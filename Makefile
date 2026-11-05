@@ -155,12 +155,12 @@ package-macos-x64: build build-host
 # zip: dist-package/cmspark-v{ver}-windows-x64.zip
 # Setup.exe: dist-package/CMspark-Setup-v{ver}.exe（需 makensis；CI 设 CMSPARK_REQUIRE_NSIS=1）
 # 本地 SEA：powershell -File scripts/build-windows-exe.ps1 或 build-package.bat
-package-windows:
+package-windows: install
 	@bash scripts/package.sh windows-x64
 	@echo "Official zip: dist-package/cmspark-v*-windows-x64.zip"
 	@echo "Setup.exe:    dist-package/CMspark-Setup-v*-windows-x64.exe (skipped with a warning if makensis is missing)"
 
-package-windows-arm64:
+package-windows-arm64: install
 	@bash scripts/package.sh windows-arm64
 
 # 打包 Linux x64
@@ -182,6 +182,6 @@ package-linux-rpm-arm64: build
 	@bash scripts/package.sh linux-arm64
 	@bash scripts/build-linux-rpm.sh linux-arm64
 
-package-chrome-extension:
+package-chrome-extension: $(EXTENSION_STAMP)
 	@cd chrome-extension && npm run build
 	@bash scripts/package-chrome-extension.sh

@@ -43,6 +43,7 @@ done
 for tool in node dpkg-deb install md5sum mktemp mv realpath; do
   command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: required tool not found: ${tool}" >&2; exit 1; }
 done
+node "${ROOT_DIR}/scripts/verify-linux-tray.mjs" "${STAGING}" "${PLATFORM}"
 
 STAGING_PHYSICAL="$(cd "${STAGING}" && pwd -P)"
 OUTPUT_PHYSICAL="$(realpath -m -- "${OUTPUT_DIR}")"

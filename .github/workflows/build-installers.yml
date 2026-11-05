@@ -93,7 +93,18 @@ jobs:
 
       - name: Install RPM builder
         if: startsWith(matrix.platform, 'linux-')
-        run: sudo apt-get update && sudo apt-get install -y rpm
+        run: sudo apt-get update && sudo apt-get install -y rpm cpio desktop-file-utils xvfb dbus-x11
+
+      - name: Install native ARM64 tray build tools
+        if: matrix.platform == 'linux-arm64'
+        run: sudo apt-get install -y golang-go libappindicator3-dev
+
+      - name: Linux installer controls
+        if: matrix.family == 'linux'
+        run: |
+          node --test scripts/tests/linux-tray-architecture.test.mjs
+          bash scripts/tests/linux-deb-package.test.sh
+          bash scripts/tests/linux-rpm-package.test.sh
 
       - name: Build macOS installer
         if: matrix.family == 'macos'
@@ -120,6 +131,7 @@ jobs:
           bash scripts/package.sh '${{ matrix.platform }}'
           bash scripts/build-linux-deb.sh '${{ matrix.platform }}'
           bash scripts/build-linux-rpm.sh '${{ matrix.platform }}'
+          CMSPARK_TEST_LINUX_STAGE="$PWD/dist-package/cmspark-${{ matrix.platform }}" dbus-run-session -- xvfb-run -a node --test scripts/tests/linux-tray-protocol.test.mjs
 
       - name: Collect platform installers
         shell: bash

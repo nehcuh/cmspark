@@ -16,6 +16,7 @@ RELEASE="${CMSPARK_RPM_RELEASE:-1}"
 for required in cmspark-agent.js launch-companion.sh node assets/cmspark.png chrome-extension/manifest.json node_modules/systray2/traybin/tray_linux_release; do
   [[ -s "${STAGING}/${required}" ]] || { echo "ERROR: staging is missing ${required}" >&2; exit 1; }
 done
+node "${ROOT_DIR}/scripts/verify-linux-tray.mjs" "${STAGING}" "${PLATFORM}"
 for tool in rpmbuild install; do command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: ${tool} is required" >&2; exit 1; }; done
 mkdir -p "${OUTPUT_DIR}"
 BUILD_ROOT="$(mktemp -d "${OUTPUT_DIR}/.rpm-build-${PLATFORM}.XXXXXXXX")"
@@ -25,12 +26,16 @@ PAYLOAD="${TOP}/SOURCES/payload"
 mkdir -p "${TOP}/BUILD" "${TOP}/RPMS" "${TOP}/SOURCES" "${TOP}/SPECS" "${TOP}/SRPMS" "${PAYLOAD}/opt/cmspark" "${PAYLOAD}/usr/bin" "${PAYLOAD}/usr/lib/systemd/user" "${PAYLOAD}/usr/share/applications" "${PAYLOAD}/usr/share/icons/hicolor/256x256/apps"
 cp -a "${STAGING}/." "${PAYLOAD}/opt/cmspark/"
 install -d "${PAYLOAD}/opt/cmspark"
+install -m 0755 "${ROOT_DIR}/scripts/packaging/linux/launch-desktop.sh" "${PAYLOAD}/opt/cmspark/launch-desktop.sh"
 install -m 0755 "${ROOT_DIR}/scripts/packaging/linux/cmspark-agent" "${PAYLOAD}/usr/bin/cmspark-agent"
 install -m 0644 "${ROOT_DIR}/scripts/packaging/linux/systemd/"*.service "${PAYLOAD}/usr/lib/systemd/user/"
 install -m 0644 "${ROOT_DIR}/scripts/packaging/linux/cmspark.desktop" "${PAYLOAD}/usr/share/applications/cmspark.desktop"
 install -m 0644 "${STAGING}/assets/cmspark.png" "${PAYLOAD}/usr/share/icons/hicolor/256x256/apps/cmspark.png"
 
 cat > "${TOP}/SPECS/cmspark.spec" <<EOF
+# Keep shipped Node/Go binaries and integrity-bound resources byte-identical.
+%global __os_install_post %{nil}
+%global debug_package %{nil}
 Name:           cmspark
 Version:        ${VERSION}
 Release:        ${RELEASE}%{?dist}
@@ -49,8 +54,8 @@ CMspark local companion and browser automation agent.
 %build
 
 %install
-mkdir -p %{buildroot}/opt/cmspark %{buildroot}/usr/bin %{buildroot}/usr/lib/systemd/user %{buildroot}/usr/share/applications %{buildroot}/usr/share/icons/hicolor/256x256/apps
-cp -a %{_sourcedir}/payload/. %{buildroot}/
+mkdir -p "%{buildroot}"
+cp -a "%{_sourcedir}/payload/." "%{buildroot}/"
 
 %files
 /opt/cmspark
@@ -66,9 +71,8 @@ cp -a %{_sourcedir}/payload/. %{buildroot}/
 EOF
 
 rpmbuild --target "${RPM_ARCH}" --define "_topdir ${TOP}" --define "_rpmdir ${TOP}/RPMS" --define "_build_id_links none" -bb "${TOP}/SPECS/cmspark.spec"
-RPM_SOURCE="${TOP}/RPMS/${RPM_ARCH}/cmspark-${VERSION}-${RELEASE}*.${RPM_ARCH}.rpm"
 shopt -s nullglob
-RPM_FILES=( ${RPM_SOURCE} )
+RPM_FILES=( "${TOP}/RPMS/${RPM_ARCH}/cmspark-${VERSION}-${RELEASE}"*".${RPM_ARCH}.rpm" )
 [[ "${#RPM_FILES[@]}" -eq 1 && -s "${RPM_FILES[0]}" ]] || { echo "ERROR: expected one RPM package" >&2; exit 1; }
 cp "${RPM_FILES[0]}" "${OUTPUT_DIR}/cmspark-${VERSION}-${RELEASE}.${RPM_ARCH}.rpm"
 echo "Wrote ${OUTPUT_DIR}/cmspark-${VERSION}-${RELEASE}.${RPM_ARCH}.rpm"

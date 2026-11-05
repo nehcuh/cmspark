@@ -520,6 +520,12 @@ case "${PLATFORM}" in
     ;;
   linux-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
+    if [ "${PLATFORM}" = "linux-arm64" ]; then
+      bash "${ROOT_DIR}/scripts/build-linux-arm64-tray.sh"
+      cp "${ROOT_DIR}/companion/dist/linux-arm64-tray/tray_linux_release" "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
+      mkdir -p "${STAGING}/licenses/linux-arm64-tray"
+      cp "${ROOT_DIR}/companion/dist/linux-arm64-tray/"{LICENSE,SOURCE.txt} "${STAGING}/licenses/linux-arm64-tray/"
+    fi
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_windows_release.exe"
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
@@ -628,6 +634,9 @@ else
 fi
 
 # --- Step 6: Platform-specific launch scripts ---
+if [[ "${PLATFORM}" == linux-* ]]; then
+  node "${ROOT_DIR}/scripts/verify-linux-tray.mjs" "${STAGING}" "${PLATFORM}"
+fi
 echo "[7/9] Adding launch scripts..."
 if [[ "${PLATFORM}" == windows* ]]; then
   if [ ! -f companion/launch-hidden.vbs ]; then
