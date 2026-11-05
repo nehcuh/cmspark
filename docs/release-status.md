@@ -1,16 +1,28 @@
 # 版本与交付状态
 
-> 源码开发版本 **0.8.1（尚未正式发布）**。本页的 0.8.1 状态为打标签前的发行候选记录，正式下载以 [GitHub Releases](https://github.com/nehcuh/cmspark/releases) 的已发布资产为准。
+> 源码版本 **0.8.1（已于 2026-11-05 正式发布）**。正式安装包见 [v0.8.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.1)。
 
-## 0.8.1 发行候选
+## 0.8.1 正式发行回执
 
-- 发布范围包含 [PR #828](https://github.com/nehcuh/cmspark/pull/828) 的本机视觉、来源截图与大附件修复，以及 [PR #830](https://github.com/nehcuh/cmspark/pull/830) 的附件兼容性修复。主线功能提交为 `9e753332`。
-- Linux WPS 的标准 Office/PDF MIME 别名已归一至对应标准类型，沿用上传白名单。聊天可导入内部确认为未加密标准 DOC 的 .wps。四份公开原件已通过实际聊天上传入口，核对正文、数字与培训表结构，见 [Office 导入契约](office-import-contract.md)。
-- 标签发布前须通过既有 CI 和三平台 Release 预演。正式 Linux 资产为 `cmspark-v0.8.1-linux-x64.zip`，需核对压缩包内 Companion 与 Chrome 扩展均包含这次修复，并验证发布校验清单。
+- 发布范围包含 [PR #828](https://github.com/nehcuh/cmspark/pull/828) 的本机视觉、来源截图与大附件修复，以及 [PR #830](https://github.com/nehcuh/cmspark/pull/830) 的附件兼容性修复。Linux WPS 的标准 Office/PDF MIME 别名归一至对应标准类型，继续沿用上传白名单；聊天可导入内部确认为未加密标准 DOC 的 .wps，见 [Office 导入契约](office-import-contract.md)。
+- 正式发布时间 **2026-11-05T07:06:08Z**，draft=false、prerelease=false。标签 `v0.8.1` 指向 `669f399906d404341135f2549940995a02e20944`，完整树为 `5980de0d1b7e28101e65c789f5cb1e11cbefdf4b`，包含附件修复提交 `9e753332`。标签内文档保留打标签前的准备状态，本页为发布后回执。
+- 精确主线[正常 CI](https://github.com/nehcuh/cmspark/actions/runs/41980305278)及相关检查共 **10 SUCCESS**；同树候选的[三平台预演](https://github.com/nehcuh/cmspark/actions/runs/41979339691)通过；[正式 Release](https://github.com/nehcuh/cmspark/actions/runs/41983243784)预检、macOS arm64／Linux x64／Windows x64 打包和发布五个 job 全部 SUCCESS。发布前独立对抗与 Pi 复审均通过。
+- 已实际下载四份二进制和两份校验清单，六项 API digest 与文件摘要相符，两份清单的四条二进制记录一致。正式 Linux ZIP 内 Companion 与扩展均为 **0.8.1**，双方均含 WPS MIME 归一及 .wps 支持。
+- 正式 Linux x64 包在无网络容器中使用自带 Node **v22.23.4**，通过真实鉴权聊天上传与本地解析链路：WPS MIME DOCX 一份、四份公开 .wps 原件共 **5 次成功**，正文、数字和培训表结构符合预期；切换 PDF-only 白名单后 DOCX／.wps **2 次拒绝**，未新增用户消息。测试未使用用户私有文档。
+- 本机已从该发行源码构建并换装 `/Applications/CMspark.app` **0.8.1**；签名有效，主程序与宿主单一 CDHash 均为 `a89c3a9e9f887be589a4fe07e4baa055d5647667`，与 staging 一致。应用已启动，后台由已安装包的 Node／Companion 运行，`127.0.0.1:23401/healthz` 正常。既有 Chrome 扩展目录已原位更新，身份和权限不变，Chrome 显示 **0.8.1／已重新加载**。本机 DMG 为本地构建产物，不混同 GitHub ZIP 资产。
+
+下载：[正式 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.1) · [SHA256SUMS](https://github.com/nehcuh/cmspark/releases/download/v0.8.1/SHA256SUMS) · [SHA256SUMS.txt](https://github.com/nehcuh/cmspark/releases/download/v0.8.1/SHA256SUMS.txt)。
+
+| 文件 | 字节数 | SHA-256 |
+|---|---:|---|
+| [CMspark-Setup-v0.8.1.exe](https://github.com/nehcuh/cmspark/releases/download/v0.8.1/CMspark-Setup-v0.8.1.exe) | 106648744 | `523924ceacbc69b60e9c18e409e8f2901aa7a69ef5801ad447eb4d86b4040a46` |
+| [cmspark-v0.8.1-linux-x64.zip](https://github.com/nehcuh/cmspark/releases/download/v0.8.1/cmspark-v0.8.1-linux-x64.zip) | 140704958 | `58eabaf7295b124fdcabf45f2a23f3ea721148dbc6f18892fa5500772d7a26f6` |
+| [cmspark-v0.8.1-macos-arm64.zip](https://github.com/nehcuh/cmspark/releases/download/v0.8.1/cmspark-v0.8.1-macos-arm64.zip) | 158696204 | `cbc51473ba2733eccd1ddd2023f345a7b75d9df1202a9cf949d94a19b00ccf95` |
+| [cmspark-v0.8.1-windows-x64.zip](https://github.com/nehcuh/cmspark/releases/download/v0.8.1/cmspark-v0.8.1-windows-x64.zip) | 164234843 | `0d08c22413f3276b93aa2fe200d2ef81ca4a9dac08c1079f42ac129d3589157c` |
 
 以下保留 **0.8.0 正式发行回执**，核对日期为 2026-11-03。
 
-## 源码、发行包与已安装应用
+## 0.8.0 历史源码、发行包与已安装应用
 
 | 项目 | 当前事实 |
 |---|---|
@@ -19,7 +31,7 @@
 | 本机应用 | 2026-11-03 已从本地候选包换装为 **0.8.0**，签名、主程序／宿主标识和 `127.0.0.1:23401` 监听已验证。实际加载目录的扩展已重载，Chrome 已显示 **0.8.0／已重新加载**，本地换装完成。 |
 | 本批动作 | 0.8.0 已正式发布，包含跨协议视觉、截图待办、Windows 稳定进程发现、指定聊天区域及最短 3 秒检查；采集和模型默认关闭。PR #826 已合并，精确主线 10 项检查与最终同树三平台预演通过，正式 tag Release 五项 job 及资产内容校验完成。 |
 
-## 发布验收基线
+## 0.8.0 历史发布验收基线
 
 视觉功能 [PR #823](https://github.com/nehcuh/cmspark/pull/823) 与 Windows 采集、版本和指南 [PR #824](https://github.com/nehcuh/cmspark/pull/824) 已合入主线 `b585eb6bc29baa2e2a0314dad2793de29a72209b`。测试准备和失败回执由 [PR #826](https://github.com/nehcuh/cmspark/pull/826) 完成并合入；最终主线与正式发布证据如下。
 
