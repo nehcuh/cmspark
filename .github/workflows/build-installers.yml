@@ -67,7 +67,12 @@ jobs:
       - name: Install and build Windows ARM64 extension
         if: matrix.platform == 'windows-arm64'
         shell: bash
-        run: cd chrome-extension && npm ci && npm run build
+        run: |
+          cd chrome-extension
+          npm ci
+          npm run build
+          cd ..
+          git restore -- chrome-extension/assets/brand-mark.svg
 
       - name: Restore ARM64 Node for Windows packaging
         if: matrix.platform == 'windows-arm64'
