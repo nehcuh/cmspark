@@ -4,7 +4,7 @@
 
 ## 上传 MIME 与迁移
 
-`resolveDocumentMime(filename, mime)` 只在上传 MIME 为空、`application/octet-stream` 或 `binary/octet-stream` 时，根据已知后缀推断格式；显式未知 MIME 不被后缀覆盖。Linux WPS 的标准 PDF 别名 `application/wps-office.pdf` 归一为 `application/pdf`，然后仍须通过上传白名单。
+`resolveDocumentMime(filename, mime)` 只在上传 MIME 为空、`application/octet-stream` 或 `binary/octet-stream` 时，根据已知后缀推断格式；显式未知 MIME 不被后缀覆盖。Linux WPS 注册的 `application/wps-office.doc/docx/xls/xlsx/ppt/pptx/pdf` 别名归一为对应标准 MIME，然后仍须通过上传白名单。其它显式 MIME 保留原值。
 
 聊天入口的 `effectiveUploadAllowedTypes` 将**规范化后集合恰好等于历史十项默认 MIME**的配置视为旧产品默认，按当前默认格式判断放行，不写回内存缓存或磁盘配置。手工录入恰好同集也会触发此约定；迁移无法区分这两种来源。自定义子集、超集保留原有限制；空列表仍表示不按 MIME 限制。需要严格限制时，请配置实际允许的具体 MIME。
 

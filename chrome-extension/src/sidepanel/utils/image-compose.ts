@@ -133,12 +133,13 @@ export function mimeFromName(name: string): string {
   return mimeMap[ext || ""] || "application/octet-stream"
 }
 
-/** Normalize the verified WPS PDF alias; infer only absent/generic client types. */
+/** Normalize standard Office/PDF aliases registered by Linux WPS. */
 export function mimeForIncomingFile(name: string, providedMime: string): string {
   // The Companion determines the document format from the actual .wps bytes.
   if (/\.wps$/i.test(name)) return "application/octet-stream"
   const mime = String(providedMime || "").trim().toLowerCase().split(";")[0].trim()
-  if (mime === "application/wps-office.pdf") return "application/pdf"
+  const wpsFormat = mime.match(/^application\/wps-office\.(docx?|xlsx?|pptx?|pdf)$/)?.[1]
+  if (wpsFormat) return mimeFromName(`document.${wpsFormat}`)
   return !mime || mime === "application/octet-stream" || mime === "binary/octet-stream"
     ? mimeFromName(name)
     : mime

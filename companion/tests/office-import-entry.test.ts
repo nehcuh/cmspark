@@ -169,6 +169,32 @@ test("chat canonicalizes the WPS PDF alias before admission and keeps custom res
   assert.equal(reached, 3)
 })
 
+test("Linux WPS Office aliases use the standard MIME upload policy", async () => {
+  const seen: string[] = []
+  router.__testSetFileParseImpl(async (_bytes, name, mime) => {
+    seen.push(mime)
+    return { success: false, filename: name, mimeType: mime, error: "Office parser reached" }
+  })
+  for (const ext of ["doc", "docx", "xls", "xlsx", "ppt", "pptx"]) {
+    const canonical = DOCUMENT_MIMES[ext]
+    const alias = `application/wps-office.${ext}`
+    for (const types of [[canonical], [alias]]) {
+      saveUploadConfig(types)
+      const svc = services()
+      const result = await router.handleMessage(upload(svc.thread.id, `report.${ext}`, ` ${alias.toUpperCase()}; charset=binary `), svc, session())
+      assert.equal(result.error, "Office parser reached")
+      assert.equal(seen.at(-1), canonical)
+      assert.deepEqual(cfg.getConfig().file_upload!.allowed_types, types)
+    }
+    const count = seen.length
+    saveUploadConfig([DOCUMENT_MIMES.pdf])
+    const svc = services()
+    const result = await router.handleMessage(upload(svc.thread.id, `report.${ext}`, alias), svc, session())
+    assert.match(String(result.error), /不支持的文件类型/)
+    assert.equal(seen.length, count)
+  }
+})
+
 test("chat keeps unrestricted empty allowlist and rejects ET/DPS with save-as guidance", async () => {
   saveUploadConfig([])
   let parses = 0
