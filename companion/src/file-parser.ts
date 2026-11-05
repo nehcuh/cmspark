@@ -7,6 +7,7 @@ import AdmZip from "adm-zip"
 import type { SupportedFileType } from "officeparser"
 import { logger } from "./logger"
 import { CONVERTED_EXTENSIONS, DOCUMENT_MIMES, OFFICE_MIMES, documentExtension, resolveDocumentMime, unsupportedWpsError } from "./file-formats"
+import { isWpsWithWordDocContent } from "./wps-doc"
 import { convertOfficeDocument, OFFICE_OUTPUT_MAX_BYTES, OFFICE_ARCHIVE_MAX_BYTES, OFFICE_IMAGE_MAX_BYTES, OFFICE_IMAGES_MAX_BYTES } from "./office-runtime"
 import { validateOdfExpansion } from "./odf-expansion"
 
@@ -217,8 +218,7 @@ function cancellable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> 
   })
 }
 
-async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: string, signal: AbortSignal): Promise<FileParseResponse> {
-  const sourceExt = getExtension(filename) || Object.keys(DOCUMENT_MIMES).find(ext => DOCUMENT_MIMES[ext] === mimeType) || "docx"
+async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: string, signal: AbortSignal, sourceExt: string): Promise<FileParseResponse> {
   const zipFormats = new Set(["docx", "xlsx", "pptx", "odt", "ods", "odp"])
   validateOfficeZip(buffer, zipFormats.has(sourceExt))
   validateOdfExpansion(buffer, sourceExt)
@@ -377,7 +377,11 @@ export async function parseFile(
   const timer = setTimeout(() => controller.abort(new Error(`文件 "${filename}" 解析超时 (${timeoutMs / 1000}s)`)), timeoutMs)
   try {
     controller.signal.throwIfAborted()
+    const extension = getExtension(filename)
     const wpsError = unsupportedWpsError(filename)
+    if (extension === "wps" && resolvedMime === DOCUMENT_MIMES.doc && isWpsWithWordDocContent(buffer)) {
+      return await parseOfficeFile(buffer, filename, resolvedMime, controller.signal, "doc")
+    }
     if (wpsError) throw new Error(wpsError)
     if (resolvedMime === "text/plain" || resolvedMime === "text/markdown") {
       return parseText(buffer, filename, resolvedMime)
@@ -392,7 +396,8 @@ export async function parseFile(
     }
 
     if (isOfficeFormat(resolvedMime)) {
-      return await parseOfficeFile(buffer, filename, resolvedMime, controller.signal)
+      const sourceExt = extension || Object.keys(DOCUMENT_MIMES).find(ext => DOCUMENT_MIMES[ext] === resolvedMime) || "docx"
+      return await parseOfficeFile(buffer, filename, resolvedMime, controller.signal, sourceExt)
     }
 
     if (resolvedMime.startsWith("text/")) {

@@ -47,6 +47,13 @@ test("Office format picker MIME fallback supports legacy and OpenDocument files"
   assert.equal(mimeForIncomingFile("photo.png", "IMAGE/PNG; charset=binary"), "image/png")
 })
 
+test("the picker sends .wps as a document candidate for server-side detection", () => {
+  assert.ok(IMAGE_ACCEPT.split(",").includes(".wps"))
+  for (const mime of ["", "application/wps-office.wps", "application/msword", "image/png"]) {
+    assert.equal(mimeForIncomingFile("report.WPS", mime), "application/octet-stream")
+  }
+})
+
 // --- isAllowlistedImageMime ---
 
 test("isAllowlistedImageMime: png/jpeg/jpg/gif/webp true", () => {
@@ -361,8 +368,14 @@ test("IMAGE_PREFLIGHT_NO_VISION copy is honest", () => {
   assert.match(IMAGE_PREFLIGHT_NO_VISION, /视觉分析/)
 })
 
-test("mimeForIncomingFile canonicalizes only the verified WPS PDF alias", () => {
+test("mimeForIncomingFile canonicalizes the standard Office/PDF WPS aliases", () => {
   assert.equal(mimeForIncomingFile("report.pdf", " Application/WPS-Office.PDF; charset=binary "), "application/pdf")
+  for (const ext of ["doc", "docx", "xls", "xlsx", "ppt", "pptx"]) {
+    assert.equal(mimeForIncomingFile(`report.${ext}`, ` Application/WPS-Office.${ext.toUpperCase()}; charset=binary `), mimeFromName(`report.${ext}`))
+  }
+  for (const ext of ["wps", "et", "dps", "docm", "unknown"]) {
+    assert.equal(mimeForIncomingFile("report.docx", `application/wps-office.${ext}`), `application/wps-office.${ext}`)
+  }
   assert.equal(mimeForIncomingFile("report.pdf", "application/wps-office.unknown"), "application/wps-office.unknown")
   assert.equal(mimeForIncomingFile("report.pdf", "application/custom"), "application/custom")
 })

@@ -48,8 +48,9 @@ export function documentExtension(filename: string): string {
 
 export function resolveDocumentMime(filename: string, providedMime: string): string {
   const normalized = String(providedMime || "").trim().toLowerCase().split(";")[0].trim()
-  // WPS on Linux can label standard PDF bytes with this application-specific alias.
-  const mime = normalized === "application/wps-office.pdf" ? DOCUMENT_MIMES.pdf : normalized
+  // Linux WPS registers these aliases for standard Office/PDF documents.
+  const wpsFormat = normalized.match(/^application\/wps-office\.(docx?|xlsx?|pptx?|pdf)$/)?.[1]
+  const mime = wpsFormat ? DOCUMENT_MIMES[wpsFormat] : normalized
   if (!mime || mime === "application/octet-stream" || mime === "binary/octet-stream") {
     return DOCUMENT_MIMES[documentExtension(filename)] || mime
   }
@@ -66,7 +67,9 @@ export function effectiveUploadAllowedTypes(types: readonly string[]): readonly 
 }
 
 export function unsupportedWpsError(filename: string): string | undefined {
-  return ["wps", "et", "dps"].includes(documentExtension(filename))
+  const extension = documentExtension(filename)
+  if (extension === "wps") return `无法按标准 DOC 导入 "${filename}"，请在 WPS 中另存为 .docx 后重试。`
+  return ["et", "dps"].includes(extension)
     ? `暂不支持 WPS 专有格式 (${filename})，请用 WPS 另存为 .docx/.xlsx/.pptx 或 PDF 后导入。`
     : undefined
 }

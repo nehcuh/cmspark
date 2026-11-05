@@ -50,6 +50,10 @@ export function partitionUploadFiles(
     const type = typeof f?.type === "string" ? f.type : ""
     const content = typeof f?.content === "string" ? f.content : ""
     const ext = name.split(".").pop()?.toLowerCase() || ""
+    if (ext === "wps") {
+      docs.push({ name, type, content })
+      continue
+    }
     if (ext === "heic" || ext === "heif" || ext === "svg") {
       return {
         images: [],

@@ -68,7 +68,7 @@ import { listPendingToolsForThread } from "./ws/tool-forward"
 import { MAX_UPLOAD_BYTES } from "./ws/file-upload-parts"
 
 import { parseFile, PARSE_FILE_MAX_BYTES } from "./file-parser"
-import { resolveDocumentMime, effectiveUploadAllowedTypes, unsupportedWpsError, normalizeDocumentWarning } from "./file-formats"
+import { DOCUMENT_MIMES, documentExtension, resolveDocumentMime, effectiveUploadAllowedTypes, unsupportedWpsError, normalizeDocumentWarning } from "./file-formats"
 import type { FileParseResponse, FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
 import { extractKnowledgeDraft, type KnowledgeDraftSuggestion } from "./llm/knowledge-draft-extract"
@@ -1801,8 +1801,11 @@ async function dispatchMessage(
           const file = docFiles[fi]
           const { name, content } = file
           if (uploadController.signal.aborted) return uploadError("文件处理已取消")
-          const type = resolveDocumentMime(name, file.type)
-          const wpsError = unsupportedWpsError(name)
+          const isWps = documentExtension(name) === "wps"
+          // A .wps is a DOC candidate for the existing allowlist. parseFile
+          // must still confirm the internal Word structure before conversion.
+          const type = isWps ? DOCUMENT_MIMES.doc : resolveDocumentMime(name, file.type)
+          const wpsError = isWps ? undefined : unsupportedWpsError(name)
           if (wpsError) return uploadError(wpsError)
 
           pushUploadStatus(

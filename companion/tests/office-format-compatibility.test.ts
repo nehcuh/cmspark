@@ -130,6 +130,14 @@ function scannedStylePdf(pageCount: number): Buffer {
   return Buffer.from(pdf)
 }
 
+test("Linux WPS DOCX alias preserves real text through the standard parser", async () => {
+  const result = await parsed(repeatedNumericDocx(), "WPS-export.docx", "application/wps-office.docx")
+  assert.equal(result.mimeType, WORD)
+  assert.equal(result.text.match(/重复业务正文/g)?.length, 3)
+  assert.match(result.text, /12345/)
+  assert.match(result.text, /67890/)
+})
+
 test("#611 actual Office conversion, text integrity, refusal and rendering", { timeout: 240000 }, async t => {
   const cases = [
     ["one-page.doc", "application/msword", "2483a8cafde92910a0ea857cce49c07e6fa6bf58ab4a4f0852dfd2f488dedba1"],
