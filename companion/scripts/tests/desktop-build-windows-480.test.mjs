@@ -169,8 +169,9 @@ test('all actual C++ acceptance compiler arguments preserve Unicode input withou
   // Evaluate all three actual argv expressions; never invoke a compiler.
   const calls=[...helperSource.matchAll(/checked\(cl,(\["\/nologo","\/std:c\+\+20"[^\n]+?\]),\{env,cwd:output,buildDiagnostic:true\}\)/g)]
   assert.equal(calls.length,3,'all actual native acceptance compile sites')
-  for(const [index,match] of calls.entries()) for(const mode of ['visual','hostile','inheritance','parent']) for(const family of ['mcp','metadata','dialog','resource','workspace','local','archive']) {
-    const argv=new Function('path','mode','sdk','generated','root','source','mcpSource','binary','mcpBinary','terminalSource','terminalBinary','family',`return ${match[1]}`)(path.win32,mode,'C:\\sdk','C:\\generated','C:\\repo','C:\\owned.cpp','C:\\owned-mcp.cpp','C:\\owned.exe','C:\\owned-mcp.exe','C:\\owned-terminal.cpp','C:\\owned-terminal.exe',family)
+  for(const arch of ['x64','arm64']) for(const [index,match] of calls.entries()) for(const mode of ['visual','hostile','inheritance','parent']) for(const family of ['mcp','metadata','dialog','resource','workspace','local','archive']) {
+    const argv=new Function('path','mode','sdk','generated','root','source','mcpSource','binary','mcpBinary','terminalSource','terminalBinary','family','arch',`return ${match[1]}`)(path.win32,mode,'C:\\sdk','C:\\generated','C:\\repo','C:\\owned.cpp','C:\\owned-mcp.cpp','C:\\owned.exe','C:\\owned-mcp.exe','C:\\owned-terminal.cpp','C:\\owned-terminal.exe',family,arch)
+    assert.ok(argv.includes(path.win32.join('C:\\sdk', 'build/native', arch, 'WebView2LoaderStatic.lib')))
     assert.equal(argv.filter(arg=>arg==='/utf-8').length,1,'acceptance C++ has the same explicit source encoding as production')
     assert.ok(argv.includes('/DUNICODE')&&argv.includes('/D_UNICODE'))
     assert.equal(argv.filter(arg=>arg==='/DCMSPARK_DESKTOP_TEST_PHASES').length,index===0||index===1&&family==='mcp'?1:0,'only actual 480 and MCP acceptance variants observe existing process-lifetime phases')

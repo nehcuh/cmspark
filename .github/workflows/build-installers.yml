@@ -93,7 +93,7 @@ jobs:
 
       - name: Install RPM builder
         if: startsWith(matrix.platform, 'linux-')
-        run: sudo apt-get update && sudo apt-get install -y rpm cpio desktop-file-utils xvfb dbus-x11
+        run: sudo apt-get update && sudo apt-get install -y rpm cpio desktop-file-utils xvfb dbus-x11 libappindicator3-1 xclip
 
       - name: Install native ARM64 tray build tools
         if: matrix.platform == 'linux-arm64'

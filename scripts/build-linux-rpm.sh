@@ -17,8 +17,21 @@ for required in cmspark-agent.js launch-companion.sh node assets/cmspark.png chr
   [[ -s "${STAGING}/${required}" ]] || { echo "ERROR: staging is missing ${required}" >&2; exit 1; }
 done
 node "${ROOT_DIR}/scripts/verify-linux-tray.mjs" "${STAGING}" "${PLATFORM}"
-for tool in rpmbuild install; do command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: ${tool} is required" >&2; exit 1; }; done
+cmp -s "${ROOT_DIR}/companion/dist/cmspark-agent.js" "${STAGING}/cmspark-agent.js" || {
+  echo 'ERROR: staged agent does not match current bundle; rebuild with scripts/package.sh' >&2; exit 1;
+}
+node -e 'const fs=require("fs");if(JSON.parse(fs.readFileSync(process.argv[1])).version!==process.argv[2])process.exit(1)' "${STAGING}/chrome-extension/manifest.json" "${VERSION}" || {
+  echo 'ERROR: staged extension version mismatch' >&2; exit 1;
+}
+for tool in rpmbuild install realpath; do command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: ${tool} is required" >&2; exit 1; }; done
+STAGING_PHYSICAL="$(cd "${STAGING}" && pwd -P)"
+OUTPUT_PHYSICAL="$(realpath -m -- "${OUTPUT_DIR}")"
+case "${OUTPUT_PHYSICAL}" in
+  "${STAGING_PHYSICAL}"|"${STAGING_PHYSICAL}"/*) echo 'ERROR: RPM output must not be inside staging' >&2; exit 1 ;;
+esac
 mkdir -p "${OUTPUT_DIR}"
+RPM_PATH="${OUTPUT_DIR}/cmspark-${VERSION}-${RELEASE}.${RPM_ARCH}.rpm"
+[[ ! -L "${RPM_PATH}" && ( ! -e "${RPM_PATH}" || -f "${RPM_PATH}" ) ]] || { echo 'ERROR: RPM output is not a regular file' >&2; exit 1; }
 BUILD_ROOT="$(mktemp -d "${OUTPUT_DIR}/.rpm-build-${PLATFORM}.XXXXXXXX")"
 trap 'rm -rf "${BUILD_ROOT}"' EXIT
 TOP="${BUILD_ROOT}/rpmbuild"
@@ -74,5 +87,5 @@ rpmbuild --target "${RPM_ARCH}" --define "_topdir ${TOP}" --define "_rpmdir ${TO
 shopt -s nullglob
 RPM_FILES=( "${TOP}/RPMS/${RPM_ARCH}/cmspark-${VERSION}-${RELEASE}"*".${RPM_ARCH}.rpm" )
 [[ "${#RPM_FILES[@]}" -eq 1 && -s "${RPM_FILES[0]}" ]] || { echo "ERROR: expected one RPM package" >&2; exit 1; }
-cp "${RPM_FILES[0]}" "${OUTPUT_DIR}/cmspark-${VERSION}-${RELEASE}.${RPM_ARCH}.rpm"
+mv -fT -- "${RPM_FILES[0]}" "${RPM_PATH}"
 echo "Wrote ${OUTPUT_DIR}/cmspark-${VERSION}-${RELEASE}.${RPM_ARCH}.rpm"
