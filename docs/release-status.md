@@ -1,7 +1,14 @@
 # 版本与交付状态
 
-> 源码开发版本 **0.8.1（尚未正式发布）**。包含本机模型抽取、来源截图和大附件修复。通过 CI 与三平台预演后发布。
- **0.8.0 正式发行回执**，核对日期为 2026-11-03。
+> 源码开发版本 **0.8.1（尚未正式发布）**。本页的 0.8.1 状态为打标签前的发行候选记录，正式下载以 [GitHub Releases](https://github.com/nehcuh/cmspark/releases) 的已发布资产为准。
+
+## 0.8.1 发行候选
+
+- 发布范围包含 [PR #828](https://github.com/nehcuh/cmspark/pull/828) 的本机视觉、来源截图与大附件修复，以及 [PR #830](https://github.com/nehcuh/cmspark/pull/830) 的附件兼容性修复。主线功能提交为 `9e753332`。
+- Linux WPS 的标准 Office/PDF MIME 别名已归一至对应标准类型，沿用上传白名单。聊天可导入内部确认为未加密标准 DOC 的 .wps。四份公开原件已通过实际聊天上传入口，核对正文、数字与培训表结构，见 [Office 导入契约](office-import-contract.md)。
+- 标签发布前须通过既有 CI 和三平台 Release 预演。正式 Linux 资产为 `cmspark-v0.8.1-linux-x64.zip`，需核对压缩包内 Companion 与 Chrome 扩展均包含这次修复，并验证发布校验清单。
+
+以下保留 **0.8.0 正式发行回执**，核对日期为 2026-11-03。
 
 ## 源码、发行包与已安装应用
 
@@ -55,7 +62,7 @@
 
 ## 已合并与尚待验收的边界
 
-- **Office**：DOC/DOCX、XLS/XLSX、PPT/PPTX、ODT/ODS/ODP 与 PDF 入口扩展已合入。专有 WPS/ET/DPS 尚不支持；严格 XML、表格与图表预算可能拒绝复杂文档。#615 原范围已完成公开大表预算核验，四份原件均未成功转换，不能称为业务大表兼容保证。见 [导入契约](office-import-contract.md)。
+- **Office**：DOC/DOCX、XLS/XLSX、PPT/PPTX、ODT/ODS/ODP 与 PDF 入口扩展已合入。聊天支持内部为未加密标准 DOC 的 .wps，其他 WPS 变体和 ET/DPS 需另存为标准 Office 格式；严格 XML、表格与图表预算可能拒绝复杂文档。#615 原范围已完成公开大表预算核验，四份原件均未成功转换，不能称为业务大表兼容保证。见 [导入契约](office-import-contract.md)。
 - **协作、编程接力与项目**：父任务导航、汇总/操作反馈、终端入口和持久化项目元数据已合入；项目归属不授予目录权限。内嵌终端支持 macOS / Windows、默认关闭，Linux 仍不支持。原生工作区、文件/PTY/编程 Agent 组合的完整验收仍由 [#476](https://github.com/nehcuh/cmspark/issues/476) 跟踪。
 - **连续会议**：#494 的有界采集/识别队列已合入；慢识别时继续采集，容量、断连和三小时上限仍会终止输入。连续协议不保留原始音频。见 [会议指南](meeting-and-dictation-user-guide.md)。
 - **桌面与 Windows**：已有原生验收仅覆盖记名的工具包、动作和夹具。#572 原范围已完成；macOS AX 的 [#571](https://github.com/nehcuh/cmspark/issues/571) 已按原范围完成 AppKit 后台动作与 WK 已知 TREE_EXHAUSTED Gap 验收；这不表示所有工具包或 WK 根因已修复。上述 #476 整票仍未完成。永久归档的源码能力、数据寿命和原生验收边界见 [归档指南](desktop-thread-archive.md)。能力范围见 [Computer Use 台账](computer-capability-ledger.md)，不把 Linux 或受控 seam 的成功当作 Windows/macOS 原生成功。[#639](https://github.com/nehcuh/cmspark/issues/639) 的历史 10 秒失败根因仍未证明。
