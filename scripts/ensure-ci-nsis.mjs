@@ -96,7 +96,7 @@ async function main() {
     const compiler = path.join(process.env["ProgramFiles(x86)"] || "", "NSIS", "makensis.exe")
     if (!fs.existsSync(compiler)) throw new Error("NSIS compiler missing after installation")
     console.log("NSIS 3.12 installer verified and available for native regressions")
-  } finally { fs.rmSync(owned, { recursive: true, force: true }) }
+  } finally { fs.rmSync(owned, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }) }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
