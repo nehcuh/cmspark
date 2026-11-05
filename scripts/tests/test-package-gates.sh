@@ -225,7 +225,7 @@ assert_file_lacks "${NSIS}" 'CreateShortCut "\$SMSTARTUP' \
   "installer.nsi must not create Startup-folder autostart (HKCU Run only)"
 assert_file_lacks "${NSIS}" 'wmic process' \
   "installer.nsi no longer depends on WMIC"
-assert_file_has "${NSIS}" 'dist-package\\cmspark-windows-x64' \
+assert_file_has "${NSIS}" 'dist-package\\cmspark-windows-\$\{PRODUCT_ARCH\}' \
   "installer.nsi File /r copies package.sh staging tree"
 assert_file_lacks "${NSIS}" '\*\.\*' \
   "installer.nsi does not use *.* glob (would skip extensionless files)"

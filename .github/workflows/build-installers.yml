@@ -53,8 +53,28 @@ jobs:
           ONNXRUNTIME_NODE_INSTALL: skip
         run: cd companion && npm ci
 
+      - name: Select x64 Node for Windows ARM64 extension
+        if: matrix.platform == 'windows-arm64'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          architecture: x64
+
       - name: Install extension dependencies
+        if: matrix.platform != 'windows-arm64'
         run: cd chrome-extension && npm ci
+
+      - name: Install and build Windows ARM64 extension
+        if: matrix.platform == 'windows-arm64'
+        shell: bash
+        run: cd chrome-extension && npm ci && npm run build
+
+      - name: Restore ARM64 Node for Windows packaging
+        if: matrix.platform == 'windows-arm64'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          architecture: arm64
 
       - name: Install NSIS
         if: startsWith(matrix.platform, 'windows-')
@@ -84,6 +104,7 @@ jobs:
         env:
           CMSPARK_ALLOW_UNTAGGED: '1'
           CMSPARK_REQUIRE_NSIS: '1'
+          CMSPARK_SKIP_EXTENSION_BUILD: ${{ matrix.platform == 'windows-arm64' && '1' || '0' }}
         run: bash scripts/package.sh '${{ matrix.platform }}'
 
       - name: Build Linux Debian and Red Hat installers

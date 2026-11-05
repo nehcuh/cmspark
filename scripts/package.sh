@@ -95,9 +95,13 @@ else
   cd "${ROOT_DIR}/companion"
   npm run build 2>&1 | tail -1
 
-  echo "[2/9] Building Chrome extension..."
-  cd "${ROOT_DIR}/chrome-extension"
-  npm run build 2>&1 | tail -1
+  if [ "${CMSPARK_SKIP_EXTENSION_BUILD:-0}" = "1" ]; then
+    echo "[2/9] Using the prebuilt Chrome extension"
+  else
+    echo "[2/9] Building Chrome extension..."
+    cd "${ROOT_DIR}/chrome-extension"
+    npm run build 2>&1 | tail -1
+  fi
 fi
 # Note: macOS host build is [2b/9] immediately below (same major step family as [2/9]).
 
