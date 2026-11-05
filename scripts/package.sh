@@ -4,7 +4,7 @@
 # Version: companion/package.json (SoT). Align chrome-extension/package.json
 # before tagging so Side Panel + Companion report the same product version.
 #
-# Usage: scripts/package.sh [macos-arm64|macos-x64|windows-x64|linux-x64]
+# Usage: scripts/package.sh [macos-arm64|macos-x64|windows-x64|windows-arm64|linux-x64|linux-arm64]
 # Output: dist-package/cmspark-v{version}-{platform}.zip
 #   (lowercase "cmspark-v*" — cross-platform zip from this script)
 #   Windows SEA portable zip uses "CMspark-v*" via build-windows-exe.ps1;
@@ -95,9 +95,13 @@ else
   cd "${ROOT_DIR}/companion"
   npm run build 2>&1 | tail -1
 
-  echo "[2/9] Building Chrome extension..."
-  cd "${ROOT_DIR}/chrome-extension"
-  npm run build 2>&1 | tail -1
+  if [ "${CMSPARK_SKIP_EXTENSION_BUILD:-0}" = "1" ]; then
+    echo "[2/9] Using the prebuilt Chrome extension"
+  else
+    echo "[2/9] Building Chrome extension..."
+    cd "${ROOT_DIR}/chrome-extension"
+    npm run build 2>&1 | tail -1
+  fi
 fi
 # Note: macOS host build is [2b/9] immediately below (same major step family as [2/9]).
 
@@ -516,6 +520,12 @@ case "${PLATFORM}" in
     ;;
   linux-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
+    if [ "${PLATFORM}" = "linux-arm64" ]; then
+      bash "${ROOT_DIR}/scripts/build-linux-arm64-tray.sh"
+      cp "${ROOT_DIR}/companion/dist/linux-arm64-tray/tray_linux_release" "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
+      mkdir -p "${STAGING}/licenses/linux-arm64-tray"
+      cp "${ROOT_DIR}/companion/dist/linux-arm64-tray/"{LICENSE,SOURCE.txt} "${STAGING}/licenses/linux-arm64-tray/"
+    fi
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_windows_release.exe"
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
@@ -543,6 +553,7 @@ case "${PLATFORM}" in
   macos-arm64) NODE_ARCH="darwin-arm64" ;;
   macos-x64)   NODE_ARCH="darwin-x64" ;;
   windows-x64) NODE_ARCH="win-x64" ;;
+  windows-arm64) NODE_ARCH="win-arm64" ;;
   linux-x64)   NODE_ARCH="linux-x64" ;;
   linux-arm64) NODE_ARCH="linux-arm64" ;;
   *) echo "ERROR: Unsupported platform: ${PLATFORM}"; exit 1 ;;
@@ -568,7 +579,7 @@ NODE_SHASUMS="${CACHE_DIR}/SHASUMS256-${NODE_VERSION}.txt"
 echo "  Fetching SHASUMS256.txt for Node ${NODE_VERSION} from ${NODE_SHASUMS_MIRROR}..."
 curl -fSL --retry 3 "${NODE_SHASUMS_MIRROR}/${NODE_VERSION}/SHASUMS256.txt" -o "${NODE_SHASUMS}"
 
-if [ "${PLATFORM}" = "windows-x64" ]; then
+if [[ "${PLATFORM}" == windows-* ]]; then
   CACHE_ZIP="${CACHE_DIR}/node-${NODE_VERSION}-${NODE_ARCH}.zip"
   if [ ! -f "${CACHE_ZIP}" ]; then
     echo "  Downloading..."
@@ -623,6 +634,9 @@ else
 fi
 
 # --- Step 6: Platform-specific launch scripts ---
+if [[ "${PLATFORM}" == linux-* ]]; then
+  node "${ROOT_DIR}/scripts/verify-linux-tray.mjs" "${STAGING}" "${PLATFORM}"
+fi
 echo "[7/9] Adding launch scripts..."
 if [[ "${PLATFORM}" == windows* ]]; then
   if [ ! -f companion/launch-hidden.vbs ]; then
@@ -681,7 +695,7 @@ echo "  $(du -sh "${ZIP_NAME}" | cut -f1) compressed"
 if [[ "${PLATFORM}" == windows* ]]; then
   echo ""
   echo "[nsis] Building official CMspark-Setup-v${VERSION}.exe from staging..."
-  bash "${ROOT_DIR}/scripts/build-windows-installer.sh"
+  CMSPARK_PLATFORM="${PLATFORM}" bash "${ROOT_DIR}/scripts/build-windows-installer.sh"
 fi
 
 echo ""

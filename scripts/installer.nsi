@@ -13,6 +13,9 @@
 !ifndef PRODUCT_VERSION
   !define PRODUCT_VERSION "0.8.1"
 !endif
+!ifndef PRODUCT_ARCH
+  !define PRODUCT_ARCH "x64"
+!endif
 !define PRODUCT_PUBLISHER "CMspark"
 !ifndef CMSPARK_STOP_SCRIPT
   !define CMSPARK_STOP_SCRIPT "..\companion\stop-installed-agent.ps1"
@@ -30,7 +33,7 @@
 
 ; Installer settings
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
-OutFile "..\dist-package\CMspark-Setup-v${PRODUCT_VERSION}.exe"
+OutFile "..\dist-package\CMspark-Setup-v${PRODUCT_VERSION}-windows-${PRODUCT_ARCH}.exe"
 InstallDir "$LOCALAPPDATA\${PRODUCT_NAME}"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
@@ -98,7 +101,7 @@ Section "CMspark Agent" SecMain
   SetOutPath "$INSTDIR"
 
   ; Trailing slash copies the complete tree, including extensionless files.
-  File /r "..\dist-package\cmspark-windows-x64\"
+  File /r "..\dist-package\cmspark-windows-${PRODUCT_ARCH}\"
 
   ; Write registry for Add/Remove Programs
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"

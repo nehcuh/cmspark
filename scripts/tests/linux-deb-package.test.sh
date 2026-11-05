@@ -41,6 +41,11 @@ printf 'bundle\n' > "${STAGING}/cmspark-agent.js"
 printf '#!/bin/sh\n' > "${STAGING}/launch-companion.sh"
 printf '#!/bin/sh\n' > "${STAGING}/node"
 printf '#!/bin/sh\n' > "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
+node - "${STAGING}" <<'JS'
+const fs=require('fs'),path=require('path'),root=process.argv[2]
+const elf=Buffer.alloc(64);elf.set([127,69,76,70,2,1,1]);elf.writeUInt16LE(62,18)
+for(const name of ['node','node_modules/systray2/traybin/tray_linux_release']) fs.writeFileSync(path.join(root,name),elf)
+JS
 printf '// official filesystem fixture\n' > "${STAGING}/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"
 printf '{"name":"@modelcontextprotocol/sdk","version":"fixture"}\n' > "${STAGING}/node_modules/@modelcontextprotocol/sdk/package.json"
 printf '{"manifest_version":3}\n' > "${STAGING}/chrome-extension/manifest.json"

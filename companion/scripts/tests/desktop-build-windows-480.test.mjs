@@ -61,6 +61,14 @@ test('Windows compile plan keeps pinned inputs and spaced paths as argv, not she
   assert.ok(plan[1][1].includes('version.lib'));assert.ok(plan[1][1].includes('/OUT:C:\\owned path\\out\\cmspark-desktop.exe'))
 })
 
+test('Windows ARM64 compile plan selects ARM64 WebView2 and output machine', () => {
+  const plan=desktopWindowsCompilePlan({cl:'C:\\VS tools\\cl.exe',root:'C:\\owned path\\repo',output:'C:\\owned path\\out',headers:'C:\\headers',generated:'C:\\generated',sdk:'C:\\SDK',nodeLib:'C:\\node-arm64.lib',arch:'arm64'})
+  assert.ok(plan[0][1].includes('C:\\node-arm64.lib'))
+  assert.ok(plan[1][1].includes('C:\\SDK\\build\\native\\arm64\\WebView2LoaderStatic.lib'))
+  assert.ok(plan[1][1].includes('/MACHINE:ARM64'))
+  assert.ok(!plan[1][1].includes('C:\\SDK\\build\\native\\x64\\WebView2LoaderStatic.lib'))
+})
+
 // Execute the complete private discovery function with controlled Windows API
 // outlets. These are discovery contracts; real MSVC/native execution is CI-only.
 const helperSource = fs.readFileSync(new URL('../build-desktop-windows.mjs', import.meta.url), 'utf8')
@@ -72,26 +80,28 @@ function loadDiscovery(source) {
 const discover = loadDiscovery(helperSource)
 
 function controlledDiscovery(major, override = {}) {
+  const arch = override.arch ?? 'x64'
   const installation = override.installation ?? `C:\\Program Files\\Microsoft Visual Studio\\${major}\\Enterprise`
   const tools = override.tools ?? path.win32.join(installation, 'VC', 'Tools', 'MSVC', 'owned-version')
   const commands = [], env = {SystemRoot: 'C:\\Windows', 'ProgramFiles(x86)': 'C:\\Program Files (x86)', PATH: 'OWNED_PATH_MUST_NOT_SELECT_COMPILER'}
   const vcvars = path.win32.join(installation, 'VC', 'Auxiliary', 'Build', 'vcvarsall.bat')
-  const cl = path.win32.join(tools, 'bin', 'Hostx64', 'x64', 'cl.exe')
+  const hostTools = arch === 'arm64' ? 'HostARM64' : 'Hostx64', targetTools = arch === 'arm64' ? 'ARM64' : 'x64'
+  const cl = path.win32.join(tools, 'bin', hostTools, targetTools, 'cl.exe')
   const checked = (binary, args, options) => {
     commands.push({binary, args, options})
     if (binary.endsWith('vswhere.exe')) {
       assert.equal(binary, 'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe')
-      assert.deepEqual([...args.slice(0, 2), ...args.slice(3)], ['-latest', '-version', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'])
+      assert.deepEqual([...args.slice(0, 2), ...args.slice(3)], ['-latest', '-version', '-products', '*', '-requires', arch === 'arm64' ? 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' : 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'])
       const version = args[args.indexOf('-version') + 1].match(/^\[(\d+)\.0,(\d+)\.0\)$/)
       assert.ok(version, 'finite explicit major range')
       return major >= Number(version[1]) && major < Number(version[2]) ? installation : ''
     }
     assert.equal(binary, 'C:\\Windows\\System32\\cmd.exe')
-    assert.deepEqual(args, ['/d', '/v:off', '/s', '/c', `"call "${vcvars}" x64 >nul && set"`])
+    assert.deepEqual(args, ['/d', '/v:off', '/s', '/c', `"call "${vcvars}" ${arch} >nul && set"`])
     assert.equal(options.windowsVerbatimArguments, true)
     return `Path=OWNED_CAPTURED_PATH\r\nVCToolsInstallDir=${tools}\r\nINCLUDE=OWNED_INCLUDE\r\nOWNED_UNRELATED=not_imported\r\n`
   }
-  const result = (override.discover ?? discover)(path.win32, {env}, checked, {
+  const result = (override.discover ?? discover)(path.win32, {env, arch}, checked, {
     existsSync: file => [vcvars, cl].includes(file),
     realpathSync: file => file,
   })
@@ -120,6 +130,10 @@ for (const installation of ['relative\\VS', 'C:\\VS"quoted', 'C:\\VS%expanded', 
 }
 test('selected compiler tools must remain inside the discovered installation', () => {
   assert.throws(() => controlledDiscovery(17, {tools: 'C:\\unrelated\\Tools'}), /DESKTOP_WINDOWS_TOOLCHAIN_PATH/)
+})
+
+test('native ARM64 discovery selects the ARM64 compiler and SDK environment', () => {
+  controlledDiscovery(17, {arch:'arm64'})
 })
 
 for (const [name, newline] of [['LF', '\n'], ['CRLF', '\r\n']]) {
@@ -155,8 +169,9 @@ test('all actual C++ acceptance compiler arguments preserve Unicode input withou
   // Evaluate all three actual argv expressions; never invoke a compiler.
   const calls=[...helperSource.matchAll(/checked\(cl,(\["\/nologo","\/std:c\+\+20"[^\n]+?\]),\{env,cwd:output,buildDiagnostic:true\}\)/g)]
   assert.equal(calls.length,3,'all actual native acceptance compile sites')
-  for(const [index,match] of calls.entries()) for(const mode of ['visual','hostile','inheritance','parent']) for(const family of ['mcp','metadata','dialog','resource','workspace','local','archive']) {
-    const argv=new Function('path','mode','sdk','generated','root','source','mcpSource','binary','mcpBinary','terminalSource','terminalBinary','family',`return ${match[1]}`)(path.win32,mode,'C:\\sdk','C:\\generated','C:\\repo','C:\\owned.cpp','C:\\owned-mcp.cpp','C:\\owned.exe','C:\\owned-mcp.exe','C:\\owned-terminal.cpp','C:\\owned-terminal.exe',family)
+  for(const arch of ['x64','arm64']) for(const [index,match] of calls.entries()) for(const mode of ['visual','hostile','inheritance','parent']) for(const family of ['mcp','metadata','dialog','resource','workspace','local','archive']) {
+    const argv=new Function('path','mode','sdk','generated','root','source','mcpSource','binary','mcpBinary','terminalSource','terminalBinary','family','arch',`return ${match[1]}`)(path.win32,mode,'C:\\sdk','C:\\generated','C:\\repo','C:\\owned.cpp','C:\\owned-mcp.cpp','C:\\owned.exe','C:\\owned-mcp.exe','C:\\owned-terminal.cpp','C:\\owned-terminal.exe',family,arch)
+    assert.ok(argv.includes(path.win32.join('C:\\sdk', 'build/native', arch, 'WebView2LoaderStatic.lib')))
     assert.equal(argv.filter(arg=>arg==='/utf-8').length,1,'acceptance C++ has the same explicit source encoding as production')
     assert.ok(argv.includes('/DUNICODE')&&argv.includes('/D_UNICODE'))
     assert.equal(argv.filter(arg=>arg==='/DCMSPARK_DESKTOP_TEST_PHASES').length,index===0||index===1&&family==='mcp'?1:0,'only actual 480 and MCP acceptance variants observe existing process-lifetime phases')

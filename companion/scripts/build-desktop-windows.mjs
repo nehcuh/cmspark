@@ -18,11 +18,16 @@ export const DESKTOP_WINDOWS_INPUTS = Object.freeze({
     sha256: "dc4028dc105e27e5295119dd9da076fca71d5216113e097813f0fb30f59241a5" }),
   nodeLib: Object.freeze({ url: `https://nodejs.org/dist/v${NODE_VERSION}/win-x64/node.lib`,
     sha256: "c243185f2347870cadb637c909bf123fc703dc65dbfa769b17ec45a4b661d782" }),
+  nodeLibArm64: Object.freeze({ url: `https://nodejs.org/dist/v${NODE_VERSION}/win-arm64/node.lib`,
+    sha256: "5378f5bad777b4929d1cd4f58974e0ef03815ce5c159863f1875c4b434460c27" }),
   webview: Object.freeze({ url: "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4258.31/microsoft.web.webview2.1.0.4258.31.nupkg",
     sha256: "56f7f4b8bf9aee4b8efefbbdd4f67d5f74ebd1b100ed0806da71bf76af481aa9" }),
 })
 const headerMembers = ["node_api.h", "node_api_types.h", "js_native_api.h", "js_native_api_types.h"].map(v => `node-v${NODE_VERSION}/include/node/${v}`)
-const webviewMembers = ["build/native/include/WebView2.h", "build/native/x64/WebView2LoaderStatic.lib", "LICENSE.txt"]
+function webviewMembers(arch) {
+  if (arch !== "x64" && arch !== "arm64") throw new Error("DESKTOP_SDK_ARCHITECTURE")
+  return ["build/native/include/WebView2.h", `build/native/${arch}/WebView2LoaderStatic.lib`, "LICENSE.txt"]
+}
 
 // Derived from the four members of the archive pinned in DESKTOP_WINDOWS_INPUTS.
 const RUNTIME_HEADER_SHA256 = Object.freeze({
@@ -122,9 +127,9 @@ function checked(binary, args, options = {}) {
   }
   return r.stdout || ""
 }
-export function extractDesktopSdk(id, bytes, cache) {
+export function extractDesktopSdk(id, bytes, cache, arch = "x64") {
   verifyDesktopSdkBytes(id, bytes)
-  const members = id === "headers" ? headerMembers : id === "webview" ? webviewMembers : null
+  const members = id === "headers" ? headerMembers : id === "webview" ? webviewMembers(arch) : null
   if (!members) throw new Error("DESKTOP_SDK_ARCHIVE_KIND")
   const dest = fs.mkdtempSync(path.join(cache, `${id}-`))
   const tar = process.platform === "win32" ? path.join(process.env.SystemRoot || process.env.SYSTEMROOT || "", "System32", "tar.exe") : "/usr/bin/tar"
@@ -162,12 +167,13 @@ export async function prepareDesktopNodeHeaders({ dest, preferRuntimeHeaders = f
   return path.join(extractDesktopSdk("headers", bytes, cache), `node-v${NODE_VERSION}`, "include", "node")
 }
 
-export function desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib, testFixtures = false }) {
+export function desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib, testFixtures = false, arch = "x64" }) {
+  if (arch !== "x64" && arch !== "arm64") throw new Error("DESKTOP_WINDOWS_ARCHITECTURE")
   const p = path.win32
   const addon = p.join(output, "desktop-launcher.node"), host = p.join(output, "cmspark-desktop.exe")
   return [
     [cl, ["/nologo", "/std:c11", "/W4", "/WX", "/MD", "/LD", "/DBUILDING_NODE_EXTENSION", "/DNODE_GYP_MODULE_NAME=desktop_launcher", `/I${headers}`, p.join(root, "src/desktop/native/launcher.c"), "/link", nodeLib, "bcrypt.lib", `/OUT:${addon}`]],
-    [cl, ["/nologo", "/std:c++20", "/EHsc", "/utf-8", "/DUNICODE", "/D_UNICODE", ...(testFixtures ? ["/DCMSPARK_DESKTOP_TEST_PHASES"] : []), `/I${p.join(sdk, "build/native/include")}`, `/I${generated}`, p.join(root, "src/desktop/native/DesktopHost.cpp"), "/link", "/SUBSYSTEM:WINDOWS", p.join(sdk, "build/native/x64/WebView2LoaderStatic.lib"), "version.lib", "windowsapp.lib", "winhttp.lib", "bcrypt.lib", "shlwapi.lib", "ole32.lib", "user32.lib", "advapi32.lib", `/OUT:${host}`]],
+    [cl, ["/nologo", "/std:c++20", "/EHsc", "/utf-8", "/DUNICODE", "/D_UNICODE", ...(testFixtures ? ["/DCMSPARK_DESKTOP_TEST_PHASES"] : []), `/I${p.join(sdk, "build/native/include")}`, `/I${generated}`, p.join(root, "src/desktop/native/DesktopHost.cpp"), "/link", "/SUBSYSTEM:WINDOWS", p.join(sdk, `build/native/${arch}/WebView2LoaderStatic.lib`), "version.lib", "windowsapp.lib", "winhttp.lib", "bcrypt.lib", "shlwapi.lib", "ole32.lib", "user32.lib", "advapi32.lib", `/MACHINE:${arch === "arm64" ? "ARM64" : "X64"}`, `/OUT:${host}`]],
   ]
 }
 function toolchain() {
@@ -175,11 +181,14 @@ function toolchain() {
   const pf = process.env["ProgramFiles(x86)"]
   if (!system || !pf) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_MISSING")
   const vswhere = path.join(pf, "Microsoft Visual Studio", "Installer", "vswhere.exe")
-  const installation = checked(vswhere, ["-latest", "-version", "[17.0,19.0)", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"]).trim()
+  const arm64 = process.arch === "arm64"
+  const targetComponent = arm64 ? "Microsoft.VisualStudio.Component.VC.Tools.ARM64" : "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+  const installation = checked(vswhere, ["-latest", "-version", "[17.0,19.0)", "-products", "*", "-requires", targetComponent, "-property", "installationPath"]).trim()
   if (!path.isAbsolute(installation) || /["%!\r\n]/.test(installation)) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_PATH")
   const vcvars = path.join(installation, "VC", "Auxiliary", "Build", "vcvarsall.bat")
   if (!fs.existsSync(vcvars)) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_MISSING")
-  const captured = checked(path.join(system, "System32", "cmd.exe"), ["/d", "/v:off", "/s", "/c", `"call "${vcvars}" x64 >nul && set"`], { windowsVerbatimArguments: true })
+  const vcvarsArch = arm64 ? "arm64" : "x64"
+  const captured = checked(path.join(system, "System32", "cmd.exe"), ["/d", "/v:off", "/s", "/c", `"call "${vcvars}" ${vcvarsArch} >nul && set"`], { windowsVerbatimArguments: true })
   const env = { ...process.env }
   const allowed = new Set(["path", "include", "lib", "libpath", "vctoolsinstalldir", "windowssdkdir", "windowssdkversion", "ucrtversion", "universalcrtsdkdir"])
   for (const line of captured.split(/\r?\n/)) {
@@ -195,19 +204,23 @@ function toolchain() {
   if (!tools || !path.isAbsolute(tools)) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_PATH")
   const relative = path.relative(fs.realpathSync(installation), fs.realpathSync(tools))
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_PATH")
-  const cl = path.join(tools, "bin", "Hostx64", "x64", "cl.exe")
+  const hostTools = arm64 ? "HostARM64" : "Hostx64"
+  const targetTools = arm64 ? "ARM64" : "x64"
+  const cl = path.join(tools, "bin", hostTools, targetTools, "cl.exe")
   if (!fs.existsSync(cl)) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_MISSING")
   return { cl, env }
 }
 export async function buildDesktopWindows({ root, dest, generated, testFixtures = false }) {
-  if (process.platform !== "win32" || process.arch !== "x64") throw new Error("DESKTOP_WINDOWS_BUILD_REQUIRES_X64")
+  if (process.platform !== "win32" || !["x64", "arm64"].includes(process.arch)) throw new Error("DESKTOP_WINDOWS_BUILD_ARCH_UNSUPPORTED")
+  const arch = process.arch
   const { cl, env } = toolchain(), cache = ownedDirectory(dest), finalDest = path.dirname(cache)
   const { buildComputerUiaNoFocus } = await import("./build-computer-uia-no-focus.mjs")
-  buildComputerUiaNoFocus({ root, toolchain: { cl, env } })
-  const [headers, webview, nodeLib] = await Promise.all([prepareDesktopNodeHeaders({ dest }), download("webview", cache), download("nodeLib", cache)])
-  const sdk = extractDesktopSdk("webview", webview, cache), output = fs.mkdtempSync(path.join(cache, "objects-"))
+  buildComputerUiaNoFocus({ root, toolchain: { cl, env }, arch })
+  const nodeLibId = arch === "arm64" ? "nodeLibArm64" : "nodeLib"
+  const [headers, webview, nodeLib] = await Promise.all([prepareDesktopNodeHeaders({ dest }), download("webview", cache), download(nodeLibId, cache)])
+  const sdk = extractDesktopSdk("webview", webview, cache, arch), output = fs.mkdtempSync(path.join(cache, "objects-"))
   const lib = path.join(output, "node.lib"); fs.writeFileSync(lib, nodeLib, { flag: "wx", mode: 0o600 })
-  for (const [binary, args] of desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib: lib, testFixtures })) checked(binary, args, { env, cwd: output, buildDiagnostic: true })
+  for (const [binary, args] of desktopWindowsCompilePlan({ cl, root, output, headers, generated, sdk, nodeLib: lib, testFixtures, arch })) checked(binary, args, { env, cwd: output, buildDiagnostic: true })
   if (testFixtures) {
     buildMcpSnapshotCpu825({root,dest:finalDest,output,cl,env,checked})
     checked(cl, ["/nologo", "/std:c11", "/W4", "/WX", path.join(root, "tests", "fixtures", "desktop-480", "synchronize-handle-probe.c"), "/link", `/OUT:${path.join(output, "desktop-synchronize-handle-probe.exe")}`], { env, cwd: output, buildDiagnostic: true })
@@ -229,7 +242,7 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
       // visual is also the actual reconnect/relaunch binary; observation never selects a product build.
       const observed=mode==="inheritance"||mode==="visual"?desktopBootstrapObservationFixture773(variant.source):{source:variant.source,inverse:variant.source};if(observed.inverse!==variant.source)throw Error("BOOT773_BUILD_INVERSE");
       const source=path.join(output,`acceptance-${mode}.cpp`),binary=path.join(output,`acceptance-${mode}.exe`);fs.writeFileSync(source,observed.source,{flag:"wx"})
-      checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE","/DCMSPARK_DESKTOP_TEST_PHASES",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
+      checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE","/DCMSPARK_DESKTOP_TEST_PHASES",mode==="hostile"?"/DD480_HOSTILE":mode==="inheritance"?"/DD480_INHERITANCE":mode==="parent"?"/DD480_PARENT":"/DD480_VISUAL",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,source,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,`build/native/${arch}/WebView2LoaderStatic.lib`),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${binary}`],{env,cwd:output,buildDiagnostic:true})
       publish(binary,path.join(directory,"cmspark-desktop.exe"))
     }
     for(const [family,formName]of[["mcp","native-form.js"],["metadata","metadata-form.js"],["dialog","dialog-form.js"],["resource","resource-form.js"],["workspace","workspace-form.js"],["local","local-form.js"],["archive","archive-form.js"]]){
@@ -240,7 +253,7 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
     if(mcpVariant.inverse!==mcpOriginal)throw Error("DESKTOP_MCP_SOURCE_DRIFT")
     const mcpObserved=family==="mcp"?desktopMcpBootstrapObservationFixture773(mcpVariant.source,fs.readFileSync(path.join(root,"tests/fixtures/desktop-476/mcp-snapshot-825.h"),"utf8")):family==="local"?desktopConfirmationObservationFixture(mcpVariant.source,"LOCAL"):null;if(mcpObserved&&mcpObserved.inverse!==mcpVariant.source)throw Error("DESKTOP_CONFIRMATION_OBSERVATION_DRIFT")
     const mcpSource=path.join(output,`acceptance-${family}.cpp`),mcpBinary=path.join(output,`acceptance-${family}.exe`);fs.writeFileSync(mcpSource,mcpObserved?mcpObserved.source:mcpVariant.source,{flag:"wx"})
-    checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE",...(family==="mcp"?["/DCMSPARK_DESKTOP_TEST_PHASES"]:[]),`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,mcpSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${mcpBinary}`],{env,cwd:output,buildDiagnostic:true})
+    checked(cl,["/nologo","/std:c++20","/EHsc", "/utf-8","/DUNICODE","/D_UNICODE",...(family==="mcp"?["/DCMSPARK_DESKTOP_TEST_PHASES"]:[]),`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,mcpSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,`build/native/${arch}/WebView2LoaderStatic.lib`),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${mcpBinary}`],{env,cwd:output,buildDiagnostic:true})
     publish(mcpBinary,path.join(mcpDirectory,"cmspark-desktop.exe"))
     }
     const terminalDirectory=path.join(acceptanceRoot,"terminal");fs.mkdirSync(terminalDirectory,{recursive:true});if(!fs.lstatSync(terminalDirectory).isDirectory()||fs.lstatSync(terminalDirectory).isSymbolicLink())throw Error("DESKTOP_ACCEPTANCE_DIRECTORY")
@@ -249,7 +262,7 @@ export async function buildDesktopWindows({ root, dest, generated, testFixtures 
     if(terminalVariant.inverse!==terminalOriginal)throw Error("DESKTOP_TERMINAL_SOURCE_DRIFT")
     const terminalObserved=desktopConfirmationObservationFixture(terminalVariant.source,"TERMINAL");if(terminalObserved.inverse!==terminalVariant.source)throw Error("DESKTOP_CONFIRMATION_OBSERVATION_DRIFT")
     const terminalSource=path.join(output,"acceptance-terminal.cpp"),terminalBinary=path.join(output,"acceptance-terminal.exe");fs.writeFileSync(terminalSource,terminalObserved.source,{flag:"wx"})
-    checked(cl,["/nologo","/std:c++20","/EHsc","/utf-8","/DUNICODE","/D_UNICODE",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,terminalSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,"build/native/x64/WebView2LoaderStatic.lib"),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${terminalBinary}`],{env,cwd:output,buildDiagnostic:true})
+    checked(cl,["/nologo","/std:c++20","/EHsc","/utf-8","/DUNICODE","/D_UNICODE",`/I${path.join(sdk,"build/native/include")}`,`/I${generated}`,`/I${path.join(root,"src/desktop/native")}`,terminalSource,"/link","/SUBSYSTEM:WINDOWS",path.join(sdk,`build/native/${arch}/WebView2LoaderStatic.lib`),"version.lib","windowsapp.lib","winhttp.lib","bcrypt.lib","shlwapi.lib","ole32.lib","user32.lib","advapi32.lib",`/OUT:${terminalBinary}`],{env,cwd:output,buildDiagnostic:true})
     publish(terminalBinary,path.join(terminalDirectory,"cmspark-desktop.exe"))
     const inherit=path.join(acceptanceRoot,"inheritance"),fixture=path.join(root,"tests/fixtures/desktop-480/windows-inheritance.c")
     checked(cl,["/nologo","/std:c11","/W4","/WX","/MD","/LD","/DBUILDING_NODE_EXTENSION","/DNODE_GYP_MODULE_NAME=desktop_inheritance","/DDESKTOP_FIXTURE_ADDON",`/I${headers}`,fixture,"/link",lib,"bcrypt.lib",`/OUT:${path.join(output,"desktop-inheritance.node")}`],{env,cwd:output,buildDiagnostic:true})

@@ -4,7 +4,7 @@
        uninstall-macos daemon-status \
        install-linux uninstall-linux \
        install-windows uninstall-windows \
-       package package-macos package-windows package-linux package-linux-deb
+       package package-macos package-macos-x64 package-windows package-windows-arm64 package-linux package-linux-deb package-linux-deb-arm64 package-linux-rpm package-linux-rpm-arm64 package-chrome-extension
 
 # 一键启动开发环境（两个进程并行）
 dev: install
@@ -143,16 +143,25 @@ package-macos: build build-host
 	@bash scripts/package.sh macos-arm64
 	@echo "Building macOS DMG installer..."
 	@bash scripts/create-dmg.sh
-	@echo "Done: dist-package/CMspark-v*-macOS.dmg"
+	@echo "Done: dist-package/CMspark-v*-macOS-arm64.dmg"
+
+# 打包 Intel macOS DMG（必须在原生 Intel macOS 上构建）
+package-macos-x64: build build-host
+	@bash scripts/package.sh macos-x64
+	@CMSPARK_MACOS_PLATFORM=macos-x64 bash scripts/create-dmg.sh
+	@echo "Done: dist-package/CMspark-v*-macOS-x64.dmg"
 
 # 打包 Windows x64 官方产物（与 CI 同源：package.sh）
 # zip: dist-package/cmspark-v{ver}-windows-x64.zip
 # Setup.exe: dist-package/CMspark-Setup-v{ver}.exe（需 makensis；CI 设 CMSPARK_REQUIRE_NSIS=1）
 # 本地 SEA：powershell -File scripts/build-windows-exe.ps1 或 build-package.bat
-package-windows:
+package-windows: install
 	@bash scripts/package.sh windows-x64
 	@echo "Official zip: dist-package/cmspark-v*-windows-x64.zip"
-	@echo "Setup.exe:    dist-package/CMspark-Setup-v*.exe (skipped with a warning if makensis is missing)"
+	@echo "Setup.exe:    dist-package/CMspark-Setup-v*-windows-x64.exe (skipped with a warning if makensis is missing)"
+
+package-windows-arm64: install
+	@bash scripts/package.sh windows-arm64
 
 # 打包 Linux x64
 package-linux: build
@@ -161,3 +170,18 @@ package-linux: build
 # 打包 Linux x64 Debian 安装包（沿用 package-linux 的 staging）
 package-linux-deb: package-linux
 	@bash scripts/build-linux-deb.sh linux-x64
+
+package-linux-deb-arm64: build
+	@bash scripts/package.sh linux-arm64
+	@bash scripts/build-linux-deb.sh linux-arm64
+
+package-linux-rpm: package-linux
+	@bash scripts/build-linux-rpm.sh linux-x64
+
+package-linux-rpm-arm64: build
+	@bash scripts/package.sh linux-arm64
+	@bash scripts/build-linux-rpm.sh linux-arm64
+
+package-chrome-extension: $(EXTENSION_STAMP)
+	@cd chrome-extension && npm run build
+	@bash scripts/package-chrome-extension.sh

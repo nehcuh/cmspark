@@ -723,7 +723,11 @@ make uninstall-windows                             # 卸载
 
 ### Linux
 
-#### DEB 构建与安装（Debian / Ubuntu / 麒麟 x86_64）
+#### DEB / RPM 安装（x86_64 与 ARM64）
+
+完整安装、应用图标和 Chrome 扩展使用步骤见 [Linux 安装指南](docs/linux-installation.md)。
+Fedora / Red Hat 系可用 `make package-linux-rpm` 构建，使用 `sudo dnf install ./cmspark-0.8.1-1.x86_64.rpm` 安装。
+ARM64 使用 `make package-linux-deb-arm64` / `make package-linux-rpm-arm64`，须在原生 ARM64 Linux 上构建。
 
 ```bash
 make package-linux-deb
@@ -774,7 +778,7 @@ Companion daemon 核心（systemd 服务、WebSocket、工具执行）在 Linux 
 | 托盘原生确认 | ❌ 不可用 | systray2 `showConfirmDialog()` 永不 resolve；高危确认须开 Chrome 确认台（45s 超时兜底） |
 | 召唤器（Summoner） | ⚠️ 仅 HTML shell | 无原生 overlay、无全局热键（热键仅 macOS Swift 侧实现），走托盘菜单触发 |
 | 生物识别门 | ⚠️ 仅 manual-nonce | 无 TouchID/Windows Hello 等价物，persistent 授权每次手输 nonce |
-| 分发形态 | ⚠️ 仅 zip | 无 AppImage/deb/snap；zip 内容断言见 release.yml（#379 起补齐 ORT napi / qwen worker / systray2 binary 检查） |
+| 分发形态 | ZIP / DEB / RPM | x86_64 与 ARM64；安装包提供应用菜单图标、托盘和用户服务，见 [Linux 安装指南](docs/linux-installation.md) |
 
 Diarize（会议说话人）依赖的 ORT napi 二进制会打入 linux zip，但代码无平台门且无任何 Linux 实测/CI 验证，状态为「未验证」。
 

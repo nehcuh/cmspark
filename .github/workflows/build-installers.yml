@@ -1,0 +1,174 @@
+name: Build installers
+
+on:
+  push:
+    branches:
+      - codex/installer-matrix-833
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos-arm64
+            arch: arm64
+            family: macos
+          - runner: macos-15-intel
+            platform: macos-x64
+            arch: x64
+            family: macos
+          - runner: windows-2025
+            platform: windows-x64
+            family: windows
+          - runner: windows-11-arm
+            platform: windows-arm64
+            family: windows
+          - runner: ubuntu-24.04
+            platform: linux-x64
+            family: linux
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            family: linux
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: |
+            companion/package-lock.json
+            chrome-extension/package-lock.json
+
+      - name: Install companion dependencies
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: cd companion && npm ci
+
+      - name: Select x64 Node for Windows ARM64 extension
+        if: matrix.platform == 'windows-arm64'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          architecture: x64
+
+      - name: Install extension dependencies
+        if: matrix.platform != 'windows-arm64'
+        run: cd chrome-extension && npm ci
+
+      - name: Install and build Windows ARM64 extension
+        if: matrix.platform == 'windows-arm64'
+        shell: bash
+        run: |
+          cd chrome-extension
+          npm ci
+          npm run build
+          cd ..
+          git restore -- chrome-extension/assets/brand-mark.svg
+
+      - name: Restore ARM64 Node for Windows packaging
+        if: matrix.platform == 'windows-arm64'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          architecture: arm64
+
+      - name: Install NSIS
+        if: startsWith(matrix.platform, 'windows-')
+        shell: pwsh
+        run: |
+          node scripts/ensure-ci-nsis.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nsis = 'C:\Program Files (x86)\NSIS'
+          if (-not (Test-Path "$nsis\makensis.exe")) { throw 'makensis.exe was not installed' }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsis
+
+      - name: Install RPM builder
+        if: startsWith(matrix.platform, 'linux-')
+        run: sudo apt-get update && sudo apt-get install -y rpm cpio desktop-file-utils xvfb dbus-x11 libappindicator3-1 xclip
+
+      - name: Install native ARM64 tray build tools
+        if: matrix.platform == 'linux-arm64'
+        run: sudo apt-get install -y golang-go libappindicator3-dev
+
+      - name: Linux installer controls
+        if: matrix.family == 'linux'
+        run: |
+          node --test scripts/tests/linux-tray-architecture.test.mjs
+          bash scripts/tests/linux-deb-package.test.sh
+          bash scripts/tests/linux-rpm-package.test.sh
+
+      - name: Build macOS installer
+        if: matrix.family == 'macos'
+        env:
+          CMSPARK_ALLOW_UNTAGGED: '1'
+        run: |
+          bash scripts/package.sh '${{ matrix.platform }}'
+          CMSPARK_MACOS_PLATFORM='${{ matrix.platform }}' bash scripts/create-dmg.sh
+
+      - name: Build Windows installer
+        if: matrix.family == 'windows'
+        shell: bash
+        env:
+          CMSPARK_ALLOW_UNTAGGED: '1'
+          CMSPARK_REQUIRE_NSIS: '1'
+          CMSPARK_SKIP_EXTENSION_BUILD: ${{ matrix.platform == 'windows-arm64' && '1' || '0' }}
+        run: bash scripts/package.sh '${{ matrix.platform }}'
+
+      - name: Build Linux Debian and Red Hat installers
+        if: matrix.family == 'linux'
+        env:
+          CMSPARK_ALLOW_UNTAGGED: '1'
+        run: |
+          bash scripts/package.sh '${{ matrix.platform }}'
+          bash scripts/build-linux-deb.sh '${{ matrix.platform }}'
+          bash scripts/build-linux-rpm.sh '${{ matrix.platform }}'
+          CMSPARK_TEST_LINUX_STAGE="$PWD/dist-package/cmspark-${{ matrix.platform }}" dbus-run-session -- xvfb-run -a node --test scripts/tests/linux-tray-protocol.test.mjs
+
+      - name: Collect platform installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="dist-package/installers/${{ matrix.platform }}"
+          mkdir -p "${DEST}"
+          cp "dist-package/cmspark-v"*"-${{ matrix.platform }}.zip" "${DEST}/"
+          if [[ '${{ matrix.family }}' == 'macos' ]]; then
+            cp "dist-package/CMspark-v"*"-macOS-${{ matrix.arch }}.dmg" "${DEST}/"
+          elif [[ '${{ matrix.family }}' == 'windows' ]]; then
+            cp "dist-package/CMspark-Setup-v"*"-${{ matrix.platform }}.exe" "${DEST}/"
+          else
+            cp "dist-package/cmspark_"*"_$( [[ '${{ matrix.platform }}' == 'linux-arm64' ]] && echo arm64 || echo amd64 ).deb" "${DEST}/"
+            cp "dist-package/cmspark-"*".rpm" "${DEST}/"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmspark-installers-${{ matrix.platform }}
+          path: dist-package/installers/${{ matrix.platform }}/*
+          if-no-files-found: error
+
+  chrome-extension:
+    name: Build standalone Chrome extension ZIP
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: chrome-extension/package-lock.json
+      - run: cd chrome-extension && npm ci && npm run build
+      - run: bash scripts/package-chrome-extension.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmspark-chrome-extension
+          path: dist-package/chrome-extension/*
+          if-no-files-found: error

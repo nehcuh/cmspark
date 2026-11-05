@@ -18,7 +18,7 @@ function select(source, begin, end) {
   return source.slice(start, stop + end.length)
 }
 const pkgBlock = select(pkg, 'if [ "${PLATFORM}" = "macos-arm64" ]; then\n  cmp -s', '\nfi')
-const dmgBlock = select(dmg, 'cmp -s "${STAGING}/cmspark-agent.js" "${RESOURCES}/cmspark-agent.js"', 'echo "[create-dmg] ERROR: signed tray differs from staging" >&2; exit 1; }')
+const dmgBlock = select(dmg, 'cmp -s "${STAGING}/cmspark-agent.js" "${RESOURCES}/cmspark-agent.js"', '\nfi')
 
 test("actual staging and signed-pair checks reject changes and absent files", t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-tray-copy-test-"))

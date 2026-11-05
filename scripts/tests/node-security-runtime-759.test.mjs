@@ -33,6 +33,8 @@ test('native SDK URLs and SHA256 pins match the official v22.23.4 SHASUMS', () =
   assert.equal(DESKTOP_WINDOWS_INPUTS.headers.sha256, 'dc4028dc105e27e5295119dd9da076fca71d5216113e097813f0fb30f59241a5')
   assert.equal(DESKTOP_WINDOWS_INPUTS.nodeLib.url, 'https://nodejs.org/dist/v22.23.4/win-x64/node.lib')
   assert.equal(DESKTOP_WINDOWS_INPUTS.nodeLib.sha256, 'c243185f2347870cadb637c909bf123fc703dc65dbfa769b17ec45a4b661d782')
+  assert.equal(DESKTOP_WINDOWS_INPUTS.nodeLibArm64.url, 'https://nodejs.org/dist/v22.23.4/win-arm64/node.lib')
+  assert.equal(DESKTOP_WINDOWS_INPUTS.nodeLibArm64.sha256, '5378f5bad777b4929d1cd4f58974e0ef03815ce5c159863f1875c4b434460c27')
 })
 test('Office Docker validation keeps the verified multi-platform index digest', () => {
   assert.match(read('docker/office-val.Dockerfile'), /^FROM node:22\.23\.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d$/m)
@@ -53,7 +55,10 @@ for (const [file, platform] of guards) {
     assert.doesNotThrow(() => execute(patched))
     for (const version of rejected) assert.throws(() => execute(version), { name: 'Error' })
     if (file !== 'build-desktop-native.mjs') assert.throws(() => execute(patched, {platform: 'linux'}), { name: 'Error' })
-    if (platform === 'win32') assert.throws(() => execute(patched, {arch: 'arm64'}), { name: 'Error' })
+    if (platform === 'win32') {
+      if (file === 'build-computer-uia-no-focus.mjs') assert.doesNotThrow(() => execute(patched, {arch: 'arm64'}))
+      assert.throws(() => execute(patched, {arch: 'ia32'}), { name: 'Error' })
+    }
     // The prior vulnerable pin must fail the exact same positive/negative oracle.
     const old = lines[0].replaceAll('22.23.4', '22.23.2')
     assert.notEqual(old, lines[0])
