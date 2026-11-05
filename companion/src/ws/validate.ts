@@ -1132,7 +1132,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (!Array.isArray(m.files) || m.files.length === 0) return { valid: false, error: "files array required" }
       if (m.files.length > 10) return { valid: false, error: "最多上传 10 个文件" }
       for (const f of m.files) {
-        if (!f.name || !f.type || !f.content) return { valid: false, error: "每个文件需要 name, type, content 字段" }
+        if (!f?.name || !f.type || !f.content) return { valid: false, error: "每个文件需要 name, type, content 字段" }
         if (typeof f.name !== "string" || typeof f.type !== "string" || typeof f.content !== "string") return { valid: false, error: "文件字段均为 string 类型" }
       }
       if (m.message !== undefined && typeof m.message !== "string") return { valid: false, error: "message 必须为字符串" }

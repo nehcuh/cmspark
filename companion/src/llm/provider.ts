@@ -106,6 +106,7 @@ export interface CompleteParams {
   signal?: AbortSignal
   /** Optional output cap override; falls back to config.llm.max_tokens. */
   max_tokens?: number
+  reasoning_effort?: "none"
 }
 
 export interface CompleteUsage {

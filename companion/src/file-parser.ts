@@ -348,7 +348,7 @@ function parseCsv(buffer: Buffer, filename: string, mimeType: string): FileParse
   return { success: true, text: mdTable, filename, mimeType, fileSize: buffer.length }
 }
 
-export interface FileParseOptions { signal?: AbortSignal; timeoutMs?: number }
+export interface FileParseOptions { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number }
 
 export async function parseFile(
   buffer: Buffer,
@@ -356,10 +356,12 @@ export async function parseFile(
   mimeType: string,
   options: FileParseOptions = {},
 ): Promise<FileParseResponse> {
-  if (buffer.length > MAX_FILE_SIZE) {
+  const maxBytes = options.maxBytes ?? MAX_FILE_SIZE
+  if (buffer.length > maxBytes) {
     return {
       success: false,
-      error: `文件 "${filename}" 过大 (${Math.round(buffer.length / 1024 / 1024)}MB)，最大支持 ${MAX_FILE_SIZE / 1024 / 1024}MB。浏览器「导入文件」上限 6MB；10MB 以内请改用「导入大文件」（Companion 原生选择）。`,
+      error: `文件 "${filename}" 过大 (${Math.round(buffer.length / 1024 / 1024)}MB)，最大支持 ${maxBytes / 1024 / 1024}MB。` +
+        (options.maxBytes === undefined ? "浏览器「导入文件」上限 6MB；10MB 以内请改用「导入大文件」（Companion 原生选择）。" : ""),
       filename,
       mimeType,
     }

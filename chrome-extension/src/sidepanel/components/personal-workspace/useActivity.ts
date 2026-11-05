@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { requestActivity, type ActivitySnapshot } from './activity-request'
+import { ActivityRequestError, requestActivity, type ActivitySnapshot } from './activity-request'
 
 export type ActivityBulkAction = 'handling_done' | 'feedback_done' | 'dismiss'
 export type ActivityBulkItem = { kind: 'todo' | 'candidate'; id: string; revision: number; title: string }
@@ -68,7 +68,13 @@ export function useActivity(connected: boolean, connectionRevision: number) {
       const result = await requestActivity(type, data, abort.signal)
       if (!live.current || abort.signal.aborted || peer.current !== owner) return false
       accept(result.state, owner); setNotice(success); return true
-    } catch (e) { if (live.current && peer.current === owner) setError((e as Error).message); return false }
+    } catch (e) {
+      if (live.current && !abort.signal.aborted && peer.current === owner) {
+        if (e instanceof ActivityRequestError) accept(e.state, owner)
+        setError((e as Error).message)
+      }
+      return false
+    }
     finally { if (writing.current === write) { writing.current = null; if (live.current) setBusy(false) }; if (controller.current === abort) controller.current = null }
   }, [connected, connectionRevision, accept])
   const mutateBulk = useCallback(async (action: ActivityBulkAction, selected: readonly ActivityBulkItem[], current: () => boolean): Promise<ActivityBulkResult[]> => {

@@ -250,7 +250,15 @@ export class ActivityService {
       }
       if (!current()) throw new ActivityError('SESSION_CLOSED', '原请求连接已关闭')
       return { type: 'activity.result', id, ok: true, state: this.state() }
-    } catch (error) { return { type: 'activity.result', id, ok: false, error_code: error instanceof ActivityError ? error.code : 'ACTIVITY_FAILED', error: error instanceof ActivityError ? error.message : '活动请求失败，请刷新后重试' } }
+    } catch (error) {
+      const mayHaveSavedSource = message.type === 'activity.scan' || message.type === 'activity.import'
+      return {
+        type: 'activity.result', id, ok: false,
+        error_code: error instanceof ActivityError ? error.code : 'ACTIVITY_FAILED',
+        error: error instanceof ActivityError ? error.message : '活动请求失败，请刷新后重试',
+        ...(mayHaveSavedSource && current() ? { state: this.state() } : {}),
+      }
+    }
   }
 }
 let singleton: ActivityService | undefined

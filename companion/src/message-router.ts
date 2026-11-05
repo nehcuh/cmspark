@@ -65,6 +65,7 @@ import {
 } from "./llm/run-queues"
 import type { RunStats } from "./loop/loop-state"
 import { listPendingToolsForThread } from "./ws/tool-forward"
+import { MAX_UPLOAD_BYTES } from "./ws/file-upload-parts"
 
 import { parseFile, PARSE_FILE_MAX_BYTES } from "./file-parser"
 import { resolveDocumentMime, effectiveUploadAllowedTypes, unsupportedWpsError, normalizeDocumentWarning } from "./file-formats"
@@ -547,8 +548,9 @@ export async function parseFileBounded(
   timeoutMs = KNOWLEDGE_PARSE_TIMEOUT_MS,
   parseFn: typeof parseFile = fileParseImpl,
   parentSignal?: AbortSignal,
+  maxBytes?: number,
 ): Promise<FileParseResponse> {
-  if (parseFn === parseFile) return parseFn(buffer, name, mime, { timeoutMs, signal: parentSignal })
+  if (parseFn === parseFile) return parseFn(buffer, name, mime, { timeoutMs, signal: parentSignal, maxBytes })
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
@@ -565,7 +567,7 @@ export async function parseFileBounded(
         reject(new Error(`文件 "${name}" 解析超时 (${Math.round(timeoutMs / 1000)}s)`))
       }, timeoutMs)
     })
-    return await Promise.race([bounded, parseFn(buffer, name, mime, { timeoutMs, signal: controller.signal })])
+    return await Promise.race([bounded, parseFn(buffer, name, mime, { timeoutMs, signal: controller.signal, maxBytes })])
   } finally {
     if (timer) clearTimeout(timer)
     if (onAbort) parentSignal?.removeEventListener("abort", onAbort)
@@ -1774,6 +1776,10 @@ async function dispatchMessage(
       // timeouts / unexpected throws become file.upload_error (UI clears busy).
       const parseResults: FileParseResult[] = []
       let finalFileContents: Array<{ filename: string; content: string; warning?: string }> = []
+      const maxFileBytes = Math.min(fileConfig.max_file_size, MAX_UPLOAD_BYTES)
+      const totalBytes = (Array.isArray(files) ? files : []).reduce((total, file) =>
+        total + (typeof file?.content === "string" ? Buffer.byteLength(file.content, "base64") : 0), 0)
+      if (totalBytes > MAX_UPLOAD_BYTES) return uploadError("附件合计不得超过 100 MiB")
       const partitioned = partitionUploadFiles(Array.isArray(files) ? files : [])
       if (partitioned.error) return uploadError(partitioned.error)
       const standaloneImages = partitioned.images
@@ -1807,10 +1813,10 @@ async function dispatchMessage(
             { filename: name },
           )
 
-          const decodedSize = Math.ceil(content.length * 0.75)
-          if (decodedSize > fileConfig.max_file_size) {
+          const decodedSize = Buffer.byteLength(content, "base64")
+          if (decodedSize > maxFileBytes) {
             return uploadError(
-              `文件 "${name}" 过大 (${Math.round(decodedSize / 1024 / 1024)}MB)，最大支持 ${Math.round(fileConfig.max_file_size / 1024 / 1024)}MB`,
+              `文件 "${name}" 过大 (${Math.round(decodedSize / 1024 / 1024)}MB)，最大支持 ${Math.round(maxFileBytes / 1024 / 1024)}MB`,
             )
           }
 
@@ -1824,7 +1830,7 @@ async function dispatchMessage(
           const buffer = Buffer.from(content, "base64")
           let parseResult: Awaited<ReturnType<typeof parseFile>>
           try {
-            parseResult = await parseFileBounded(buffer, name, type, KNOWLEDGE_PARSE_TIMEOUT_MS, fileParseImpl, uploadController.signal)
+            parseResult = await parseFileBounded(buffer, name, type, KNOWLEDGE_PARSE_TIMEOUT_MS, fileParseImpl, uploadController.signal, maxFileBytes)
           } catch (parseErr: any) {
             logger.warn("file.upload.parse_failed", {
               thread_id,

@@ -11,7 +11,7 @@
 !define PRODUCT_NAME "CMspark"
 ; Prefer -DPRODUCT_VERSION= from build-windows-installer.sh; fallback must match companion/package.json.
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "0.8.0"
+  !define PRODUCT_VERSION "0.8.1"
 !endif
 !define PRODUCT_PUBLISHER "CMspark"
 !ifndef CMSPARK_STOP_SCRIPT

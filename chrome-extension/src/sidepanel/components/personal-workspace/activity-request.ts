@@ -13,6 +13,10 @@ export interface ActivitySnapshot { version: 1; revision: number; config: Activi
 export interface ActivityApp { app_id: string; app_name: string; window_state?: 'visible' | 'minimized' | 'hidden' | 'none' }
 export interface ActivityReply { preview?: ActivityPreview; recognized_title?: string; apps?: ActivityApp[]; type: 'activity.result'; id: string; ok: boolean; state?: ActivitySnapshot; source?: ActivitySource & { image_data_url: string | null }; error?: string; error_code?: string }
 
+export class ActivityRequestError extends Error {
+  constructor(message: string, readonly state?: ActivitySnapshot) { super(message) }
+}
+
 export function matchingActivityReply(message: ActivityReply, type: string, data: Record<string, unknown>): boolean {
   if (message.type !== 'activity.result' || message.ok !== true) return false
   if (type === 'activity.apps') return Array.isArray(message.apps) && message.apps.length <= 4096 && message.apps.every(app => !!app && Object.keys(app).every(key => key === 'app_id' || key === 'app_name' || key === 'window_state') && typeof app.app_id === 'string' && /^[A-Za-z0-9][A-Za-z0-9.-]{2,199}$/.test(app.app_id) && typeof app.app_name === 'string' && app.app_name.length > 0 && app.app_name.length <= 200 && (app.window_state === undefined || ['visible', 'minimized', 'hidden', 'none'].includes(app.window_state))) && new Set(message.apps.map(app => app.app_id)).size === message.apps.length
@@ -44,7 +48,11 @@ export function requestActivity(type: string, data: Record<string, unknown> = {}
     const receive = (message: ActivityReply) => {
       if (message?.id !== id) return
       if (message.type !== 'activity.result') return
-      if (!message.ok) finish(new Error(message.error || '操作未确认，请刷新核实。'))
+      if (!message.ok) {
+        const hasSourceState = (type === 'activity.scan' || type === 'activity.import') &&
+          matchingActivityReply({ ...message, ok: true }, type, data)
+        finish(new ActivityRequestError(message.error || '操作未确认，请刷新核实。', hasSourceState ? message.state : undefined))
+      }
       else if (matchingActivityReply(message, type, data)) finish(undefined, message)
     }
     if (signal?.aborted) { cancel(); return }

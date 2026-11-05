@@ -11,6 +11,7 @@
 // and are injected via WsLifecycleDeps.
 
 import { WebSocketServer, WebSocket } from "ws"
+import { FileUploadParts } from "./file-upload-parts"
 import { bindProjectConfirmationProbe } from "../threads/project-activity"
 import { codingHandbackView } from "../acp/ui-progress"
 import { randomUUID } from "crypto"
@@ -108,6 +109,7 @@ const WS_DISCONNECT_GRACE_MS = 5000
 
 let wss: WebSocketServer
 let clients: Set<WebSocket> = new Set()
+const fileUploadParts = new FileUploadParts<WebSocket>()
 let outboundRunnerWs: WebSocket | null = null
 
 // P0-2B: per-connection authentication state. A peer is UNauthenticated until it
@@ -1039,6 +1041,22 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           try { ws.terminate() } catch { /* closing */ }
           return
         }
+        if (msg?.type === "file.upload.part" || msg?.type === "file.upload" && msg.upload_id !== undefined) {
+          const auth = wsAuth.get(ws)
+          const allowed = auth?.surface === "panel" && isChromeExtensionWsOrigin(auth.origin)
+          if (msg.type === "file.upload.part") {
+            if (allowed) fileUploadParts.add(ws, msg)
+            return
+          }
+          const files = allowed && fileUploadParts.take(ws, msg.upload_id, msg.thread_id, msg.part_count)
+          if (!files) {
+            ws.send(JSON.stringify({ type: "file.upload_error", thread_id: msg.thread_id, error: "附件传输未完成或超过总大小限制，请重新选择后上传" }))
+            return
+          }
+          msg.files = files
+          delete msg.upload_id
+          delete msg.part_count
+        }
         // #239: tray reports overlay spawn failure. "error" is a response type,
         // not a request — relay before validateWsMessage so Side Panel toasts.
         if (
@@ -1170,6 +1188,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                   type: "auth.ok",
                   ...authOkProtocolFields(),
                   negotiated_protocol_version: nego.negotiated,
+                  file_upload_parts: 1,
                 }),
               )
               ws.send(JSON.stringify({ type: "connected" }))
@@ -1577,6 +1596,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     })
 
     ws.on("close", (code) => {
+      fileUploadParts.close(ws)
       cockpitNativeBridge.close(ws)
       clearInterval(pingInterval)
       clients.delete(ws)

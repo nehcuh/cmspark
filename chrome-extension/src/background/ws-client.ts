@@ -55,6 +55,7 @@ export class WSClient {
 
   /** Authenticated = companion accepted our handshake. App sends are gated on this. */
   private authenticated = false
+  private fileUploadParts = false
   private meetingAuth: object = {}
   private meetingObserved: { socket: WebSocket; gen: number; auth: object } | null = null
   private meetingPing: { socket: WebSocket; gen: number; auth: object; id: string } | null = null
@@ -158,6 +159,7 @@ export class WSClient {
           return
         }
         this.authenticated = true
+        this.fileUploadParts = msg.file_upload_parts === 1
         this.setState("connected")
         this.flushPending()
         return
@@ -322,6 +324,10 @@ export class WSClient {
       this.connect()
     }
     return false
+  }
+
+  supportsFileUploadParts(): boolean {
+    return this.authenticated && this.fileUploadParts && this.ws?.readyState === WebSocket.OPEN
   }
 
   ping() {

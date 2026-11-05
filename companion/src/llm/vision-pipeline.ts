@@ -28,6 +28,17 @@ export interface VisionResult {
   latency_ms: number
 }
 
+export class VisionOutputError extends Error {
+  constructor(readonly code: "empty" | "truncated") {
+    super(code === "empty" ? "Vision model returned empty response" : "Vision model exhausted its output token budget")
+  }
+}
+
+interface VisionAnalysisOptions {
+  requireComplete?: boolean
+  disableReasoning?: boolean
+}
+
 interface CacheEntry {
   description: string
   model_used: string
@@ -133,11 +144,12 @@ export async function analyzeImage(
   config: VisionConfig,
   customPrompt?: string,
   signal?: AbortSignal,
+  options?: VisionAnalysisOptions,
 ): Promise<VisionResult> {
   // Scope the image hash to endpoint + model so two models (or the native
   // track vs the vision track) never share a cached description — and
   // model_used on a cache hit names the model that actually produced it.
-  const key = hashBase64(JSON.stringify([resolveVisionLlmConfig(config), customPrompt || config.prompt || DEFAULT_VISION_PROMPT, config.max_tokens, image.base64]))
+  const key = hashBase64(JSON.stringify([resolveVisionLlmConfig(config), customPrompt || config.prompt || DEFAULT_VISION_PROMPT, config.max_tokens, options, image.base64]))
 
   // Check cache
   const cached = getCached(key, config.cache_ttl_seconds)
@@ -156,7 +168,7 @@ export async function analyzeImage(
     return buildFallback(image, config, "Image too large for local model")
   }
 
-  const promise = doAnalyze(image, config, key, customPrompt, signal)
+  const promise = doAnalyze(image, config, key, customPrompt, signal, options)
   inflight.set(key, promise)
 
   try {
@@ -172,6 +184,7 @@ async function doAnalyze(
   cacheKey: string,
   customPrompt?: string,
   signal?: AbortSignal,
+  options?: VisionAnalysisOptions,
 ): Promise<VisionResult> {
   const startTime = Date.now()
 
@@ -213,14 +226,19 @@ async function doAnalyze(
         { type: "text", text: prompt },
       ] }],
       max_tokens: config.max_tokens,
+      reasoning_effort: options?.disableReasoning ? "none" : undefined,
       temperature: 0.3,
       signal: requestSignal,
     })
     const description = response.content.trim()
     const latencyMs = Date.now() - startTime
 
+    if (options?.requireComplete && ["length", "max_tokens"].includes(response.finish_reason ?? "")) {
+      throw new VisionOutputError("truncated")
+    }
     if (!description) {
       logger.warn("vision.empty_response", { model: config.model_name,  })
+      if (options?.requireComplete) throw new VisionOutputError("empty")
       return buildFallback(
         image,
         config,
@@ -233,6 +251,7 @@ async function doAnalyze(
 
     return { description, cached: false, model_used: config.model_name, latency_ms: latencyMs }
   } catch (err: any) {
+    if (err instanceof VisionOutputError) throw err
     const latencyMs = Date.now() - startTime
     logger.warn("vision.analysis_failed", {
       error: err.message,
