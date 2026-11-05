@@ -27,6 +27,8 @@ export class ActivityService {
   private notify: NonNullable<ActivityDependencies['notify']>
   private timer: NodeJS.Timeout | null = null
   private pending: Promise<void> | null = null
+  private calibrationPending: Promise<void> | null = null
+  private automaticScan: { controller: AbortController | null; settled: Promise<unknown> } | null = null
   private reminders: Promise<void> | null = null
   private appListing: Promise<ActivityApp[]> | null = null
   private generation = 0
@@ -83,7 +85,7 @@ export class ActivityService {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer)
     this.timer = null; this.stopping = true; this.runtime.running = false; this.fence()
-    await Promise.allSettled([this.pending, this.reminders, this.appListing])
+    await Promise.allSettled([this.pending, this.calibrationPending, this.reminders, this.appListing])
     this.runtime.status = 'stopped'
   }
   private maintain(): void {
@@ -99,8 +101,8 @@ export class ActivityService {
     await this.reminders
     if (!this.runtime.running) return
     const config = this.store.config()
-    if (this.pending || !config.enabled || !this.runtime.supported || this.now() - this.lastPoll < config.interval_ms) return
-    await this.scan()
+    if (this.pending || this.calibrationPending || !config.enabled || !this.runtime.supported || this.now() - this.lastPoll < config.interval_ms) return
+    await this.runScan(() => true, true)
   }
   private async listApps(): Promise<ActivityApp[]> {
     if (!this.runtime.supported || !this.recorder.listApps) throw new ActivityError('UNSUPPORTED_PLATFORM', this.runtime.platform_note || '当前环境无法列出前台应用')
@@ -109,14 +111,23 @@ export class ActivityService {
   }
   private async calibration<T>(requestCurrent: () => boolean, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     if (this.runtime.platform !== 'win32') throw new ActivityError('UNSUPPORTED_PLATFORM', '聊天区域校准目前仅支持 Windows')
-    if (this.pending) throw new ActivityError('BUSY', '上一轮采集或校准尚未完成')
+    const automatic = this.automaticScan
+    if (this.calibrationPending || (this.pending && !automatic)) throw new ActivityError('BUSY', '上一轮采集或校准尚未完成')
     const epoch = this.generation, signal = this.abort.signal
-    let result!: T
-    this.pending = (async () => {
-      result = await run(signal)
+    const requireCurrent = () => {
       if (epoch !== this.generation || signal.aborted || !requestCurrent()) throw new ActivityError('CANCELLED', '页面或设置已变化，本次校准结果已丢弃')
-    })().finally(() => { this.pending = null })
-    await this.pending
+    }
+    let result!: T
+    this.calibrationPending = (async () => {
+      // Wait for the recorder to release its resources. A model that is
+      // already processing a stored source can finish independently.
+      if (automatic) await automatic.settled.catch(() => {})
+      requireCurrent()
+      result = await run(signal)
+      requireCurrent()
+    })().finally(() => { this.calibrationPending = null })
+    automatic?.controller?.abort()
+    await this.calibrationPending
     return result
   }
   async preview(appId: string, requestCurrent: () => boolean): Promise<ActivityPreview> {
@@ -141,19 +152,28 @@ export class ActivityService {
     })
   }
   async scan(requestCurrent: () => boolean = () => true): Promise<void> {
-    if (this.pending) throw new ActivityError('BUSY', '上一轮采集尚未完成')
+    return this.runScan(requestCurrent, false)
+  }
+  private async runScan(requestCurrent: () => boolean, automatic: boolean): Promise<void> {
+    if (this.pending || this.calibrationPending) throw new ActivityError('BUSY', '上一轮采集尚未完成')
     const config = this.store.config()
     if (!config.enabled) throw new ActivityError('RECORDING_DISABLED', '请先选择应用并明确开启记录')
     if (!this.runtime.supported) throw new ActivityError('UNSUPPORTED_PLATFORM', this.runtime.platform_note || '当前环境不支持自动采集')
     if (!config.allowed_apps.length) throw new ActivityError('NO_ALLOWED_APPS', '请先设置采集应用白名单')
     const epoch = this.generation, signal = this.abort.signal
+    const controller = automatic ? new AbortController() : null
     this.lastPoll = this.now(); this.runtime.scanning = true; this.runtime.status = 'scanning'; this.runtime.error = null; this.runtime.scope_note = null
     this.runtime.last_scan_at = new Date(this.now()).toISOString()
     const current = (): boolean => epoch === this.generation && !signal.aborted && requestCurrent()
     this.pending = (async () => {
       try {
         this.store.prune(this.now())
-        const capture = await this.recorder.capture(config, signal)
+        const capturing = this.recorder.capture(config, controller ? AbortSignal.any([signal, controller.signal]) : signal)
+        const automaticScan = controller ? { controller, settled: capturing } : null
+        this.automaticScan = automaticScan
+        const capture = await capturing
+        if (controller?.signal.aborted) return
+        if (this.automaticScan) this.automaticScan.controller = null
         if (!current() || !capture) { if (current()) this.runtime.status = 'no_visible_allowed_window'; return }
         const source = this.store.addSource({ app_id: capture.app_id, app_name: capture.app_name, window_title: capture.window_title, ...(capture.conversation_title ? { conversation_title: capture.conversation_title } : {}), origin: 'foreground', ocr_text: capture.ocr_text, captured_at: new Date(this.now()).toISOString() }, capture.image)
         if (!current()) return
@@ -166,14 +186,18 @@ export class ActivityService {
         }
         if (current()) this.store.prune(this.now())
       } catch (error) {
+        if (controller?.signal.aborted) return
         if (current() && error instanceof ActivityScopeSkip) { this.runtime.status = error.status; this.runtime.scope_note = error.message; this.runtime.error = null; return }
         if (current()) { this.runtime.status = 'error'; this.runtime.error = error instanceof ActivityError ? error.message : '本轮采集或语义抽取失败，已保存的记录仍可查看'; throw error instanceof ActivityError ? error : new ActivityError('CAPTURE_OR_EXTRACTION_FAILED', this.runtime.error) }
-      } finally { this.runtime.scanning = false }
-    })().finally(() => { this.pending = null })
+      } finally {
+        this.runtime.scanning = false
+        if (controller?.signal.aborted && this.runtime.status === 'scanning') this.runtime.status = 'idle'
+      }
+    })().finally(() => { this.pending = null; this.automaticScan = null })
     await this.pending
   }
   async analyze(sourceId: string, requestCurrent: () => boolean = () => true): Promise<void> {
-    if (this.pending) throw new ActivityError('BUSY', '上一轮采集或抽取尚未完成')
+    if (this.pending || this.calibrationPending) throw new ActivityError('BUSY', '上一轮采集或抽取尚未完成')
     if (!this.canExtract()) throw new ActivityError('SEMANTIC_CONSENT_REQUIRED', '请先允许所选模型处理聊天内容')
     const epoch = this.generation, signal = this.abort.signal
     const source = this.store.sourceMetadata(sourceId)
@@ -184,7 +208,7 @@ export class ActivityService {
     await this.pending
   }
   async importImage(encoded: string, requestCurrent: () => boolean): Promise<void> {
-    if (this.pending) throw new ActivityError('BUSY', '上一轮采集或 OCR 尚未完成')
+    if (this.pending || this.calibrationPending) throw new ActivityError('BUSY', '上一轮采集或 OCR 尚未完成')
     const imageMode = (this.store.config().extraction_mode || 'ocr') !== 'ocr'
     if (!imageMode && !this.recorder.ocrImage) throw new ActivityError('OCR_UNAVAILABLE', '当前系统未提供本地截图 OCR')
     const image = Buffer.from(encoded, 'base64'); if (image.toString('base64') !== encoded) throw new ActivityError('INVALID_IMAGE', '截图编码无效'); validatePng(image)
