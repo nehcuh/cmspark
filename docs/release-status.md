@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-> 源码版本 **0.8.1**。本页的 0.8.1 状态为打标签前的发行候选记录，正式下载以 [GitHub Releases](https://github.com/nehcuh/cmspark/releases) 的已发布资产为准。
+> 源码开发版本 **0.8.1（尚未正式发布）**。本页的 0.8.1 状态为打标签前的发行候选记录，正式下载以 [GitHub Releases](https://github.com/nehcuh/cmspark/releases) 的已发布资产为准。
 
 ## 0.8.1 发行候选
 
