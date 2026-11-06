@@ -248,6 +248,11 @@ test("planned spawn uses the saved task goal for confirmation and the worker bri
     wsAuthGet: () => ({ authenticated: true, surface: "panel", origin: "chrome-extension://planned-spawn" }),
   })
 
+  const missingStandalone = await admit({ __thread_id: c.parent.id })
+  assert.equal(missingStandalone.ok, false)
+  if (!missingStandalone.ok) assert.equal(missingStandalone.result.data?.error_code, "INVALID_ARGS")
+  assert.equal(previews.length, 0)
+
   for (const [taskId, goal] of [["a", "Rephrased task"], ["b", undefined]] as const) {
     const parsed = tryParseToolArgs("spawn_worker", { ...spawnParams(c, p, taskId), goal })
     assert.equal(parsed.ok, true)
