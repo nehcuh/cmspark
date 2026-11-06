@@ -1,6 +1,12 @@
 # 版本与交付状态
 
-> 源码开发版本 **0.8.2（尚未正式发布）**，包含 Windows 聊天范围校准修复（#835）与 Linux 原生安装包（#834）。发布前可用的正式安装包见 [v0.8.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.1)。
+> 源码版本 **0.8.2（已于 2026-11-06 正式发布）**，包含 Windows 聊天范围校准修复（#835）与 Linux 原生安装包（#834）。正式安装包见 [v0.8.2 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.2)。
+
+## 0.8.2 正式发行回执
+
+- [PR #835](https://github.com/nehcuh/cmspark/pull/835) 的 10 项检查通过后合入 `8a012a8f`。正式标签 `v0.8.2` 指向 `efb6a837b72fc9e718b25f6adf142a6d8bf94659`。
+- [正式发布构建](https://github.com/nehcuh/cmspark/actions/runs/42137849215)通过预检、依赖审计及三平台打包。正式发布时间为 2026-11-06 08:46:55（北京时间）。
+- [同标签安装器构建](https://github.com/nehcuh/cmspark/actions/runs/42137862842)通过。x86_64 和 ARM64 的 DEB、RPM 由[补充发布任务](https://github.com/nehcuh/cmspark/actions/runs/42139714285)上传。Release 共 12 项资产，三份校验清单均已下载并与 GitHub 的资产摘要核对。
 
 ## 0.8.1 正式发行回执
 
