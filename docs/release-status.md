@@ -1,6 +1,12 @@
 # 版本与交付状态
 
-> 源码开发版本 **0.8.3（尚未正式发布）**，修复计划内 `spawn_worker` 的目标校验错误（#836）。当前正式安装包见 [v0.8.2 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.2)。
+> 源码版本 **0.8.3（已于 2026-11-06 正式发布）**，修复计划内 `spawn_worker` 的目标校验错误（#836）。正式安装包见 [v0.8.3 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.3)。
+
+## 0.8.3 正式发行回执
+
+- [PR #836](https://github.com/nehcuh/cmspark/pull/836) 的 10 项检查通过后合入 `e9c9b412`。正式标签 `v0.8.3` 指向 `0bebed7a1e5506c4d39a588ac9f96cb6aa397541`。[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/42216182194) 和 ARM、会话持久化工作流均通过。
+- [发布预演](https://github.com/nehcuh/cmspark/actions/runs/42212674692) 使用相同源码树。正式 [Release 工作流](https://github.com/nehcuh/cmspark/actions/runs/42219517582) 完成预检、依赖审计、三平台打包及发布，发布时间为 2026-11-06 20:52:31（北京时间）。
+- [同标签安装器工作流](https://github.com/nehcuh/cmspark/actions/runs/42219519110) 的六个平台／架构构建及独立 Chrome ZIP 构建均通过。macOS ARM64 DMG 已用 GitHub 资产摘要和应用签名核对，并验证 Companion 启动后健康检查正常。
 
 ## 0.8.2 正式发行回执
 
