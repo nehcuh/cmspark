@@ -133,6 +133,58 @@ test('scope825 readonly calibration serializes with scan and rejects generation 
     } finally { await service.stop(); fs.rmSync(root, { recursive: true, force: true }) }
   }
 })
+test('manual preview takes priority over automatic capture without overlapping native reads', async () => {
+  const root = fresh()
+  let finish!: () => void, automaticSignal!: AbortSignal, captures = 0
+  const frame = { app_id: id, app_name: 'Owned', window_title: 'Owned', window_class: 'OwnedChatMain', image, ocr_text: '' }
+  const service = new ActivityService({ dataDir: root, platform: 'win32', recorder: {
+    capture: async (_config, signal) => {
+      if (++captures === 1) {
+        automaticSignal = signal
+        await new Promise<void>(resolve => { finish = resolve })
+      }
+      return frame
+    },
+  } })
+  try {
+    service.store.configure(0, config())
+    service.start()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(captures, 1)
+    const preview = service.handle({ type: 'activity.preview', app_id: id })
+    assert.equal(automaticSignal.aborted, true)
+    assert.equal(captures, 1)
+    assert.equal((await service.handle({ type: 'activity.preview', app_id: id })).error_code, 'BUSY')
+    finish()
+    assert.equal((await preview).ok, true)
+    assert.equal(captures, 2)
+    assert.equal(service.state().sources.length, 0)
+  } finally { finish?.(); await service.stop(); fs.rmSync(root, { recursive: true, force: true }) }
+})
+test('manual preview can capture while an automatic source is being analyzed', async () => {
+  const root = fresh()
+  let finish!: () => void, modelSignal!: AbortSignal
+  const frame = { app_id: id, app_name: 'Owned', window_title: 'Owned', window_class: 'OwnedChatMain', image, ocr_text: 'Owned task' }
+  const service = new ActivityService({ dataDir: root, platform: 'win32', recorder: { capture: async () => frame },
+    extract: async (_source, signal) => {
+      modelSignal = signal
+      await new Promise<void>(resolve => { finish = resolve })
+      return []
+    },
+  })
+  try {
+    service.store.configure(0, { ...config(), extraction_mode: 'ocr', ocr_ai_enabled: true })
+    service.start()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.ok(modelSignal)
+    assert.equal((await service.handle({ type: 'activity.preview', app_id: id })).ok, true)
+    assert.equal(modelSignal.aborted, false)
+    assert.equal(service.state().sources.length, 1)
+    finish()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(service.state().runtime.status, 'ready_for_review')
+  } finally { finish?.(); await service.stop(); fs.rmSync(root, { recursive: true, force: true }) }
+})
 test('scope825 refusal is a normal visible status and stores no source or model request', async () => {
   const root = fresh(); let models = 0
   const service = new ActivityService({ dataDir: root, platform: 'win32', recorder: { capture: async () => { throw new ActivityScopeSkip('scope_title_mismatch', 'Owned mismatch') } }, extractImage: async () => { models++; throw Error('must not call') } })
