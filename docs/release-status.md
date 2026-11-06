@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-> 源码版本 **0.8.2（已于 2026-11-06 正式发布）**，包含 Windows 聊天范围校准修复（#835）与 Linux 原生安装包（#834）。正式安装包见 [v0.8.2 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.2)。
+> 源码开发版本 **0.8.3（尚未正式发布）**，修复计划内 `spawn_worker` 的目标校验错误（#836）。当前正式安装包见 [v0.8.2 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.2)。
 
 ## 0.8.2 正式发行回执
 
