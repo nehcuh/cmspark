@@ -340,6 +340,29 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
   const threadManager = ctx.getThreadManager()
   const computerTaskAbort = getComputerTaskAbortRegistry()
 
+  const plannedSpawn = toolName === "spawn_worker" &&
+    (finalParams.plan_id !== undefined || finalParams.plan_task_id !== undefined)
+  if (toolName === "spawn_worker" && !finalParams.security_token) {
+    if (plannedSpawn) {
+      try {
+        const { resolvePlannedSpawnTask } = await import("../orchestrator/cooperation-plan")
+        const ownerId = String(finalParams.__thread_id || finalParams._thread_id || finalParams.parent_thread_id || "")
+        const { task } = resolvePlannedSpawnTask(threadManager, ownerId, finalParams)
+        // Bind the saved goal before showing it or issuing a token. Calls
+        // carrying a token must still match the original approved parameters.
+        finalParams = { ...finalParams, __thread_id: ownerId, goal: task.goal }
+      } catch (error) {
+        const result = { success: false as const, error: String(error), error_code: "COOPERATION_REJECTED" }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return { ok: false, result }
+      }
+    } else if (!String(finalParams.goal || finalParams.task || "").trim()) {
+      const result = { success: false as const, error: "spawn_worker requires goal", data: { error_code: "INVALID_ARGS" } }
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return { ok: false, result }
+    }
+  }
+
   // ADR-025: normalize mode + workspace into finalParams so L2 preview, token
   // binding, and dispatch validateTokenFor share one binding surface.
   if (toolName === "acp_propose_session") {
@@ -421,7 +444,22 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
     // spawn_worker / ask_user use role/question summaries for the Confirm Center.
     // C7/C8: shell preview includes cwd; netsec includes ports summary (post-normalize).
-    const code = String(
+    const spawnPreview = toolName === "spawn_worker"
+      ? [
+          "Spawn worker",
+          plannedSpawn && `plan=${finalParams.plan_id} task=${finalParams.plan_task_id} attempt=${finalParams.plan_task_attempt}`,
+          `role=${finalParams.role_label || finalParams.roleLabel || "worker"}`,
+          `alias=${finalParams.alias || ""}`,
+          `pack=${finalParams.pack_id || "none"}`,
+          `allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"}`,
+          `deny=${Array.isArray(finalParams.tool_deny) ? finalParams.tool_deny.join(",") : "default"}`,
+          `intent=${finalParams.intent_id || ""}`,
+          `goal=${plannedSpawn ? finalParams.goal : String(finalParams.goal || finalParams.task || "").replace(/\s+/g, " ").trim().slice(0, 400)}`,
+          typeof finalParams.role_prompt === "string" && finalParams.role_prompt.trim() &&
+            `role_prompt=${finalParams.role_prompt.replace(/\s+/g, " ").trim().slice(0, 200)}`,
+        ].filter(Boolean).join(" ")
+      : ""
+    const code = plannedSpawn ? spawnPreview : String(
       (toolName === "shell_exec"
         ? `command=${finalParams.command || ""} cwd=${finalParams.cwd || ""}`
         : null) ||
@@ -435,9 +473,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         finalParams.expression ||
         finalParams.command ||
         (Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : "") ||
-        (toolName === "spawn_worker"
-          ? `Spawn worker${finalParams.plan_id ? ` plan=${finalParams.plan_id} task=${finalParams.plan_task_id || ""} attempt=${finalParams.plan_task_attempt || ""}` : ""} role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"} deny=${Array.isArray(finalParams.tool_deny) ? finalParams.tool_deny.join(",") : "default"} intent=${finalParams.intent_id || ""} goal=${String(finalParams.goal || finalParams.task || "").replace(/\s+/g, " ").trim().slice(0, 400)}${typeof finalParams.role_prompt === "string" && finalParams.role_prompt.trim() ? ` role_prompt=${finalParams.role_prompt.replace(/\s+/g, " ").trim().slice(0, 200)}` : ""}`
-          : "") ||
+        spawnPreview ||
         (toolName === "spawn_expert_team"
           ? `Spawn expert team members=${Array.isArray(finalParams.members) ? finalParams.members.map((m: any) => m?.pack_id || m?.id || "?").join(",") : ""} goal=${String(finalParams.goal || finalParams.task || "")}`
           : "") ||
@@ -1670,6 +1706,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // 语料的逐条枚举对人完整可见);其余工具不设置,修复面收窄。
             ...(hostComputerGated && computerPreview ? { fullPreview: computerPreview } : {}),
             ...(expertTeamPreview ? { fullPreview: expertTeamPreview } : {}),
+            ...(plannedSpawn ? { fullPreview: spawnPreview } : {}),
             ...(expertTeamForConfirm ? { expertTeam: expertTeamForConfirm } : {}),
             // WP4 (§F.1): L2 标注截图 + 三段式非绑定 caption(best-effort,
             // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
