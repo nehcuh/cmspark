@@ -345,12 +345,12 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
   if (toolName === "spawn_worker" && !finalParams.security_token) {
     if (plannedSpawn) {
       try {
+        if (!actingThreadId) throw new Error("planned spawn requires acting thread context")
         const { resolvePlannedSpawnTask } = await import("../orchestrator/cooperation-plan")
-        const ownerId = String(finalParams.__thread_id || finalParams._thread_id || finalParams.parent_thread_id || "")
-        const { task } = resolvePlannedSpawnTask(threadManager, ownerId, finalParams)
+        const { task } = resolvePlannedSpawnTask(threadManager, actingThreadId, finalParams)
         // Bind the saved goal before showing it or issuing a token. Calls
         // carrying a token must still match the original approved parameters.
-        finalParams = { ...finalParams, __thread_id: ownerId, goal: task.goal }
+        finalParams = { ...finalParams, __thread_id: actingThreadId, goal: task.goal }
       } catch (error) {
         const result = { success: false as const, error: String(error), error_code: "COOPERATION_REJECTED" }
         logToolFinish(toolCallId, toolName, startedAt, result)
@@ -454,7 +454,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           `allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"}`,
           `deny=${Array.isArray(finalParams.tool_deny) ? finalParams.tool_deny.join(",") : "default"}`,
           `intent=${finalParams.intent_id || ""}`,
-          `goal=${plannedSpawn ? finalParams.goal : String(finalParams.goal || finalParams.task || "").replace(/\s+/g, " ").trim().slice(0, 400)}`,
+          `goal=${plannedSpawn ? JSON.stringify(finalParams.goal) : String(finalParams.goal || finalParams.task || "").replace(/\s+/g, " ").trim().slice(0, 400)}`,
           typeof finalParams.role_prompt === "string" && finalParams.role_prompt.trim() &&
             `role_prompt=${finalParams.role_prompt.replace(/\s+/g, " ").trim().slice(0, 200)}`,
         ].filter(Boolean).join(" ")

@@ -226,7 +226,7 @@ test("capability mismatch and changed immutable goal never start a worker", asyn
 })
 
 test("planned spawn uses the saved task goal for confirmation and the worker brief", async () => {
-  const c = setup(), p = await plan(c, [task("a"), task("b")])
+  const c = setup(), p = await plan(c, [{ ...task("a"), goal: "Investigate a\nReport the sources" }, task("b")])
   const { runL2ToolAdmission } = await import("../src/tool/l2-admission")
   const { SecurityConfirmationManager } = await import("../src/security-confirmation")
   const { tryParseToolArgs } = await import("../src/bridge/tool-schemas")
@@ -238,9 +238,9 @@ test("planned spawn uses the saved task goal for confirmation and the worker bri
     previews.push(frame.full_preview ?? frame.code_preview)
     queueMicrotask(() => confirmations.respondFrom(frame.confirmation_id, true, ws))
   } } as unknown as WebSocket
-  const admit = (params: Record<string, unknown>) => runL2ToolAdmission({
+  const admit = (params: Record<string, unknown>, actingId: string | null = c.parent.id) => runL2ToolAdmission({
     toolName: "spawn_worker", finalParams: params, toolCallId: "planned-spawn", startedAt: Date.now(),
-    ws, sessionId: "planned-spawn", actingThreadId: c.parent.id, isOutboundMcpCall: false,
+    ws, sessionId: "planned-spawn", actingThreadId: actingId ?? undefined, isOutboundMcpCall: false,
     logToolFinish() {}, securityConfirmations: confirmations, getThreadManager: () => c.tm,
     getCachedTabUrl: () => undefined, getDomainFromUrl: () => "",
     computerRateLimiter: async () => { throw Error("unexpected computer rate limit") },
@@ -251,6 +251,12 @@ test("planned spawn uses the saved task goal for confirmation and the worker bri
   const missingStandalone = await admit({ __thread_id: c.parent.id })
   assert.equal(missingStandalone.ok, false)
   if (!missingStandalone.ok) assert.equal(missingStandalone.result.data?.error_code, "INVALID_ARGS")
+  const { __thread_id, ...plannedParams } = spawnParams(c, p, "a")
+  const ownerless = await admit({ ...plannedParams, parent_thread_id: __thread_id }, null)
+  assert.equal(ownerless.ok, false)
+  const other = c.tm.create("another plan owner")
+  const foreignPlan = await admit({ ...plannedParams, __thread_id }, other.id)
+  assert.equal(foreignPlan.ok, false)
   assert.equal(previews.length, 0)
 
   for (const [taskId, goal] of [["a", "Rephrased task"], ["b", undefined]] as const) {
@@ -263,8 +269,9 @@ test("planned spawn uses the saved task goal for confirmation and the worker bri
     assert.equal(c.kicks.length, previews.length - 1, "confirmation alone does not launch")
     const result = await c.call("spawn_worker", approved.finalParams)
     assert.equal(result.success, true, result.error)
-    assert.match(previews.at(-1)!, new RegExp(`goal=Investigate ${taskId}`))
-    assert.ok(c.kicks.at(-1)!.message.includes(`\nInvestigate ${taskId}\n`))
+    const savedGoal = p.tasks.find(t => t.id === taskId)!.goal
+    assert.ok(previews.at(-1)!.includes(`goal=${JSON.stringify(savedGoal)}`))
+    assert.ok(c.kicks.at(-1)!.message.includes(`\n${savedGoal}\n`))
   }
 })
 
