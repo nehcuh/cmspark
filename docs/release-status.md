@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-> 源码版本 **0.8.2**，包含 Windows 聊天范围校准修复（#835）与 Linux 原生安装包（#834）。发布前可用的正式安装包见 [v0.8.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.1)。
+> 源码开发版本 **0.8.2（尚未正式发布）**，包含 Windows 聊天范围校准修复（#835）与 Linux 原生安装包（#834）。发布前可用的正式安装包见 [v0.8.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.1)。
 
 ## 0.8.1 正式发行回执
 
