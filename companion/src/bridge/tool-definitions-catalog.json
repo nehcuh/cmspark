@@ -1059,7 +1059,7 @@
         "properties": {
           "goal": {
             "type": "string",
-            "description": "REQUIRED. The worker's task brief: what it must do and what it should return. The worker starts on this goal immediately after spawn — be specific (sites/queries/criteria), this is the only instruction it gets beyond its role."
+            "description": "Required for a standalone worker. Describe what it must do and return. Omit for a planned worker; the Companion uses the saved task goal."
           },
           "role_prompt": {
             "type": "string",
@@ -1101,16 +1101,13 @@
           },
           "plan_task_id": {
             "type": "string",
-            "description": "Logical task ID. Goal must match plan; dependencies require explicit acceptance. Every attempt retains existing L2."
+            "description": "Logical task ID. The saved task supplies the goal. Dependencies require explicit acceptance, and every attempt requires L2 confirmation."
           },
           "plan_task_attempt": {
             "type": "integer",
             "description": "Required for planned spawn. Exact next_attempt from cooperation_status; confirmation is bound to this generation."
           }
-        },
-        "required": [
-          "goal"
-        ]
+        }
       }
     }
   },
@@ -1883,7 +1880,7 @@
     "type": "function",
     "function": {
       "name": "cooperation_plan",
-      "description": "Create an immutable bounded parent task plan before spawning. Up to 32 tasks with dependencies, required tools, input references and 1-8 explicit success criteria. Does not execute or grant permissions; use returned plan_id and task id in confirmed spawn_worker. Resume an existing plan instead of resetting attempts.",
+      "description": "Create an immutable bounded parent task plan before spawning. Up to 32 tasks with dependencies, required tools, input references and 1-8 explicit success criteria. Does not execute or grant permissions; use the returned plan_id, task id and next_attempt in confirmed spawn_worker. The Companion uses the saved task goal. Resume an existing plan instead of resetting attempts.",
       "parameters": {
         "type": "object",
         "properties": {

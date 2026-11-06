@@ -193,13 +193,19 @@ export function createCooperationPlan(tm: ThreadManager, ownerId: string, input:
   return plan
 }
 
-export function plannedSpawnCheck(tm: ThreadManager, ownerId: string, params: Record<string, any>, isActive: Active, effectiveTools?: string[]) {
+export function resolvePlannedSpawnTask(tm: ThreadManager, ownerId: string, params: Record<string, any>) {
   assertMutable(tm, ownerId)
-  const plan = currentPlan(tm, ownerId, params.plan_id), parent = owner(tm, ownerId)
   if (!params.plan_id || !params.plan_task_id) throw new Error("plan_id and plan_task_id required together")
+  const plan = currentPlan(tm, ownerId, params.plan_id)
   const task = plan.tasks.find(t => t.id === params.plan_task_id)
   if (!task) throw new Error("planned task not found")
   if (params.plan_task_attempt !== task.attempts.length + 1) throw new Error("planned attempt changed; request a fresh confirmation")
+  return { plan, task }
+}
+
+export function plannedSpawnCheck(tm: ThreadManager, ownerId: string, params: Record<string, any>, isActive: Active, effectiveTools?: string[]) {
+  const { plan, task } = resolvePlannedSpawnTask(tm, ownerId, params)
+  const parent = owner(tm, ownerId)
   if (parent.paused || (["aborted", "security_halt"].includes(parent.last_run_terminal ?? "") && !isActive(ownerId))) throw new Error("parent stopped; resume through the existing user control")
   if (String(params.goal ?? "").trim() !== task.goal) throw new Error("spawn goal must match the immutable plan goal")
   if (accepted(tm, task, isActive)) throw new Error("task already accepted; reuse its checkpoint")

@@ -408,10 +408,12 @@ test("#514: plain spawn_worker persists a role-aware brief and kicks the worker"
   assert.ok(kicks[0].message.includes("检索 latent communication"))
 })
 
-test("#514 catalog lock: spawn_worker goal is required", () => {
+test("#514 catalog lock: only standalone spawn_worker requires a supplied goal", () => {
   const src = readSrc("bridge", "tool-definitions-catalog.json")
   const tool = JSON.parse(src).find((entry: any) => entry.function?.name === "spawn_worker")
   assert.ok(tool, "spawn_worker must remain in the production catalog")
-  assert.deepEqual(tool.function.parameters.required, ["goal"])
-  assert.equal(tool.function.parameters.properties.goal.type, "string")
+  const { required, properties } = tool.function.parameters
+  assert.ok(!required?.includes("goal"), "planned calls can omit the supplied goal")
+  assert.equal(properties.goal.type, "string")
+  assert.match(properties.goal.description, /Required for a standalone worker/)
 })
