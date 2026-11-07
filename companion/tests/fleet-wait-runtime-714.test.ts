@@ -213,7 +213,7 @@ test("a foreign live worker remains denied instead of entering owned fleet coord
   }
 })
 
-test("timeout permits one summary then ends repeated polls with a persisted pending reply", async () => {
+test("timeout persists a pending checkpoint and stops repeated polls", async () => {
   const s = setup(1), originalNow = Date.now
   const { FLEET_WAIT_MS } = await import("../src/orchestrator/fleet-supervision")
   s.setWait(() => { Date.now = () => originalNow() + FLEET_WAIT_MS + 10 })
@@ -229,13 +229,15 @@ test("timeout permits one summary then ends repeated polls with a persisted pend
   }
   try {
     await adapter.chatCreate(s.params)
-    assert.equal(s.inputs.length, 2)
+    assert.equal(s.inputs.length, 1)
     assert.equal(s.waits, 1)
-    assert.equal(s.calls.filter(n => n === "wait_workers").length, 2)
+    assert.equal(s.calls.filter(n => n === "wait_workers").length, 1)
     const done = s.frames.filter(f => f.type === "chat.done")
     assert.equal(done.length, 1)
     const final = s.tm.getMessages(s.parent.id).find(m => m.id === done[0].message_id)
-    assert.match(final?.content ?? "", /仍在运行/)
+    assert.match(final?.content ?? "", /子任务结束后会在本对话跟进/)
+    assert.ok(final?.content?.includes(s.workers[0].id))
+    assert.deepEqual(s.tm.get(s.parent.id)?.fleet_followup?.pending, [s.workers[0].id])
     assert.equal(final?.tool_calls?.length ?? 0, 0)
     assert.equal(s.tm.get(s.workers[0].id)?.last_run_ended_at, undefined)
     assert.equal(s.stats.terminal, null, "waiting is not a fabricated execution error")
