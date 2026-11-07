@@ -20,7 +20,7 @@ const assessments = new WeakMap<ThreadManager, Map<string, {
   followup: FleetFollowup; config: LlmConfig; controller?: AbortController
 }>>()
 
-export function ownedFleetWorkers(tm: ThreadManager, parent: Thread | undefined) {
+function ownedFleetWorkers(tm: ThreadManager, parent: Thread | undefined) {
   if (!parent?.orchestrator_run_id || parent.agent_role === "worker") return []
   return tm.list().filter(w => w.agent_role === "worker" && w.parent_thread_id === parent.id &&
     w.orchestrator_run_id === parent.orchestrator_run_id)
