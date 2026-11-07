@@ -1114,7 +1114,7 @@ export async function collectWorkerHandback(
   const version = before && { ...before }
   const sourceStillCurrent = () => {
     const now = tm.get(opts.workerId)
-    return !!now && !!version && now.last_run_execution_id === version.last_run_execution_id &&
+    return opts.sourceStillCurrent?.() !== false && !!now && !!version && now.last_run_execution_id === version.last_run_execution_id &&
       now.last_run_settled_execution_id === version.last_run_settled_execution_id &&
       now.parent_thread_id === version.parent_thread_id && now.orchestrator_run_id === version.orchestrator_run_id &&
       now.last_run_ended_at === version.last_run_ended_at && now.last_run_terminal === version.last_run_terminal &&
@@ -1124,7 +1124,7 @@ export async function collectWorkerHandback(
   const worker = tm.get(opts.workerId)
   if (version && read.data) {
     const task = browserTaskResult(version, read)
-    const stable = !!worker && worker.parent_thread_id === version.parent_thread_id && worker.orchestrator_run_id === version.orchestrator_run_id &&
+    const stable = opts.sourceStillCurrent?.() !== false && !!worker && worker.parent_thread_id === version.parent_thread_id && worker.orchestrator_run_id === version.orchestrator_run_id &&
       worker.agent_role === version.agent_role &&
       worker.last_run_execution_id === version.last_run_execution_id && worker.last_run_settled_execution_id === version.last_run_settled_execution_id &&
       worker.last_run_ended_at === version.last_run_ended_at && worker.last_run_terminal === version.last_run_terminal && !!worker.paused === !!version.paused &&

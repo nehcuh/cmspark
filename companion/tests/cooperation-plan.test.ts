@@ -148,6 +148,38 @@ test("duplicate dispatch cannot bind two attempts or start two workers", async (
   assert.equal(children.length, 1, "losing dispatch cleans up its speculative worker")
 })
 
+test("#837 late follow-up checkpoints only the current planned attempt", async () => {
+  const c = setup(), p = await plan(c)
+  assert.equal((await spawn(c, p, "a")).success, true)
+  const oldWorker = c.kicks.at(-1)!.threadId
+  await finish(c, oldWorker, "round_limit")
+  assert.equal((await spawn(c, p, "a")).success, true)
+  const workerId = c.kicks.at(-1)!.threadId
+  c.tm.update(c.parent.id, { last_run_execution_id: "timeout-execution" })
+  c.tm.update(workerId, { last_run_execution_id: "new-attempt" })
+  const { armFleetFollowup, reconcileFleetFollowup } = await import("../src/orchestrator/fleet-continuity")
+  const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("../src/board")
+  const active = () => false
+  armFleetFollowup(c.tm, c.parent.id, "timeout-execution", [oldWorker, workerId], {
+    base_url: "http://localhost:9999", api_key: "test", model_name: "test", temperature: 0, context_window: 32000,
+  })
+  c.tm.addMessage(oldWorker, { thread_id: oldWorker, role: "assistant", content: "superseded late result" })
+  c.tm.addMessage(workerId, { thread_id: workerId, role: "assistant", content: "current late result" })
+  c.tm.update(workerId, { last_run_settled_execution_id: "new-attempt", last_run_ended_at: new Date().toISOString() })
+  const collected: string[] = []
+  await reconcileFleetFollowup(c.tm, { active, send: () => {}, assess: async () => undefined,
+    collect: (parentId, id, current) => {
+      collected.push(id)
+      return collectWorkerHandback(c.tm, { workerId: id, callerThreadId: parentId, isThreadLlmActive: active,
+        sourceStillCurrent: current, resolveToolCall: resolveToolCallFromThreadMessages(c.tm, id, parentId) })
+    },
+  })
+  assert.deepEqual(collected, [workerId])
+  const attempt = c.tm.get(c.parent.id)?.cooperation_plan?.tasks[0].attempts.at(-1)
+  assert.equal(attempt?.result?.summary, "current late result")
+  assert.doesNotMatch(c.tm.getMessages(c.parent.id).at(-1)?.content ?? "", /superseded late result/)
+})
+
 test("confirmation for a previous attempt cannot authorize its replacement", async () => {
   const c = setup(), p = await plan(c)
   const originalParams = spawnParams(c, p, "a")

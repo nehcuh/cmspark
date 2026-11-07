@@ -29,6 +29,7 @@ import { peekFleetSuggestGate } from "../orchestrator/fleet-suggest"
 import { computeWorkerWhitelist, workerParentCapabilityWhitelist } from "../orchestrator/spawn"
 import { projectCooperationToolResult, projectFleetReports } from "../orchestrator/cooperation-result"
 import { superviseFleet, abortableDelay, FLEET_SUPERVISION_HINT, FLEET_WAIT_MS } from "../orchestrator/fleet-supervision"
+import { armFleetFollowup, fleetCheckpoint, fleetWorkerStates } from "../orchestrator/fleet-continuity"
 import { multiAgentLlmLoopSnapshot, releaseMultiAgentLlmLoop, tryAcquireMultiAgentLlmLoop } from "../orchestrator/llm-loop-gate"
 import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
@@ -634,13 +635,20 @@ export function runTerminalEpochIsCurrent(threadId: string, epoch: number): bool
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, knowledgeDescriptionOnly, knowledgeMode, knowledgeSmartMatch, knowledgeRouteByGroup, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
   params.assertCurrentRun?.()
+  const startingThread = threadManager.get(threadId)
+  if (startingThread?.worker_released_at) throw new Error("子任务已回收，历史记录仍可查看")
   // Before any await. A successor can start once this function yields; if the
   // claim happened later, the older run could become "latest" and overwrite.
   const runEpoch = claimRunTerminalEpoch(threadId)
   // Persist before any await: old successful reports cannot survive a crashed rerun
   // as if they were produced by the new execution.
   const executionId = randomUUID()
-  threadManager.update(threadId, { last_run_execution_id: executionId })
+  threadManager.update(threadId, { last_run_execution_id: executionId,
+    ...(startingThread?.worker_release ? { worker_release: null } : {}) })
+  const pendingFollowup = startingThread?.fleet_followup
+  if (pendingFollowup && pendingFollowup.run_id === startingThread?.orchestrator_run_id) {
+    armFleetFollowup(threadManager, threadId, executionId, pendingFollowup.pending, config)
+  }
   // L-2 (#388): reset the caller-owned run-outcome accumulator (observation only).
   //
   // #569: **本地兜底**。`params.runStats` 是调用方**可选**传入的：router 的三条路径都传
@@ -1463,7 +1471,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   const fleetTimeoutsReported = new Set<string>()
   let fleetSlotYielded = false
   let fleetWaitDeadline: number | undefined
-  let fleetTimeoutSummaryOffered = false
 
   const reacquireFleetSlot = async () => {
     if (!fleetSlotYielded) return
@@ -1533,14 +1540,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       },
     })
     assertCurrentFleetRun()
-    // The first timeout is offered to the model once for a combined summary.
-    // If it asks to poll again, end this turn with an honest persisted pending
-    // reply. Never renew the deadline, fake worker completion or error, or
-    // spend another model round merely asking it not to poll.
-    const pending = threadManager.list().filter(w => ownsFleetWorker(w.id) && !w.paused && isActive(w.id))
-    if (fleetTimeoutSummaryOffered && pending.length) {
-      const content = "子任务仍在运行，本轮等待已达到时限。已收集的结果保留在当前对话；未完成子任务：" +
-        pending.map(w => w.id).join("、") + "。你可以稍后继续收集，或取消不再需要的子任务；不会自动重复派发。"
+    const pending = reports.filter(r => r.status === "waiting_timeout").map(r => String(r.worker_id))
+    if (pending.length) {
+      armFleetFollowup(threadManager, threadId, executionId, pending, config)
+      const checkpoint = fleetCheckpoint(fleetWorkerStates(threadManager, threadManager.get(threadId), isActive))
+      const content = "本轮等待已达到时限。以下是已取得的结果及未完成项，子任务结束后会在本对话跟进。\n\n" + checkpoint
       const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content })
       sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content })
       sendToExtension({ type: "chat.done", thread_id: threadId, message_id: note.id, finish_reason: "stop" })
@@ -1554,7 +1558,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content })
         sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content })
       }
-      if (reports.some(r => r.status === "waiting_timeout")) fleetTimeoutSummaryOffered = true
       await reacquireFleetSlot()
       signal?.throwIfAborted()
       messages.push({ role: "system", content: FLEET_SUPERVISION_HINT + " Actual collected tool rows contain bounded extractive reports with original source references; the list below contains status and recovery only. Continue with a combined answer and concrete recovery options for incomplete work. Runtime completion does not independently verify claims. A waiting_timeout is still live; do not claim all work finished. Do not loop wait_workers to bypass the runtime deadline." })

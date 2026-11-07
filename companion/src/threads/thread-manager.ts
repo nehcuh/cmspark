@@ -115,6 +115,9 @@ interface Thread {
   last_run_ended_at?: string | null
   /** #576: terminal worker versions already delivered to this parent's summary. */
   fleet_handback_epochs?: Record<string, string>
+  fleet_followup?: import("../orchestrator/fleet-continuity").FleetFollowup | null
+  worker_release?: import("../orchestrator/fleet-continuity").WorkerRelease | null
+  worker_released_at?: string
   /** #577: bounded runtime-owned result snapshots, never executable grants. */
   cooperation_tasks?: Record<string, import("../orchestrator/cooperation-state").CooperationTaskRecord>
   cooperation_plan?: import("../orchestrator/cooperation-plan").CooperationPlan
@@ -1647,6 +1650,12 @@ export class ThreadManager {
       return true
     }
     if (thread.tool_whitelist === null) return true
+    if (thread.agent_role === "orchestrator" && toolName === "worker_release") {
+      const { ORCHESTRATOR_TOOL_ALLOWLIST } = require("../orchestrator/constants") as typeof import("../orchestrator/constants")
+      const previousDefault = ORCHESTRATOR_TOOL_ALLOWLIST.filter(tool => tool !== "worker_release")
+      if (thread.tool_whitelist.length === previousDefault.length &&
+          previousDefault.every(tool => thread.tool_whitelist!.includes(tool))) return true
+    }
     // P1 / D8 revise: pack tool_whitelist constrains MCP too.
     // Allow mcp tools only when whitelist includes:
     //   - exact tool name, or

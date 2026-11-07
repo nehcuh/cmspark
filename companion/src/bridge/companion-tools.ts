@@ -44,6 +44,7 @@ export const COMPANION_TOOLS = [
   "get_worker_status",
   "list_tab_locks",
   "collect_handback",
+  "worker_release",
   "board_read",
   "cooperation_plan",
   "cooperation_review",

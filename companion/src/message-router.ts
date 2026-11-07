@@ -1217,6 +1217,7 @@ async function dispatchMessage(
         if (!thrGate) {
           return { type: "chat.error", thread_id: rest.thread_id, error: "Thread not found" }
         }
+        if (thrGate.worker_released_at) return { type: "chat.error", thread_id: rest.thread_id, error: "子任务已回收，历史记录仍可查看", error_code: "WORKER_RELEASED" }
         if (thrGate.trashed_at) {
           return {
             type: "chat.error",
@@ -1972,6 +1973,7 @@ async function dispatchMessage(
         if (thrGate.trashed_at) {
           return uploadError("thread_trashed")
         }
+        if (thrGate.worker_released_at) return uploadError("WORKER_RELEASED")
         if (thrGate.paused) {
           return uploadError("thread_paused")
         }
@@ -2294,6 +2296,8 @@ async function dispatchMessage(
       // the nextRun queue (a user stop must never silently revive the thread),
       // and log every abort so clicks are traceable after the fact.
       const { stopped, cancelled } = abortThreadChat(rest.thread_id, { clearQueue: true })
+      const { cancelFleetFollowup } = require("./orchestrator/fleet-continuity") as typeof import("./orchestrator/fleet-continuity")
+      cancelFleetFollowup(services.threadManager, rest.thread_id)
       // L-2 (#388): user stop → STOPPED_USER; the loop never revives without
       // an explicit re-arm gesture (#307 discipline continued).
       try {
@@ -2397,6 +2401,7 @@ async function dispatchMessage(
       {
         const thrGate = services.threadManager.get(thread_id)
         if (!thrGate) return { type: "error", error: "Thread not found" }
+        if (thrGate.worker_released_at) return { type: "chat.error", thread_id, error: "子任务已回收，历史记录仍可查看", error_code: "WORKER_RELEASED" }
         if (thrGate.trashed_at) {
           return {
             type: "chat.error",
@@ -4702,6 +4707,11 @@ async function dispatchMessage(
       } else {
         targets = threadManager.list().filter((t: any) => t.agent_role === "worker")
       }
+      const { cancelFleetFollowup } = await import("./orchestrator/fleet-continuity")
+      const owners = new Set<string>(targets.map(w => w.parent_thread_id).filter(Boolean))
+      if (parentId) owners.add(parentId)
+      for (const id of owners) cancelFleetFollowup(threadManager, id)
+      targets = targets.filter(w => !w.worker_released_at)
       const results: any[] = []
       // Cross-thread no-revive (pull 2026-09-21): cancelling inside the loop
       // is too late — the first abortThreadChat's releaseMultiAgentLlmLoop
@@ -4758,6 +4768,7 @@ async function dispatchMessage(
     }
     case "worker.pause": {
       if (!rest.worker_id) return { type: "error", error: "worker_id required" }
+      if (threadManager.get(String(rest.worker_id))?.worker_released_at) return { type: "error", error: "WORKER_RELEASED" }
       const w = threadManager.update(String(rest.worker_id), { paused: true } as any)
       if (!w) return { type: "error", error: "worker not found" }
       // #307: user stop — pause must clear the queue, not defer it to a later drain.
@@ -4771,6 +4782,7 @@ async function dispatchMessage(
     }
     case "worker.resume": {
       if (!rest.worker_id) return { type: "error", error: "worker_id required" }
+      if (threadManager.get(String(rest.worker_id))?.worker_released_at) return { type: "error", error: "WORKER_RELEASED" }
       const w = threadManager.update(String(rest.worker_id), { paused: false } as any)
       if (!w) return { type: "error", error: "worker not found" }
       return { type: "worker.updated", worker: w }

@@ -1401,6 +1401,21 @@
   {
     "type": "function",
     "function": {
+      "name": "worker_release",
+      "description": "Mark an owned, settled worker as no longer needed after its current result has been collected. Closes the worker after the grace window and preserves its history. Only call when the worker's contribution is no longer needed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "worker_id": { "type": "string", "description": "ID of the worker owned by this conversation." },
+          "grace_seconds": { "type": "integer", "minimum": 0, "maximum": 3600, "description": "Seconds to retain the worker after the handback was recorded. Default 180." }
+        },
+        "required": ["worker_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "wait_workers",
       "description": "Poll-only snapshot of workers in this orchestrator_run (ADR-015). Does NOT block/sleep for a barrier — call repeatedly or use HITL. True async barrier is not implemented. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both absent = it never ran. Use these to tell a dead worker from an idle one (#569). In a parent chat, a successful poll transfers to bounded runtime waiting after this tool batch, yielding the parent model slot for queued workers. The tool itself remains poll-only. On deadline, disclose still-running work rather than repeatedly calling this tool or spawning duplicates.",
       "parameters": {
