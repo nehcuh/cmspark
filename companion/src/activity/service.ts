@@ -39,7 +39,8 @@ export class ActivityService {
   constructor(deps: ActivityDependencies) {
     this.store = new ActivityStore(deps.dataDir)
     const platform = deps.platform ?? process.platform
-    this.runtime = { platform, ...platformSupport(platform), running: false, scanning: false, last_scan_at: null, last_success_at: null, status: 'stopped', error: null, coverage: COVERAGE }
+    const support = platformSupport(platform)
+    this.runtime = { platform, ...support, chat_scope_supported: support.supported, running: false, scanning: false, last_scan_at: null, last_success_at: null, status: 'stopped', error: null, coverage: COVERAGE }
     this.now = deps.now ?? Date.now
     this.recorder = deps.recorder ?? createRecorder(this.store.root, platform)
     this.extract = deps.extract ?? extractActivity
@@ -110,7 +111,7 @@ export class ActivityService {
     return this.appListing
   }
   private async calibration<T>(requestCurrent: () => boolean, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    if (this.runtime.platform !== 'win32') throw new ActivityError('UNSUPPORTED_PLATFORM', '聊天区域校准目前仅支持 Windows')
+    if (!this.runtime.chat_scope_supported) throw new ActivityError('UNSUPPORTED_PLATFORM', this.runtime.platform_note || '当前环境无法校准前台聊天区域')
     const automatic = this.automaticScan
     if (this.calibrationPending || (this.pending && !automatic)) throw new ActivityError('BUSY', '上一轮采集或校准尚未完成')
     const epoch = this.generation, signal = this.abort.signal

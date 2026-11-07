@@ -96,7 +96,7 @@ export function ChatScopeEditor({ appIds, apps, scopes, language, busy, onChange
     updateApp(editingApp, [...profiles, profile]); close()
   }
   function overlay(rect: ActivityRect | null, kind: string) { return preview && rect && <span aria-hidden="true" className={`cm-chat-scope-box cm-chat-scope-box-${kind}`} style={{ left: `${rect.x * 100 / preview.width}%`, top: `${rect.y * 100 / preview.height}%`, width: `${rect.width * 100 / preview.width}%`, height: `${rect.height * 100 / preview.height}%` }}>{kind === 'content' ? '聊天内容' : '当前标题'}</span> }
-  return <section className="cm-personal-wide cm-chat-scopes" aria-label="指定聊天范围"><h2>指定群聊或联系人</h2><p className="cm-personal-fieldnote">可为主窗口和独立聊天窗口分别校准。只处理框选聊天内容；左侧其它聊天预览不进入识别。更改窗口大小、布局或缩放后，请重新校准。</p>
+  return <section className="cm-personal-wide cm-chat-scopes" aria-label="指定聊天范围"><h2>指定群聊或联系人</h2><p className="cm-personal-fieldnote">可为主窗口和独立聊天窗口分别校准。只处理框选聊天内容；左侧其它聊天预览不进入识别。窗口标题、大小、布局或缩放变化后，可能需要重新校准。</p>
     {!appIds.length && <p className="cm-personal-fieldnote">先在上方选择聊天应用。</p>}
     {originalLanguage.current !== language && <p role="status" className="cm-personal-fieldnote">OCR 语言已变化，请重新核对已有标题范围；当前预检结果已清除。</p>}
     {appIds.map(id => { const scope = scopes.find(item => item.app_id === id); return <div className="cm-chat-scope-app" key={id}><label className="cm-personal-check"><input type="checkbox" checked={!!scope} disabled={busy || !!phase} onChange={e => { if (editingApp === id) close(); updateApp(id, e.target.checked ? [] : null) }} />{appName(id)}：仅记录指定对话</label>

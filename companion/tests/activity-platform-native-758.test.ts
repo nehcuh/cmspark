@@ -9,6 +9,7 @@ import { withSurface650 } from './fixtures/native-surface-650'
 import { WindowsPassiveRecorder, LinuxPassiveRecorder, resolveLinuxRecorder, runLinux, type LinuxRunner } from '../src/activity/platform'
 import { resolveWinScript, runPs } from '../src/host-use/win/powershell'
 import { DEFAULT_ACTIVITY_CONFIG } from '../src/activity/types'
+import { ActivityScopeSkip, imageSize } from '../src/activity/chat-scope'
 import { submitReminder } from '../src/activity/adapters'
 import { buildOwnedWpf758 } from './helpers/activity-native-fixture-758'
 import { compilerFailureObservation758 } from './helpers/activity-compiler-observation-758'
@@ -100,6 +101,26 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
     else{
       const after=JSON.parse((await exec('/usr/bin/python3',['-I',resolveLinuxRecorder(),'probe'],{signal:owned.signal,timeout:15000})).stdout).window
       assert.equal(after.window,before);assert.equal(after.pid,child.pid)
+      assert.ok(captured.window_class)
+      const content = { x: 100, y: 0, width: 600, height: 300 }
+      const title = { x: 100, y: 80, width: 600, height: 70 }
+      const recognized = await adapter.ocrTitle(captured.image, title, 'en-US', owned.signal)
+      assert.equal(recognized, 'PROJECT ALPHA')
+      const scoped = { ...config, chat_scopes: [{ app_id: native.app_id, profiles: [{
+        window_class: captured.window_class, ...imageSize(captured.image), content, title, allowed_titles: [recognized],
+      }] }] }
+      const admitted = await adapter.capture(scoped, owned.signal)
+      assert.ok(admitted)
+      assert.equal(admitted.conversation_title, recognized)
+      assert.deepEqual(imageSize(admitted.image), { width: content.width, height: content.height })
+      assert.match(admitted.ocr_text, /REPORT\s+FRIDAY/)
+      write('control.json', { command: 'switch_chat' })
+      assert.equal((await receipt(path.join(dir,'ack.json'),child,owned.signal)).command, 'switch_chat')
+      fs.unlinkSync(path.join(dir, 'ack.json'))
+      await assert.rejects(adapter.capture(scoped, owned.signal), error => error instanceof ActivityScopeSkip && error.status === 'scope_title_mismatch')
+      write('control.json', { command: 'restore_chat' })
+      assert.equal((await receipt(path.join(dir,'ack.json'),child,owned.signal)).command, 'restore_chat')
+      fs.unlinkSync(path.join(dir, 'ack.json'))
       // _NET_WM_PID is spoofable: XRes server ownership must continue to name our actual child.
       await exec('/usr/bin/xprop',['-id',String(native.window),'-f','_NET_WM_PID','32c','-set','_NET_WM_PID','1'],{signal:owned.signal,timeout:5000})
       const spoofed=await adapter.capture(config,owned.signal);assert.ok(spoofed);assert.equal(spoofed.app_id,native.app_id)
