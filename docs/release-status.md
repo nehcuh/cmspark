@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-> 源码版本 **0.8.4（已于 2026-11-07 正式发布）**，补齐 macOS 和 Linux X11 的指定聊天范围（#842）。正式安装包见 [v0.8.4 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.4)。
+> 源码开发版本 **0.8.5（尚未正式发布）**，修复派发前查询子任务导致主对话中断的问题（#843）。当前正式安装包见 [v0.8.4 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.4)。
 
 ## 0.8.4 正式发行回执
 
