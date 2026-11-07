@@ -297,12 +297,15 @@ test("ACP cancellation keeps its terminal kind when a late CLI exit callback arr
 
 test("#837 three-worker replay: two handbacks are shown at timeout, late round-limit is assessed and only a released worker closes", async t => {
   const { tm, parent, params, sent, calls } = setup()
+  const { ORCHESTRATOR_TOOL_ALLOWLIST } = await import("../src/orchestrator/constants")
   const { cooperationSnapshot } = await import("../src/orchestrator/cooperation-state")
   const { reconcileFleetFollowup, reapReleasedWorkers, requestWorkerRelease } = await import("../src/orchestrator/fleet-continuity")
   const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("../src/board")
   const mockComplete = Provider.prototype.complete
   t.after(() => { Provider.prototype.complete = mockComplete; gates._resetMultiAgentLlmLoopsForTests() })
-  tm.update(parent.id, { agent_role: "orchestrator", orchestrator_run_id: parent.id })
+  tm.update(parent.id, { agent_role: "orchestrator", orchestrator_run_id: parent.id,
+    tool_whitelist: ORCHESTRATOR_TOOL_ALLOWLIST.filter(tool => tool !== "worker_release") })
+  assert.ok(tm.isToolAllowed(parent.id, "worker_release", { cruiseOpen: false }))
   const workers = ["来源一", "来源二", "晚到"].map(alias => {
     const worker = tm.create(alias)
     tm.update(worker.id, { agent_role: "worker", parent_thread_id: parent.id, orchestrator_run_id: parent.id,

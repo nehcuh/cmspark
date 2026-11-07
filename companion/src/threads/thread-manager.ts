@@ -1650,6 +1650,12 @@ export class ThreadManager {
       return true
     }
     if (thread.tool_whitelist === null) return true
+    if (thread.agent_role === "orchestrator" && toolName === "worker_release") {
+      const { ORCHESTRATOR_TOOL_ALLOWLIST } = require("../orchestrator/constants") as typeof import("../orchestrator/constants")
+      const previousDefault = ORCHESTRATOR_TOOL_ALLOWLIST.filter(tool => tool !== "worker_release")
+      if (thread.tool_whitelist.length === previousDefault.length &&
+          previousDefault.every(tool => thread.tool_whitelist!.includes(tool))) return true
+    }
     // P1 / D8 revise: pack tool_whitelist constrains MCP too.
     // Allow mcp tools only when whitelist includes:
     //   - exact tool name, or
