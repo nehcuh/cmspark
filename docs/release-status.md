@@ -1,6 +1,12 @@
 # 版本与交付状态
 
-> 源码开发版本 **0.8.4（尚未正式发布）**，补齐 macOS 和 Linux X11 的指定聊天范围（#842）。当前正式安装包见 [v0.8.3 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.3)。
+> 源码版本 **0.8.4（已于 2026-11-07 正式发布）**，补齐 macOS 和 Linux X11 的指定聊天范围（#842）。正式安装包见 [v0.8.4 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.4)。
+
+## 0.8.4 正式发行回执
+
+- PR #842 的 10 项检查通过后合入 `1c4c045b`。标签 `v0.8.4` 指向 `b981f2e9e00b032df421bd100b31ba29abd925e1`。主线 CI、ARM、会话持久化和同树发布预演通过。[PR #842](https://github.com/nehcuh/cmspark/pull/842) · [主线 CI](https://github.com/nehcuh/cmspark/actions/runs/42359913243) · [发布预演](https://github.com/nehcuh/cmspark/actions/runs/42359418417)
+- macOS 实测使用真实聊天应用，允许群保存一份裁图，切换到另一群后标题不匹配且来源数量保持为一。实测配置和截图已清理。Linux X11 的真实原生夹具同样验证了切群拒绝。[Linux X11 验证](https://github.com/nehcuh/cmspark/actions/runs/42359913243/job/128365921831)
+- 正式发布时间为 2026-11-07 18:10:03（北京时间）。同标签生成六种平台与架构安装器及独立 Chrome ZIP。正式包及补充资产的 SHA-256 已核对，本机 macOS ARM64 DMG 签名与 Companion 健康检查通过。[Release 构建](https://github.com/nehcuh/cmspark/actions/runs/42361744730) · [安装器构建](https://github.com/nehcuh/cmspark/actions/runs/42361746397) · [安装器校验清单](https://github.com/nehcuh/cmspark/releases/download/v0.8.4/SHA256SUMS-INSTALLERS.txt)
 
 ## 0.8.3 正式发行回执
 
