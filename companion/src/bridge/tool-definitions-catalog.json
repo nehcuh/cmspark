@@ -1078,7 +1078,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Optional allowlist of tools for the worker role (intersected with parent + HARD_DENY)"
+            "description": "Optional tools required for this worker. The Companion intersects them with the parent's delegable tools and removes worker-forbidden tools. Omitting this uses the default scope."
           },
           "tool_deny": {
             "type": "array",
