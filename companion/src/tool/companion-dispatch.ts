@@ -760,8 +760,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     case "list_workers": {
       const parentId = params.__thread_id || params._thread_id
       const parent = parentId ? threadManager.get(String(parentId)) : null
-      const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
-      if (!runId) return { success: false, error: "orchestrator_run_id required (spawn workers first)" }
+      const runId = params.orchestrator_run_id || parent?.orchestrator_run_id
+      if (!runId) return parent
+        ? { success: true, data: { orchestrator_run_id: null, workers: [] } }
+        : { success: false, error: "orchestrator_run_id required (spawn workers first)" }
       const { listWorkers } = await import("../orchestrator/spawn")
       // #578: 透出占用状态，让「名额为何空了/为何满了」可解释（overdue = 从未跑过且超 idle_ttl，spawn 已让位）。
       // 评审 F1：占名额 SoT 含回收站行（G8b），诊断面必须同口径枚举——否则 gate 报
@@ -1039,8 +1041,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // Frozen as poll-only (ADR-015): no async barrier / sleep in tool path.
       const parentId = params.__thread_id || params._thread_id
       const parent = parentId ? threadManager.get(String(parentId)) : null
-      const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
-      if (!runId) return { success: false, error: "orchestrator_run_id required" }
+      const runId = params.orchestrator_run_id || parent?.orchestrator_run_id
+      if (!runId) return parent
+        ? { success: true, data: { orchestrator_run_id: null, poll_only: true, intents_reaped: 0, open_intent_count: 0, workers: [] } }
+        : { success: false, error: "orchestrator_run_id required" }
       // ADR-016 Stage 3: reap stale claimed intents on host board
       let intentsReaped = 0
       let openIntents = 0

@@ -43,10 +43,10 @@ after(() => {
   fs.rmSync(owned, { recursive: true, force: true })
 })
 
-function setup(count: number) {
+function setup(count: number, hasRun = true) {
   gates._resetMultiAgentLlmLoopsForTests()
   const tm = new ThreadManager(), parent = tm.create("parent")
-  tm.update(parent.id, { agent_role: "orchestrator", orchestrator_run_id: parent.id })
+  if (hasRun) tm.update(parent.id, { agent_role: "orchestrator", orchestrator_run_id: parent.id })
   const workers = Array.from({ length: count }, (_, i) => {
     const w = tm.create(`worker ${i}`)
     tm.update(w.id, { agent_role: "worker", parent_thread_id: parent.id, orchestrator_run_id: parent.id })
@@ -101,7 +101,7 @@ function setup(count: number) {
         for (const [index, tc] of first.entries()) yield { type: "tool_call_delta", index, id: `owned_${index}`, name: tc.name, arguments: JSON.stringify(tc.args) }
         yield { type: "done", finish_reason: "tool_calls" }
       } else {
-        assert.equal(gates.multiAgentLlmLoopSnapshot().holders.includes(parent.id), true)
+        if (hasRun) assert.equal(gates.multiAgentLlmLoopSnapshot().holders.includes(parent.id), true)
         yield { type: "token", text: "combined owned result" }
         yield { type: "done", finish_reason: "stop" }
       }
@@ -110,6 +110,26 @@ function setup(count: number) {
   return { tm, parent, workers, params, stats, frames, calls, results, inputs, setScript,
     settle, get waits() { return waits }, setWait: (f: () => void) => { waitAction = f } }
 }
+
+for (const tool of ["list_workers", "wait_workers"]) test(`${tool} before the first dispatch reports an empty fleet and lets the chat continue`, async () => {
+  const s = setup(0, false)
+  const batch = tool === "list_workers" ? [tool, "list_tab_locks"] : [tool]
+  s.setScript(batch.map(name => ({ name, args: {} })))
+  try {
+    await adapter.chatCreate(s.params)
+    assert.equal(s.results[0]?.result.success, true, s.results[0]?.result.error)
+    assert.equal(s.results[0].result.data.orchestrator_run_id, null)
+    assert.deepEqual(s.results[0].result.data.workers, [])
+    assert.equal(s.waits, 0)
+    assert.equal(s.inputs.length, 2)
+    assert.equal(s.frames.some(f => f.type === "chat.error"), false)
+    assert.equal(s.frames.filter(f => f.type === "chat.done").length, 1)
+    assert.ok(!s.tm.get(s.parent.id)?.orchestrator_run_id)
+    assert.deepEqual(s.calls, batch)
+    assert.equal(s.stats.terminal, null)
+    assert.equal((await dispatch.executeCompanionTool(tool, { __thread_id: "missing-thread" })).success, false)
+  } finally { gates.releaseMultiAgentLlmLoop(s.parent.id) }
+})
 
 for (const count of [1, 3]) test(`early collect batch for ${count} live workers waits and collects without parent breaker`, async () => {
   const s = setup(count)
