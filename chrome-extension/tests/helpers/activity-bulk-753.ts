@@ -19,7 +19,7 @@ export async function createActivityFixture() {
   function load(file: string): any {
     file = path.resolve(file)
     if (modules.has(file)) return modules.get(file)
-    assert.ok(file === path.resolve(root, '../llm/vision-reuse-inherit.ts') || ['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config', 'windows-apps', 'chat-scope'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
+    assert.ok(['../llm/vision-reuse-inherit.ts', '../llm/image-preview.ts', '../computer/png-decode.ts'].some(name => file === path.resolve(root, name)) || ['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config', 'windows-apps', 'chat-scope'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
     const output: any = {}; modules.set(file, output)
     const requireValue = (id: string): any => {
       if (id === '../config') return { DATA_DIR: directory, getConfig: () => ({ llm: {}, computer: {} }) }
@@ -27,7 +27,7 @@ export async function createActivityFixture() {
       if (id === '../host-use/win/powershell') return { runPs: forbidden, resolveWinScript: forbidden }
       if (id === 'node:child_process') return { execFile: forbidden }
       if (id.startsWith('.')) return load(path.resolve(path.dirname(file), id + '.ts'))
-      assert.ok(['node:fs', 'node:path', 'node:crypto', 'node:util', 'fs', 'path', 'crypto'].includes(id), `unexpected builtin ${id}`)
+      assert.ok(['node:fs', 'node:path', 'node:crypto', 'node:util', 'node:zlib', 'fs', 'path', 'crypto'].includes(id), `unexpected builtin ${id}`)
       return hostRequire(id)
     }
     const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText

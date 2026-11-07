@@ -65,7 +65,7 @@ export function decodePngToRgba(bytes: Uint8Array): {
     if (dataEnd + 4 > buf.length) fail(`chunk ${type} 截断`);
     if (!sawIhdr && type !== "IHDR") fail("首个 chunk 非 IHDR");
     if (type === "IHDR") {
-      if (length !== 13) fail("IHDR 长度异常");
+      if (sawIhdr || length !== 13) fail("IHDR 重复或长度异常");
       width = buf.readUInt32BE(dataStart);
       height = buf.readUInt32BE(dataStart + 4);
       bitDepth = buf[dataStart + 8]!;
