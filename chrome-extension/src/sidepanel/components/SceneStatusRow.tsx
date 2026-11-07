@@ -37,6 +37,7 @@ export interface SceneStatusInfo {
   packId: string | null
   workspaceRoot: string | null
   toolWhitelist: string[] | null | undefined
+  isWorker: boolean
   surfaceLabel: string | null
 }
 
@@ -47,6 +48,7 @@ export function readSceneStatus(state: {
     mission_pack_id?: string | null
     workspace_root?: string | null
     tool_whitelist?: string[] | null
+    agent_role?: string
   }>
   activeThreadId: string | null
 }): SceneStatusInfo {
@@ -58,6 +60,7 @@ export function readSceneStatus(state: {
     packId,
     workspaceRoot,
     toolWhitelist,
+    isWorker: thread?.agent_role === "worker",
     surfaceLabel: toolSurfaceLabel(toolWhitelist),
   }
 }
@@ -85,13 +88,12 @@ export function SceneStatusRow({ secondary = false }: { secondary?: boolean } = 
     })
   }
 
-  /** Restore full tool surface on THIS conversation immediately (thread.update). */
-  const restoreFullTools = () => {
+  const restoreTools = () => {
     if (!state.activeThreadId) return
     chrome.runtime.sendMessage({
       type: "thread.update",
       thread_id: state.activeThreadId,
-      updates: { tool_whitelist: null },
+      updates: info.isWorker ? { inherit_parent_tools: true } : { tool_whitelist: null },
     })
   }
 
@@ -118,24 +120,24 @@ export function SceneStatusRow({ secondary = false }: { secondary?: boolean } = 
           </button>
         </span>
       ) : null}
-      {info.surfaceLabel != null ? (
+      {info.surfaceLabel != null || info.isWorker ? (
         <span
           style={{ ...styles.chip, ...styles.surfaceChip }}
           title={
             Array.isArray(info.toolWhitelist)
-              ? `本对话工具白名单：\n${info.toolWhitelist.join("\n")}\n\n三旗全自动巡航也会放开普通对话工具面；点「恢复全工具」立即对本对话生效。`
-              : "工具面已收窄"
+              ? `本对话工具白名单：\n${info.toolWhitelist.join("\n")}${info.isWorker ? "" : "\n\n三旗全自动巡航也会放开普通对话工具面；点「恢复全工具」立即对本对话生效。"}`
+              : "查看可用工具范围"
           }
           data-testid="tool-surface-chip"
         >
-          <span style={styles.surfaceText}>工具面：{info.surfaceLabel}</span>
+          <span style={styles.surfaceText}>工具面：{info.surfaceLabel ?? "子线程"}</span>
           <button
             type="button"
             style={styles.exitBtn}
-            onClick={restoreFullTools}
-            title="清除本对话工具白名单（立即生效，无需新建对话）"
+            onClick={restoreTools}
+            title={info.isWorker ? "继承主线程可委派的工具，仍受子任务及工具确认规则约束" : "清除本对话工具白名单（立即生效，无需新建对话）"}
           >
-            恢复全工具
+            {info.isWorker ? "继承主线程工具" : "恢复全工具"}
           </button>
         </span>
       ) : null}

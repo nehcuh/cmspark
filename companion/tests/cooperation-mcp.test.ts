@@ -110,6 +110,31 @@ test("planning rejects fabricated, disconnected, unselected and unauthorized MCP
   assert.equal(c.tm.get(c.parent.id)?.cooperation_plan, undefined)
 })
 
+test("worker tool inheritance respects live parent and worker MCP selection", async t => {
+  const c = await setup(t)
+  const { handleMessage } = await import("../src/message-router")
+  c.tm.update(c.parent.id, { tool_whitelist: ["get_page_text", "mcp__fs__*"] })
+  const spawned = spawnWorkerThread(c.tm, { parentThreadId: c.parent.id, userConfirmed: true,
+    roleAllow: ["get_page_text"], roleDeny: ["mcp__filesystem__read_other"] })
+  assert.ok(spawned.ok)
+  const workerId = spawned.worker.id
+  const inherit = () => handleMessage({ type: "thread.update", thread_id: workerId, updates: { inherit_parent_tools: true } },
+    { threadManager: c.tm, skillEngine: {} as any, historyStore: {} as any })
+  const saved = await inherit()
+  assert.equal(saved.type, "thread.updated")
+  assert.ok(saved.thread.tool_whitelist.includes(name))
+  assert.ok(!saved.thread.tool_whitelist.includes("mcp__filesystem__read_other"))
+  assert.ok(!saved.thread.tool_whitelist.includes("mcp__fs__*"))
+  c.tm.update(c.parent.id, { active_mcp_server_ids: [] })
+  const denied = await executeMcpTool(name, { __thread_id: workerId }, workerId, {} as any, Date.now())
+  assert.equal(denied.success, false)
+  assert.equal(c.toolCalls(), 0)
+  assert.deepEqual((await inherit()).thread.tool_whitelist, ["get_page_text"])
+  c.tm.update(c.parent.id, { active_mcp_server_ids: ["filesystem"] })
+  c.tm.update(workerId, { active_mcp_server_ids: [] })
+  assert.deepEqual((await inherit()).thread.tool_whitelist, ["get_page_text"])
+})
+
 test("selection or whitelist revocation after confirmation blocks spawn without consuming an attempt", async t => {
   const c = await setup(t), plan = c.plan(), params = c.params(plan)
   plannedSpawnCheck(c.tm, c.parent.id, params, () => false)
