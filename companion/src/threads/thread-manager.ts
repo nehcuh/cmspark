@@ -115,6 +115,9 @@ interface Thread {
   last_run_ended_at?: string | null
   /** #576: terminal worker versions already delivered to this parent's summary. */
   fleet_handback_epochs?: Record<string, string>
+  fleet_followup?: import("../orchestrator/fleet-continuity").FleetFollowup | null
+  worker_release?: import("../orchestrator/fleet-continuity").WorkerRelease | null
+  worker_released_at?: string
   /** #577: bounded runtime-owned result snapshots, never executable grants. */
   cooperation_tasks?: Record<string, import("../orchestrator/cooperation-state").CooperationTaskRecord>
   cooperation_plan?: import("../orchestrator/cooperation-plan").CooperationPlan

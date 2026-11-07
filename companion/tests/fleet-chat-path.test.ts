@@ -294,3 +294,106 @@ test("ACP cancellation keeps its terminal kind when a late CLI exit callback arr
   assert.equal(read.data.task_result.status, "cancelled")
   assert.equal(offer.session.pid, undefined)
 })
+
+test("#837 three-worker replay: two handbacks are shown at timeout, late round-limit is assessed and only a released worker closes", async t => {
+  const { tm, parent, params, sent, calls } = setup()
+  const { cooperationSnapshot } = await import("../src/orchestrator/cooperation-state")
+  const { reconcileFleetFollowup, reapReleasedWorkers, requestWorkerRelease } = await import("../src/orchestrator/fleet-continuity")
+  const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("../src/board")
+  const mockComplete = Provider.prototype.complete
+  t.after(() => { Provider.prototype.complete = mockComplete; gates._resetMultiAgentLlmLoopsForTests() })
+  tm.update(parent.id, { agent_role: "orchestrator", orchestrator_run_id: parent.id })
+  const workers = ["来源一", "来源二", "晚到"].map(alias => {
+    const worker = tm.create(alias)
+    tm.update(worker.id, { agent_role: "worker", parent_thread_id: parent.id, orchestrator_run_id: parent.id,
+      last_run_execution_id: worker.id })
+    return worker
+  })
+  for (const [i, worker] of workers.slice(0, 2).entries()) {
+    tm.addMessage(worker.id, { thread_id: worker.id, role: "assistant", content: `已核对的证据 ${i + 1}` })
+    tm.update(worker.id, { last_run_ended_at: new Date().toISOString(), last_run_terminal: null, last_run_settled_execution_id: worker.id })
+  }
+  const late = workers[2]
+  assert.ok(gates.tryAcquireMultiAgentLlmLoop(tm.get(late.id), late.id).ok)
+  const active = await dispatch.buildIsThreadLlmActive()
+  const initial = cooperationSnapshot(tm, parent.id, { isActive: active })
+  assert.equal(initial.workers.length, 3)
+  assert.equal(initial.workers.find(row => row.worker_id === late.id)?.status, "running")
+  assert.throws(() => requestWorkerRelease(tm, parent.id, late.id, active), /须已结束/)
+
+  // Move just the deadline clock after the two real handbacks. No ten-minute sleep.
+  const clock = Date.now
+  let reads = 0
+  try {
+    await adapter.chatCreate({ ...params, executeTool: async (...args) => {
+      const result = await params.executeTool(args[0], args[1], args[2])
+      if (args[1] === "collect_handback" && ++reads === 2) Date.now = () => clock() + 10 * 60_000 + 1
+      return result
+    } })
+  } finally { Date.now = clock }
+  const partial = tm.getMessages(parent.id).at(-1)?.content ?? ""
+  assert.match(partial, /本轮等待已达到时限/)
+  assert.match(partial, /已核对的证据 1/)
+  assert.match(partial, /已核对的证据 2/)
+  assert.ok(partial.includes(late.id))
+  assert.deepEqual(tm.get(parent.id)?.fleet_followup?.pending, [late.id])
+  assert.deepEqual(calls, ["collect_handback", "collect_handback"])
+
+  let judgments = 0
+  Provider.prototype.complete = async input => {
+    judgments++
+    assert.match(JSON.stringify(input.messages), /round_limit/)
+    assert.match(JSON.stringify(input.messages), /已核对的证据 1/)
+    assert.equal("tools" in input, false)
+    return { content: JSON.stringify({ decision: "adjust", summary: "保留前两份证据。缺少第三个来源，补派前请确认。", release_worker_ids: [workers[0].id, late.id] }) }
+  }
+  const collect = async (parentId: string, workerId: string, current: () => boolean) => collectWorkerHandback(tm, {
+    workerId, callerThreadId: parentId, isThreadLlmActive: active, sourceStillCurrent: current,
+    resolveToolCall: resolveToolCallFromThreadMessages(tm, workerId, parentId),
+  })
+  const opts = { active, send: (frame: unknown) => sent.push(frame), collect }
+  await reconcileFleetFollowup(tm, opts)
+  assert.equal(judgments, 0)
+  tm.update(late.id, { last_run_terminal: "round_limit", last_run_ended_at: new Date().toISOString(), last_run_settled_execution_id: late.id })
+  gates.releaseMultiAgentLlmLoop(late.id)
+  await reconcileFleetFollowup(tm, opts)
+  await reconcileFleetFollowup(tm, opts)
+  assert.equal(judgments, 1)
+  assert.equal(tm.get(parent.id)?.fleet_followup, null)
+  assert.equal(tm.get(parent.id)?.cooperation_tasks?.[`browser:${late.id}`]?.result.missing[0], "round_limit")
+  assert.match(tm.getMessages(parent.id).at(-1)?.content ?? "", /主对话判断（调整）/)
+  assert.equal(tm.get(late.id)?.worker_release, undefined, "no delivered content, no release")
+  assert.equal(tm.get(workers[1].id)?.worker_release, undefined, "absence of a release decision is not consent")
+  const observed = Date.parse(tm.get(parent.id)!.cooperation_tasks![`browser:${workers[0].id}`].observed_at)
+  assert.equal(tm.get(workers[0].id)?.worker_release?.due_at, observed + 180_000)
+  assert.equal(reapReleasedWorkers(tm, active, observed + 179_999), false)
+  assert.equal(reapReleasedWorkers(tm, active, observed + 180_000), true)
+  assert.equal(cooperationSnapshot(tm, parent.id).workers.find(row => row.worker_id === workers[0].id)?.status, "closed")
+  assert.match(tm.getMessages(workers[0].id).at(-1)?.content ?? "", /已核对的证据 1/)
+  assert.equal(tm.get(parent.id)?.cooperation_tasks?.[`browser:${workers[0].id}`]?.result.status, "completed")
+})
+
+test("#837 cancelled assessment cannot publish and a restored follow-up can reconcile terminal state", async () => {
+  const { tm, parent, params } = setup()
+  const { armFleetFollowup, cancelFleetFollowup, reconcileFleetFollowup } = await import("../src/orchestrator/fleet-continuity")
+  const worker = tm.create("terminal worker")
+  tm.update(parent.id, { agent_role: "orchestrator", orchestrator_run_id: parent.id, last_run_execution_id: parent.id })
+  tm.update(worker.id, { agent_role: "worker", parent_thread_id: parent.id, orchestrator_run_id: parent.id,
+    last_run_execution_id: worker.id, last_run_settled_execution_id: worker.id,
+    last_run_terminal: "round_limit", last_run_ended_at: new Date().toISOString() })
+  const sent: unknown[] = []
+  const opts = { active: () => false, collect: async () => {}, send: (frame: unknown) => sent.push(frame) }
+  armFleetFollowup(tm, parent.id, parent.id, [worker.id], params.config)
+  await reconcileFleetFollowup(tm, { ...opts, assess: async (_config, _objective, _states, signal) => {
+    cancelFleetFollowup(tm, parent.id)
+    assert.equal(signal.aborted, true)
+    return { decision: "finish", summary: "stale answer", release_worker_ids: [] }
+  } })
+  assert.equal(sent.length, 0)
+  assert.equal(tm.getMessages(parent.id).length, 0)
+  armFleetFollowup(tm, parent.id, parent.id, [worker.id], params.config)
+  const restored = new ThreadManager()
+  await reconcileFleetFollowup(restored, { ...opts, assess: async () => assert.fail("provider credentials are not restored") })
+  assert.match(restored.getMessages(parent.id).at(-1)?.content ?? "", /主对话判断（调整）/)
+  assert.equal(restored.get(parent.id)?.fleet_followup, null)
+})
