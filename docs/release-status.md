@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-> 源码版本 **0.8.3（已于 2026-11-06 正式发布）**，修复计划内 `spawn_worker` 的目标校验错误（#836）。正式安装包见 [v0.8.3 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.3)。
+> 源码开发版本 **0.8.4（尚未正式发布）**，补齐 macOS 和 Linux X11 的指定聊天范围（#842）。当前正式安装包见 [v0.8.3 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.3)。
 
 ## 0.8.3 正式发行回执
 

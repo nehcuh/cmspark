@@ -2,7 +2,7 @@ import * as fs from "fs"
 import * as path from "path"
 
 /** Fallback must stay lock-step with companion/package.json (test-package-gates). */
-export const CLI_VERSION_FALLBACK = "0.8.3"
+export const CLI_VERSION_FALLBACK = "0.8.4"
 
 export function resolveCliVersion(): string {
   const candidates = [
