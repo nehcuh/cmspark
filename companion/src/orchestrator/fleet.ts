@@ -6,7 +6,7 @@ import { listWorkers } from "./spawn"
 import { countOpenIntents } from "../board/intent-claim"
 import { multiAgentLlmLoopSnapshot, pendingDeferredLlmKickThreadIds } from "./llm-loop-gate"
 import { workerOccupiesSlot } from "./worker-occupancy"
-import { fleetWorkerState } from "./fleet-continuity"
+import { fleetFollowupView, fleetWorkerState } from "./fleet-continuity"
 
 export interface FleetWorkerView {
   id: string
@@ -19,6 +19,7 @@ export interface FleetWorkerView {
   status: "idle" | "paused" | "holding_tabs" | "unknown"
   /** In-flight LLM for this worker (run-state). */
   llm_active?: boolean
+  followup?: ReturnType<typeof fleetFollowupView>
   task_status?: string
   parent_wait_timed_out?: boolean
   release_due_at?: number
@@ -151,6 +152,7 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
       paused: !!w.paused,
       status,
       llm_active: llmSet.has(w.id),
+      ...(w.agent_role !== "worker" && w.fleet_followup ? { followup: fleetFollowupView(tm, w) } : {}),
       ...(task ? { task_status: task.status, parent_wait_timed_out: task.parent_wait_timed_out, release_due_at: task.release_due_at } : {}),
       // #578: 占名额只对 worker 行有意义——orchestrator/普通 parent 行不算占用
       ...(w.agent_role === "worker"

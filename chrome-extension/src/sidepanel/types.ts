@@ -449,6 +449,7 @@ export interface FleetWorkerView {
   paused: boolean
   status: "idle" | "paused" | "holding_tabs" | "unknown"
   llm_active?: boolean
+  followup?: { phase: "choose" | "wait" | "report" | "merge" | "tracking"; offer_id?: string; pending: number }
   task_status?: string
   parent_wait_timed_out?: boolean
   release_due_at?: number

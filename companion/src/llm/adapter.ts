@@ -647,7 +647,7 @@ export async function chatCreate(params: ChatCreateParams) {
     ...(startingThread?.worker_release ? { worker_release: null } : {}) })
   const pendingFollowup = startingThread?.fleet_followup
   if (pendingFollowup && pendingFollowup.run_id === startingThread?.orchestrator_run_id) {
-    armFleetFollowup(threadManager, threadId, executionId, pendingFollowup.pending, config)
+    armFleetFollowup(threadManager, threadId, executionId, pendingFollowup.pending, config, pendingFollowup)
   }
   // L-2 (#388): reset the caller-owned run-outcome accumulator (observation only).
   //
@@ -1542,9 +1542,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     assertCurrentFleetRun()
     const pending = reports.filter(r => r.status === "waiting_timeout").map(r => String(r.worker_id))
     if (pending.length) {
-      armFleetFollowup(threadManager, threadId, executionId, pending, config)
+      const previous = threadManager.get(threadId)?.fleet_followup ?? undefined
+      armFleetFollowup(threadManager, threadId, executionId, [...pending, ...(previous?.pending ?? [])], config, previous)
       const checkpoint = fleetCheckpoint(fleetWorkerStates(threadManager, threadManager.get(threadId), isActive))
-      const content = "本轮等待已达到时限。以下是已取得的结果及未完成项，子任务结束后会在本对话跟进。\n\n" + checkpoint
+      const content = "本轮等待已达到时限。以下是已取得的结果及未完成项，子任务结束后会在本对话跟进。" +
+        (!previous || previous.mode === "choose" ? "你可以继续等待，或先生成阶段报告。" : "") + "\n\n" + checkpoint
       const note = threadManager.addMessage(threadId, { thread_id: threadId, role: "assistant", content })
       sendToExtension({ type: "chat.assistant", thread_id: threadId, message_id: note.id, content })
       sendToExtension({ type: "chat.done", thread_id: threadId, message_id: note.id, finish_reason: "stop" })

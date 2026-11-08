@@ -299,7 +299,7 @@ test("#837 three-worker replay: two handbacks are shown at timeout, late round-l
   const { tm, parent, params, sent, calls } = setup()
   const { ORCHESTRATOR_TOOL_ALLOWLIST } = await import("../src/orchestrator/constants")
   const { cooperationSnapshot } = await import("../src/orchestrator/cooperation-state")
-  const { reconcileFleetFollowup, reapReleasedWorkers, requestWorkerRelease } = await import("../src/orchestrator/fleet-continuity")
+  const { chooseFleetFollowup, reconcileFleetFollowup, reapReleasedWorkers, requestWorkerRelease } = await import("../src/orchestrator/fleet-continuity")
   const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("../src/board")
   const mockComplete = Provider.prototype.complete
   t.after(() => { Provider.prototype.complete = mockComplete; gates._resetMultiAgentLlmLoopsForTests() })
@@ -341,6 +341,7 @@ test("#837 three-worker replay: two handbacks are shown at timeout, late round-l
   assert.ok(partial.includes(late.id))
   assert.deepEqual(tm.get(parent.id)?.fleet_followup?.pending, [late.id])
   assert.deepEqual(calls, ["collect_handback", "collect_handback"])
+  assert.ok(chooseFleetFollowup(tm, parent.id, tm.get(parent.id)!.fleet_followup!.offer_id!, "wait"))
 
   let judgments = 0
   Provider.prototype.complete = async input => {
@@ -378,7 +379,7 @@ test("#837 three-worker replay: two handbacks are shown at timeout, late round-l
 
 test("#837 cancelled assessment cannot publish and a restored follow-up can reconcile terminal state", async () => {
   const { tm, parent, params } = setup()
-  const { armFleetFollowup, cancelFleetFollowup, reconcileFleetFollowup } = await import("../src/orchestrator/fleet-continuity")
+  const { armFleetFollowup, cancelFleetFollowup, chooseFleetFollowup, reconcileFleetFollowup } = await import("../src/orchestrator/fleet-continuity")
   const worker = tm.create("terminal worker")
   tm.update(parent.id, { agent_role: "orchestrator", orchestrator_run_id: parent.id, last_run_execution_id: parent.id })
   tm.update(worker.id, { agent_role: "worker", parent_thread_id: parent.id, orchestrator_run_id: parent.id,
@@ -387,6 +388,7 @@ test("#837 cancelled assessment cannot publish and a restored follow-up can reco
   const sent: unknown[] = []
   const opts = { active: () => false, collect: async () => {}, send: (frame: unknown) => sent.push(frame) }
   armFleetFollowup(tm, parent.id, parent.id, [worker.id], params.config)
+  assert.ok(chooseFleetFollowup(tm, parent.id, tm.get(parent.id)!.fleet_followup!.offer_id!, "wait"))
   await reconcileFleetFollowup(tm, { ...opts, assess: async (_config, _objective, _states, signal) => {
     cancelFleetFollowup(tm, parent.id)
     assert.equal(signal.aborted, true)
@@ -395,6 +397,7 @@ test("#837 cancelled assessment cannot publish and a restored follow-up can reco
   assert.equal(sent.length, 0)
   assert.equal(tm.getMessages(parent.id).length, 0)
   armFleetFollowup(tm, parent.id, parent.id, [worker.id], params.config)
+  assert.ok(chooseFleetFollowup(tm, parent.id, tm.get(parent.id)!.fleet_followup!.offer_id!, "wait"))
   const restored = new ThreadManager()
   await reconcileFleetFollowup(restored, { ...opts, assess: async () => assert.fail("provider credentials are not restored") })
   assert.match(restored.getMessages(parent.id).at(-1)?.content ?? "", /主对话判断（调整）/)

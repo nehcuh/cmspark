@@ -4620,6 +4620,10 @@ async function dispatchMessage(
     }
 
     // --- Mission Packs (P0) ---
+    case "fleet.followup.choose": {
+      const { handleFleetFollowupChoice } = await import("./message-router/handlers/fleet-followup")
+      return handleFleetFollowupChoice(rest, threadManager, session)
+    }
     case "fleet.status": {
       const { buildFleetSnapshot } = await import("./orchestrator/fleet")
       // Stage 3: reap stale intents on active orchestrator hosts when polling fleet

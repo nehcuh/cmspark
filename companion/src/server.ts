@@ -416,13 +416,14 @@ async function initServices() {
     if (reconciling) return
     reconciling = true
     void (async () => {
-      if (reapReleasedWorkers(tm, active)) broadcastFleetSnapshotIfWorkers(tm, send)
-      await reconcileFleetFollowup(tm, { active, send,
+      const released = reapReleasedWorkers(tm, active)
+      const updated = await reconcileFleetFollowup(tm, { active, send,
         collect: (parentId, workerId, current) => collectWorkerHandback(tm, {
           workerId, callerThreadId: parentId, isThreadLlmActive: active, sourceStillCurrent: current,
           resolveToolCall: resolveToolCallFromThreadMessages(tm, workerId, parentId),
         }),
       })
+      if (released || updated) broadcastFleetSnapshotIfWorkers(tm, send)
     })().catch(() => logger.warn("fleet.continuity_tick_failed")).finally(() => { reconciling = false })
   }, 4000)
   fleetTimer.unref()

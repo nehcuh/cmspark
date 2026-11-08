@@ -54,6 +54,7 @@ import { tokens, statusColor } from "../ui/tokens"
 import { captionOnlyForEdit, previewDataUrl } from "../utils/image-compose"
 import { previewImageSafe } from "../utils/computer-utils"
 import type { MessageAttachment } from "../types"
+import { FleetFollowupChoice } from "./FleetFollowupChoice"
 import {
   CompanionMark,
   IconBranch,
@@ -139,6 +140,13 @@ export function ChatView() {
       ? contextCompactedByThreadId[activeThreadId]
       : null
   const runItems = threads.find((t) => t.id === activeThreadId)?.run_progress?.items
+  const fleetFollowup = fleet?.workers.find(worker => worker.id === activeThreadId)?.followup
+  const isFleetParent = threads.some(thread => thread.id === activeThreadId && thread.agent_role === "orchestrator")
+  useEffect(() => {
+    if (isFleetParent && state.connectionState === "connected") {
+      void chrome.runtime.sendMessage({ type: "fleet.status" }).catch(() => {})
+    }
+  }, [activeThreadId, isFleetParent, state.connectionState])
   // #502 A / #507: consecutive role=tool rows render as one per-turn block.
   // Correlate L2 confirms by tool_name, but only those owned by this thread
   // (worker_id / thread_id on the frame). Cross-thread pending click must
@@ -568,6 +576,11 @@ export function ChatView() {
               {fakeEndLabel}
               <span style={{ color: tokens.accent, marginLeft: 6 }}>查看子任务</span>
             </button>
+          </div>
+        )}
+        {activeThreadId && fleetFollowup && (
+          <div style={styles.agentMsg}>
+            <FleetFollowupChoice threadId={activeThreadId} followup={fleetFollowup} />
           </div>
         )}
         {loopView && activeThreadId ? (
