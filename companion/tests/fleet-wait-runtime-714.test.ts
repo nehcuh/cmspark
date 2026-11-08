@@ -233,9 +233,22 @@ test("a foreign live worker remains denied instead of entering owned fleet coord
   }
 })
 
-test("timeout persists a pending checkpoint and stops repeated polls", async () => {
-  const s = setup(1), originalNow = Date.now
+test("three-worker poll timeout keeps two reports and automatically assesses a late successful report", async () => {
+  const s = setup(3), originalNow = Date.now
   const { FLEET_WAIT_MS } = await import("../src/orchestrator/fleet-supervision")
+  const { reconcileFleetFollowup } = await import("../src/orchestrator/fleet-continuity")
+  const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("../src/board")
+  const [first, second, late] = s.workers
+  const complete = (worker: typeof late, content: string) => {
+    const message = s.tm.addMessage(worker.id, { thread_id: worker.id, role: "assistant", content })
+    s.tm.update(worker.id, { last_run_terminal: null, last_run_ended_at: new Date().toISOString(),
+      last_run_settled_execution_id: worker.id })
+    gates.releaseMultiAgentLlmLoop(worker.id)
+    return message
+  }
+  for (const worker of s.workers) s.tm.update(worker.id, { last_run_execution_id: worker.id })
+  complete(first, "First early report")
+  complete(second, "Second early report")
   s.setWait(() => { Date.now = () => originalNow() + FLEET_WAIT_MS + 10 })
   providerRound = async function* (p) {
     s.inputs.push(p)
@@ -248,22 +261,59 @@ test("timeout persists a pending checkpoint and stops repeated polls", async () 
     }
   }
   try {
-    await adapter.chatCreate(s.params)
+    try { await adapter.chatCreate(s.params) }
+    finally { Date.now = originalNow }
     assert.equal(s.inputs.length, 1)
     assert.equal(s.waits, 1)
-    assert.equal(s.calls.filter(n => n === "wait_workers").length, 1)
+    assert.deepEqual(s.calls, ["wait_workers", "collect_handback", "collect_handback"])
     const done = s.frames.filter(f => f.type === "chat.done")
     assert.equal(done.length, 1)
     const final = s.tm.getMessages(s.parent.id).find(m => m.id === done[0].message_id)
     assert.match(final?.content ?? "", /子任务结束后会在本对话跟进/)
-    assert.ok(final?.content?.includes(s.workers[0].id))
-    assert.deepEqual(s.tm.get(s.parent.id)?.fleet_followup?.pending, [s.workers[0].id])
+    assert.match(final?.content ?? "", /First early report/)
+    assert.match(final?.content ?? "", /Second early report/)
+    assert.ok(final?.content?.includes(late.id))
+    assert.deepEqual(s.tm.get(s.parent.id)?.fleet_followup?.pending, [late.id])
     assert.equal(final?.tool_calls?.length ?? 0, 0)
-    assert.equal(s.tm.get(s.workers[0].id)?.last_run_ended_at, undefined)
+    assert.equal(s.tm.get(late.id)?.last_run_ended_at, undefined)
     assert.equal(s.stats.terminal, null, "waiting is not a fabricated execution error")
+
+    const active = await dispatch.buildIsThreadLlmActive()
+    const collected: string[] = []
+    let assessments = 0
+    const opts = {
+      active, send: (frame: unknown) => s.frames.push(frame),
+      collect: (parentId: string, workerId: string, current: () => boolean) => {
+        collected.push(workerId)
+        return collectWorkerHandback(s.tm, { workerId, callerThreadId: parentId, isThreadLlmActive: active,
+          sourceStillCurrent: current, resolveToolCall: resolveToolCallFromThreadMessages(s.tm, workerId, parentId) })
+      },
+      assess: async (_config: unknown, _objective: string, states: { worker_id: string; status: string }[]) => {
+        assessments++
+        assert.deepEqual(states.map(row => [row.worker_id, row.status]).sort(),
+          s.workers.map(worker => [worker.id, "completed"]).sort())
+        return { decision: "finish" as const, summary: "All three reports are ready.", release_worker_ids: [] }
+      },
+    }
+    await reconcileFleetFollowup(s.tm, opts)
+    assert.equal(assessments, 0)
+    assert.deepEqual(collected, [])
+    const report = complete(late, "Late successful report")
+    await reconcileFleetFollowup(s.tm, opts)
+    await reconcileFleetFollowup(s.tm, opts)
+    assert.equal(assessments, 1)
+    assert.deepEqual(collected, [late.id])
+    assert.equal(s.tm.get(s.parent.id)?.fleet_followup, null)
+    const handback = s.tm.get(s.parent.id)?.cooperation_tasks?.[`browser:${late.id}`]?.result
+    assert.equal(handback?.status, "completed")
+    assert.equal(handback?.source.message_id, report.id)
+    const followup = s.tm.getMessages(s.parent.id).at(-1)
+    assert.match(followup?.content ?? "", /Late successful report/)
+    assert.match(followup?.content ?? "", /主对话判断（收尾）/)
+    assert.equal(s.frames.filter(f => f.type === "chat.done" && f.message_id === followup?.id).length, 1)
+    assert.equal(s.calls.includes("spawn_worker"), false)
   } finally {
-    Date.now = originalNow
-    gates.releaseMultiAgentLlmLoop(s.workers[0].id)
+    for (const worker of s.workers) gates.releaseMultiAgentLlmLoop(worker.id)
     gates.releaseMultiAgentLlmLoop(s.parent.id)
   }
 })
