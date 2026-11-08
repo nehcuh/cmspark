@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-> 源码版本 **0.9.0（已于 2026-11-08 正式发布）**，新增超时报告选择与晚到结果合并，修复子线程工具继承（#839、#840）。正式安装包见 [v0.9.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.9.0)。
+> 源码开发版本 **0.9.1（尚未正式发布）**，修复 macOS Computer Use 重复输入与在途急停回执（#844）。当前正式安装包见 [v0.9.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.9.0)。
 
 ## 0.9.0 正式发行回执
 
