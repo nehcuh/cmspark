@@ -38,6 +38,7 @@ import type { SkillEngine } from "../skills/skill-engine"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
 import { registerComputerInputStop } from "../computer/task-abort-registry"
+import { gateHostComputerFocusLease, releaseCuFocusLease } from "../loop/cu-focus-lease"
 import { proposeRunProgress } from "../threads/run-progress"
 import { acpSessionLookupFailure, currentAcpSessions } from "../acp/session-recovery"
 import { resolveAcpThreadId } from "../acp/thread-id"
@@ -2170,7 +2171,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const cuThreadId = String(params.__thread_id || params._thread_id || params.thread_id || "")
       let cuLeaseHeld = false
       if (cuThreadId) {
-        const { gateHostComputerFocusLease } = await import("../loop/cu-focus-lease")
         const lease = gateHostComputerFocusLease(threadManager.get(cuThreadId) as any, cuThreadId)
         if (!lease.ok) {
           return {
@@ -2466,7 +2466,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         computerTaskAbort.delete(computerTaskId)
         if (cuLeaseHeld && cuThreadId) {
           try {
-            const { releaseCuFocusLease } = await import("../loop/cu-focus-lease")
             releaseCuFocusLease(cuThreadId)
           } catch {
             /* lease release is best-effort */
