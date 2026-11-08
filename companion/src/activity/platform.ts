@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { resolveWinScript, runPs, type PsRunner } from '../host-use/win/powershell'
 import { MacPassiveRecorder, type CapturedWindow, type RecorderAdapter } from './adapters'
 import { ActivityError, PROTECTED_APPS, type ActivityApp, type ActivityConfig, type ActivityRect } from './types'
-import { ActivityScopeSkip, imageSize, profileForFrame, recognizedChatTitle, validateActivityRect } from './chat-scope'
+import { ActivityScopeSkip, activityImageCrop, imageSize, namedWindowLayout, profileForFrame, recognizedChatTitle, scopeLocalFrame, validateActivityRect } from './chat-scope'
 import { decodeWindowsActivityApps } from './windows-apps'
 
 const exec = promisify(execFile)
@@ -125,8 +125,17 @@ export class LinuxPassiveRecorder implements RecorderAdapter {
     validatePng(image)
     return withPendingImage(this.root, image, file => this.ocr(file, language, signal))
   }
-  private async ocr(file: string, language: LocalLanguage, signal: AbortSignal): Promise<string> {
-    return (await this.run('/usr/bin/tesseract', [file, 'stdout', '-l', { 'zh-Hans': 'chi_sim+eng', 'zh-Hant': 'chi_tra+eng', 'en-US': 'eng' }[language], '--psm', '3'], signal)).trim().slice(0, 24000)
+  private async ocr(file: string, language: LocalLanguage, signal: AbortSignal, pageMode = '3'): Promise<string> {
+    return (await this.run('/usr/bin/tesseract', [file, 'stdout', '-l', { 'zh-Hans': 'chi_sim+eng', 'zh-Hant': 'chi_tra+eng', 'en-US': 'eng' }[language], '--psm', pageMode], signal)).trim().slice(0, 24000)
+  }
+  private readTitle(crop: Buffer, language: LocalLanguage, signal: AbortSignal): Promise<string> {
+    return withPendingImage(this.root, crop, async file => {
+      const text = await this.ocr(file, language, signal, '7')
+      return recognizedChatTitle({ ok: true, words: text.split(/\r?\n/).map(line => ({ text: line })) })
+    })
+  }
+  async ocrTitle(image: Buffer, rect: ActivityRect, language: LocalLanguage, signal: AbortSignal): Promise<string> {
+    return this.readTitle(activityImageCrop(image)(rect), language, signal)
   }
   async capture(config: ActivityConfig, signal: AbortSignal): Promise<CapturedWindow | null> {
     return withPendingImage(this.root, null, async file => {
@@ -138,7 +147,11 @@ export class LinuxPassiveRecorder implements RecorderAdapter {
       const stat = fs.lstatSync(file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024) throw new ActivityError('CAPTURE_FAILED', 'Linux 截图不可读取')
       const image = fs.readFileSync(file); validatePng(image)
-      return { app_id: w.app_id, app_name: w.app_name.slice(0, 200), window_title: w.title.slice(0, 500), image, ocr_text: (config.extraction_mode || 'ocr') !== 'ocr' ? '' : await this.ocr(file, languageOf(config), signal) }
+      const window_class = namedWindowLayout('linux', w.title), language = languageOf(config)
+      const scoped = await scopeLocalFrame(config, w.app_id, window_class, image, signal, crop => this.readTitle(crop, language, signal))
+      const ocr_text = (config.extraction_mode || 'ocr') !== 'ocr' ? '' : scoped.conversation_title ?
+        await this.ocrImage(scoped.image, language, signal) : await this.ocr(file, language, signal)
+      return { app_id: w.app_id, app_name: w.app_name.slice(0, 200), window_title: w.title.slice(0, 500), window_class, ocr_text, ...scoped }
     })
   }
 }

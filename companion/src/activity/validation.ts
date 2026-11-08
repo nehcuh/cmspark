@@ -1,4 +1,4 @@
-import { ActivityError, PROTECTED_APPS } from './types'
+import { ActivityError, isActivityAppId } from './types'
 import { validateActivityRect, validateChatScopes } from './chat-scope'
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype
 export function checkObject(v: unknown, allowed: string[]): asserts v is Record<string, unknown> {
@@ -31,7 +31,7 @@ export function validateConfig(patch: unknown): Record<string, unknown> {
     else if (key === 'ocr_language') { if (!['zh-Hans', 'zh-Hant', 'en-US'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', 'OCR 语言无效') }
     else if (key === 'enabled' || key === 'ocr_ai_enabled' || key === 'image_ai_enabled') { if (typeof value !== 'boolean') throw new ActivityError('INVALID_REQUEST', '开关必须是布尔值') }
     else if (key === 'allowed_apps') {
-      if (!Array.isArray(value) || value.length > 20 || value.some(app => typeof app !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]{2,199}$/.test(app) || /^(?:win|linux)\./.test(app) && !/^(?:win|linux)\.[a-f0-9]{64}$/.test(app) || PROTECTED_APPS.test(app))) throw new ActivityError('INVALID_REQUEST', '应用白名单无效或包含敏感应用')
+      if (!Array.isArray(value) || value.length > 20 || !value.every(isActivityAppId)) throw new ActivityError('INVALID_REQUEST', '应用白名单无效或包含敏感应用')
     } else {
       const limits: Record<string, [number, number]> = { interval_ms: [3_000, 600_000], retention_days: [1, 90], max_storage_mb: [16, 10240] }
       const [min, max] = limits[key]
@@ -71,7 +71,7 @@ export function validateActivityMessage(message: unknown): boolean {
     if ('expected_revision' in message && (!Number.isSafeInteger(message.expected_revision) || Number(message.expected_revision) < 0)) return false
     if (['activity.configure', 'todo.create', 'todo.confirm', 'todo.update', 'todo.dismiss'].includes(message.type) && !('expected_revision' in message)) return false
     if (['activity.import', 'activity.preview_ocr'].includes(message.type) && (typeof message.image_base64 !== 'string' || message.image_base64.length > 8_388_608 || message.image_base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(message.image_base64) || !message.image_base64.length)) return false
-    if (message.type === 'activity.preview' && (typeof message.app_id !== 'string' || !/^win\.[a-f0-9]{64}$/.test(message.app_id))) return false
+    if (message.type === 'activity.preview' && !isActivityAppId(message.app_id)) return false
     if (message.type === 'activity.preview_ocr') {
       validateActivityRect(message.rect)
       if (!['zh-Hans', 'zh-Hant', 'en-US'].includes(String(message.ocr_language))) return false

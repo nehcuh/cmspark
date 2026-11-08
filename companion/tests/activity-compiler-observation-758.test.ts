@@ -44,7 +44,18 @@ test('#758 compiler failure observation handles cancellation and refuses hostile
 // Every inserted line must appear exactly once; never update the historical pin.
 const wpfDiagnosticLine = "    if(win)try{const project=require(path.resolve('tests/helpers/activity-wpf-observation-758.cjs'));t.diagnostic('D758_WPF_PHASE '+JSON.stringify({at:'CLOSE',phases:project(dir)}))}catch{}\n"
 function restoreController(value: string, eol: string): string {
+  const x11ScopeStart = '      assert.ok(captured.window_class)' + eol
+  const x11ScopeEnd = '      // _NET_WM_PID is spoofable:'
+  assert.equal(value.split(x11ScopeStart).length, 2)
+  assert.equal(value.split(x11ScopeEnd).length, 2)
+  const start = value.indexOf(x11ScopeStart)
+  const end = value.indexOf(x11ScopeEnd, start)
+  const x11Scope = value.slice(start, end).replace(/\r\n/g, '\n')
+  assert.equal(createHash('sha256').update(x11Scope).digest('hex'), 'de81e948215c99ef05eb51243f5903b9030de02fd26231ebaeccf4a5ae85a476')
   const changes: [string, string][] = [
+    // #841 adds one import and one Linux-only acceptance block.
+    ["import { ActivityScopeSkip, imageSize } from '../src/activity/chat-scope'\n", ''],
+    [x11Scope, ''],
     // #825 changes the real Apps DTO consumer; restore that explicit delta too.
     ['Array.isArray(listed.apps)', 'Array.isArray(listed.windows)'],
     [wpfDiagnosticLine, ''],
@@ -70,6 +81,7 @@ for (const [eol, expected] of [['\n', '9898bc1278d7e5958ce01a06b12e046a2d64ba1ee
     assert.equal(original.split(line).length, 2)
     assert.throws(() => restoreController(original.replace(line, ''), eol))
     assert.throws(() => restoreController(original.replace(line, line + line), eol))
+    assert.throws(() => restoreController(original.replace("'PROJECT ALPHA'", "'PROJECT BRAVO'"), eol))
     const changed = original.replace('const enabled=', 'const enabled =')
     assert.notEqual(changed, original)
     assert.notEqual(digest(restoreController(changed, eol)), expected)

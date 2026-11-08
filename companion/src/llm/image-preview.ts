@@ -90,7 +90,7 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([len, typeBuf, data, crc])
 }
 
-function encodePngRgba(rgba: Uint8Array, width: number, height: number): Buffer {
+export function encodePngRgba(rgba: Uint8Array, width: number, height: number): Buffer {
   const src = Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength)
   const raw = Buffer.alloc((width * 4 + 1) * height)
   for (let y = 0; y < height; y++) {

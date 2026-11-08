@@ -1274,7 +1274,7 @@
     "type": "function",
     "function": {
       "name": "list_workers",
-      "description": "List worker threads for the current orchestrator_run, including trashed rows (`trashed: true`) — trashed workers still hold spawn slots and creation budget, so use these rows to reconcile a \"worker slots full (trashed workers still count)\" rejection. Each row carries `occupancy` (paused/running/not_started/overdue/completed/terminated: the last three have released their slot; the first three hold one) plus `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both null = it never ran. Use these to tell a dead worker from an idle one (#569) and to see why slots are full or free (#578).",
+      "description": "List worker threads for the current orchestrator_run. Before the first dispatch this returns an empty list with a null run ID. Includes trashed rows (`trashed: true`) — trashed workers still hold spawn slots and creation budget, so use these rows to reconcile a \"worker slots full (trashed workers still count)\" rejection. Each row carries `occupancy` (paused/running/not_started/overdue/completed/terminated: the last three have released their slot; the first three hold one) plus `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both null = it never ran. Use these to tell a dead worker from an idle one (#569) and to see why slots are full or free (#578).",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -1417,7 +1417,7 @@
     "type": "function",
     "function": {
       "name": "wait_workers",
-      "description": "Poll-only snapshot of workers in this orchestrator_run (ADR-015). Does NOT block/sleep for a barrier — call repeatedly or use HITL. True async barrier is not implemented. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both absent = it never ran. Use these to tell a dead worker from an idle one (#569). In a parent chat, a successful poll transfers to bounded runtime waiting after this tool batch, yielding the parent model slot for queued workers. The tool itself remains poll-only. On deadline, disclose still-running work rather than repeatedly calling this tool or spawning duplicates.",
+      "description": "Poll-only snapshot of workers in this orchestrator_run (ADR-015). Before the first dispatch this returns an empty list immediately. Does NOT block/sleep for a barrier — call repeatedly or use HITL. True async barrier is not implemented. Each worker also carries `last_run_terminal` + `last_run_ended_at`: null terminal with a set timestamp = the run ended normally; a non-null terminal (e.g. \"circuit_breaker\") = that is how it ended; both absent = it never ran. Use these to tell a dead worker from an idle one (#569). In a parent chat, a successful poll transfers to bounded runtime waiting after this tool batch, yielding the parent model slot for queued workers. The tool itself remains poll-only. On deadline, disclose still-running work rather than repeatedly calling this tool or spawning duplicates.",
       "parameters": {
         "type": "object",
         "properties": {},

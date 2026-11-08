@@ -92,6 +92,7 @@ export interface ActivityState {
 }
 export interface ActivityRuntime {
   platform: string
+  chat_scope_supported?: boolean
   capture_mode?: 'automatic' | 'manual-only'
   platform_note?: string
   supported: boolean
@@ -117,4 +118,8 @@ export const DEFAULT_ACTIVITY_CONFIG: ActivityConfig = {
   retention_days: 14, max_storage_mb: 512,
 }
 export const PROTECTED_APPS = /(?:keychainaccess|1password|onepassword|bitwarden|lastpass|keepass|dashlane|authy|authenticator|systempreferences|loginwindow|screenlock|securityagent|authorizationhost|passwords|wallet|metamask|ledger|exodus|secretive|logonui|credentialuibroker|lockapp|winlogon|consent\.exe|screensaver|screenlock|kscreenlocker|gnome-shell|gdm|lightdm|sddm)/i
+export function isActivityAppId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9.-]{2,199}$/.test(value) &&
+    (!/^(?:win|linux)\./.test(value) || /^(?:win|linux)\.[a-f0-9]{64}$/.test(value)) && !PROTECTED_APPS.test(value)
+}
 export const COVERAGE = '仅记录已授权且位于前台的应用窗口可见内容；不会切换聊天、滚动或读取未显示消息。提醒要求本机 Companion 运行；系统可能抑制通知。'
