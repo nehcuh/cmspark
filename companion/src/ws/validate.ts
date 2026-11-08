@@ -1384,6 +1384,14 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     // ADR-015 multi-agent fleet / Confirm Center
     "fleet.status": () => ({ valid: true }),
+    "fleet.followup.choose": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id.trim() || m.thread_id.length > 128 ||
+          typeof m.offer_id !== "string" || !/^[0-9a-f-]{36}$/.test(m.offer_id) ||
+          m.user_gesture !== true || !["wait", "summarize", "merge", "dismiss"].includes(m.action)) {
+        return { valid: false, error: "fleet.followup.choose requires the current offer and a user gesture" }
+      }
+      return { valid: true }
+    },
     "fleet.stop_all": () => ({ valid: true }),
     "worker.pause": (m) => {
       if (typeof m.worker_id !== "string" || !m.worker_id) return { valid: false, error: "worker.pause requires worker_id" }

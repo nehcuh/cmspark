@@ -1,4 +1,7 @@
-import { ActivityError, type ActivityChatProfile, type ActivityConfig, type ActivityRect } from './types'
+import { createHash } from 'node:crypto'
+import { decodePngToRgba } from '../computer/png-decode'
+import { encodePngRgba } from '../llm/image-preview'
+import { ActivityError, isActivityAppId, type ActivityChatProfile, type ActivityConfig, type ActivityRect } from './types'
 import { validatePng } from './image'
 
 /** An expected refusal: no source or model request may follow it. */
@@ -27,7 +30,7 @@ export function validateChatScopes(value: unknown): void {
   const apps = new Set<string>()
   for (const scope of value) {
     keys(scope, ['app_id', 'profiles'])
-    if (typeof scope.app_id !== 'string' || !/^win\.[a-f0-9]{64}$/.test(scope.app_id) || apps.has(scope.app_id) || !Array.isArray(scope.profiles) || scope.profiles.length > 8) throw new ActivityError('INVALID_REQUEST', '聊天应用范围无效或重复')
+    if (!isActivityAppId(scope.app_id) || apps.has(scope.app_id) || !Array.isArray(scope.profiles) || scope.profiles.length > 8) throw new ActivityError('INVALID_REQUEST', '聊天应用范围无效或重复')
     apps.add(scope.app_id)
     const layouts = new Set<string>()
     for (const profile of scope.profiles) {
@@ -57,4 +60,47 @@ export function recognizedChatTitle(result: unknown): string {
   const title = value.words.map(word => word.text as string).join(' ').trim()
   if (title.length > 200) throw new ActivityScopeSkip('scope_unreadable', '标题区域包含过多文字；请只框选当前聊天标题')
   return title
+}
+
+/** Quartz and X11 receipts give a window title. Treat a change as an uncalibrated layout. */
+export function namedWindowLayout(platform: 'darwin' | 'linux', title: unknown): string | undefined {
+  if (typeof title !== 'string' || !title.trim() || title.length >= 500) return undefined
+  return platform + ':' + createHash('sha256').update(title).digest('hex')
+}
+
+/** Both crops are made from the same locally decoded frame, with no rescaling. */
+export function activityImageCrop(image: Buffer): (rect: ActivityRect) => Buffer {
+  const size = imageSize(image)
+  const { rgba, width, height } = decodePngToRgba(image)
+  if (size.width !== width || size.height !== height) throw new ActivityError('INVALID_IMAGE', '截图尺寸不一致')
+  return rect => {
+    validateActivityRect(rect, width, height)
+    const rowBytes = rect.width * 4
+    const crop = new Uint8Array(rowBytes * rect.height)
+    for (let row = 0; row < rect.height; row++) {
+      const offset = ((rect.y + row) * width + rect.x) * 4
+      crop.set(rgba.subarray(offset, offset + rowBytes), row * rowBytes)
+    }
+    const png = encodePngRgba(crop, rect.width, rect.height)
+    validatePng(png)
+    return png
+  }
+}
+
+export async function scopeLocalFrame(config: ActivityConfig, appId: string, windowClass: string | undefined, image: Buffer,
+  signal: AbortSignal, readTitle: (crop: Buffer) => Promise<string>): Promise<{ image: Buffer; conversation_title?: string }> {
+  const profile = profileForFrame(config, appId, windowClass, image)
+  if (!profile) return { image }
+  let crop: ReturnType<typeof activityImageCrop>, title: string
+  try {
+    crop = activityImageCrop(image)
+    title = await readTitle(crop(profile.title))
+    signal.throwIfAborted()
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw new ActivityScopeSkip('scope_unreadable', '当前聊天标题无法在本机识别；请核对 OCR 语言与标题区域')
+  }
+  if (!title) throw new ActivityScopeSkip('scope_unreadable', '未能识别当前聊天标题；请核对标题区域与本机 OCR 语言')
+  if (!profile.allowed_titles.includes(title)) throw new ActivityScopeSkip('scope_title_mismatch', '当前聊天标题不在允许名单，已跳过且未保存截图')
+  return { image: crop(profile.content), conversation_title: title }
 }

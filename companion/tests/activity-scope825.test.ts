@@ -67,7 +67,7 @@ test('scope825 exact OCR projection is identical for preview and capture, withou
   assert.equal(recognizedChatTitle({ ok: true, words: [{ text: ' ALPHA  GROUP ' }] }), 'ALPHA  GROUP')
   assert.throws(() => recognizedChatTitle({ ok: true, words: [{ text: 1 }] }))
   assert.equal(validateActivityMessage({ type: 'activity.preview', app_id: id }), true)
-  assert.equal(validateActivityMessage({ type: 'activity.preview', app_id: 'com.other.app' }), false)
+  assert.equal(validateActivityMessage({ type: 'activity.preview', app_id: 'linux.invalid' }), false)
   assert.equal(validateActivityMessage({ type: 'activity.preview_ocr', image_base64: image.toString('base64'), rect: profile.title, ocr_language: 'en-US' }), true)
   assert.equal(validateActivityMessage({ type: 'activity.preview_ocr', image_base64: image.toString('base64'), rect: profile.title, ocr_language: 'unknown' }), false)
 })

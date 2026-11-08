@@ -6,6 +6,7 @@ import { listWorkers } from "./spawn"
 import { countOpenIntents } from "../board/intent-claim"
 import { multiAgentLlmLoopSnapshot, pendingDeferredLlmKickThreadIds } from "./llm-loop-gate"
 import { workerOccupiesSlot } from "./worker-occupancy"
+import { fleetFollowupView, fleetWorkerState } from "./fleet-continuity"
 
 export interface FleetWorkerView {
   id: string
@@ -18,6 +19,10 @@ export interface FleetWorkerView {
   status: "idle" | "paused" | "holding_tabs" | "unknown"
   /** In-flight LLM for this worker (run-state). */
   llm_active?: boolean
+  followup?: ReturnType<typeof fleetFollowupView>
+  task_status?: string
+  parent_wait_timed_out?: boolean
+  release_due_at?: number
   /**
    * #578: 该 worker 是否占用 spawn 名额（paused/在跑/新鲜未跑占；终局/逾期让位）。
    * 与 spawn gate 同一谓词（worker-occupancy.ts）。与 `llm_active` 不同：
@@ -90,15 +95,17 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     llmActiveResolved = false
   }
   const llmSet = new Set(llmActive)
+  const queued = new Set(pendingDeferredLlmKickThreadIds())
   // #578: 完整三源并集（abort map ∪ loop-gate holders ∪ 排队 kick）——与 spawn gate
   // 的占名额口径同源。llmActiveResolved=false 时退化为 loop-gate 两源（advisory 展示，
   // 执行闸不受影响）。
   const isActiveUnion = (id: string) =>
     llmSet.has(id) ||
     multiAgentLlmLoopSnapshot().holders.includes(id) ||
-    pendingDeferredLlmKickThreadIds().includes(id)
+    queued.has(id)
 
-  const all = tm.list() as any[]
+  const all = tm.list()
+  const threads = new Map(all.map(thread => [thread.id, thread]))
   // A worker whose LLM run has ended (and was not paused) must not keep tab
   // leases. Otherwise Glance stays holding_tabs and the chip says 运行中
   // after the subtask is done (thread 8olhpa).
@@ -132,6 +139,9 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     const latestTool =
       typeof w.latest_tool === "string" && w.latest_tool.trim() ? w.latest_tool.trim() : undefined
     const brief = typeof w.brief === "string" && w.brief.trim() ? w.brief : undefined
+    const parent = w.agent_role === "worker" && w.parent_thread_id ? threads.get(w.parent_thread_id) : undefined
+    const task = parent && parent.orchestrator_run_id === w.orchestrator_run_id
+      ? fleetWorkerState(parent, w, isActiveUnion, id => queued.has(id)) : undefined
     return {
       id: w.id,
       alias: w.alias,
@@ -142,6 +152,8 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
       paused: !!w.paused,
       status,
       llm_active: llmSet.has(w.id),
+      ...(w.agent_role !== "worker" && w.fleet_followup ? { followup: fleetFollowupView(tm, w) } : {}),
+      ...(task ? { task_status: task.status, parent_wait_timed_out: task.parent_wait_timed_out, release_due_at: task.release_due_at } : {}),
       // #578: 占名额只对 worker 行有意义——orchestrator/普通 parent 行不算占用
       ...(w.agent_role === "worker"
         ? { occupied: workerOccupiesSlot(w, { isActive: isActiveUnion }) }

@@ -2,6 +2,8 @@ import type { ThreadManager } from "../threads/thread-manager"
 import { acpTaskResult, recoveryForTaskStatus, type CooperationResult, type CooperationStatus } from "./cooperation-result"
 import type { AcpSessionRecord } from "../acp/types"
 import { checkpointCooperationResult, clampPlannedRecovery } from "./cooperation-plan"
+import { fleetWorkerStates } from "./fleet-continuity"
+import { pendingDeferredLlmKickThreadIds } from "./llm-loop-gate"
 
 export type CooperationTaskRecord = { result: CooperationResult; observed_at: string; failure_versions: string[] }
 export const COOPERATION_TASK_CAP = 64
@@ -69,5 +71,9 @@ export function cooperationSnapshot(tm: ThreadManager, ownerId: string, opts?: {
       recovery: status === result.status && current.source.version === result.source.version ? result.recovery : recoveryForTaskStatus(status, failure_versions.length) })
     return { ...projected, observed_at, raw_report_available: rawReportAvailable }
   })
-  return { schema_version: 1 as const, tasks, data_not_instruction: true as const }
+  const queued = new Set(pendingDeferredLlmKickThreadIds())
+  return { schema_version: 1 as const, tasks,
+    workers: fleetWorkerStates(tm, parent, opts?.isActive ?? (() => false), id => queued.has(id))
+      .map(({ result, ...worker }) => ({ ...worker, result_status: result?.status, result_version: result?.source.version })),
+    data_not_instruction: true as const }
 }

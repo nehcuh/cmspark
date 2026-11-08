@@ -1,6 +1,18 @@
 # 版本与交付状态
 
-> 源码版本 **0.8.3（已于 2026-11-06 正式发布）**，修复计划内 `spawn_worker` 的目标校验错误（#836）。正式安装包见 [v0.8.3 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.3)。
+> 源码版本 **0.8.5（已于 2026-11-07 正式发布）**，修复首次派发前查询或等待子任务导致主对话中断的问题（#843）。正式安装包见 [v0.8.5 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.5)。
+
+## 0.8.5 正式发行回执
+
+- [PR #843](https://github.com/nehcuh/cmspark/pull/843) 的 10 项检查通过后合入 `9a52ad5c`。标签 `v0.8.5` 指向 `5a3606cfcdef61415b6e77101caa997dbe632525`。[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/42383981682)、ARM、Linux ARM 集成、会话持久化与[同树发布预演](https://github.com/nehcuh/cmspark/actions/runs/42382995301)均通过。
+- 正式发布时间为 2026-11-07 23:36:40（北京时间）。[正式 Release 构建](https://github.com/nehcuh/cmspark/actions/runs/42386075801)和[同标签安装器构建](https://github.com/nehcuh/cmspark/actions/runs/42386077660)均通过。Linux x64／ARM64 的 DEB 和 RPM 均包含桌面入口与图标，Chrome 扩展以独立 ZIP 提供。
+- 正式包及补充安装器的 SHA-256 已与 GitHub 资产摘要核对，见[安装器校验清单](https://github.com/nehcuh/cmspark/releases/download/v0.8.5/SHA256SUMS-INSTALLERS.txt)。本机使用该 macOS ARM64 DMG 完成换装，应用签名与 Companion 健康检查通过。
+
+## 0.8.4 正式发行回执
+
+- PR #842 的 10 项检查通过后合入 `1c4c045b`。标签 `v0.8.4` 指向 `b981f2e9e00b032df421bd100b31ba29abd925e1`。主线 CI、ARM、会话持久化和同树发布预演通过。[PR #842](https://github.com/nehcuh/cmspark/pull/842) · [主线 CI](https://github.com/nehcuh/cmspark/actions/runs/42359913243) · [发布预演](https://github.com/nehcuh/cmspark/actions/runs/42359418417)
+- macOS 实测使用真实聊天应用，允许群保存一份裁图，切换到另一群后标题不匹配且来源数量保持为一。实测配置和截图已清理。Linux X11 的真实原生夹具同样验证了切群拒绝。[Linux X11 验证](https://github.com/nehcuh/cmspark/actions/runs/42359913243/job/128365921831)
+- 正式发布时间为 2026-11-07 18:10:03（北京时间）。同标签生成六种平台与架构安装器及独立 Chrome ZIP。正式包及补充资产的 SHA-256 已核对，本机 macOS ARM64 DMG 签名与 Companion 健康检查通过。[Release 构建](https://github.com/nehcuh/cmspark/actions/runs/42361744730) · [安装器构建](https://github.com/nehcuh/cmspark/actions/runs/42361746397) · [安装器校验清单](https://github.com/nehcuh/cmspark/releases/download/v0.8.4/SHA256SUMS-INSTALLERS.txt)
 
 ## 0.8.3 正式发行回执
 

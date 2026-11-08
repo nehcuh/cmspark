@@ -42,19 +42,21 @@ const harness = loadHarness()
 const recorded = JSON.parse(fs.readFileSync(path.resolve(root, '../companion/tests/fixtures/activity-scope825.json'), 'utf8'))
 const scopes = recorded.configured.state.config.chat_scopes, appId = scopes[0].app_id
 
-async function setup() {
+async function setup(platform = 'win32') {
   const fixture = await harness.createFixture()
-  const reply = await fixture.handle({ type: 'activity.configure', expected_revision: fixture.state().revision, patch: { allowed_apps: [appId] } })
+  const chosenApp = platform === 'darwin' ? 'com.example.OwnedChat' : platform === 'linux' ? 'linux.' + 'a'.repeat(64) : appId
+  const chosenScopes = scopes.map((scope: any) => ({ ...scope, app_id: chosenApp }))
+  const reply = await fixture.handle({ type: 'activity.configure', expected_revision: fixture.state().revision, patch: { allowed_apps: [chosenApp] } })
   assert.equal(reply.ok, true)
   fixture.initial = reply.state
   // UI platform projection only; the real service/store still run without any
   // OS capture, timers, models or native calls in this test.
-  fixture.initial.runtime.platform = 'win32'
+  fixture.initial.runtime = { ...fixture.initial.runtime, platform, supported: true, chat_scope_supported: platform === 'win32' ? undefined : true }
   const ui = harness.uiHarness(fixture, { initialView: 'activity', allowConfigure: true })
   const render = () => ui.render('activity').panel
   ui.button(render(), '设置应用与隐私').props.onClick()
   const scopeNode = () => ui.find(render(), (node: any) => typeof node.type === 'function' && node.type.name === 'ChatScopeEditor')
-  scopeNode().props.onChange(plain(scopes))
+  scopeNode().props.onChange(plain(chosenScopes))
   let sourceNumber = 0
   const addSource = () => fixture.service.store.addSource(fixture.into({ app_id: appId, app_name: 'Owned chat', window_title: 'Owned source', origin: 'foreground', ocr_text: 'Owned source ' + ++sourceNumber, captured_at: '2026-11-02T09:00:00Z' }), Buffer.from('owned-source-' + sourceNumber))
   const submit = () => ui.find(render(), (node: any) => node.type === 'form').props.onSubmit({ preventDefault() {} })
@@ -73,8 +75,8 @@ async function setup() {
     await flush()
     return result
   }
-  return { fixture, ui, render, scopeNode, submit, fresh, serviceRead, addSource,
-    assertDraft() { assert.equal(JSON.stringify(plain(scopeNode().props.scopes)), JSON.stringify(scopes)) },
+  return { fixture, ui, render, scopeNode, submit, fresh, serviceRead, addSource, chosenScopes,
+    assertDraft() { assert.equal(JSON.stringify(plain(scopeNode().props.scopes)), JSON.stringify(chosenScopes)) },
     async dispose() { await ui.dispose(); await fixture.service.stop(); fixture.dispose() } }
 }
 
@@ -86,7 +88,7 @@ test('825 source-only refresh preserves scope draft bytes and saves using the fr
     const sourceState = f.fixture.state()
     assert.ok(sourceState.revision > opened.revision)
     assert.deepEqual(sourceState.config, opened.config)
-    f.ui.controller.snapshot = { ...sourceState, runtime: { ...sourceState.runtime, platform: 'win32' } }
+    f.ui.controller.snapshot = { ...sourceState, runtime: { ...sourceState.runtime, platform: 'win32', supported: true, chat_scope_supported: undefined } }
     f.assertDraft()
     assert.equal(f.ui.configurationCalls.length, 0)
     f.submit()
@@ -101,6 +103,20 @@ test('825 source-only refresh preserves scope draft bytes and saves using the fr
   } finally { await f.dispose() }
 })
 
+for (const platform of ['darwin', 'linux']) {
+  test(`work center saves the chat scope on ${platform} when Companion advertises support`, async () => {
+    const f = await setup(platform)
+    try {
+      f.assertDraft()
+      f.submit()
+      await f.fresh()
+      assert.equal(f.ui.configurationCalls.length, 1)
+      assert.equal((await f.ui.configurationCalls[0].promise).ok, true)
+      assert.deepEqual(plain(f.fixture.state().config.chat_scopes), f.chosenScopes)
+    } finally { await f.dispose() }
+  })
+}
+
 test('825 changed live config or model identity rejects before any configuration, retaining scope draft', async () => {
   for (const changed of ['config', 'model'] as const) for (const refreshed of [false, true]) {
     const f = await setup()
@@ -114,7 +130,7 @@ test('825 changed live config or model identity rejects before any configuration
         assert.deepEqual(f.fixture.state().config, before.config)
         assert.ok(f.fixture.state().runtime.model_target_ids.vision !== before.runtime.model_target_ids.vision)
       }
-      if (refreshed) { const state = f.fixture.state(); f.ui.controller.snapshot = { ...state, runtime: { ...state.runtime, platform: 'win32' } } }
+      if (refreshed) { const state = f.fixture.state(); f.ui.controller.snapshot = { ...state, runtime: { ...state.runtime, platform: 'win32', supported: true, chat_scope_supported: undefined } } }
       f.submit()
       if (!refreshed) await f.fresh()
       else assert.equal(f.ui.stateRequests.length, 0)

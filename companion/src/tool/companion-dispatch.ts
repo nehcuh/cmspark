@@ -760,8 +760,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     case "list_workers": {
       const parentId = params.__thread_id || params._thread_id
       const parent = parentId ? threadManager.get(String(parentId)) : null
-      const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
-      if (!runId) return { success: false, error: "orchestrator_run_id required (spawn workers first)" }
+      const runId = params.orchestrator_run_id || parent?.orchestrator_run_id
+      if (!runId) return parent
+        ? { success: true, data: { orchestrator_run_id: null, workers: [] } }
+        : { success: false, error: "orchestrator_run_id required (spawn workers first)" }
       const { listWorkers } = await import("../orchestrator/spawn")
       // #578: 透出占用状态，让「名额为何空了/为何满了」可解释（overdue = 从未跑过且超 idle_ttl，spawn 已让位）。
       // 评审 F1：占名额 SoT 含回收站行（G8b），诊断面必须同口径枚举——否则 gate 报
@@ -815,6 +817,21 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
     case "list_tab_locks": {
       const { listTabLocks } = await import("../orchestrator/tab-lease")
       return { success: true, data: { locks: listTabLocks() } }
+    }
+    case "worker_release": {
+      const scope = execOpts?.evidenceScope
+      const parentId = scope?.kind === "chat" ? scope.threadId : undefined
+      if (!parentId || parentId !== params.__thread_id || typeof params.worker_id !== "string") {
+        return { success: false, error: "worker_release requires the owning chat and a worker_id" }
+      }
+      try {
+        const { requestWorkerRelease } = await import("../orchestrator/fleet-continuity")
+        const active = await buildIsThreadLlmActive()
+        execOpts?.signal?.throwIfAborted()
+        return { success: true, data: requestWorkerRelease(threadManager, parentId, params.worker_id, active, params.grace_seconds) }
+      } catch (error) {
+        return { success: false, error: String(error), error_code: "WORKER_RELEASE_REJECTED" }
+      }
     }
     case "collect_handback": {
       // ADR-016 Task 3: board mode / mission_board → structured Fact/Intent merge;
@@ -1039,8 +1056,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // Frozen as poll-only (ADR-015): no async barrier / sleep in tool path.
       const parentId = params.__thread_id || params._thread_id
       const parent = parentId ? threadManager.get(String(parentId)) : null
-      const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
-      if (!runId) return { success: false, error: "orchestrator_run_id required" }
+      const runId = params.orchestrator_run_id || parent?.orchestrator_run_id
+      if (!runId) return parent
+        ? { success: true, data: { orchestrator_run_id: null, poll_only: true, intents_reaped: 0, open_intent_count: 0, workers: [] } }
+        : { success: false, error: "orchestrator_run_id required" }
       // ADR-016 Stage 3: reap stale claimed intents on host board
       let intentsReaped = 0
       let openIntents = 0
@@ -1062,7 +1081,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         success: true,
         data: {
           poll_only: true,
-          note: "wait_workers is poll-only (no barrier). Avoid repeated model polling. After a parent wait request, a pending owned handback batch, or an ordinary final reply, the parent runtime yields its model slot and waits for active/queued workers within one request deadline, collects results, and asks for a combined summary with recovery options. Repeated polls after that deadline end with an explicit still-running reply. User stop/security/round-limit endings do not auto-resume. Check llm_loops and terminal states for progress.",
+          note: "wait_workers is poll-only. The parent runtime waits within one request deadline, collects results, and reports available results at the deadline. Later worker terminal states are followed up in the parent chat. Do not poll repeatedly or start replacement workers without confirmation.",
           llm_loops: llm,
           ...(parentId ? { plan: (await import("../orchestrator/cooperation-plan")).cooperationPlanSnapshot(threadManager, String(parentId), await buildIsThreadLlmActive()) } : {}),
           intents_reaped: intentsReaped,

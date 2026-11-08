@@ -60,7 +60,7 @@ export class LcuSession {
       throw new Error("LCU_HOST_IDENTITY_INVALID")
     }
     this.upstreamTurnId = options.turnId
-    this.client = new Client({ name: "cmspark-lcu", version: "0.8.3" }, { capabilities: { elicitation: {} } })
+    this.client = new Client({ name: "cmspark-lcu", version: "0.8.5" }, { capabilities: { elicitation: {} } })
     this.client.setRequestHandler(ElicitRequestSchema, async (request, extra) => {
       const call = this.active
       if (!call || this.phase !== "ready" || !this.options.current() || call.signal.aborted) return { action: "cancel" }

@@ -31,7 +31,8 @@ mark_ready758(3)
 root.title("CMspark Activity 758 Owned Fixture")
 root.geometry("800x300+80+80")
 root.configure(background="white")
-tk.Label(root, text="PROJECT ALPHA\nSEND REPORT FRIDAY", font=("DejaVu Sans", 30), fg="black", bg="white").pack(expand=True)
+chat = tk.Label(root, text="PROJECT ALPHA\nSEND REPORT FRIDAY", font=("DejaVu Sans", 30), fg="black", bg="white")
+chat.pack(expand=True)
 # OBS758_READY_BEGIN
 mark_ready758(4)
 # OBS758_READY_END
@@ -172,6 +173,10 @@ def poll():
             elif command == "clear_overlay" and overlay:
                 overlay.destroy()
                 overlay = None
+            elif command == "switch_chat":
+                chat.configure(text="PROJECT BRAVO\nSEND REPORT FRIDAY")
+            elif command == "restore_chat":
+                chat.configure(text="PROJECT ALPHA\nSEND REPORT FRIDAY")
             elif command == "quit":
                 root.destroy()
                 return

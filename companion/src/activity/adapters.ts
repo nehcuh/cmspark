@@ -10,6 +10,7 @@ import { llmExtract } from '../llm/llm-extract'
 import { ActivityError, PROTECTED_APPS, type ActivityApp, type ActivityConfig, type ActivitySource, type TodoCandidate, type ActivityRect } from './types'
 import { evidencedDeadline } from './deadline-evidence'
 import { languageOf, validatePng, withPendingImage, type LocalLanguage } from './image'
+import { activityImageCrop, namedWindowLayout, recognizedChatTitle, scopeLocalFrame } from './chat-scope'
 import { submitWindowsReminder } from './notifications'
 export interface CapturedWindow { app_id: string; app_name: string; window_title: string; window_class?: string; conversation_title?: string; ocr_text: string; image: Buffer }
 export interface RecorderAdapter {
@@ -36,16 +37,23 @@ export class MacPassiveRecorder implements RecorderAdapter {
     }
     return [...apps.values()].sort((a, b) => a.app_name.localeCompare(b.app_name))
   }
-  async ocrImage(image: Buffer, language: LocalLanguage, signal: AbortSignal): Promise<string> {
+  private async readOcr(image: Buffer, language: LocalLanguage, signal: AbortSignal) {
     if (this.platform !== 'darwin') throw new ActivityError('OCR_UNAVAILABLE', '当前环境未提供 Vision OCR')
     validatePng(image)
     return withPendingImage(this.root, image, async file => {
       signal.throwIfAborted()
       const result = JSON.parse(await this.host.run(this.host.resolve(), ['ocr', '--image', file, '--languages', language === 'en-US' ? language : language + ',en-US'], { timeoutMs: 30000 }))
       signal.throwIfAborted()
-      if (result.ok !== true || !Array.isArray(result.words)) throw new ActivityError('OCR_FAILED', '本地 OCR 未返回可靠结果')
-      return result.words.filter((w: any) => typeof w.text === 'string').map((w: any) => w.text).join('\n').slice(0, 24000)
+      return result
     })
+  }
+  async ocrImage(image: Buffer, language: LocalLanguage, signal: AbortSignal): Promise<string> {
+    const result = await this.readOcr(image, language, signal)
+    if (result.ok !== true || !Array.isArray(result.words)) throw new ActivityError('OCR_FAILED', '本地 OCR 未返回可靠结果')
+    return result.words.filter((w: any) => typeof w.text === 'string').map((w: any) => w.text).join('\n').slice(0, 24000)
+  }
+  async ocrTitle(image: Buffer, rect: ActivityRect, language: LocalLanguage, signal: AbortSignal): Promise<string> {
+    return recognizedChatTitle(await this.readOcr(activityImageCrop(image)(rect), language, signal))
   }
   async capture(config: ActivityConfig, signal: AbortSignal): Promise<CapturedWindow | null> {
     if (this.platform !== 'darwin') throw new ActivityError('UNSUPPORTED_PLATFORM', '当前活动截图仅支持 macOS')
@@ -74,10 +82,19 @@ export class MacPassiveRecorder implements RecorderAdapter {
       if (securityAfter.secureInput !== false || after.foregroundWindowId !== id || !current || current.bundleId !== window.bundleId || current.pid !== window.pid || current.name !== window.name) return null
       const stat = fs.lstatSync(file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0 || stat.size > 16 * 1024 * 1024) throw new ActivityError('CAPTURE_FAILED', '截图为空或超过大小限制')
-      const ocr = (config.extraction_mode || 'ocr') !== 'ocr' ? { words: [] } : await run(['ocr', '--image', file, '--languages', languageOf(config) === 'en-US' ? 'en-US' : languageOf(config) + ',en-US'], 30000)
-      if (!Array.isArray(ocr.words)) throw new ActivityError('OCR_FAILED', '原生 OCR 未返回文字')
-      const ocr_text = ocr.words.filter((w: any) => typeof w.text === 'string').map((w: any) => w.text).join('\n').slice(0, 24000)
-      return { app_id: window.bundleId, app_name: String(window.ownerName || window.bundleId).slice(0, 200), window_title: String(window.name || '').slice(0, 500), ocr_text, image: fs.readFileSync(file) }
+      const window_class = namedWindowLayout('darwin', window.name), language = languageOf(config)
+      const scoped = await scopeLocalFrame(config, window.bundleId, window_class, fs.readFileSync(file), signal,
+        async crop => recognizedChatTitle(await this.readOcr(crop, language, signal)))
+      let ocr_text = ''
+      if ((config.extraction_mode || 'ocr') === 'ocr') {
+        if (scoped.conversation_title) ocr_text = await this.ocrImage(scoped.image, language, signal)
+        else {
+          const ocr = await run(['ocr', '--image', file, '--languages', language === 'en-US' ? language : language + ',en-US'], 30000)
+          if (!Array.isArray(ocr.words)) throw new ActivityError('OCR_FAILED', '原生 OCR 未返回文字')
+          ocr_text = ocr.words.filter((w: any) => typeof w.text === 'string').map((w: any) => w.text).join('\n').slice(0, 24000)
+        }
+      }
+      return { app_id: window.bundleId, app_name: String(window.ownerName || window.bundleId).slice(0, 200), window_title: String(window.name || '').slice(0, 500), window_class, ocr_text, ...scoped }
     } finally { fs.rmSync(file, { force: true }) }
   }
 }

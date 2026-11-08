@@ -1008,6 +1008,9 @@ export function useWebSocket() {
         case "fleet.stop_all_result":
         case "tab.force_release_result": {
           const snap = msg.type === "fleet.status" ? msg : msg.fleet
+          if (snap?.followup_error?.thread_id === activeThreadRef.current && typeof snap?.followup_error?.message === "string") {
+            window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: snap.followup_error.message }))
+          }
           if (snap && Array.isArray(snap.workers)) {
             dispatch({
               type: "SET_FLEET",

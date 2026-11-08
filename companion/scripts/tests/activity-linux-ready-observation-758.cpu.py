@@ -44,17 +44,29 @@ prior = {
 count = text.count("# OBS758_READY_BEGIN")
 assert count == 21 and text.count("# OBS758_READY_END") == count
 current_sha = "f4a8ed6487cde0fbfc2772225d54ef6f3b59c6a8356adcf68b129234a85e78d7"
+original_label = r'tk.Label(root, text="PROJECT ALPHA\nSEND REPORT FRIDAY", font=("DejaVu Sans", 30), fg="black", bg="white")'
+scope_controls = r'''            elif command == "switch_chat":
+                chat.configure(text="PROJECT BRAVO\nSEND REPORT FRIDAY")
+            elif command == "restore_chat":
+                chat.configure(text="PROJECT ALPHA\nSEND REPORT FRIDAY")
+'''
 for name, eol in [("LF", "\n"), ("CRLF", "\r\n")]:
     candidate = text.replace("\r\n", "\n").replace("\n", eol)
+    scope_label = "chat = " + original_label + eol + "chat.pack(expand=True)"
+    scope_commands = scope_controls.replace("\n", eol)
     def validate(value):
-        assert hashlib.sha256(value.replace("\r\n", "\n").encode()).hexdigest() == current_sha
-        assert value.count("# OBS758_READY_BEGIN") == count
-        assert value.count("# OBS758_READY_END") == count
-        restored, removed = pattern.subn("", value)
+        # The chat-scope acceptance adds exactly these two fixture edits.
+        # Keep both historical readiness hashes over the original fixture.
+        assert value.count(scope_label) == 1 and value.count(scope_commands) == 1
+        original = value.replace(scope_label, original_label + ".pack(expand=True)").replace(scope_commands, "")
+        assert hashlib.sha256(original.replace("\r\n", "\n").encode()).hexdigest() == current_sha
+        assert original.count("# OBS758_READY_BEGIN") == count
+        assert original.count("# OBS758_READY_END") == count
+        restored, removed = pattern.subn("", original)
         assert removed == count
         assert hashlib.sha256(restored.encode()).hexdigest() == prior[name]
     validate(candidate)
-    for mutant in [candidate.replace("# OBS758_READY_BEGIN", "# MISSING", 1), candidate.replace("# OBS758_READY_BEGIN", "# OBS758_READY_BEGIN" + eol + "# OBS758_READY_BEGIN", 1), candidate.replace("mark_ready758(11)", "mark_ready758(12)", 1), candidate + eol]:
+    for mutant in [candidate.replace("# OBS758_READY_BEGIN", "# MISSING", 1), candidate.replace("# OBS758_READY_BEGIN", "# OBS758_READY_BEGIN" + eol + "# OBS758_READY_BEGIN", 1), candidate.replace("mark_ready758(11)", "mark_ready758(12)", 1), candidate.replace("PROJECT BRAVO", "PROJECT CHARLIE", 1), candidate + eol]:
         try:
             validate(mutant)
         except AssertionError:
