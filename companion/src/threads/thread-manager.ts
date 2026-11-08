@@ -132,6 +132,8 @@ interface Thread {
   orchestrator_run_id?: string | null
   /** Human-readable worker role label. */
   worker_role_label?: string | null
+  /** Additional tool exclusions set when this worker was dispatched. */
+  worker_tool_denials?: string[]
   /** Optional elevation marker (audited grants only). */
   capability_elevation_level?: string | null
   /** Pause freezes LLM loop + new tool dispatch. In-flight mutation locks end with that call; a create_tab hold stays until its deadline. */
@@ -1642,6 +1644,13 @@ export class ThreadManager {
         }
       }
       // Workers never get cruise-expanded surface (spawn whitelist + HARD_DENY stay).
+      if (thread.parent_thread_id && thread.orchestrator_run_id) {
+        const { liveWorkerParent, workerParentCapabilityWhitelist, workerWhitelistAllows } = require("../orchestrator/spawn") as typeof import("../orchestrator/spawn")
+        const parent = liveWorkerParent(this, thread)
+        if (!parent || workerWhitelistAllows(thread.worker_tool_denials ?? [], toolName)) return false
+        const parentWhitelist = workerParentCapabilityWhitelist(parent)
+        if (parentWhitelist !== null && !workerWhitelistAllows(parentWhitelist, toolName)) return false
+      }
     } else if (opts?.cruiseOpen ?? isFullAutonomyCruiseOpen()) {
       // Product: three-flag full-autonomy cruise expands tool surface for normal
       // threads immediately (scene tool_whitelist still stored, but does not block).

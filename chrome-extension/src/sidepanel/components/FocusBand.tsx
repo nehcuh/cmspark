@@ -91,7 +91,7 @@ export function FocusBand({
   // #321 PR-2「一条 Now」inputs — former standalone bands.
   const scene = readSceneStatus(state)
   const hasScene =
-    !!scene.packId || !!scene.workspaceRoot || scene.surfaceLabel != null
+    !!scene.packId || !!scene.workspaceRoot || scene.surfaceLabel != null || scene.isWorker
   const activeThread = state.threads.find((t) => t.id === state.activeThreadId)
   const hasWorkerScope = activeThread?.agent_role === "worker"
   const hasRunBusy = scoped.runBusy

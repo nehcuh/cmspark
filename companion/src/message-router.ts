@@ -3295,25 +3295,26 @@ async function dispatchMessage(
           allowedUpdates[key] = updates[key]
         }
       }
-      // C6 multi-adv: worker cannot open full surface or re-add HARD_DENY tools via update
-      if (Object.prototype.hasOwnProperty.call(allowedUpdates, "tool_whitelist")) {
+      const inheritParentTools = updates.inherit_parent_tools === true
+      if (inheritParentTools || Object.prototype.hasOwnProperty.call(allowedUpdates, "tool_whitelist")) {
         const existing = threadManager.get(rest.thread_id)
         if (existing?.agent_role === "worker") {
-          const { WORKER_HARD_DENY } = await import("./orchestrator/constants")
-          const wl = allowedUpdates.tool_whitelist
-          if (wl === null) {
+          const wl: unknown = allowedUpdates.tool_whitelist
+          if (!inheritParentTools && (!Array.isArray(wl) || !wl.every(tool => typeof tool === "string"))) {
             return {
               type: "error",
-              error:
-                "thread.update: worker cannot set tool_whitelist=null (full surface). HARD_DENY tools remain denied.",
+              error: "子线程需要具体工具范围。请使用「继承主线程工具」。",
               code: "worker_whitelist_elevation",
             }
           }
-          if (Array.isArray(wl)) {
-            allowedUpdates.tool_whitelist = wl.filter(
-              (t: unknown) => typeof t === "string" && !WORKER_HARD_DENY.has(t),
-            )
+          const { resolveWorkerToolUpdate } = await import("./orchestrator/spawn")
+          try {
+            allowedUpdates.tool_whitelist = resolveWorkerToolUpdate(threadManager, existing, inheritParentTools ? null : wl as string[])
+          } catch (error) {
+            return { type: "error", error: error instanceof Error ? error.message : String(error) }
           }
+        } else if (inheritParentTools) {
+          return { type: "error", error: "只有子线程可以继承主线程工具" }
         }
       }
       const lcuWasSelected = threadManager.get(rest.thread_id)?.active_mcp_server_ids?.includes("cmspark_lcu") === true

@@ -3,6 +3,7 @@
 import { randomUUID } from "crypto"
 import { isMcpToolAllowedByWhitelist, type ThreadManager } from "../threads/thread-manager"
 import { getMcpManager } from "../mcp/manager"
+import { getMcpMetaToolDefinitions, getToolDefinitions } from "../bridge/tool-definitions"
 import {
   ORCHESTRATOR_CAPS,
   ORCHESTRATOR_TOOL_ALLOWLIST,
@@ -17,9 +18,17 @@ export function workerParentCapabilityWhitelist(parent: {
   agent_role?: string | null
   tool_whitelist?: string[] | null
 } | null | undefined): string[] | null {
-  return parent?.agent_role === "orchestrator" || !Array.isArray(parent?.tool_whitelist)
-    ? null
-    : [...parent.tool_whitelist]
+  const whitelist = parent?.tool_whitelist
+  if (!Array.isArray(whitelist)) return null
+  if (parent?.agent_role === "orchestrator") {
+    // Older promotions store the control catalog directly on the parent.
+    // worker_release was added to that catalog after the original promotion.
+    const catalog: readonly string[] = ORCHESTRATOR_TOOL_ALLOWLIST
+    const controls = catalog.filter(tool => tool !== "worker_release")
+    const tools = whitelist.filter(tool => tool !== "worker_release")
+    if (tools.length === controls.length && controls.every(tool => tools.includes(tool))) return null
+  }
+  return [...whitelist]
 }
 
 /** Match the same MCP exact/server/global patterns accepted at dispatch. */
@@ -33,6 +42,48 @@ function expandMcpPatterns(tools: string[]): string[] {
   const live = getMcpManager().getAggregatedTools().map(tool => tool.function.name)
   return [...new Set([...tools.filter(tool => !patterns.includes(tool)),
     ...live.filter(tool => isMcpToolAllowedByWhitelist(patterns, tool))])]
+}
+
+type Thread = NonNullable<ReturnType<ThreadManager["get"]>>
+
+export function liveWorkerParent(tm: ThreadManager, worker: Thread): Thread | undefined {
+  const parent = worker.parent_thread_id ? tm.get(worker.parent_thread_id) : undefined
+  return parent && parent.agent_role !== "worker" && !parent.trashed_at && !parent.archived_at &&
+    worker.orchestrator_run_id && parent.orchestrator_run_id === worker.orchestrator_run_id ? parent : undefined
+}
+
+/** A user-requested delegation stores concrete tools, subject to the current parent and role. */
+export function resolveWorkerToolUpdate(tm: ThreadManager, worker: Thread, requested: string[] | null): string[] {
+  const parent = liveWorkerParent(tm, worker)
+  if (!parent) throw new Error("找不到当前子任务所属的主对话，无法修改工具范围")
+  const restricted = !!worker.mission_pack_id || !!parent.cooperation_plan?.tasks.some(task =>
+    task.attempts.some(attempt => attempt.worker_id === worker.id))
+  const roleTools = restricted ? worker.tool_whitelist ?? [] : null
+  const manager = getMcpManager()
+  const selected = (server: string) => [parent, worker].every(thread =>
+    thread.mcp_selection_mode !== "manual" || thread.active_mcp_server_ids?.includes(server))
+  const inMcpSelection = (tool: string) => {
+    if (!tool.startsWith("mcp__")) return true
+    const server = manager.resolveToolName(tool)?.serverName
+    return !!server && selected(server)
+  }
+  let candidates: string[]
+  if (requested === null) {
+    const servers = manager.listServers().filter(server =>
+      server.enabled && server.connection.status === "connected" && selected(server.name))
+    const metaTools = getMcpMetaToolDefinitions({
+      resources: servers.some(server => server.capabilities.resources),
+      prompts: servers.some(server => server.capabilities.prompts),
+    })
+    candidates = [...getToolDefinitions(), ...manager.getAggregatedTools(), ...metaTools].map(tool => tool.function.name)
+  } else {
+    candidates = expandMcpPatterns(requested)
+  }
+  const parentWhitelist = workerParentCapabilityWhitelist(parent)
+  return [...new Set(candidates)].filter(tool => !WORKER_HARD_DENY.has(tool) &&
+    (parentWhitelist === null || workerWhitelistAllows(parentWhitelist, tool)) && inMcpSelection(tool) &&
+    !workerWhitelistAllows(worker.worker_tool_denials ?? [], tool) &&
+    (roleTools === null || workerWhitelistAllows(roleTools, tool)))
 }
 
 export function computeWorkerWhitelist(opts: {
@@ -162,9 +213,7 @@ export function spawnWorkerThread(
   // still be computed from the pre-promotion surface (null → roleAllow fully minus HARD_DENY).
   // ADR-015: effective = (parent ∩ role.allow) \ HARD_DENY with parent null → role.allow.
   //
-  // After the parent is already an orchestrator, parent.tool_whitelist is the control
-  // surface — do NOT inherit that onto workers. Treat orchestrator parent as null parent
-  // capability so roleAllow (or the safe browser default) is the base, then HARD_DENY.
+  // The generated orchestration catalog is separate from a custom parent whitelist.
   const parentCapabilityWhitelist = workerParentCapabilityWhitelist(parent)
 
   const runId = ensureOrchestratorRunId(parent)
@@ -255,6 +304,7 @@ export function spawnWorkerThread(
     agent_role: "worker" as AgentRole,
     ...(parentPlan ? { execution_policy: "plan_readonly" as const } : {}),
     tool_whitelist: whitelist,
+    ...(opts.roleDeny?.length ? { worker_tool_denials: [...opts.roleDeny] } : {}),
     ...(parentThread?.mcp_selection_mode === "manual" ? {
       mcp_selection_mode: "manual" as const,
       active_mcp_server_ids: [...(parentThread.active_mcp_server_ids ?? [])],
