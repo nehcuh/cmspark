@@ -1579,6 +1579,34 @@ test("executor WP2: abort before the first action -> TASK_ABORTED, zero injectio
   assert.equal(r.completedActions, 0)
 })
 
+test("executor preserves a native type abort without raising or replaying input", async () => {
+  const injector = Object.assign(new RecordingInjector(), { retryTypeAfterFailure: false })
+  injector.typeText = async (hwnd, text) => {
+    injector.types.push({ hwnd, text })
+    throw new ComputerError("TASK_ABORTED", "native input stopped")
+  }
+  injector.forceForeground = async () => { assert.fail("stopped input must not raise or retry") }
+  const result = await runComputerTask({
+    task: "t", app: "win.app.test", actions: [{ action: "type", text: "one" }],
+  }, makeDeps({ injector }))
+  assert.equal(result.errorCode, "TASK_ABORTED")
+  assert.equal(injector.types.length, 1)
+})
+
+test("executor does not replay a type whose producer may have sent a prefix", async () => {
+  const injector = Object.assign(new RecordingInjector(), { retryTypeAfterFailure: false })
+  injector.typeText = async (hwnd, text) => {
+    injector.types.push({ hwnd, text })
+    throw new ComputerError("INJECT_FAILED", "native type ended after a prefix")
+  }
+  injector.forceForeground = async () => { assert.fail("partial input must not raise or retry") }
+  const result = await runComputerTask({
+    task: "t", app: "win.app.test", actions: [{ action: "type", text: "one" }],
+  }, makeDeps({ injector }))
+  assert.equal(result.errorCode, "INJECT_FAILED")
+  assert.equal(injector.types.length, 1)
+})
+
 test("executor WP2: abort fires DURING a wait -> TASK_ABORTED, wait step not completed", async () => {
   let calls = 0
   const deps = makeDeps({

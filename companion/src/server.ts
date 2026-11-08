@@ -117,7 +117,7 @@ export {
 import {
   flipAllComputerTaskAborts,
   getComputerTaskAbortRegistry,
-  notifyComputerTaskAbort,
+  requestComputerTaskAbort,
 } from "./computer/task-abort-registry"
 
 /** User-facing tool labels for scene whitelist errors (product SoT §14.1). */
@@ -244,8 +244,8 @@ export { flipAllComputerTaskAborts }
  * the safe direction, so any authenticated panel connection may send this
  * (no origin binding). The flag flip is UNCONDITIONAL: the abort takes
  * effect even when the ack can no longer be delivered (socket closing at
- * the WS seam) — the send alone is guarded by the OPEN check. Returns the
- * ack payload (also used by the dispatch to send the ack).
+ * the WS seam). If native input is in flight, send the ack after it drains.
+ * The return value describes the immediate request match, before the wire ack.
  */
 
 export function handleComputerTaskAbort(
@@ -253,18 +253,17 @@ export function handleComputerTaskAbort(
   msg: { task_id?: unknown },
 ): { taskId: string; matched: number } {
   const tid = typeof msg.task_id === "string" ? msg.task_id : ""
-  let matched = 0
-  if (tid === "*") {
-    matched = flipAllComputerTaskAborts()
-  } else if (tid && computerTaskAbort.has(tid)) {
-    computerTaskAbort.set(tid, true)
-    notifyComputerTaskAbort(tid)
-    matched = 1
-  }
+  const { matched, drains } = requestComputerTaskAbort(tid)
   if (matched > 0) logger.warn("computer.task.abort.requested", { taskId: tid, matched })
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: "computer.task.abort.ack", task_id: tid, matched }))
+  const sendAck = () => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "computer.task.abort.ack", task_id: tid, matched }))
+    }
   }
+  if (drains.length === 0) sendAck()
+  else void Promise.all(drains).then(sendAck).catch((error) => {
+    logger.warn("computer.task.abort.ack_failed", { taskId: tid, error: String(error) })
+  })
   return { taskId: tid, matched }
 }
 

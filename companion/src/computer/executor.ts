@@ -1403,8 +1403,8 @@ export async function runComputerTask(
       }
 
       // Inject (ps1 re-checks IL/desktop/bounds; type re-checks foreground).
-      // Grill Q5=B: type inject failure → TYPE_NO_EFFECT; allow one re-focus
-      // retry of the same text per task (tracked below), then hard-fail.
+      // Retain the legacy re-focus retry for injectors that permit replay.
+      // A producer that may have delivered a prefix must never replay it.
       if (action.action === "type") {
         const typeKey = action.text
         const priorFails = typeNoEffectCounts.get(typeKey) ?? 0
@@ -1417,6 +1417,7 @@ export async function runComputerTask(
         try {
           await deps.injector.typeText(hwnd, action.text)
         } catch (typeErr) {
+          if (deps.injector.retryTypeAfterFailure === false) throw typeErr
           typeNoEffectCounts.set(typeKey, priorFails + 1)
           if (priorFails === 0) {
             // First failure: try one preferForeground-style re-raise then retype.

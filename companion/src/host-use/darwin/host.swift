@@ -2302,8 +2302,13 @@ func postEventDual(_ event: CGEvent, pid: pid_t, useHid: Bool) -> Bool {
 }
 
 func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?, chord: String?, delta: Int?, checkOcclusion: Bool, checkSecureInput: Bool, checkOnscreen: Bool, estopFlag: String?) -> String {
+    func stopped() -> Bool {
+        guard let path = estopFlag else { return false }
+        return FileManager.default.fileExists(atPath: path)
+    }
+    func stopError() -> String { cuError("E-Stop flag present", code: "TASK_ABORTED") }
     if checkSecureInput && IsSecureEventInputEnabled() { return cuError("Secure Input active", code: "DESKTOP_DENIED") }
-    if let flagPath = estopFlag, FileManager.default.fileExists(atPath: flagPath) { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
+    if stopped() { return stopError() }
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
     // Always activate before inject. SkyLight per-PID was designed to reach
@@ -2347,29 +2352,32 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         guard let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseMoved construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
+        if stopped() { return stopError() }
         if !postEventDual(me, pid: pid, useHid: useHid) {
             return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
         }
         usleep(50000)
-        guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn) else {
-            return cuError("CGEvent mouseDown construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+        guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn),
+              let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
+            return cuError("CGEvent mouse button construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
+        if stopped() { return stopError() }
         if !postEventDual(de, pid: pid, useHid: useHid) {
             return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
         }
         for _ in 1..<cc {
             usleep(100000)
+            if stopped() { break }
             if !postEventDual(de, pid: pid, useHid: useHid) {
                 return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
             }
         }
         usleep(50000)
-        guard let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
-            return cuError("CGEvent mouseUp construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
-        }
+        // Finish a button release even when a stop arrived after the down.
         if !postEventDual(ue, pid: pid, useHid: useHid) {
             return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
         }
+        if stopped() { return stopError() }
         // x/y remain client coords (Windows computer-input.ps1 parity); screenX/Y report landing.
         return cuJson([
             "ok": true, "action": action, "x": px, "y": py,
@@ -2382,22 +2390,23 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         guard let txt = text else { return cuError("type requires --text") }
         let src = CGEventSource(stateID: .hidSystemState)
         for ch in txt.unicodeScalars {
-            var uc = UniChar(ch.value)
-            guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) else {
+            let units = Array(String(ch).utf16)
+            guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else {
                 return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
             }
-            down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
-            if !postEventDual(down, pid: pid, useHid: useHid) {
-                return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+            down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+            up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+            if stopped() { return stopError() }
+            // Both routes can reach the same focused control. Send each key pair once, to its PID.
+            if !postEventDual(down, pid: pid, useHid: false) {
+                return cuError("keyboard event post failed (SkyLight)", code: "SKYLIGHT_POST_FAILED")
             }
-            guard let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else {
-                return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
-            }
-            up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
-            _ = postEventDual(up, pid: pid, useHid: useHid)
+            _ = postEventDual(up, pid: pid, useHid: false)
             usleep(30000)
         }
-        return cuJson(["ok": true, "action": "type", "chars": txt.count, "delivery": useHid ? "skylight+hid" : "skylight"])
+        if stopped() { return stopError() }
+        return cuJson(["ok": true, "action": "type", "chars": txt.count, "delivery": "skylight"])
 
     case "key":
         guard let ch = chord else { return cuError("key requires --chord") }
@@ -2419,27 +2428,28 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         }
         let src = CGEventSource(stateID: .hidSystemState)
         for kc in nonMods {
-            guard let down = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true) else {
+            guard let down = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: false) else {
                 return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
             }
             down.flags = flags
-            if !postEventDual(down, pid: pid, useHid: useHid) {
-                return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
-            }
-            guard let up = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: false) else {
-                return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
-            }
             up.flags = flags
-            _ = postEventDual(up, pid: pid, useHid: useHid)
+            if stopped() { return stopError() }
+            if !postEventDual(down, pid: pid, useHid: false) {
+                return cuError("keyboard event post failed (SkyLight)", code: "SKYLIGHT_POST_FAILED")
+            }
+            _ = postEventDual(up, pid: pid, useHid: false)
             usleep(30000)
         }
-        return cuJson(["ok": true, "action": "key", "chord": ch, "delivery": useHid ? "skylight+hid" : "skylight"])
+        if stopped() { return stopError() }
+        return cuJson(["ok": true, "action": "key", "chord": ch, "delivery": "skylight"])
 
     case "scroll":
         guard let d = delta else { return cuError("scroll requires --delta") }
         guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) else {
             return cuError("CGEvent scroll construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
+        if stopped() { return stopError() }
         if !postEventDual(ev, pid: pid, useHid: useHid) {
             return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
         }

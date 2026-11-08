@@ -37,6 +37,7 @@ import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
+import { registerComputerInputStop } from "../computer/task-abort-registry"
 import { proposeRunProgress } from "../threads/run-progress"
 import { acpSessionLookupFailure, currentAcpSessions } from "../acp/session-recovery"
 import { resolveAcpThreadId } from "../acp/thread-id"
@@ -2182,6 +2183,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         cuLeaseHeld = lease.acquired
       }
       computerTaskAbort.set(computerTaskId, false)
+      let unregisterInputStop: (() => void) | undefined
       try {
         // NOTE (2026-07-21 crash): the Windows estop preflight used to run
         // here, UNCONDITIONALLY — on macOS it spawned powershell.exe, whose
@@ -2231,6 +2233,15 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           const { writeBackUiaVerdict } = await import("../computer/uia")
 
           const macSealer = new MacEvidenceSealer()
+          const macInjector = new MacInputInjector(
+            darwinEstop.estopFlagPath(),
+            () => computerTaskAbort.get(computerTaskId) === true,
+          )
+          unregisterInputStop = registerComputerInputStop(computerTaskId, () => {
+            const drain = macInjector.pendingInput()
+            if (drain) darwinEstop.requestEstopFlag()
+            return drain
+          })
 
           result = await runComputerTask(
             {
@@ -2243,7 +2254,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             {
               capturer: new MacScreenCapturer(),
               locator: new MacLocator(),
-              injector: new MacInputInjector(darwinEstop.estopFlagPath()),
+              injector: macInjector,
               windows: new MacWindowEnumerator(),
               securityEnv: new MacSecurityEnvironment(),
               uiaLocator: new MacAxLocator(),
@@ -2451,6 +2462,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         // R1 (§E.6.2): release the single-task slot on EVERY exit path —
         // success, typed refusal, abort, or throw. Runs after the return
         // value is computed; delete is idempotent.
+        unregisterInputStop?.()
         computerTaskAbort.delete(computerTaskId)
         if (cuLeaseHeld && cuThreadId) {
           try {

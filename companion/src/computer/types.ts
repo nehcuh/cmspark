@@ -530,6 +530,8 @@ export type AxInvokeResult =
     }
 
 export interface InputInjector {
+  /** A failed type may already have delivered a prefix. */
+  readonly retryTypeAfterFailure?: boolean
   click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void>
   typeText(hwnd: number, text: string): Promise<void>
   /** WP2: named-key chord, whitelist-validated upstream (executor + ps1). */

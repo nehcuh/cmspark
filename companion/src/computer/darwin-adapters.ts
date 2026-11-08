@@ -629,15 +629,21 @@ export class MacLocator implements Locator {
 // ---------------------------------------------------------------------------
 
 export class MacInputInjector implements InputInjector {
-  private estopFlagPath: string | undefined
+  readonly retryTypeAfterFailure = false
+  private inputDrain: Promise<void> | undefined
   private segmenter = new Intl.Segmenter("zh-Hans", { granularity: "grapheme" })
   // LRU-ish hwnd → bundleId cache so the forceForeground path doesn't pay
   // the cmspark-host windows-query cost every time the sidepanel snatches
   // focus and the FOREGROUND-YIELD detector re-raises the target.
   private hwndBidCache = new Map<number, string>()
 
-  constructor(estopFlagPath?: string) {
-    this.estopFlagPath = estopFlagPath
+  constructor(
+    private readonly estopFlagPath?: string,
+    private readonly inputAborted: () => boolean = () => false,
+  ) {}
+
+  pendingInput(): Promise<void> | undefined {
+    return this.inputDrain
   }
 
   /**
@@ -796,26 +802,36 @@ export class MacInputInjector implements InputInjector {
     }
   }
 
+  private assertInputActive(): void {
+    if (this.inputAborted()) {
+      throw new ComputerError("TASK_ABORTED", "computer: task aborted by emergency stop (panel)")
+    }
+  }
+
+  private async inject(args: string[], timeoutMs: number): Promise<void> {
+    this.assertInputActive()
+    if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
+    const pending = spawnHostBin(resolveHostBinary(), ["inject", ...args], { timeoutMs })
+    this.inputDrain = pending.then(() => {}, () => {})
+    let stdout: string
+    try {
+      stdout = await pending
+    } catch (err) {
+      rethrowDarwinExecError(err as ExecFileException | Error, "inject")
+    } finally {
+      this.inputDrain = undefined
+    }
+    checkOk(parseComputerJson(stdout, "inject"), "inject")
+  }
+
   async click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void> {
     // Best-effort raise: WeChat needs key-window for reliable hit-testing;
     // Chrome SkyLight path still works when raise is a no-op / already FG.
     await this.preferForeground(hwnd)
-    const bin = resolveHostBinary()
-    const args = ["inject", "--action", kind, "--window-id", String(hwnd),
-                  "--x", String(Math.round(x)), "--y", String(Math.round(y)),
-                  "--check-occlusion"]
-    if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
-    let stdout: string
-    try {
-      stdout = await spawnHostBin(bin, args, { timeoutMs: DARWIN_INJECT_TIMEOUT_MS })
-    } catch (err) {
-      rethrowDarwinExecError(err as ExecFileException | Error, "inject")
-    }
-    // SkyLight SPI failures (SKYLIGHT_SPI_UNAVAILABLE / SKYLIGHT_POST_FAILED)
-    // are returned as structured JSON `{ok:false, error_code}` by the binary;
-    // surface as typed ComputerError so the LLM sees the failure mode.
-    const parsed = parseComputerJson(stdout, "inject")
-    checkOk(parsed, "inject")
+    await this.inject([
+      "--action", kind, "--window-id", String(hwnd),
+      "--x", String(Math.round(x)), "--y", String(Math.round(y)), "--check-occlusion",
+    ], DARWIN_INJECT_TIMEOUT_MS)
   }
 
   async typeText(hwnd: number, text: string): Promise<void> {
@@ -826,29 +842,20 @@ export class MacInputInjector implements InputInjector {
     const normalized = text.normalize("NFKC")
     const graphemes = [...this.segmenter.segment(normalized)].map((s) => s.segment)
 
-    const bin = resolveHostBinary()
     for (let i = 0; i < graphemes.length; i += 16) {
       const chunk = graphemes.slice(i, i + 16).join("")
-      const args = ["inject", "--action", "type", "--window-id", String(hwnd),
-                    "--text", chunk,
-                    "--check-secure-input",
-                    "--check-onscreen"]
-      if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
-      let stdout: string
-      try {
-        stdout = await spawnHostBin(bin, args, { timeoutMs: 5000 })
-      } catch (err) {
-        rethrowDarwinExecError(err as ExecFileException | Error, "inject")
-      }
-      const parsed = parseComputerJson(stdout, "inject")
-      checkOk(parsed, "inject")
+      await this.inject([
+        "--action", "type", "--window-id", String(hwnd), "--text", chunk,
+        "--check-secure-input", "--check-onscreen",
+      ], 5000)
+      this.assertInputActive()
       await new Promise((r) => setTimeout(r, Math.max(chunk.length * 80, 1)))
     }
+    this.assertInputActive()
   }
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
     await this.preferForeground(hwnd)
-    const bin = resolveHostBinary()
     // Host argValue("--chord") takes a SINGLE token and splits on comma.
     // Passing `--chord ctrl enter` only delivers "ctrl" (modifiers with no
     // non-mod key → silent no-op, still ok:true). Join first.
@@ -857,52 +864,22 @@ export class MacInputInjector implements InputInjector {
       if (lower === "meta" || lower === "command" || lower === "cmd") return "cmd"
       return lower
     })
-    const chord = normalized.join(",")
-    const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", chord]
-    if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
-    let stdout: string
-    try {
-      stdout = await spawnHostBin(bin, args, { timeoutMs: 5000 })
-    } catch (err) {
-      rethrowDarwinExecError(err as ExecFileException | Error, "inject")
-    }
-    const parsed = parseComputerJson(stdout, "inject")
-    checkOk(parsed, "inject")
+    await this.inject(["--action", "key", "--window-id", String(hwnd), "--chord", normalized.join(",")], 5000)
   }
 
   async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
-    const bin = resolveHostBinary()
-    let stdout: string
-    try {
-      stdout = await spawnHostBin(bin, [
-        "inject", "--action", "scroll",
-        "--window-id", String(hwnd),
-        "--x", String(Math.round(x)),
-        "--y", String(Math.round(y)),
-        "--delta", String(delta),
-      ], { timeoutMs: 5000 })
-    } catch (err) {
-      rethrowDarwinExecError(err as ExecFileException | Error, "inject")
-    }
-    const parsed = parseComputerJson(stdout, "inject")
-    checkOk(parsed, "inject")
+    await this.inject([
+      "--action", "scroll", "--window-id", String(hwnd),
+      "--x", String(Math.round(x)), "--y", String(Math.round(y)), "--delta", String(delta),
+    ], 5000)
   }
 
   async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
-    const bin = resolveHostBinary()
-    let stdout: string
-    try {
-      stdout = await spawnHostBin(bin, [
-        "inject", "--action", "drag",
-        "--window-id", String(hwnd),
-        "--x", String(Math.round(x)), "--y", String(Math.round(y)),
-        "--x2", String(Math.round(x2)), "--y2", String(Math.round(y2)),
-      ], { timeoutMs: 10000 })
-    } catch (err) {
-      rethrowDarwinExecError(err as ExecFileException | Error, "inject")
-    }
-    const parsed = parseComputerJson(stdout, "inject")
-    checkOk(parsed, "inject")
+    await this.inject([
+      "--action", "drag", "--window-id", String(hwnd),
+      "--x", String(Math.round(x)), "--y", String(Math.round(y)),
+      "--x2", String(Math.round(x2)), "--y2", String(Math.round(y2)),
+    ], 10000)
   }
 
   async probeWindow(hwnd: number): Promise<WindowInfo> {
