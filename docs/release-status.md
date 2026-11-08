@@ -1,6 +1,12 @@
 # 版本与交付状态
 
-> 源码开发版本 **0.9.0（尚未正式发布）**，新增超时报告选择与晚到结果合并，修复子线程工具继承（#839、#840）。当前正式安装包见 [v0.8.5 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.8.5)。
+> 源码版本 **0.9.0（已于 2026-11-08 正式发布）**，新增超时报告选择与晚到结果合并，修复子线程工具继承（#839、#840）。正式安装包见 [v0.9.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.9.0)。
+
+## 0.9.0 正式发行回执
+
+- [PR #839](https://github.com/nehcuh/cmspark/pull/839) 通过 10 项检查后合入 `f91e29ab`。[PR #840](https://github.com/nehcuh/cmspark/pull/840) 更新到该主线基线，通过 10 项检查后合入 `ddef9c80`。标签 `v0.9.0` 指向 `19763d73b91943579c634aca1842ae7c9234575d`。[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/42455409059)、ARM、Linux ARM 集成、会话持久化与[同树发布预演](https://github.com/nehcuh/cmspark/actions/runs/42453619136)均通过。
+- 正式发布时间为 2026-11-08 15:18:49（北京时间）。[正式 Release 构建](https://github.com/nehcuh/cmspark/actions/runs/42457168616)与[同标签安装器构建](https://github.com/nehcuh/cmspark/actions/runs/42457169844)均通过。Linux x64／ARM64 的 DEB 和 RPM 均含桌面入口与图标，Chrome 扩展以独立 ZIP 提供。
+- 共 19 项资产已与 GitHub 的 SHA-256 摘要核对，见[安装器校验清单](https://github.com/nehcuh/cmspark/releases/download/v0.9.0/SHA256SUMS-INSTALLERS.txt)。本机使用同标签 macOS ARM64 DMG 完成换装，应用签名与 Companion 健康检查通过。
 
 ## 0.8.5 正式发行回执
 
