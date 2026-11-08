@@ -1637,6 +1637,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "outbound_mcp.grants.revoke_all":
       case "outbound_mcp.set_require_grant":
       case "fleet.status":
+      case "fleet.followup.choose":
       case "fleet.stop_all":
       case "worker.pause":
       case "worker.resume":
@@ -1787,6 +1788,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         try {
           if (!wsClient) {
             sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
+            return true
+          }
+          if (message.type === "fleet.followup.choose" && wsClient.getState() !== "connected") {
+            sendResponse({ ok: false, error: "Companion 未连接，请连接后重试。" })
             return true
           }
           if (message.type === "board.add_hint" && message.require_connected && wsClient.getState() !== "connected") {

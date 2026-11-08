@@ -11,9 +11,17 @@ import {
   workersInFleetScope,
 } from "../utils/thread-busy"
 
-function statusLabel(status: string | undefined, llmActive?: boolean, mapBusy?: boolean): string {
+const TASK_STATUS_LABELS: Record<string, string> = {
+  queued: "排队中", running: "运行中", not_started: "尚未启动", needs_collection: "待回收结果",
+  completed: "已交还结果", partial: "部分结果", round_limit: "轮数已达上限", interrupted: "已中断",
+  aborted: "已取消", error: "出错", failed: "未完成", security_halt: "安全阻断", circuit_breaker: "重复失败后停止", closed: "已回收",
+}
+
+function statusLabel(status: string | undefined, llmActive?: boolean, mapBusy?: boolean, taskStatus?: string): string {
+  if (taskStatus === "closed") return TASK_STATUS_LABELS.closed
   if (status === "holding_tabs") return "持锁中"
   if (status === "paused") return "已暂停"
+  if (taskStatus && Object.hasOwn(TASK_STATUS_LABELS, taskStatus)) return TASK_STATUS_LABELS[taskStatus]
   if (llmActive || mapBusy) return "处理中"
   if (status === "idle") return "空闲"
   return status || "—"
@@ -134,7 +142,8 @@ export function FleetWorkerList({
                   {w.worker_role_label ? ` · ${w.worker_role_label}` : ""}
                 </span>
                 <span style={{ fontSize: 10, color: statusColor(w.status, busy) }}>
-                  {statusLabel(w.status, w.llm_active, state.threadBusyById[w.id])}
+                  {statusLabel(w.status, w.llm_active, state.threadBusyById[w.id], w.task_status)}
+                  {w.parent_wait_timed_out && w.task_status === "running" ? " · 主对话已先汇总" : ""}
                 </span>
               </div>
               <div style={styles.sub}>
@@ -153,9 +162,9 @@ export function FleetWorkerList({
                   查看
                 </button>
                 <button type="button" style={styles.smallBtn} onClick={() => enterWorker(w)}>
-                  进入子任务
+                  {w.task_status === "closed" ? "查看历史" : "进入子任务"}
                 </button>
-                {w.agent_role === "worker" &&
+                {w.agent_role === "worker" && w.task_status !== "closed" &&
                   (w.paused ? (
                     <button
                       type="button"
@@ -177,7 +186,7 @@ export function FleetWorkerList({
                       暂停
                     </button>
                   ))}
-                <button
+                {w.task_status !== "closed" && <button
                   type="button"
                   style={{ ...styles.smallBtn, color: "#b91c1c" }}
                   onClick={() => {
@@ -190,7 +199,7 @@ export function FleetWorkerList({
                   }}
                 >
                   停止该子任务
-                </button>
+                </button>}
               </div>
               {state.inspectedWorkerId === w.id && (
                 <WorkerInspectPanel

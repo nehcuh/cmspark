@@ -233,9 +233,34 @@ test("a foreign live worker remains denied instead of entering owned fleet coord
   }
 })
 
-test("timeout permits one summary then ends repeated polls with a persisted pending reply", async () => {
-  const s = setup(1), originalNow = Date.now
+for (const outcome of ["wait", "merge", "dismiss"] as const) test(`three-worker timeout follows the user's ${outcome} choice`, async () => {
+  const choice = outcome === "wait" ? "wait" : "summarize"
+  const s = setup(3), originalNow = Date.now
   const { FLEET_WAIT_MS } = await import("../src/orchestrator/fleet-supervision")
+  const { reconcileFleetFollowup } = await import("../src/orchestrator/fleet-continuity")
+  const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("../src/board")
+  const { buildFleetSnapshot } = await import("../src/orchestrator/fleet")
+  const { handleMessage } = await import("../src/message-router")
+  const { validateWsMessage } = await import("../src/ws/validate")
+  const view = () => buildFleetSnapshot(s.tm).workers.find(row => row.id === s.parent.id)?.followup
+  const choose = async (action: string, offerId = view()?.offer_id, surface: "panel" | "tray" = "panel") => {
+    const frame = { type: "fleet.followup.choose", thread_id: s.parent.id, offer_id: offerId, action, user_gesture: true }
+    assert.equal(validateWsMessage(frame).valid, true)
+    assert.equal(validateWsMessage({ ...frame, user_gesture: false }).valid, false)
+    return handleMessage(frame, { threadManager: s.tm, skillEngine: s.params.skillEngine, historyStore: s.params.historyStore },
+      { surface, isCurrentSession: () => true, sendToExtension: s.params.sendToExtension, executeTool: s.params.executeTool })
+  }
+  const [first, second, late] = s.workers
+  const complete = (worker: typeof late, content: string) => {
+    const message = s.tm.addMessage(worker.id, { thread_id: worker.id, role: "assistant", content })
+    s.tm.update(worker.id, { last_run_terminal: null, last_run_ended_at: new Date().toISOString(),
+      last_run_settled_execution_id: worker.id })
+    gates.releaseMultiAgentLlmLoop(worker.id)
+    return message
+  }
+  for (const worker of s.workers) s.tm.update(worker.id, { last_run_execution_id: worker.id })
+  complete(first, "First early report")
+  complete(second, "Second early report")
   s.setWait(() => { Date.now = () => originalNow() + FLEET_WAIT_MS + 10 })
   providerRound = async function* (p) {
     s.inputs.push(p)
@@ -248,20 +273,92 @@ test("timeout permits one summary then ends repeated polls with a persisted pend
     }
   }
   try {
-    await adapter.chatCreate(s.params)
-    assert.equal(s.inputs.length, 2)
+    try { await adapter.chatCreate(s.params) }
+    finally { Date.now = originalNow }
+    assert.equal(s.inputs.length, 1)
     assert.equal(s.waits, 1)
-    assert.equal(s.calls.filter(n => n === "wait_workers").length, 2)
+    assert.deepEqual(s.calls, ["wait_workers", "collect_handback", "collect_handback"])
     const done = s.frames.filter(f => f.type === "chat.done")
     assert.equal(done.length, 1)
     const final = s.tm.getMessages(s.parent.id).find(m => m.id === done[0].message_id)
-    assert.match(final?.content ?? "", /仍在运行/)
+    assert.match(final?.content ?? "", /子任务结束后会在本对话跟进/)
+    assert.match(final?.content ?? "", /First early report/)
+    assert.match(final?.content ?? "", /Second early report/)
+    assert.ok(final?.content?.includes(late.id))
+    assert.deepEqual(s.tm.get(s.parent.id)?.fleet_followup?.pending, [late.id])
     assert.equal(final?.tool_calls?.length ?? 0, 0)
-    assert.equal(s.tm.get(s.workers[0].id)?.last_run_ended_at, undefined)
+    assert.equal(s.tm.get(late.id)?.last_run_ended_at, undefined)
     assert.equal(s.stats.terminal, null, "waiting is not a fabricated execution error")
+
+    const active = await dispatch.buildIsThreadLlmActive()
+    const collected: string[] = []
+    const assessments: Array<{ kind?: string; statuses: string[] }> = []
+    const opts = {
+      active, send: (frame: unknown) => s.frames.push(frame),
+      collect: (parentId: string, workerId: string, current: () => boolean) => {
+        collected.push(workerId)
+        return collectWorkerHandback(s.tm, { workerId, callerThreadId: parentId, isThreadLlmActive: active,
+          sourceStillCurrent: current, resolveToolCall: resolveToolCallFromThreadMessages(s.tm, workerId, parentId) })
+      },
+      assess: async (_config: unknown, _objective: string, states: { status: string }[], _signal: AbortSignal, kind?: string) => {
+        assessments.push({ kind, statuses: states.map(row => row.status).sort() })
+        return { decision: "finish" as const, summary: "Reports assessed.", release_worker_ids: [] }
+      },
+    }
+    await reconcileFleetFollowup(s.tm, opts)
+    assert.equal(assessments.length, 0)
+    assert.deepEqual(collected, [])
+    const initialOffer = view()?.offer_id
+    assert.ok(initialOffer)
+    assert.equal(view()?.phase, "choose")
+    assert.equal((await choose(choice, initialOffer, "tray")).type, "error")
+    assert.equal((await choose(choice)).type, "fleet.status")
+    assert.ok((await choose(choice, initialOffer)).followup_error)
+    if (choice === "summarize") {
+      assert.equal(view()?.phase, "report")
+      await reconcileFleetFollowup(s.tm, opts)
+      const stage = s.tm.getMessages(s.parent.id).at(-1)?.content ?? ""
+      assert.match(stage, /阶段报告/)
+      assert.match(stage, /First early report/)
+      assert.match(stage, /Second early report/)
+      assert.doesNotMatch(stage, /Late successful report/)
+      assert.equal(view()?.phase, "tracking")
+    } else assert.equal(view()?.phase, "wait")
+    const report = complete(late, "Late successful report")
+    await reconcileFleetFollowup(s.tm, opts)
+    await reconcileFleetFollowup(s.tm, opts)
+    if (choice === "summarize") {
+      assert.deepEqual(assessments, [{ kind: "partial", statuses: ["completed", "completed", "running"] }])
+      assert.equal(view()?.phase, "merge")
+      assert.match(s.tm.getMessages(s.parent.id).at(-1)?.content ?? "", /是否合并到报告/)
+      assert.doesNotMatch(s.tm.getMessages(s.parent.id).at(-1)?.content ?? "", /合并后的报告/)
+      const offer = view()?.offer_id
+      assert.ok(offer)
+      assert.equal(buildFleetSnapshot(new ThreadManager()).workers.find(row => row.id === s.parent.id)?.followup?.offer_id, offer)
+      assert.equal((await choose(outcome, offer)).type, "fleet.status")
+      assert.ok((await choose(outcome, offer)).followup_error)
+      await reconcileFleetFollowup(s.tm, opts)
+      await reconcileFleetFollowup(s.tm, opts)
+      assert.deepEqual(assessments.map(row => row.kind), outcome === "merge" ? ["partial", "merge"] : ["partial"])
+    } else assert.deepEqual(assessments.map(row => row.kind), ["final"])
+    if (outcome !== "dismiss") assert.deepEqual(assessments.at(-1)?.statuses, ["completed", "completed", "completed"])
+    assert.deepEqual(collected, [late.id])
+    assert.equal(s.tm.get(s.parent.id)?.fleet_followup, null)
+    const handback = s.tm.get(s.parent.id)?.cooperation_tasks?.[`browser:${late.id}`]?.result
+    assert.equal(handback?.status, "completed")
+    assert.equal(handback?.source.message_id, report.id)
+    const followup = s.tm.getMessages(s.parent.id).at(-1)
+    assert.match(followup?.content ?? "", /Late successful report/)
+    if (outcome === "dismiss") {
+      assert.doesNotMatch(followup?.content ?? "", /合并后的报告/)
+    } else {
+      assert.match(followup?.content ?? "", /主对话判断（收尾）/)
+      assert.match(followup?.content ?? "", outcome === "wait" ? /总结报告/ : /合并后的报告/)
+    }
+    assert.equal(s.frames.filter(f => f.type === "chat.done" && f.message_id === followup?.id).length, 1)
+    assert.equal(s.calls.includes("spawn_worker"), false)
   } finally {
-    Date.now = originalNow
-    gates.releaseMultiAgentLlmLoop(s.workers[0].id)
+    for (const worker of s.workers) gates.releaseMultiAgentLlmLoop(worker.id)
     gates.releaseMultiAgentLlmLoop(s.parent.id)
   }
 })

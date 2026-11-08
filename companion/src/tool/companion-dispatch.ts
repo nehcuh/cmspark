@@ -818,6 +818,21 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const { listTabLocks } = await import("../orchestrator/tab-lease")
       return { success: true, data: { locks: listTabLocks() } }
     }
+    case "worker_release": {
+      const scope = execOpts?.evidenceScope
+      const parentId = scope?.kind === "chat" ? scope.threadId : undefined
+      if (!parentId || parentId !== params.__thread_id || typeof params.worker_id !== "string") {
+        return { success: false, error: "worker_release requires the owning chat and a worker_id" }
+      }
+      try {
+        const { requestWorkerRelease } = await import("../orchestrator/fleet-continuity")
+        const active = await buildIsThreadLlmActive()
+        execOpts?.signal?.throwIfAborted()
+        return { success: true, data: requestWorkerRelease(threadManager, parentId, params.worker_id, active, params.grace_seconds) }
+      } catch (error) {
+        return { success: false, error: String(error), error_code: "WORKER_RELEASE_REJECTED" }
+      }
+    }
     case "collect_handback": {
       // ADR-016 Task 3: board mode / mission_board → structured Fact/Intent merge;
       // free-form-only rejected with recoverable HANDBACK_MISSING_STRUCTURE.
@@ -1066,7 +1081,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         success: true,
         data: {
           poll_only: true,
-          note: "wait_workers is poll-only (no barrier). Avoid repeated model polling. After a parent wait request, a pending owned handback batch, or an ordinary final reply, the parent runtime yields its model slot and waits for active/queued workers within one request deadline, collects results, and asks for a combined summary with recovery options. Repeated polls after that deadline end with an explicit still-running reply. User stop/security/round-limit endings do not auto-resume. Check llm_loops and terminal states for progress.",
+          note: "wait_workers is poll-only. The parent runtime waits within one request deadline, collects results, and reports available results at the deadline. Later worker terminal states are followed up in the parent chat. Do not poll repeatedly or start replacement workers without confirmation.",
           llm_loops: llm,
           ...(parentId ? { plan: (await import("../orchestrator/cooperation-plan")).cooperationPlanSnapshot(threadManager, String(parentId), await buildIsThreadLlmActive()) } : {}),
           intents_reaped: intentsReaped,

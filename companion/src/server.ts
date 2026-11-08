@@ -396,6 +396,37 @@ async function initServices() {
   bindCompanionDispatchFromServerLocals()
   bindMcpDispatchFromServerLocals()
   bindToolForwardFromServerLocals()
+  const tm = threadManager
+  const { reconcileFleetFollowup, reapReleasedWorkers } = await import("./orchestrator/fleet-continuity")
+  const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("./board")
+  const { buildIsThreadLlmActive } = await import("./tool/companion-dispatch")
+  const { broadcastFleetSnapshotIfWorkers } = await import("./orchestrator/fleet")
+  const active = await buildIsThreadLlmActive()
+  const send = (frame: unknown) => {
+    for (const peer of getWsClients()) {
+      const auth = getWsAuthState(peer)
+      if (peer.readyState === WebSocket.OPEN && auth?.authenticated && auth.surface === "panel") {
+        try { peer.send(JSON.stringify(frame)) } catch { /* the transcript is already durable */ }
+      }
+    }
+  }
+  let reconciling = false
+  const fleetTimer = setInterval(() => {
+    if (tm !== threadManager) { clearInterval(fleetTimer); return }
+    if (reconciling) return
+    reconciling = true
+    void (async () => {
+      const released = reapReleasedWorkers(tm, active)
+      const updated = await reconcileFleetFollowup(tm, { active, send,
+        collect: (parentId, workerId, current) => collectWorkerHandback(tm, {
+          workerId, callerThreadId: parentId, isThreadLlmActive: active, sourceStillCurrent: current,
+          resolveToolCall: resolveToolCallFromThreadMessages(tm, workerId, parentId),
+        }),
+      })
+      if (released || updated) broadcastFleetSnapshotIfWorkers(tm, send)
+    })().catch(() => logger.warn("fleet.continuity_tick_failed")).finally(() => { reconciling = false })
+  }, 4000)
+  fleetTimer.unref()
 }
 
 /**
