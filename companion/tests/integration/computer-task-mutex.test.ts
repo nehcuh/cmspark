@@ -17,13 +17,14 @@
 // The L2 preview returns controlled no-image immediately; this suite tests
 // confirmation/mutex behavior, not the separate best-effort screenshot path.
 // The estop preflight is also substituted via setComputerEstopEnsureForTests
-// so neither path spawns a real PS helper and no injection happens. Tests are
-// win32-only (the gate skips host_computer elsewhere).
+// so neither path spawns a real PS helper and no injection happens. The
+// WebSocket tests use Windows admission; the macOS dispatcher test stubs its
+// own preflight and runs on every CI OS.
 
 import "./_security-gates-setup.js"
 import test, { before, after, beforeEach, afterEach, mock } from "node:test"
 import assert from "node:assert/strict"
-import * as os from "node:os"
+import os from "node:os"
 import * as path from "node:path"
 import * as fs from "node:fs"
 import { WebSocketServer, WebSocket } from "ws"
@@ -42,6 +43,9 @@ import {
 import { saveConfig, getConfig, replaceAppsEntries } from "../../src/config.js"
 import type { AppEntry } from "../../src/apps/types.js"
 import * as previewHelper from "../../src/computer/l2-preview-image.js"
+import * as darwinEstop from "../../src/computer/darwin-estop.js"
+import { securityPolicy } from "../../src/security-policy.js"
+import { executeCompanionTool } from "../../src/tool/companion-dispatch.js"
 
 const WIN = process.platform === "win32"
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mutex-"))
@@ -235,6 +239,29 @@ test("R1 gate: with no task running the task is admitted to the L2 dialog (seque
   assert.doesNotMatch(result.error!, /COMPUTER_TASK_BUSY/)
   assert.equal(registry.size, 0)
   assert.equal(previewStub.mock.callCount(), 1, "real L2 admission must use the isolated preview")
+})
+
+test("macOS: simultaneous approved chat tasks cannot share the estop preflight", async (t) => {
+  t.mock.method(os, "platform", () => "darwin")
+  const preflight = t.mock.method(darwinEstop, "ensureEstopHelper", async () => ({ ok: false, reason: "test-no-helper" }))
+  const threadManager = seedThreadManagerForTests()
+  const threadA = threadManager.create("macOS mutex race A")
+  const threadB = threadManager.create("macOS mutex race B")
+  const dispatch = (threadId: string) => {
+    const params = { ...COMPUTER_PARAMS, _thread_id: threadId }
+    const { token } = securityPolicy.issueTokenFor("host_computer", params)
+    return executeCompanionTool("host_computer", { ...params, security_token: token })
+  }
+  try {
+    const [first, second] = await Promise.all([dispatch(threadA.id), dispatch(threadB.id)])
+    assert.equal(first.data?.error_code, "EMERGENCY_STOP_UNAVAILABLE")
+    assert.equal(second.data?.error_code, "COMPUTER_TASK_BUSY")
+    assert.equal(preflight.mock.callCount(), 1)
+    assert.equal(getComputerTaskRegistryForTests().size, 0)
+  } finally {
+    threadManager.delete(threadA.id)
+    threadManager.delete(threadB.id)
+  }
 })
 
 test("R1 property: concurrent loser refused by handler check-and-set; abnormal exit releases; next admitted", { skip: !WIN }, async () => {

@@ -411,6 +411,17 @@ export function clearEstopFlag(): void {
   try { fs.unlinkSync(estopFlagPath()) } catch { /* does not exist */ }
 }
 
+/** Signal the same native stop fence used by the hotkey helper. */
+export function requestEstopFlag(): void {
+  try {
+    fs.writeFileSync(estopFlagPath(), JSON.stringify({ timestamp: Date.now() }), { flag: "wx", mode: 0o600 })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      logger.warn("computer.estop.flag_write_failed", { code: (error as NodeJS.ErrnoException).code })
+    }
+  }
+}
+
 export function estopHeartbeatLost(): boolean {
   return liveSock === null || liveSock.destroyed
 }

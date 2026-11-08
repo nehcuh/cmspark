@@ -21,6 +21,7 @@ import {
   getComputerTaskRegistryForTests,
   handleComputerTaskAbort,
 } from "../../src/server.js"
+import { registerComputerInputStop } from "../../src/computer/task-abort-registry.js"
 
 let wss: WebSocketServer
 let serverWs: WebSocket
@@ -77,6 +78,29 @@ test("F1: specific task_id aborts ONLY that run; ack matched 1 reaches the panel
   assert.equal(wire.length, 1)
   assert.equal(wire[0].task_id, "task-a")
   assert.equal(wire[0].matched, 1)
+})
+
+test("panel ack waits for the matched native input to drain", { timeout: 3000 }, async (t) => {
+  const registry = getComputerTaskRegistryForTests()
+  registry.set("task-a", false)
+  registry.set("task-b", false)
+  let finish!: () => void
+  const drained = new Promise<void>((resolve) => { finish = resolve })
+  let stopCalled = false
+  t.after(registerComputerInputStop("task-a", () => {
+    stopCalled = true
+    assert.equal(registry.get("task-a"), true)
+    return drained
+  }))
+
+  assert.deepEqual(handleComputerTaskAbort(serverWs, { task_id: "task-a" }), { taskId: "task-a", matched: 1 })
+  assert.equal(stopCalled, true)
+  assert.equal(registry.get("task-b"), false)
+  await settle()
+  assert.deepEqual(recv, [])
+  const received = new Promise<string>((resolve) => clientWs.once("message", (raw) => resolve(raw.toString())))
+  finish()
+  assert.deepEqual(JSON.parse(await received), { type: "computer.task.abort.ack", task_id: "task-a", matched: 1 })
 })
 
 test("F1: \"*\" panic aborts EVERY running task; ack reports the count", async () => {
