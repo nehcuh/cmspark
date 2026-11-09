@@ -98,6 +98,7 @@ async function start() {
     assert.equal(child.exitCode, null, 'owned daemon exited during boot')
     return fetch(origin + '/healthz').then(r => r.ok, () => false)
   }, 'installed companion /healthz')
+  await eventually(() => fs.readFile(path.join(data, 'ws_secret'), 'utf8').then(secret => /^[a-f0-9]{64}$/.test(secret.trim()), () => false), 'owned pairing secret persisted')
 }
 
 async function stop() {
@@ -122,7 +123,7 @@ async function connect(authenticated = true) {
     const frame = JSON.parse(raw)
     events.push(frame)
     if (frame.type === 'auth.challenge') {
-      if (authenticated) ws.send(JSON.stringify({ type:'auth.handshake', surface:'panel', proof:createHmac('sha256',secret).update(frame.nonce).digest('hex') }))
+      if (authenticated) ws.send(JSON.stringify({ type:'auth.handshake', proof:createHmac('sha256',secret).update(frame.nonce).digest('hex') }))
       else ws.send(JSON.stringify({ type:'thread.list', id:'before-auth' }))
     }
   })
@@ -131,7 +132,10 @@ async function connect(authenticated = true) {
     assert.ok(!events.some(e => e.type === 'thread.list'))
     return
   }
-  await eventually(() => events.some(e => e.type === 'auth.ok'), 'companion HMAC authentication')
+  await eventually(() => {
+    if (ws.readyState === WebSocket.CLOSED) throw Error('Owned socket closed during auth; frames: ' + events.map(event => event.type).join(','))
+    return events.some(e => e.type === 'auth.ok')
+  }, 'companion HMAC authentication')
   return {
     close: () => new Promise(resolve => { ws.once('close', resolve); ws.close() }),
     send: async (type, fields = {}) => {
@@ -180,6 +184,11 @@ const provider = createServer(async (req, res) => {
     res.end('<title>Owned release test tab</title>')
     return
   }
+  if (req.method === 'GET' && req.url === '/v1/models') {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ object:'list', data:[{ id:'owned', object:'model' }] }))
+    return
+  }
   try {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
@@ -225,6 +234,7 @@ async function main() {
     port:23401, llm:{ base_url:'http://127.0.0.1:' + provider.address().port + '/v1', api_key:'sk-owned-test', model_name:'owned', context_window:8000 },
   }))
   let peer
+  let workError
   try {
     const old = await install('baseline', '0.9.1')
     await start()
@@ -294,11 +304,16 @@ async function main() {
     await chat(restoredBrowser.page, threadId, 'acceptance restored')
     mark('0.9.1 restored from backup, upgrade-only messages absent, original extension still pairs')
     assert.ok(providerCalls >= 5)
+  } catch (error) {
+    workError = error
+    throw error
   } finally {
     await peer?.close()
     await browser?.close()
-    await stop()
-    provider.close()
+    try { await stop() } catch (error) {
+      if (!workError) throw error
+      console.error('Owned daemon cleanup also failed:', error.message)
+    } finally { provider.close() }
   }
 }
 
