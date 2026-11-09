@@ -41,10 +41,11 @@ jobs:
             $run = gh run view $env:INSTALL_RUN --json headSha,workflowName,status,conclusion,jobs | ConvertFrom-Json
             if (!$run) { Start-Sleep 12; continue }
             if ($run.headSha -ne $env:CANDIDATE -or $run.workflowName -ne 'Build installers') { throw 'Wrong candidate run' }
+            $required = @($run.jobs | Where-Object { $_.name -eq "Build $env:PLATFORM" -or $_.name -eq 'Build standalone Chrome extension ZIP' })
+            if ($required.Count -eq 2 -and !@($required | Where-Object status -ne 'completed').Count) { break }
             if ($run.status -eq 'completed') { break }
             Start-Sleep 15
           } while ((Get-Date) -lt $deadline)
-          $required = @($run.jobs | Where-Object { $_.name -eq "Build $env:PLATFORM" -or $_.name -eq 'Build standalone Chrome extension ZIP' })
           if ($required.Count -ne 2 -or @($required | Where-Object conclusion -ne 'success').Count) { throw "Required installer jobs did not pass: $env:PLATFORM" }
           $root = Join-Path $env:RUNNER_TEMP 'cmspark-install-check'
           New-Item -ItemType Directory -Force "$root/baseline","$root/candidate" | Out-Null
@@ -63,7 +64,10 @@ jobs:
         run: |
           set -euo pipefail
           npm install --no-save --no-package-lock playwright ws
-          if [ "$RUNNER_OS" = Linux ]; then npx playwright install --with-deps chromium
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y libappindicator3-1 libgtk-3-0 xclip
+            npx playwright install --with-deps chromium
           else npx playwright install chromium; fi
       - name: Upgrade and recover an isolated installation and Chrome profile
         run: node scripts/release-1.0-install-check.cjs
