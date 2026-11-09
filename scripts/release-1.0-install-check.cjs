@@ -70,7 +70,17 @@ async function install(variant, version) {
       await exec('ditto', [app, path.join(installed, 'CMspark.app')])
     } finally { await exec('hdiutil', ['detach', mount]) }
   } else {
+    assert.equal(process.env.GITHUB_ACTIONS, 'true', 'real package installation requires a disposable Actions runner')
     await exec('sudo', ['dpkg', '-i', packageFile], { timeout: 180000 })
+    const service = 'cmspark-companion.service'
+    const active = await exec('systemctl', ['--user', 'is-active', service]).then(
+      result => result.stdout.trim() === 'active', () => false
+    )
+    if (active) {
+      mark('DEB postinst started its user service; stopping it before switching to the owned data directory')
+      await exec('systemctl', ['--user', 'stop', 'cmspark-tray.service', service], { timeout: 30000 })
+    }
+    assert.equal(await fetch(origin + '/healthz').then(() => true, () => false), false, 'port must be free after package service stop')
   }
   const extZip = assets.find(file => path.basename(file) === 'CMspark-Chrome-Extension-v' + version + '.zip')
   assert.ok(extZip, 'standalone extension zip')
