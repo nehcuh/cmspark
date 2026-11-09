@@ -133,7 +133,7 @@ async function connect(authenticated = true) {
   }
   await eventually(() => events.some(e => e.type === 'auth.ok'), 'companion HMAC authentication')
   return {
-    close: () => ws.close(),
+    close: () => new Promise(resolve => { ws.once('close', resolve); ws.close() }),
     send: async (type, fields = {}) => {
       const id = randomUUID()
       ws.send(JSON.stringify({ type, id, ...fields }))
@@ -175,6 +175,11 @@ let providerCalls = 0
 let toolRequested = false
 let toolReceived = false
 const provider = createServer(async (req, res) => {
+  if (req.method === 'GET' && req.url === '/owned-release-tab') {
+    res.writeHead(200, { 'content-type': 'text/html' })
+    res.end('<title>Owned release test tab</title>')
+    return
+  }
   try {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
@@ -188,7 +193,7 @@ const provider = createServer(async (req, res) => {
     res.setHeader('content-type', 'text/event-stream')
     const emit = (delta, finish = null) => res.write('data: ' + JSON.stringify({ id:'owned', object:'chat.completion.chunk', choices:[{ index:0, delta, finish_reason:finish }] }) + '\n\n')
     const last = body.messages.at(-1)
-    if (last.role === 'tool' && last.tool_call_id === 'owned-list-tabs') toolReceived = true
+    if (last.role === 'tool' && last.tool_call_id === 'owned-list-tabs') toolReceived = JSON.stringify(last.content).includes('/owned-release-tab')
     if (!toolRequested && last.role === 'user' && JSON.stringify(last.content).includes('acceptance upgraded tool')) {
       assert.ok(body.tools?.some(t => t.function?.name === 'list_tabs'), 'list_tabs advertised by installed companion')
       toolRequested = true
@@ -238,7 +243,7 @@ async function main() {
     const oldBrowser = await openExtension(old, true)
     await chat(oldBrowser.page, threadId, 'acceptance baseline')
     await verifySnapshot(peer, threadId, projectId, 'acceptance baseline')
-    peer.close(); peer = null
+    await peer.close(); peer = null
     await browser.close(); browser = null
     await stop()
     await fs.cp(data, backup, { recursive:true, errorOnExist:true })
@@ -254,19 +259,23 @@ async function main() {
     assert.ok(!current.state.config.extraction_prompt)
     const updated = await peer.send('activity.configure', { expected_revision:current.state.revision, patch:{ extraction_prompt:'Owned release fixture' } })
     assert.ok(updated.ok && updated.state.config.extraction_prompt === 'Owned release fixture')
+    await peer.close(); peer = null
     const newBrowser = await openExtension(upgraded, false)
     assert.equal(newBrowser.id, oldBrowser.id)
+    const ownedTab = await browser.newPage()
+    await ownedTab.goto('http://127.0.0.1:' + provider.address().port + '/owned-release-tab')
     await chat(newBrowser.page, threadId, 'acceptance upgraded tool')
     assert.ok(toolRequested && toolReceived, 'provider saw completion of the browser tool call')
+    peer = await connect()
     await verifySnapshot(peer, threadId, projectId, 'acceptance upgraded tool')
-    peer.close(); peer = null
+    await peer.close(); peer = null
     await stop()
     await eventually(async () => !(await newBrowser.page.evaluate(() => chrome.runtime.sendMessage({type:'chat.send', threadId:'owned-absent', message:'disconnected probe'}))).ok, 'extension observes disconnect')
     await start()
     peer = await connect()
     assert.equal((await peer.send('activity.state')).state.config.extraction_prompt, 'Owned release fixture')
     await chat(newBrowser.page, threadId, 'acceptance reconnected')
-    peer.close(); peer = null
+    await peer.close(); peer = null
     await browser.close(); browser = null
     await stop()
     mark('1.0.0 preserved projects, history, settings and pairing; real browser tool round trip and reconnect passed')
@@ -286,7 +295,7 @@ async function main() {
     mark('0.9.1 restored from backup, upgrade-only messages absent, original extension still pairs')
     assert.ok(providerCalls >= 5)
   } finally {
-    peer?.close()
+    await peer?.close()
     await browser?.close()
     await stop()
     provider.close()
