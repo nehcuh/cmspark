@@ -18,6 +18,7 @@ export interface ActivityPreview {
 export interface ActivityConfig {
   chat_scopes?: ActivityChatScope[]
   extraction_mode?: ActivityModelMode
+  extraction_prompt?: string
   image_ai_enabled?: boolean
   /** Backend-owned binding to the exact processing target. */
   image_ai_consent?: string

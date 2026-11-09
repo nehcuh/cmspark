@@ -3,7 +3,7 @@ import { analyzeImage, normalizeVisionBaseUrl, VisionOutputError } from '../llm/
 import { QwenVlSession } from '../computer/qwen-vl-session'
 import { ModelRuntimeError } from '../computer/qwen-vl-runtime'
 import { withPendingImage } from './image'
-import { parseExtractedCandidates, type ExtractedCandidate } from './adapters'
+import { activityExtractionPrompt, parseExtractedCandidates, type ExtractedCandidate } from './adapters'
 import { activityVisionConfig, hasActivityImageConsent } from './model-config'
 import { ActivityError, type ActivityConfig, type ActivitySource } from './types'
 
@@ -24,6 +24,7 @@ export function parseActivityImage(raw: string, source: ActivitySource): Activit
 export async function extractActivityImage(source: ActivitySource, image: Buffer, config: ActivityConfig, root: string, signal: AbortSignal): Promise<ActivityImageExtraction> {
   if (!hasActivityImageConsent(config)) throw new ActivityError('IMAGE_CONSENT_REQUIRED', '请核对处理目标并允许图像模型读取截图')
   signal.throwIfAborted()
+  const prompt = activityExtractionPrompt(ACTIVITY_IMAGE_PROMPT, config.extraction_prompt)
   let raw: string
   if (config.extraction_mode === 'qwen') {
     const variant = getConfig().computer?.modelVariant
@@ -33,7 +34,7 @@ export async function extractActivityImage(source: ActivitySource, image: Buffer
     try {
       await session.prepare(signal)
       signal.throwIfAborted()
-      raw = await withPendingImage(root, image, file => session.analyze(file, ACTIVITY_IMAGE_PROMPT))
+      raw = await withPendingImage(root, image, file => session.analyze(file, prompt))
     } catch (error) {
       signal.throwIfAborted()
       if (!(error instanceof ModelRuntimeError)) throw error
@@ -55,7 +56,7 @@ export async function extractActivityImage(source: ActivitySource, image: Buffer
       const localGemma = model.protocol !== 'anthropic' && ['localhost', '127.0.0.1', '[::1]'].includes(host) &&
         /^(?:google\/)?gemma-4-/i.test(model.model_name)
       if (localGemma) model.max_tokens = Math.max(model.max_tokens, 2048)
-      raw = (await analyzeImage(input, model, ACTIVITY_IMAGE_PROMPT, signal, { requireComplete: true, disableReasoning: localGemma })).description
+      raw = (await analyzeImage(input, model, prompt, signal, { requireComplete: true, disableReasoning: localGemma })).description
     } catch (error) {
       signal.throwIfAborted()
       if (error instanceof VisionOutputError) {

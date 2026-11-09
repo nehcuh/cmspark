@@ -1,6 +1,6 @@
 import { DATA_DIR } from '../config'
 import { ActivityStore } from './store'
-import { extractActivity, submitReminder, type RecorderAdapter, type ExtractedCandidate } from './adapters'
+import { extractActivity, submitReminder, type RecorderAdapter } from './adapters'
 import { ActivityError, COVERAGE, type ActivityApp, type ActivityRuntime, type ActivitySource, type ActivityWireState, type PersonalTodo, type ActivityPreview, type ActivityRect } from './types'
 import { createRecorder, platformSupport } from './platform'
 import { languageOf, validatePng, type LocalLanguage } from './image'
@@ -13,7 +13,7 @@ export interface ActivityDependencies {
   platform?: string
   now?: () => number
   recorder?: RecorderAdapter
-  extract?: (source: ActivitySource, signal: AbortSignal) => Promise<ExtractedCandidate[]>
+  extract?: typeof extractActivity
   extractImage?: typeof extractActivityImage
   notify?: (todo: PersonalTodo) => Promise<void>
 }
@@ -62,7 +62,7 @@ export class ActivityService {
     const imageMode = (config.extraction_mode || 'ocr') !== 'ocr'
     if (!this.canExtract()) throw new ActivityError(imageMode ? 'IMAGE_CONSENT_REQUIRED' : 'SEMANTIC_CONSENT_REQUIRED', '请核对处理目标并允许所选模型处理聊天内容')
     if (!imageMode) {
-      const entries = await this.extract(source, signal)
+      const entries = await this.extract(source, signal, config.extraction_prompt)
       if (!current() || signal.aborted) throw new ActivityError('CANCELLED', '设置或来源已变化，此次抽取已取消')
       this.store.addCandidates(source, entries)
       return

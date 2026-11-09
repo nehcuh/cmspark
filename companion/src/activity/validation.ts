@@ -17,9 +17,10 @@ export function iso(v: unknown): string | null {
   return new Date(v).toISOString()
 }
 export function validateConfig(patch: unknown): Record<string, unknown> {
-  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language', 'extraction_mode', 'image_ai_enabled', 'image_ai_consent', 'dedicated_vision', 'chat_scopes'])
+  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language', 'extraction_mode', 'extraction_prompt', 'image_ai_enabled', 'image_ai_consent', 'dedicated_vision', 'chat_scopes'])
   for (const [key, value] of Object.entries(patch)) {
     if (key === 'chat_scopes') validateChatScopes(value)
+    else if (key === 'extraction_prompt') text(value, 2000)
     else if (key === 'extraction_mode') { if (!['ocr', 'vision', 'dedicated', 'qwen'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', '图像处理方式无效') }
     else if (key === 'image_ai_consent') { if (typeof value !== 'string' || value.length > 64) throw new ActivityError('INVALID_REQUEST', '图片授权无效') }
     else if (key === 'dedicated_vision') {
