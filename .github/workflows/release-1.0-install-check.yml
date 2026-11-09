@@ -1,0 +1,69 @@
+name: 1.0 isolated installer acceptance
+on:
+  push:
+    branches: [codex/release-1.0-install-check]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            platform: windows-x64
+            baseline: CMspark-Setup-v0.9.1-windows-x64.exe
+          - os: macos-15
+            platform: macos-arm64
+            baseline: CMspark-v0.9.1-macOS-arm64.dmg
+          - os: ubuntu-24.04
+            platform: linux-x64
+            baseline: cmspark_0.9.1-1_amd64.deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CANDIDATE: 0f7de1049d44df049c1572cfe2da8a693eaac1e2
+      INSTALL_RUN: 42629681034
+      PLATFORM: ${{ matrix.platform }}
+      BASELINE_ASSET: ${{ matrix.baseline }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Fetch immutable candidate and official baseline assets
+        shell: pwsh
+        run: |
+          $deadline = (Get-Date).AddMinutes(28)
+          do {
+            $run = gh run view $env:INSTALL_RUN --json headSha,workflowName,status,conclusion,jobs | ConvertFrom-Json
+            if (!$run) { Start-Sleep 12; continue }
+            if ($run.headSha -ne $env:CANDIDATE -or $run.workflowName -ne 'Build installers') { throw 'Wrong candidate run' }
+            if ($run.status -eq 'completed') { break }
+            Start-Sleep 15
+          } while ((Get-Date) -lt $deadline)
+          $required = @($run.jobs | Where-Object { $_.name -eq "Build $env:PLATFORM" -or $_.name -eq 'Build standalone Chrome extension ZIP' })
+          if ($required.Count -ne 2 -or @($required | Where-Object conclusion -ne 'success').Count) { throw "Required installer jobs did not pass: $env:PLATFORM" }
+          $root = Join-Path $env:RUNNER_TEMP 'cmspark-install-check'
+          New-Item -ItemType Directory -Force "$root/baseline","$root/candidate" | Out-Null
+          gh release download v0.9.1 --dir "$root/baseline" --pattern $env:BASELINE_ASSET --pattern 'CMspark-Chrome-Extension-v0.9.1.zip'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $assets = (gh release view v0.9.1 --json assets | ConvertFrom-Json).assets
+          foreach ($file in Get-ChildItem "$root/baseline" -File) {
+            $digest = ($assets | Where-Object name -CEQ $file.Name).digest
+            if ($digest -ne "sha256:$((Get-FileHash -LiteralPath $file.FullName).Hash.ToLowerInvariant())") { throw "Digest mismatch: $($file.Name)" }
+          }
+          gh run download $env:INSTALL_RUN --dir "$root/candidate" -n "cmspark-installers-$env:PLATFORM" -n cmspark-chrome-extension
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem "$root/candidate" -Recurse -File | Get-FileHash | Format-Table -AutoSize
+      - name: Install test browser and protocol client
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --no-package-lock playwright ws
+          if [ "$RUNNER_OS" = Linux ]; then npx playwright install --with-deps chromium
+          else npx playwright install chromium; fi
+      - name: Upgrade and recover an isolated installation and Chrome profile
+        run: node scripts/release-1.0-install-check.cjs
