@@ -1,14 +1,17 @@
 import './helpers/require-isolated-config-825'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
 import fs from 'node:fs'
+import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { analyzeImage } from '../src/llm/vision-pipeline'
 import { getConfig, saveConfig } from '../src/config'
 import { ActivityService } from '../src/activity/service'
+import { ActivityStore } from '../src/activity/store'
 import { activityModelTarget } from '../src/activity/model-config'
-import { parseActivityImage, extractActivityImage } from '../src/activity/model-extract'
+import { ACTIVITY_IMAGE_PROMPT, parseActivityImage, extractActivityImage } from '../src/activity/model-extract'
 import { QwenVlSession } from '../src/computer/qwen-vl-session'
 import { validateActivityMessage } from '../src/activity/validation'
 
@@ -20,7 +23,7 @@ test('local Gemma extraction disables reasoning and a truncated response keeps i
   const fetchBefore = globalThis.fetch
   const visionBefore = getConfig().vision!
   const service = new ActivityService({ dataDir: directory, recorder: { capture: async () => null } })
-  const requests: Record<string, unknown>[] = []
+  const requests: Array<{ reasoning_effort: string; max_tokens: number; messages: Array<{ content: Array<{ type: string; text?: string }> }> }> = []
   globalThis.fetch = async (_input, init) => {
     requests.push(JSON.parse(String(init?.body)))
     const choice = requests.length === 1
@@ -43,12 +46,66 @@ test('local Gemma extraction disables reasoning and a truncated response keeps i
     const source = await service.handle({ type: 'activity.source', source_id: sourceId })
     assert.equal(source.ok, true)
     assert.equal((source.source as { image_data_url: string }).image_data_url, 'data:image/png;base64,' + PNG)
+    const customPrompt = '优先提取明确要求群内反馈的任务'
+    assert.equal((await service.handle({ type: 'activity.configure', expected_revision: service.state().revision, patch: { extraction_prompt: customPrompt } })).ok, true)
+    assert.equal(service.state().config.image_ai_enabled, true)
     assert.equal((await service.handle({ type: 'activity.analyze', source_id: sourceId })).ok, true)
     assert.equal(service.state().candidates.length, 1)
     assert.deepEqual(requests.map(body => [body.reasoning_effort, body.max_tokens]), [['none', 2048], ['none', 2048]])
+    const [original, customized] = requests.map(body => body.messages[0].content.find(part => part.type === 'text')?.text)
+    assert.equal(original, ACTIVITY_IMAGE_PROMPT)
+    assert.ok(customized?.includes(customPrompt))
+    assert.ok(customized?.endsWith(ACTIVITY_IMAGE_PROMPT))
   } finally {
     globalThis.fetch = fetchBefore
     saveConfig({ vision: visionBefore })
+    await service.stop()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('saved activity rules reach the OCR model and clearing them restores the original request', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-extraction-prompt-'))
+  const service = new ActivityService({ dataDir: directory, recorder: { capture: async () => null, ocrImage: async () => '小林，请提交报告' } })
+  const llm = getConfig().llm
+  const requests: Array<{ role: string; content: string }[]> = []
+  const server = createServer(async (request, response) => {
+    request.setEncoding('utf8')
+    let body = ''
+    for await (const chunk of request) body += chunk
+    requests.push(JSON.parse(body).messages)
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"candidates":[{"title":"提交报告","quote":"请提交报告"},{"title":"虚构事项","quote":"截图中没有这句话"}]}' } }] }))
+  })
+  try {
+    await once(server.listen(0, '127.0.0.1'), 'listening')
+    const address = server.address()
+    assert.ok(address && typeof address === 'object')
+    saveConfig({ llm: { ...llm, base_url: `http://127.0.0.1:${address.port}/v1`, api_key: 'owned-test-key', model_name: 'owned-text', protocol: 'openai' } })
+    const configure = (patch: object) => service.handle({ type: 'activity.configure', expected_revision: service.state().revision, patch })
+    assert.equal((await configure({ ocr_ai_enabled: true })).ok, true)
+    assert.equal((await service.handle({ type: 'activity.import', image_base64: PNG })).ok, true)
+    assert.equal(requests.length, 0)
+    const analyze = () => service.handle({ type: 'activity.analyze', source_id: service.state().sources[0].id })
+    assert.equal((await analyze()).ok, true)
+    const rules = '我在群里的昵称是小林。\n只提取分配给我的任务。'
+    assert.equal((await configure({ extraction_prompt: rules })).ok, true)
+    assert.equal(new ActivityStore(directory).config().extraction_prompt, rules)
+    assert.equal(requests.length, 1)
+    assert.equal((await configure({ extraction_prompt: 'x'.repeat(2001) })).error_code, 'INVALID_REQUEST')
+    assert.equal((await analyze()).ok, true)
+    assert.equal(requests[1][0].role, 'system')
+    assert.ok(requests[1][0].content.includes(JSON.stringify(rules)))
+    assert.ok(requests[1][0].content.endsWith(requests[0][0].content))
+    assert.deepEqual(requests[1][1], requests[0][1])
+    assert.deepEqual(service.state().candidates.map(candidate => candidate.evidence.quote), ['请提交报告'])
+    assert.equal(service.state().todos.length, 0)
+    assert.equal((await configure({ extraction_prompt: '' })).ok, true)
+    assert.equal((await analyze()).ok, true)
+    assert.deepEqual(requests[2], requests[0])
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    saveConfig({ llm })
     await service.stop()
     fs.rmSync(directory, { recursive: true, force: true })
   }
@@ -159,13 +216,14 @@ test('production Qwen extraction uses only its local session and cleans up the t
   QwenVlSession.prototype.prepare = async () => {}
   QwenVlSession.prototype.analyze = async (file, prompt) => {
     imageFile = file; assert.deepEqual(fs.readFileSync(file), Buffer.from(PNG, 'base64'))
-    assert.ok(prompt.includes('transcript'))
+    assert.ok(prompt.includes('关注明确分派的任务'))
+    assert.ok(prompt.endsWith(ACTIVITY_IMAGE_PROMPT))
     return '{"transcript":"请提交方案","candidates":[{"title":"交方案","quote":"请提交方案"}]}'
   }
   QwenVlSession.prototype.dispose = async () => { disposed++ }
   globalThis.fetch = async () => assert.fail('local Qwen may not use a cloud provider')
   try {
-    const config = { enabled: false, allowed_apps: [], interval_ms: 30000, ocr_ai_enabled: false, retention_days: 14, max_storage_mb: 512, extraction_mode: 'qwen' as const, image_ai_enabled: true, image_ai_consent: '' }
+    const config = { enabled: false, allowed_apps: [], interval_ms: 30000, ocr_ai_enabled: false, retention_days: 14, max_storage_mb: 512, extraction_mode: 'qwen' as const, extraction_prompt: '关注明确分派的任务', image_ai_enabled: true, image_ai_consent: '' }
     config.image_ai_consent = activityModelTarget(config).id
     const result = await extractActivityImage({ id: 'owned', app_id: 'manual.screenshot', app_name: 'owned', origin: 'manual_import', window_title: '', captured_at: new Date().toISOString(), ocr_text: '', sha256: '', bytes: 0 }, Buffer.from(PNG, 'base64'), config, directory, new AbortController().signal)
     assert.equal(result.entries.length, 1); assert.equal(disposed, 1); assert.equal(fs.existsSync(imageFile), false)

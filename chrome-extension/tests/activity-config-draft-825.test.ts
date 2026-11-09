@@ -117,6 +117,22 @@ for (const platform of ['darwin', 'linux']) {
   })
 }
 
+test('work center saves the edited extraction prompt through the activity settings RPC', async () => {
+  const f = await setup()
+  try {
+    const prompt = () => f.ui.find(f.render(), (node: any) => node.type === 'textarea' && node.props.maxLength === 2000)
+    const rules = '我在群里的昵称是小林。\n只提取交给我的待办。'
+    assert.equal(prompt().props.value, '')
+    prompt().props.onChange({ target: { value: rules } })
+    assert.equal(prompt().props.value, rules)
+    f.submit()
+    await f.fresh()
+    assert.equal(f.ui.configurationCalls.length, 1)
+    assert.equal((await f.ui.configurationCalls[0].promise).ok, true)
+    assert.equal(f.fixture.state().config.extraction_prompt, rules)
+  } finally { await f.dispose() }
+})
+
 test('825 changed live config or model identity rejects before any configuration, retaining scope draft', async () => {
   for (const changed of ['config', 'model'] as const) for (const refreshed of [false, true]) {
     const f = await setup()
