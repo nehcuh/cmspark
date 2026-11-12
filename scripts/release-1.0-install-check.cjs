@@ -162,9 +162,25 @@ async function openExtension(asset, pair) {
     channel: 'chromium', headless: true,
     args: ['--disable-extensions-except=' + asset.directory, '--load-extension=' + asset.directory],
   })
-  const worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker', { timeout: 20000 })
+  let worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker', { timeout: 20000 })
   const id = new URL(worker.url()).host
   assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), asset.version, 'actual loaded extension version must match the installed artifact')
+  if (!pair && asset.version === '1.0.0') {
+    const loadedCode = await worker.evaluate(() => {
+      const modules = Object.values(globalThis).filter(value => value?.isParcelRequire).flatMap(value => Object.values(value.cache))
+      const bridge = modules.find(value => value.exports?.BrowserBridge)?.exports.BrowserBridge
+      return { browser_bridge:!!bridge, creation_claim:!!bridge?.prototype.createTab.toString().includes('task_tab') }
+    })
+    mark('Upgraded worker before normal unpacked-extension reload: ' + JSON.stringify(loadedCode))
+    // Replacing an unpacked extension directory requires Chrome's normal Reload
+    // operation; a new manifest alone does not prove the running worker changed.
+    const replacement = browser.waitForEvent('serviceworker', { predicate:next => next !== worker && new URL(next.url()).host === id, timeout:20000 })
+    await worker.evaluate(() => chrome.runtime.reload()).catch(error => {
+      if (!/closed|destroyed/i.test(error.message)) throw error
+    })
+    worker = await replacement
+    assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), asset.version)
+  }
   const page = await browser.newPage()
   await page.goto('chrome-extension://' + id + '/' + asset.panel)
   await page.evaluate(() => { window.acceptanceEvents = []; chrome.runtime.onMessage.addListener(m => window.acceptanceEvents.push(m)) })
