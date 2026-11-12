@@ -1,6 +1,13 @@
 # 版本与交付状态
 
-> 源码开发版本 **1.0.0（尚未正式发布）**。当前正式安装包见 [v0.9.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.9.1)。
+> 源码版本 **1.0.0（已于 2026-11-12 正式发布）**。当前正式安装包见 [v1.0.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.0.0)。
+
+## 1.0.0 正式发行回执
+
+- [PR #849](https://github.com/nehcuh/cmspark/pull/849) 与[版本准备 PR #847](https://github.com/nehcuh/cmspark/pull/847) 已合入。标签 `v1.0.0` 指向 `14603ff67cd82337feffa7f56c670bbf0555c1c6`；该提交的[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/43170594301)、[ARM](https://github.com/nehcuh/cmspark/actions/runs/43170594339)、[Linux ARM 集成](https://github.com/nehcuh/cmspark/actions/runs/43170594329)与[会话持久化](https://github.com/nehcuh/cmspark/actions/runs/43170594296)共 10 项检查通过。完整 tree 为 `cbabc61d9b44fcc7866cbf5ac9f1e428a1a3eb9c`，与已通过[发布预演](https://github.com/nehcuh/cmspark/actions/runs/43164462622)和[安装器预演](https://github.com/nehcuh/cmspark/actions/runs/43164467995)的候选一致。
+- 正式发布时间为 2026-11-12 15:30:32（北京时间）。[正式 Release 构建](https://github.com/nehcuh/cmspark/actions/runs/43173917764)与[同标签安装器构建](https://github.com/nehcuh/cmspark/actions/runs/43173924588)均通过；发行记录为 latest、draft=false、prerelease=false。提供 macOS／Windows／Linux 的 x64 与 ARM64 安装包，以及独立 Chrome 扩展 ZIP。
+- [隔离安装升级／恢复验收](https://github.com/nehcuh/cmspark/actions/runs/43170063318)使用官方 0.9.1 DEB、真实 Chrome 配置与上述同树 1.0.0 候选安装器，验证项目、历史、设置和配对保留，真实工具往返与断线重连通过。两个任务页在提前释放／成功结束时关闭，关闭后的证据可回查，原有用户页保留；恢复备份与 0.9.1 也通过。解压版扩展升级与恢复均经 `chrome://extensions` 正常重新加载，并检查实际运行代码。
+- 共 19 项资产已上传，三个校验清单、所有资产名称及 GitHub SHA-256 摘要已核对，见[安装器校验清单](https://github.com/nehcuh/cmspark/releases/download/v1.0.0/SHA256SUMS-INSTALLERS.txt)。正式 macOS ARM64 DMG 已只读挂载核验镜像、应用签名与宿主 CDHash，包内 CLI 返回 `cmspark-agent v1.0.0`。
 
 ## 0.9.1 正式发行回执
 

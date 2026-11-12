@@ -37,3 +37,12 @@ The reviewed patch is preserved as `2026-11-12-task-tabs-848.patch.gz` (gzip rou
 ## Full CI fixture integration
 
 The first complete CI run (`43163445355`, build job `130999729013`) exposed 12 `ReferenceError: resolveEffectiveExecutionPolicy is not defined` failures in the existing `computer-readonly-session-723` factory harness. That test extracts the actual server factory and explicitly injects its imports. The harness now injects the real effective-policy resolver, with all original consent, L2, revocation, ABA and plan assertions unchanged. This is a T1 test-consumer correction; production behavior is unchanged. The affected suite and task/server/pregate regressions pass before the updated PR head is submitted to CI.
+
+## Installed Chrome and release acceptance
+
+[Installed upgrade/recovery run 43170063318](https://github.com/nehcuh/cmspark/actions/runs/43170063318) passed using the 1.0.0 candidate installer and a real isolated Chrome profile upgraded from official 0.9.1. Both early and terminal temporary-page closure, saved evidence lookup after reconnect, existing-page retention, pairing/history/settings preservation and backup restoration passed. The final tag `v1.0.0` has the same complete tree as this candidate; [main CI](https://github.com/nehcuh/cmspark/actions/runs/43170594301) passed, followed by [formal Release](https://github.com/nehcuh/cmspark/actions/runs/43173917764) and [seven installer jobs](https://github.com/nehcuh/cmspark/actions/runs/43173924588). The 19 published asset digests and formal ARM64 DMG were verified; see the [release receipt](../../release-status.md).
+
+1. Action: replace the unpacked 0.9.1 extension with 1.0.0 inside the isolated upgrade fixture while preserving its Chrome profile.
+2. Observation: the manifest reported 1.0.0 while the worker still executed the old bridge, so task ownership claims were absent; Chrome's developer-mode reload loaded the new bridge and the original lifecycle assertions passed.
+3. Attribution: AI acceptance-harness omission. The fixture had checked manifest metadata instead of the running code; no production change was required.
+4. Protected capability: real installed upgrade/recovery acceptance now reloads through Chrome's extension manager and checks loaded code in both upgrade and restore directions; original pairing, tab/evidence, policy and timeout assertions stay intact.
