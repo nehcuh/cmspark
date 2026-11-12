@@ -512,10 +512,11 @@ jobs:
           node "$moduleScopeProbe650" "$env:CMSPARK_650_FINISHED_PUBLIC_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Project retained private trace after failure
-        if: failure()
+        if: always()
         run: node scripts/diagnose-macos-native-timeout.mjs
+        id: trace
       - name: Upload bounded closed trace only
-        if: failure()
+        if: always() && steps.trace.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: macos-native-trace
