@@ -166,13 +166,13 @@ async function openExtension(asset, pair) {
   const id = new URL(worker.url()).host
   assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), asset.version, 'actual loaded extension version must match the installed artifact')
   let page
-  if (!pair && asset.version === '1.0.0') {
+  if (!pair) {
     const loadedCode = await worker.evaluate(() => {
       const modules = Object.values(globalThis).filter(value => value?.isParcelRequire).flatMap(value => Object.values(value.cache))
       const bridge = modules.find(value => value.exports?.BrowserBridge)?.exports.BrowserBridge
       return { browser_bridge:!!bridge, creation_claim:!!bridge?.prototype.createTab.toString().includes('task_tab') }
     })
-    mark('Upgraded worker before normal unpacked-extension reload: ' + JSON.stringify(loadedCode))
+    mark('Worker before normal unpacked-extension reload (' + asset.version + '): ' + JSON.stringify(loadedCode))
     // Replacing an unpacked extension directory requires Chrome's normal Reload
     // operation; a new manifest alone does not prove the running worker changed.
     const manager = await browser.newPage()
@@ -186,9 +186,9 @@ async function openExtension(asset, pair) {
     await page.goto('chrome-extension://' + id + '/' + asset.panel)
     worker = await replacement
     assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), asset.version)
-    assert.ok(await worker.evaluate(() => Object.values(globalThis).filter(value => value?.isParcelRequire)
+    assert.equal(await worker.evaluate(() => Object.values(globalThis).filter(value => value?.isParcelRequire)
       .flatMap(value => Object.values(value.cache)).some(value => value.exports?.BrowserBridge?.prototype.createTab.toString().includes('task_tab'))),
-      'reloaded worker runs task-tab creation code')
+      asset.version === '1.0.0', 'reloaded worker runs the installed version of task-tab code')
     await manager.close()
   }
   if (!page) {
