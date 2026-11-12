@@ -8,8 +8,8 @@ Chrome 扩展另在 `cmspark-chrome-extension` artifact 中提供。
 
 ## 安装和使用
 
-Debian / Ubuntu：`sudo apt install ./cmspark_1.0.0-1_amd64.deb`。
-Fedora / Red Hat 系：`sudo dnf install ./cmspark-1.0.0-1.x86_64.rpm`。
+Debian / Ubuntu：`sudo apt install ./cmspark_1.0.1-1_amd64.deb`。
+Fedora / Red Hat 系：`sudo dnf install ./cmspark-1.0.1-1.x86_64.rpm`。
 ARM64 分别选用文件名带 `arm64` 和 `aarch64` 的安装包。
 
 安装后在桌面环境的应用菜单中搜索 **CMspark**，点击图标启动 Companion 和托盘。
