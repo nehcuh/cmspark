@@ -55,6 +55,7 @@ import { ThreadManager } from "../src/threads/thread-manager"
 import * as configuration from "../src/config"
 import { runL2ToolAdmission } from "../src/tool/l2-admission"
 import { runMultiAgentToolPregate } from "../src/orchestrator/tool-pregate"
+import { resolveEffectiveExecutionPolicy } from "../src/tool/plan-readonly"
 import { securityPolicy } from "../src/security-policy"
 import { assertCoordinateAllowed } from "../src/computer/policy"
 import { getComputerSessionTrust, resolveComputerTrustKey } from "../src/computer/session-trust"
@@ -104,7 +105,7 @@ function serverFixture(executeTask?: (params: any, options: any) => Promise<any>
     WebSocket: { OPEN: 1 }, isCompanionTool: (name: string) => name === "host_computer",
     isMcpNamespaced: () => false, logger: { warn() {}, info() {}, error() {} }, logToolFinish() {},
     hasPendingForTab: () => false, toolDisplayNameZh: (name: string) => name,
-    summarizeToolParams: () => ({}), runMultiAgentToolPregate,
+    summarizeToolParams: () => ({}), runMultiAgentToolPregate, resolveEffectiveExecutionPolicy,
     runCookieTrustAdmission: () => ({ ok: true }), runBrowserDownloadAdmission: (ctx: any) => ({ ok: true, finalParams: ctx.finalParams }),
     runL2ToolAdmission, computerRateLimiter: async () => new InjectionRateLimiter(), activeTrayConfirmsByWs: new WeakMap(),
     getWsClients: () => new Set([socket]), getCachedTabUrl: () => undefined, getDomainFromUrl: () => "", 

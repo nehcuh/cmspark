@@ -396,7 +396,9 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     active: z.boolean().optional(),
     index: z.number().int().min(0).optional(),
     wait_for_load: z.boolean().optional(),
+    keep_open: z.boolean().optional(),
   }),
+  browser_sources: z.object({ observation_id: z.string().min(1).optional() }),
   set_tab_url: z.object({
     tabId: tabIdSchema,
     url: urlSchema,

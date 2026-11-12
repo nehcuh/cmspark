@@ -6,6 +6,7 @@ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64, promoteFetchSrc, sanitizeImageDim } from "./image-extract-utils"
 import { selectorJsLiteral } from "./selector-js-literal"
 import { browserSiteTarget } from "./browser-site-target"
+import { TaskTabs, taskTabOwner, taskTabHasEdits, type TaskTabOwner } from "./task-tabs"
 import { executeEnterpriseBrowser, enterpriseProfileId } from "./enterprise-browser"
 import { readPageText, readPageHtml, type PageReadDependencies } from "./page-read-tools"
 import type { PageReadChannel } from "./page-read-provenance"
@@ -117,8 +118,14 @@ export class BrowserBridge {
   private tabQueue = new TabQueue()
   /** D13: same-tab browser_download mutual exclusion (reject, do not queue). */
   downloadBusyTabs: Set<number> = new Set()
+  private taskTabs = new TaskTabs({
+    tab: id => chrome.tabs.get(id), remove: id => chrome.tabs.remove(id),
+    edited: taskTabHasEdits, busy: id => this.downloadBusyTabs.has(id),
+  })
 
   constructor(sanitizer?: PageSanitizer) {
+    chrome.tabs.onActivated?.addListener(info => this.taskTabs.adopt(info.tabId))
+    chrome.tabs.onRemoved?.addListener(id => this.taskTabs.forget(id))
     // Local identity exists before an administrator registers the first grant.
     void enterpriseProfileId().catch(() => {})
     this.sanitizer = sanitizer || pageSanitizer
@@ -150,9 +157,11 @@ export class BrowserBridge {
     }
   }
 
-  async execute(toolName: string, params: Record<string, any>, locatorScope?: unknown): Promise<ToolResult> {
+  async execute(toolName: string, params: Record<string, any>, locatorScope?: unknown, taskContext?: unknown): Promise<ToolResult> {
     const owner = snapshotOwner(locatorScope)
     const tabId = coerceTabId(params?.tabId)
+    const taskOwner = taskTabOwner(taskContext)
+    this.taskTabs.observe(tabId, taskOwner)
     let observation: SnapshotSlot | undefined
     if (toolName === "get_interactive_snapshot") {
       try {
@@ -172,11 +181,11 @@ export class BrowserBridge {
       tabId,
       downloadBusyTabs: this.downloadBusyTabs,
       tabQueueRun: (id, fn) => this.tabQueue.run(id, fn),
-      executeInner: (name, p) => this.executeInner(name, p, owner, observation),
+      executeInner: (name, p) => this.executeInner(name, p, owner, observation, taskOwner),
     }) } finally { if (observation?.state === "capturing") await this.snapshots.cache.finish(observation) }
   }
 
-  private async executeInner(toolName: string, params: Record<string, any>, owner?: SnapshotOwner, observation?: SnapshotSlot): Promise<ToolResult> {
+  private async executeInner(toolName: string, params: Record<string, any>, owner?: SnapshotOwner, observation?: SnapshotSlot, taskOwner?: TaskTabOwner): Promise<ToolResult> {
     const numbered = (toolName === "click" || toolName === "type") && hasSnapshotLocator(params)
     if (toolName === "get_interactive_snapshot" || numbered) {
       try {
@@ -217,9 +226,9 @@ export class BrowserBridge {
           }
           return await this.listTabs()
         case "create_tab":
-          return await this.createTab(params)
+          return await this.createTab(params, taskOwner)
         case "close_tab":
-          return await this.closeTab(params)
+          return await this.closeTab(params, taskOwner)
         case "navigate":
           return await this.navigate(params)
         case "screenshot":
@@ -758,26 +767,36 @@ export class BrowserBridge {
     }
   }
 
-  private async createTab(params: Record<string, any>): Promise<ToolResult> {
+  private async createTab(params: Record<string, any>, owner?: TaskTabOwner): Promise<ToolResult> {
     const tab = await chrome.tabs.create({
       url: params.url || "about:blank",
       active: params.active !== false,
     })
     // chrome.tabs.create often returns before navigation finishes (thread 1snvlv:
     // {id, url:"", title:""} → model called wait_for({tabId}) and hit schema/runtime mismatch).
+    let updated = tab
     if (params.wait_for_load !== false && tab.id) {
       // Cap under companion WS 15s so a hung page still returns {id} instead of
       // "Tool execution timeout: create_tab" with no tab id (runtime adversary).
       await this.waitForTabLoad(tab.id, 12_000)
-      const updated = await chrome.tabs.get(tab.id)
-      return { success: true, data: { id: updated.id, url: updated.url, title: updated.title } }
+      updated = await chrome.tabs.get(tab.id)
     }
-    return { success: true, data: { id: tab.id, url: tab.url, title: tab.title } }
+    const target = owner && params.keep_open !== true && typeof updated.id === "number"
+      ? await browserSiteTarget(updated.id, updated.url || updated.pendingUrl) : undefined
+    const claim = target && owner ? { token: this.taskTabs.created(target.tab_id, owner), target } : undefined
+    return { success: true, data: { id: updated.id, url: updated.url, title: updated.title,
+      ...(claim ? { task_tab: claim } : {}) } }
   }
 
-  private async closeTab(params: Record<string, any>): Promise<ToolResult> {
+  private async closeTab(params: Record<string, any>, owner?: TaskTabOwner): Promise<ToolResult> {
     const tabId = this.getTabId(params)
+    if (params.__task_tab_cleanup !== undefined) {
+      const result = await this.taskTabs.close(tabId, params.__task_tab_cleanup, owner)
+      if (result.success) this.attachedTabs.delete(tabId)
+      return result
+    }
     await chrome.tabs.remove(tabId)
+    this.taskTabs.forget(tabId)
     this.attachedTabs.delete(tabId)
     return { success: true }
   }

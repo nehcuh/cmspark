@@ -14,6 +14,7 @@ import { checkEnterprisePermit, claimEnterpriseDispatch, type EnterprisePermit }
 import { getConfig, saveConfig, initDataDir, getConfigDir } from "./config"
 import type { EvidenceScope } from "./business-evidence/content"
 import { captureLocalPageResult } from "./business-evidence/executor"
+import { bindChatEvidenceScope } from "./business-evidence/chat-scope"
 import { setOutboundContextEngine } from "./outbound-mcp/companion-http"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
 import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
@@ -459,6 +460,8 @@ export type ToolExecuteInvokeOpts = {
   siteContextRequireActive?: boolean
   /** Bound by the Chat router or authenticated outbound runner, never tool args. */
   evidenceScope?: EvidenceScope
+  /** Adapter-owned final cleanup has no model tool card to settle. Never a tool argument. */
+  taskTabCleanupExecutionId?: string
 }
 
 export type ToolExecutorFn = (
@@ -542,8 +545,12 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
     if (enterprisePermit) finalParams = { ...finalParams, __enterprise_guard: enterprisePermit.guard }
     const evidenceScope = invokeOpts?.evidenceScope?.kind === "chat" && !invokeOpts.trustedOutbound
       && threadManager.get(invokeOpts.evidenceScope.threadId) ? invokeOpts.evidenceScope : undefined
+    const taskExecution = evidenceScope?.kind === "chat" && !enterprisePermit && !nativeOwner
+      ? threadManager.get(evidenceScope.threadId)?.last_run_execution_id : undefined
+    const taskContext = evidenceScope?.kind === "chat" && taskExecution
+      ? { thread_id: evidenceScope.threadId, execution_id: taskExecution } : undefined
     const captureWritesAllowedAtStart = evidenceScope?.kind !== "chat"
-      || threadManager.get(evidenceScope.threadId)?.execution_policy !== "plan_readonly"
+      || resolveEffectiveExecutionPolicy(evidenceScope.threadId, id => threadManager.get(id)) !== "plan_readonly"
     if (evidenceScope?.kind === "chat") finalParams = { ...finalParams, __thread_id: evidenceScope.threadId }
     // Only normal router-owned chat evidence scope is a readonly subject.
     computerReads?.observeThread(evidenceScope?.threadId)
@@ -646,7 +653,9 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
     // a chat tool.start for them leaves the sidebar busy after the run ends (#496).
     // contextReadParams strips model-provided flags and only restores a validated
     // server invocation option; ordinary list_tabs calls still remain visible.
-    if (!enterprisePermit && !(toolName === "list_tabs" && finalParams.__site_context_tab_id !== undefined)) {
+    const internalTaskTabCleanup = toolName === "close_tab" && taskContext !== undefined &&
+      invokeOpts?.taskTabCleanupExecutionId === taskContext.execution_id && finalParams.__task_tab_cleanup?.automatic === true
+    if (!enterprisePermit && !internalTaskTabCleanup && !(toolName === "list_tabs" && finalParams.__site_context_tab_id !== undefined)) {
       ws.send(JSON.stringify({
         type: "tool.start",
         tool_call_id: toolCallId,
@@ -799,9 +808,9 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
       ws,
       logToolFinish,
       securityConfirmations: confirmations,
-      dispatchToExtension: (...args) => nativeOwner && !nativeOwner.current()
+      dispatchToExtension: (id, name, args, peer, meta) => nativeOwner && !nativeOwner.current()
         ? Promise.resolve({ success: false, error: "DESKTOP_SESSION_STALE" })
-        : dispatchToExtension(...args),
+        : dispatchToExtension(id, name, args, peer, { ...meta, ...(taskContext ? { taskContext } : {}) }),
       actingThreadId,
       trackTimeoutInFlight: !!mutationHold,
     })
@@ -930,7 +939,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
                   skillEngine,
                   historyStore,
                   sendToExtension: broadcastToClients,
-                  executeTool: executor,
+                  executeTool: bindChatEvidenceScope(executor, threadId),
                   signal: controller.signal,
                 })
                 // #514: expert-team worker runs bypass the router's run-end
@@ -1033,13 +1042,14 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
           mutationHold: !!mutationHold,
           ...(nativeBrowserRoute ? { remainingBudgetMs: nativeBrowserRoute.remaining() } : {}),
           locatorScope,
+          taskContext,
           logToolFinish,
         }),
     })
     if (nativeBrowserRoute && (!nativeOwner?.current() || !await nativeBrowserRoute.finish())) return { success: false, error: "DESKTOP_BROWSER_CONTEXT_STALE" }
     const currentEvidenceThread = evidenceScope?.kind === "chat" ? threadManager.get(evidenceScope.threadId) : undefined
     return captureLocalPageResult(getConfigDir(), currentEvidenceThread ? evidenceScope : undefined, toolCallId, toolName, result, signal,
-      captureWritesAllowedAtStart && currentEvidenceThread?.execution_policy !== "plan_readonly")
+      captureWritesAllowedAtStart && (!currentEvidenceThread || resolveEffectiveExecutionPolicy(currentEvidenceThread.id, id => threadManager.get(id)) !== "plan_readonly"))
     } finally {
       computerRead?.finish(computerReadSucceeded)
       guiTemplateReceipt?.close()

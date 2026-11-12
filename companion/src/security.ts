@@ -1359,6 +1359,10 @@ export function classifyError(
     "tab_locked",
     "tab_busy_confirming",
     "tab_force_releasing",
+    // Temporary-page retention is a normal refusal, not a reason to end the research task.
+    "task_tab_retained",
+    "browser_source_store_unavailable",
+    "browser_source_not_found",
     // User-facing lease copy omits the TAB_LOCKED token.
     "hard_held",
     "soft_reserved",

@@ -1,0 +1,19 @@
+{
+  "base": "e0bf978abf95f1870eb241cfdf8631324c3cc7a5",
+  "patch_sha256": "ed341b54cfe3ae7cdf303f447bddddd1d149796b6f3d01e8b39a294b9ce8fcc3",
+  "adversary": "APPROVE",
+  "pi": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "verdict": "APPROVE_WITH_NITS",
+    "exit_code": 0
+  },
+  "machine": {
+    "extension_tests": 1886,
+    "companion_behavior_tests": 209,
+    "companion_compatibility_tests": 121,
+    "builds": "PASS",
+    "production_code_integration": "PASS"
+  },
+  "patch_archive": "2026-11-12-task-tabs-848.patch.gz"
+}
