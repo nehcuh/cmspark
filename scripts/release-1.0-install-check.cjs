@@ -249,7 +249,7 @@ const provider = createServer(async (req, res) => {
         assert.equal(payload.data.evidence_capture.capture_status, 'captured')
         emit({ role:'assistant', content:'owned acceptance reply: task sources read' }); emit({}, 'stop')
       } else throw Error('Unexpected installed task-page phase: ' + last.tool_call_id)
-      res.end('data: [DONE]\\n\\n'); return
+      res.end('data: [DONE]\n\n'); return
     }
     if (userText.includes('acceptance saved sources')) {
       if (last.role === 'user') {
@@ -266,7 +266,7 @@ const provider = createServer(async (req, res) => {
         assert.ok(evidence.data.observation.content.includes('Owned task source evidence'))
         emit({ role:'assistant', content:'owned acceptance reply: archived evidence retained' }); emit({}, 'stop')
       } else throw Error('Unexpected installed source lookup phase: ' + last.tool_call_id)
-      res.end('data: [DONE]\\n\\n'); return
+      res.end('data: [DONE]\n\n'); return
     }
     if (last.role === 'tool' && last.tool_call_id === 'owned-list-tabs') toolReceived = JSON.stringify(last.content).includes('/owned-release-tab')
     if (!toolRequested && last.role === 'user' && JSON.stringify(last.content).includes('acceptance upgraded tool')) {
@@ -345,7 +345,19 @@ async function main() {
     assert.ok(toolRequested && toolReceived, 'provider saw completion of the browser tool call')
     await chat(newBrowser.page, threadId, 'acceptance task tab lifecycle')
     assert.equal(taskTabIds.length, 2)
-    await eventually(() => browser.pages().every(page => !page.url().includes('/owned-task-source')), 'owned temporary pages closed after evidence capture')
+    try {
+      await eventually(() => browser.pages().every(page => !page.url().includes('/owned-task-source')), 'owned temporary pages closed after evidence capture')
+    } catch (error) {
+      const tabState = await newBrowser.page.evaluate(ids => chrome.tabs.query({}).then(tabs => tabs.filter(tab => ids.includes(tab.id))
+        .map(tab => ({ id:tab.id, active:tab.active, pinned:tab.pinned, audible:tab.audible, status:tab.status }))), taskTabIds)
+      const evidenceDir = path.join(data, 'business-evidence-v1'), saved = []
+      for (const name of await fs.readdir(evidenceDir).catch(() => [])) {
+        const file = JSON.parse(await fs.readFile(path.join(evidenceDir, name), 'utf8'))
+        for (const source of file.task_pages || []) saved.push({ tab_id:source.tab_id, state:source.state, reason:source.reason, observations:source.observation_ids.length })
+      }
+      console.error('Owned task tab snapshot:', JSON.stringify({ tabs:tabState, sources:saved }))
+      throw error
+    }
     assert.equal(ownedTab.isClosed(), false, 'pre-existing user page survives task cleanup')
     assert.ok(ownedTab.url().endsWith('/owned-release-tab'))
     await chat(newBrowser.page, threadId, 'acceptance saved sources')
