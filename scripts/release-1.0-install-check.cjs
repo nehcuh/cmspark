@@ -353,6 +353,8 @@ async function main() {
         if (value?.type === 'tool.execute' && value.tool_call_id?.startsWith('owned-task-')) remember({
           direction:'request', id:value.tool_call_id, tool:value.tool_name, task_context:!!value.task_context,
           execution_id:typeof value.task_context?.execution_id === 'string', cleanup:!!value.params?.__task_tab_cleanup,
+          valid_owner:typeof value.task_context?.thread_id === 'string' && !!value.task_context.thread_id && value.task_context.thread_id.length <= 128 && /^[a-f0-9-]{36}$/.test(value.task_context?.execution_id),
+          keep_open:value.params?.keep_open === true,
         })
         return value
       }
