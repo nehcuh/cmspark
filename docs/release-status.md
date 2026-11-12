@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-> 源码版本 **0.9.1（已于 2026-11-08 正式发布）**，修复 macOS Computer Use 重复输入与在途急停回执（#844）。正式安装包见 [v0.9.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.9.1)。
+> 源码开发版本 **1.0.0（尚未正式发布）**。当前正式安装包见 [v0.9.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v0.9.1)。
 
 ## 0.9.1 正式发行回执
 
