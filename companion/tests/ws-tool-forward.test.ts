@@ -14,6 +14,7 @@ import {
   hasPendingForTab,
   rejectPendingForTab,
   dispatchToExtension,
+  forwardToolToExtension,
   bindToolForwardRuntime,
   listPendingToolsForThread,
 } from "../src/ws/tool-forward"
@@ -33,6 +34,25 @@ function clearPending(): void {
     pendingToolCalls.delete(id)
   }
 }
+
+test("task-tab ownership travels in the server frame, separate from model parameters", async () => {
+  clearPending()
+  bindToolForwardRuntime({ getTabUrlCache: () => new Map(), refreshTabUrlCache: () => {}, getThreadManager: () => undefined })
+  const trusted = { thread_id: "actual-task", execution_id: "11111111-1111-4111-8111-111111111111" }
+  let frame: any
+  const ws = mockWs()
+  ws.send = (body: string) => {
+    frame = JSON.parse(body)
+    queueMicrotask(() => handleToolResult({ tool_call_id: frame.tool_call_id, result: { success: true } }, ws))
+  }
+  await forwardToolToExtension({ toolCallId: "task-frame", toolName: "get_page_text", finalParams: { tabId: 7,
+    task_context: { thread_id: "model-forged" } }, ws, taskContext: trusted, startedAt: Date.now(), logToolFinish: () => {} })
+  assert.deepEqual(frame.task_context, trusted)
+  assert.equal(frame.params.task_context.thread_id, "model-forged")
+  await dispatchToExtension("image-phase", "analyze_image", { tabId: 7 }, ws,
+    { threadId: trusted.thread_id, tabId: 7, taskContext: trusted })
+  assert.deepEqual(frame.task_context, trusted, "image phase dispatch preserves the same task ownership")
+})
 
 test("resolveToolDispatchTimeoutMs: browser_download default >= 65s", () => {
   const ms = resolveToolDispatchTimeoutMs("browser_download", {})

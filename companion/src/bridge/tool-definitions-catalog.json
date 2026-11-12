@@ -14,6 +14,23 @@
   {
     "type": "function",
     "function": {
+      "name": "browser_sources",
+      "description": "查询当前本地会话保存的任务网页来源、取证关联和实际关闭状态。可传 observation_id 读取已保存的证据正文，关闭网页后仍可查；不会操作浏览器。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "observation_id": {
+            "type": "string",
+            "description": "可选：来源列表中的 observation_id；省略则列出来源与证据索引。"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "get_interactive_snapshot",
       "description": "本地Chat读取当前明确HTTP(S)顶层HTML页有界可见控件编号表；complete=false或ambiguous不得编号执行。不执行页面操作，不提供eval/权限，不支持iframe/shadow/外部MCP。",
       "parameters": {
@@ -36,7 +53,7 @@
     "type": "function",
     "function": {
       "name": "create_tab",
-      "description": "打开新标签页。url 用 http/https。不要用 file: 来「读」本地 PDF/文档（请用户把文件拖进对话）。仅当用户明确要求在浏览器里打开本机文件时才用 file:，届时会弹出「仅这一次」确认，不会加入 MCP 目录或域名白名单。",
+      "description": "打开新标签页。url 用 http/https。不要用 file: 来「读」本地 PDF/文档（请用户把文件拖进对话）。仅当用户明确要求在浏览器里打开本机文件时才用 file:，届时会弹出「仅这一次」确认，不会加入 MCP 目录或域名白名单。 临时资料页建议 active:false；仅当用户要求页面保持打开时设 keep_open:true。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -51,6 +68,10 @@
           "wait_for_load": {
             "type": "boolean",
             "description": "是否等待页面加载完成再返回，默认 true。false 则立即返回（可能 url/title 仍空）"
+          },
+          "keep_open": {
+            "type": "boolean",
+            "description": "用户要求保留页面作为交付时设 true；默认临时任务页，用完归档后可回收。"
           }
         },
         "required": [
@@ -63,7 +84,7 @@
     "type": "function",
     "function": {
       "name": "close_tab",
-      "description": "关闭标签页",
+      "description": "关闭标签页。任务创建的临时页会先记录来源与证据关联，并检查页面归属、导航和编辑状态；TASK_TAB_RETAINED 时保留页面，不要重复重试。",
       "parameters": {
         "type": "object",
         "properties": {

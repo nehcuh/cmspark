@@ -220,7 +220,7 @@ export function dispatchToExtension(
   toolName: string,
   params: any,
   ws: WebSocket,
-  meta?: { threadId?: string; tabId?: number; trackTimeoutInFlight?: boolean },
+  meta?: { threadId?: string; tabId?: number; trackTimeoutInFlight?: boolean; taskContext?: { thread_id: string; execution_id: string } },
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   return new Promise((resolve) => {
     let settled = false
@@ -268,7 +268,8 @@ export function dispatchToExtension(
       return
     }
     try {
-      ws.send(JSON.stringify({ type: "tool.execute", tool_call_id: toolCallId, tool_name: toolName, params }))
+      ws.send(JSON.stringify({ type: "tool.execute", tool_call_id: toolCallId, tool_name: toolName, params,
+        ...(meta?.taskContext ? { task_context: meta.taskContext } : {}) }))
     } catch (err: any) {
       const result = { success: false, error: `WebSocket send failed: ${err.message || String(err)}` }
       logger.error("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
@@ -289,6 +290,8 @@ export type ForwardToolToExtensionCtx = {
   actingThreadId?: string
   /** Server-derived metadata, never recovered from model parameters. */
   locatorScope?: { scope_id: string; thread_id: string }
+  /** Authenticated Chat/run identity, separate from model parameters. */
+  taskContext?: { thread_id: string; execution_id: string }
   startedAt: number
   /** True when pregate incremented mutationHolds for this call. */
   mutationHold?: boolean
@@ -459,6 +462,7 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
           tool_name: toolName,
           params: finalParams,
           ...(locatorScope ? { locator_scope: { scope_id: locatorScope.scope_id, thread_id: locatorScope.thread_id } } : {}),
+          ...(ctx.taskContext ? { task_context: ctx.taskContext } : {}),
         }))
       } catch (err: any) {
         clearTimeout(timer)

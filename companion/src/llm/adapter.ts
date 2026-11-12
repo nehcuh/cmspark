@@ -1,4 +1,7 @@
 import { readMcpWorkspaceObservation } from "../mcp/workspace-observation"
+import { TaskBrowserTabs } from "../business-evidence/task-pages"
+import type { ToolExecutorFn } from "../server"
+import { resolveEffectiveExecutionPolicy } from "../tool/plan-readonly"
 import { isSnapshotLocatorRefusal, snapshotHistory } from "../tool/snapshot-locator"
 // LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
 
@@ -31,7 +34,7 @@ import { projectCooperationToolResult, projectFleetReports } from "../orchestrat
 import { superviseFleet, abortableDelay, FLEET_SUPERVISION_HINT, FLEET_WAIT_MS } from "../orchestrator/fleet-supervision"
 import { armFleetFollowup, fleetCheckpoint, fleetWorkerStates } from "../orchestrator/fleet-continuity"
 import { multiAgentLlmLoopSnapshot, releaseMultiAgentLlmLoop, tryAcquireMultiAgentLlmLoop } from "../orchestrator/llm-loop-gate"
-import { effectiveContextWindow, getConfig, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
+import { effectiveContextWindow, getConfig, getConfigDir, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
 import type { AppsConfig } from "../apps/types"
 import type { LcuHumanChannel } from "../computer/lcu/authorization"
@@ -206,7 +209,7 @@ interface ChatCreateParams {
   skillEngine: SkillEngine
   historyStore: HistoryStore
   sendToExtension: (data: any) => void
-  executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
+  executeTool: ToolExecutorFn
   signal?: AbortSignal
   /** Authenticated local panel only; never deserialized from chat/model parameters. */
   lcuChannel?: LcuHumanChannel
@@ -673,13 +676,19 @@ export async function chatCreate(params: ChatCreateParams) {
   const executeToolInner = params.executeTool
   let executeTool: ChatCreateParams["executeTool"] =
     params.surface === "summoner"
-      ? async (toolCallId, toolName, execParams, execSignal) => {
+      ? async (toolCallId, toolName, execParams, execSignal, invokeOpts) => {
           if (isSummonerNativeExecutorDenied(toolName)) {
             return { success: false, error: SUMMONER_L0_NATIVE_DENIED }
           }
-          return executeToolInner(toolCallId, toolName, execParams, execSignal)
+          return executeToolInner(toolCallId, toolName, execParams, execSignal, invokeOpts)
         }
       : executeToolInner
+
+  const taskBrowserTabs = new TaskBrowserTabs({ dataDir: getConfigDir(), threadId, executionId, execute: executeTool,
+    current: () => !signal?.aborted && runTerminalEpochIsCurrent(threadId, runEpoch) &&
+      threadManager.get(threadId)?.last_run_execution_id === executionId &&
+      resolveEffectiveExecutionPolicy(threadId, id => threadManager.get(id)) !== "plan_readonly" })
+  executeTool = taskBrowserTabs.execute
 
   // Crash leftovers: splice INTERRUPTED after the unpaired assistant BEFORE
   // appending this turn's user row (pairing is contiguous tools after assistant).
@@ -834,6 +843,7 @@ CRITICAL RULES:
 2. When operating on a page, use the actual tabId from list_tabs results.
 3. For create_tab, always pass the full URL parameter. Use http(s) URLs. Do NOT use create_tab/navigate/set_tab_url with file: to *read* a document (especially PDF) — ask the user to drag the file into the chat. Only use file: if the user explicitly asked to open a local file in the browser. Listing local files is mcp__filesystem__* (rule 10), a different gate from opening a tab.
 4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
+   Temporary research tabs: prefer create_tab({url, active:false}). Once no further page interaction is needed, close_tab({tabId}) saves the task/source/evidence association before releasing the tab. Do this as you finish each page, without waiting for the whole task. Set keep_open:true only when the user wants a page left open as a deliverable. Successful task completion also reclaims remaining captured background tabs. Existing user tabs, foreground/adopted/pinned tabs and edited forms remain open. On TASK_TAB_RETAINED, keep the page and continue; do not repeatedly retry closure. browser_sources lists saved source links and closure status; pass observation_id to retrieve captured evidence after a tab is closed. Do not claim the full page was saved when capture was skipped or partial.
 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
 6. Wait for pages to load before extracting content. After create_tab/navigate, wait_for({tabId}) or wait_for({tabId, network_idle:true}) waits for load (tabId-only is treated as network_idle). Use wait_for({tabId, selector}) when waiting for a specific element.
 7. Local Chat may first use get_interactive_snapshot({tabId}) for a bounded visible-control table, then click/type with its paired snapshot_id/element_id only when complete and not ambiguous. IDs expire and are single-use; numbered type replaces the whole value. A refusal does not execute or automatically fall back: obtain a fresh snapshot or make an independent legacy text/selector call, under the same gates. Never use IDs as grants or durable locators. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. For clicking visible labels use click({text}) or click({selector}) — text is exclusive when provided. If a tool returns CDP_ATTACH_FAILED, call list_tabs / ask the user to focus the tab; do NOT retry via evaluate (same debugger). host_computer is NOT a substitute for a missed debugger — only after TAB_ATTACH_FROZEN / DOM-script volume cap, or an explicit user 模拟点击, MAY you call host_computer on a browser token (Rule 12; ALWAYS pops a confirm).
@@ -3001,6 +3011,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
     }
     if (runStats && signal?.aborted) runStats.terminal = "aborted"
+    try {
+      const tabs = await taskBrowserTabs.finish(!signal?.aborted && runStats.terminal === null)
+      if (tabs.closed || tabs.retained) logger.info("browser.task_tabs_settled", { thread_id: threadId, execution_id: executionId, ...tabs })
+    } catch { logger.warn("browser.task_tabs_cleanup_failed", { thread_id: threadId, execution_id: executionId }) }
     // #569: run 终值落盘。此处是**唯一覆盖全部 run 路径**的位置 ——
     // router 的 chat.create / chat.regenerate / file.upload 与 server 的 worker kick
     // （`server.ts:789` 直接调本函数、不过 router）都收口到这一个 finally。
