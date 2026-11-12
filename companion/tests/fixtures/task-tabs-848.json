@@ -1,0 +1,64 @@
+{
+  "context": {
+    "thread_id": "task-tabs-fixture",
+    "execution_id": "11111111-1111-4111-8111-111111111111"
+  },
+  "create": {
+    "success": true,
+    "data": {
+      "id": 7,
+      "url": "https://user:secret@example.test/source?token=private",
+      "title": "Synthetic source",
+      "task_tab": {
+        "token": "440c74ba-9c26-4677-9ee9-4318071a8aa4",
+        "target": {
+          "kind": "browser",
+          "tab_id": 7,
+          "url": "https://example.test/source",
+          "origin": "https://example.test",
+          "hostname": "example.test",
+          "path": "/source",
+          "navigation_key": "48c52b5c38a69c57d19301e43408549691f623ad63103e620f1413a3ac3e37a7"
+        }
+      }
+    }
+  },
+  "read": {
+    "success": true,
+    "data": {
+      "text": "Synthetic task evidence: product release 42.",
+      "threats_removed": [],
+      "provenance": {
+        "schema_version": 1,
+        "target": {
+          "kind": "browser",
+          "tab_id": 7,
+          "url": "https://example.test/source",
+          "origin": "https://example.test",
+          "hostname": "example.test",
+          "path": "/source",
+          "navigation_key": "48c52b5c38a69c57d19301e43408549691f623ad63103e620f1413a3ac3e37a7"
+        },
+        "title": "Synthetic source",
+        "captured_at": "2026-11-12T05:21:46.272Z",
+        "channel": "cdp",
+        "scope": {
+          "kind": "document"
+        },
+        "frame": "top",
+        "coverage": "unknown",
+        "complete_for_scope": false,
+        "pagination": "unknown",
+        "virtualization": "unknown",
+        "iframe_coverage": "not_traversed",
+        "truncated": false,
+        "limit": null,
+        "stop_reason": "SINGLE_READ",
+        "capture_status": "eligible"
+      }
+    }
+  },
+  "close": {
+    "success": true
+  }
+}
