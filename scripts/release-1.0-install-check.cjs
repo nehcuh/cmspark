@@ -175,10 +175,13 @@ async function openExtension(asset, pair) {
     mark('Upgraded worker before normal unpacked-extension reload: ' + JSON.stringify(loadedCode))
     // Replacing an unpacked extension directory requires Chrome's normal Reload
     // operation; a new manifest alone does not prove the running worker changed.
+    const manager = await browser.newPage()
+    await manager.goto('chrome://extensions')
     const replacement = browser.waitForEvent('serviceworker', { predicate:next => next !== worker && new URL(next.url()).host === id, timeout:20000 })
-    await worker.evaluate(() => chrome.runtime.reload()).catch(error => {
-      if (!/closed|destroyed/i.test(error.message)) throw error
-    })
+    await manager.evaluate(async id => {
+      await chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode:true })
+      await chrome.developerPrivate.reload(id, { failQuietly:false, populateErrorForUnpacked:true })
+    }, id)
     page = await browser.newPage()
     await page.goto('chrome-extension://' + id + '/' + asset.panel)
     worker = await replacement
@@ -186,6 +189,7 @@ async function openExtension(asset, pair) {
     assert.ok(await worker.evaluate(() => Object.values(globalThis).filter(value => value?.isParcelRequire)
       .flatMap(value => Object.values(value.cache)).some(value => value.exports?.BrowserBridge?.prototype.createTab.toString().includes('task_tab'))),
       'reloaded worker runs task-tab creation code')
+    await manager.close()
   }
   if (!page) {
     page = await browser.newPage()
