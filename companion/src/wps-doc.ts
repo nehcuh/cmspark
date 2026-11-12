@@ -17,24 +17,26 @@ function requireStructure(condition: unknown): asserts condition {
   if (!condition) throw new Error("Invalid Word compound file")
 }
 
-function readWordStreams(file: Buffer): { word: Buffer; table: Buffer } {
+function readWordStreams(file: Buffer, allowMissingPadding = false): { word: Buffer; table: Buffer } {
   requireStructure(file.length >= 512 && file.subarray(0, 8).equals(CFB_SIGNATURE))
   const version = file.readUInt16LE(26)
   const sectorShift = file.readUInt16LE(30)
   requireStructure((version === 3 && sectorShift === 9) || (version === 4 && sectorShift === 12))
   const sectorSize = 1 << sectorShift
-  const sectorCount = file.length / sectorSize - 1
-  requireStructure(Number.isInteger(sectorCount) && sectorCount >= 2 &&
+  const sectorCount = Math.ceil(file.length / sectorSize) - 1
+  requireStructure((allowMissingPadding || file.length % sectorSize === 0) && sectorCount >= 2 &&
     file.readUInt16LE(28) === 0xfffe && file.readUInt16LE(32) === 6 &&
     file.readUInt32LE(56) === MINI_CUTOFF)
 
   // Each physical sector may be used once across the allocation structures
   // and streams we read. This also bounds malformed chains with cycles.
   const used = new Set<number>()
-  function takeSector(index: number): Buffer {
+  function takeSector(index: number, allowShort = false): Buffer {
     requireStructure(index < sectorCount && !used.has(index))
     used.add(index)
-    return file.subarray((index + 1) * sectorSize, (index + 2) * sectorSize)
+    const sector = file.subarray((index + 1) * sectorSize, (index + 2) * sectorSize)
+    requireStructure(sector.length === sectorSize || (allowMissingPadding && allowShort))
+    return sector
   }
 
   const fatCount = file.readUInt32LE(44)
@@ -71,11 +73,13 @@ function readWordStreams(file: Buffer): { word: Buffer; table: Buffer } {
   requireStructure(fatIndices.every(index => fatNext(index) === FAT_SECTOR) &&
     difatIndices.every(index => fatNext(index) === DIFAT_SECTOR))
 
-  function readChain(start: number, count?: number): Buffer {
+  function readChain(start: number, count?: number, allowShort = false): Buffer {
     const sectors: Buffer[] = []
     for (let index = start; index !== END; index = fatNext(index)) {
       requireStructure(count === undefined || sectors.length < count)
-      sectors.push(takeSector(index))
+      const sector = takeSector(index, allowShort)
+      requireStructure(sector.length === sectorSize || fatNext(index) === END)
+      sectors.push(sector)
     }
     requireStructure(count === undefined || sectors.length === count)
     return Buffer.concat(sectors)
@@ -112,7 +116,7 @@ function readWordStreams(file: Buffer): { word: Buffer; table: Buffer } {
 
   // MS-CFB permits stream chains to allocate more sectors than the declared size.
   function readRegularStream(start: number, size: number): Buffer {
-    const stream = readChain(start)
+    const stream = readChain(start, undefined, true)
     requireStructure(stream.length >= size)
     return stream.subarray(0, size)
   }
@@ -150,13 +154,16 @@ function readWordStreams(file: Buffer): { word: Buffer; table: Buffer } {
   requireStructure(word.length >= 154 && word.readUInt16LE(0) === 0xa5ec)
   const flags = word.readUInt16LE(10)
   requireStructure((flags & 0x0100) === 0) // fEncrypted covers password encryption and XOR obfuscation
-  return { word, table: readStream(flags & 0x0200 ? "1table" : "0table") }
+  const table = readStream(flags & 0x0200 ? "1table" : "0table")
+  // A short final sector must belong to a stream whose declared bytes we read.
+  requireStructure(file.length % sectorSize === 0 || used.has(sectorCount - 1))
+  return { word, table }
 }
 
 /** MS-DOC FibRgFcLcb97 and Clx identify the actual text pieces in WordDocument. */
-export function isWpsWithWordDocContent(file: Buffer): boolean {
+function hasWordDocContent(file: Buffer, allowMissingPadding = false): boolean {
   try {
-    const { word, table } = readWordStreams(file)
+    const { word, table } = readWordStreams(file, allowMissingPadding)
     const fieldCount = word.readUInt16LE(152)
     const extensionOffset = 154 + fieldCount * 8
     requireStructure(word.readUInt16LE(32) === 14 && word.readUInt16LE(62) === 22 &&
@@ -197,4 +204,19 @@ export function isWpsWithWordDocContent(file: Buffer): boolean {
   } catch {
     return false
   }
+}
+
+export function isWpsWithWordDocContent(file: Buffer): boolean {
+  return hasWordDocContent(file)
+}
+
+/** Some Word exporters omit only the unused bytes of the final stream sector. */
+export function padWordDocFinalSector(file: Buffer): Buffer {
+  if (file.length < 512) return file
+  const shift = file.readUInt16LE(30)
+  if (shift !== 9 && shift !== 12) return file
+  const sectorSize = 1 << shift
+  const remainder = file.length % sectorSize
+  if (!remainder || !hasWordDocContent(file, true)) return file
+  return Buffer.concat([file, Buffer.alloc(sectorSize - remainder)])
 }
