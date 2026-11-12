@@ -45,6 +45,7 @@ import { resolveAcpThreadId } from "../acp/thread-id"
 import { validateAcpProposalParams } from "../acp/proposal-params"
 import type { EvidenceScope } from "../business-evidence/content"
 import { executeDraftTool } from "../business-evidence/executor"
+import { readBrowserSources } from "../business-evidence/task-pages"
 import { getConfigDir } from "../config"
 import {
   CONTRACT_SUPPORTED_TOOLS,
@@ -186,6 +187,8 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
   const rejectPendingForTab = _rt.rejectPendingForTab
 
   switch (toolName) {
+    case "browser_sources":
+      return readBrowserSources(getConfigDir(), execOpts?.evidenceScope, params.observation_id)
     case "code_review_create":
     case "code_review_read":
     case "code_review_assess":

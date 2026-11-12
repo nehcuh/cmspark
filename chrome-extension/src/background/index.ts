@@ -556,7 +556,7 @@ async function handleCompanionMessage(msg: any) {
     }
     logToCompanion("info", "extension.tool.start", toolMeta)
     try {
-      const result = await browserBridge.execute(msg.tool_name, msg.params, msg.locator_scope)
+      const result = await browserBridge.execute(msg.tool_name, msg.params, msg.locator_scope, msg.task_context)
       logToCompanion(result?.success === true ? "info" : "warn", "extension.tool.finish", {
         ...toolMeta,
         success: result?.success === true,
