@@ -94,7 +94,7 @@ async function install(variant, version) {
   assert.equal(parsed.version, version)
   assert.match((await exec(cli(), [agent(), '--version'], { env, timeout: 15000 })).stdout, new RegExp(version.replaceAll('.', '\\.')))
   mark('Installed companion and extension ' + version + ' (' + process.env.PLATFORM + ')')
-  return { directory: path.dirname(manifest), panel: parsed.side_panel?.default_path || 'sidepanel.html' }
+  return { directory: path.dirname(manifest), panel: parsed.side_panel?.default_path || 'sidepanel.html', version }
 }
 
 function cli() { return path.join(bundle(), windows ? 'node.exe' : 'node') }
@@ -164,6 +164,7 @@ async function openExtension(asset, pair) {
   })
   const worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker', { timeout: 20000 })
   const id = new URL(worker.url()).host
+  assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), asset.version, 'actual loaded extension version must match the installed artifact')
   const page = await browser.newPage()
   await page.goto('chrome-extension://' + id + '/' + asset.panel)
   await page.evaluate(() => { window.acceptanceEvents = []; chrome.runtime.onMessage.addListener(m => window.acceptanceEvents.push(m)) })
@@ -361,6 +362,7 @@ async function main() {
           if (frame.type === 'tool.result' && frame.tool_call_id?.startsWith('owned-task-')) remember({
             direction:'result', id:frame.tool_call_id, success:frame.result?.success,
             creation_claim:!!frame.result?.data?.task_tab, provenance:frame.result?.data?.provenance?.capture_status,
+            url_scheme:typeof frame.result?.data?.url === 'string' ? frame.result.data.url.split(':')[0] : undefined,
           })
         } catch { /* observation never alters dispatch */ }
         return Reflect.apply(send, this, [value])
