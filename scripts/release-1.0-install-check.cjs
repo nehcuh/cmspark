@@ -165,6 +165,7 @@ async function openExtension(asset, pair) {
   let worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker', { timeout: 20000 })
   const id = new URL(worker.url()).host
   assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), asset.version, 'actual loaded extension version must match the installed artifact')
+  let page
   if (!pair && asset.version === '1.0.0') {
     const loadedCode = await worker.evaluate(() => {
       const modules = Object.values(globalThis).filter(value => value?.isParcelRequire).flatMap(value => Object.values(value.cache))
@@ -178,11 +179,18 @@ async function openExtension(asset, pair) {
     await worker.evaluate(() => chrome.runtime.reload()).catch(error => {
       if (!/closed|destroyed/i.test(error.message)) throw error
     })
+    page = await browser.newPage()
+    await page.goto('chrome-extension://' + id + '/' + asset.panel)
     worker = await replacement
     assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), asset.version)
+    assert.ok(await worker.evaluate(() => Object.values(globalThis).filter(value => value?.isParcelRequire)
+      .flatMap(value => Object.values(value.cache)).some(value => value.exports?.BrowserBridge?.prototype.createTab.toString().includes('task_tab'))),
+      'reloaded worker runs task-tab creation code')
   }
-  const page = await browser.newPage()
-  await page.goto('chrome-extension://' + id + '/' + asset.panel)
+  if (!page) {
+    page = await browser.newPage()
+    await page.goto('chrome-extension://' + id + '/' + asset.panel)
+  }
   await page.evaluate(() => { window.acceptanceEvents = []; chrome.runtime.onMessage.addListener(m => window.acceptanceEvents.push(m)) })
   if (pair) {
     const secret = (await fs.readFile(path.join(data, 'ws_secret'), 'utf8')).trim()
