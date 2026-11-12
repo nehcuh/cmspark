@@ -47,7 +47,7 @@ function restoreInitialOwnedInput826(raw) {
   return value.replace(/\n/g, eol)
 }
 function restoreObservation826(kind, raw) {
-  if (kind === 'helper') raw = require('./diagnostic-native-timeout-inverse.cjs').restore(raw)
+  raw = require('./workspace-query-101-inverse.cjs').restoreWorkspaceQuery101(kind, raw)
   if (kind === 'native') raw = restoreInitialOwnedInput826(raw)
   if (!raw.includes('/*OBS826_')) return raw
   assert.ok(Object.hasOwn(profiles, kind), 'OBS826_SOURCE_KIND')

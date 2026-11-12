@@ -181,6 +181,8 @@ npm --prefix chrome-extension test
 
 这是父进程关闭后的稳定有界快照，不是继承日志句柄的 EOF、完整日志、两流全局顺序或根因证明。未终止的末行不解析；未知格式保持 UNKNOWN/NONE。退出码 65、未观察到启动回执，仍不能说明实际 Xcode 选择、Runner 环境或目标是否启动。原 45 秒、同实例身份/ACK、真实 UI 和关闭门禁保持不变。`companion/tests/desktop-workspace-xctest-705.test.ts` 用实际 AST producer、受控故障及真实 owned 文件验证上述边界；这些 CPU/文件控制不冒充 macOS XCTest 通过。
 
+父窗口查询先保留 `count == 1`，再使用 `firstMatch`；sheet 存在性等待后仍须通过原 `count == 1` 才能返回。输入框和 Choose／Cancel 的唯一性、可点击性及真实动作保持原样。`desktop-workspace-query-101.test.ts` 投影实际 Swift 查询语句，验证缺失／多重匹配拒绝及原等待调用；源码逆变换只用于还原完整历史源码，不转换运行时证据。原生通过仍以无临时诊断代码的实际 CI 为准。
+
 `companion/scripts/tests/desktop-workspace-ui-705.test.mjs` 覆盖固定 Format1 `OwnedPickerUITests` 的 `UITargetAppPath=__TESTROOT__/../OwnedPicker705.app` 绑定、其它描述字段保留、最终描述文件唯一清单行及坏形状/外部路径/转换失败拒绝。构建器先完成固定 app 的签名校验，再绑定描述文件；原始描述文件和无路径的前后摘要留在 generated 工作目录，不改已签名 app 或 Runner。
 
 这些 Node/owned FS 检查不运行 XCTest，也不证明 Xcode 不会在测试方法之前启动应用。真实 changed-head CI 仍须通过原 addon 启动与身份、owner ACK、实际系统 picker 选择/取消和严格关闭/静默门禁；缺字段和 exit65 的历史因果关系保持 UNKNOWN，不增加权限、等待预算、重试或 skip。该夹具不属于发行应用载荷，开发版本仍为 0.6.14。
