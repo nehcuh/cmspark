@@ -1,4 +1,5 @@
 import observation826 from './observation-826-inverse.cjs'
+import query101 from './workspace-query-101-inverse.cjs'
 const { restoreObservation826, restoreInitialFixture826 } = observation826
 export { restoreObservation826 }
 /** Static lineage only: never transform runtime bytes, JSON, TAP or evidence. */
@@ -28,6 +29,7 @@ export function restoreCloseObservation476(kind,raw){
 }
 export function restoreObservation788(source){
  if(typeof source!=='string')throw Error('OBS788_SOURCE_REQUIRED')
+ source=query101.restoreWorkspaceQuery101('ui',source)
  source=restoreInitialFixture826(source)
  if(source.includes('/*OBS476_BOUNDARY_BEGIN*/'))source=restoreCloseObservation476(source.includes('final class OwnedRunner705Observer')?'observer':'protocol',source)
  else if(source.includes('/*OBS476_CLOSE_VALUE_BEGIN*/'))source=restoreCloseObservation476('helper',source)

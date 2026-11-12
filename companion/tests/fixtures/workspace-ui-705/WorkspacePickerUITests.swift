@@ -59,9 +59,9 @@ final class WorkspacePicker705:XCTestCase {
   guard observedState == .runningForeground || observedState == .runningBackground else{throw OwnedUI705Error.refused}
   func ready(_ file:OwnedUI705File,_ number:Int) throws {let f=try waitFile(file);try scene.tuple(f,["schema","nonce","number"]);guard try OwnedUI705Scene.number(f["number"])==Double(number) else{throw OwnedUI705Error.refused}}
   func sheet(_ stage:Int) throws ->XCUIElement {
-   uiStage=stage;uiDetail=0;observeUIStage();let windows=app.windows.matching(identifier:scene.nonce),count=windows.count;uiDetail=min(count,2)+1;observeUIStage();guard count==1 else{throw OwnedUI705Error.refused};let w=windows.element
-   uiStage=stage+1;uiDetail=0;observeUIStage();let exists=w.sheets.element.waitForExistence(timeout:try remaining());uiDetail=exists ? 2:1;observeUIStage();guard exists else{throw OwnedUI705Error.refused}
-   uiStage=stage+2;uiDetail=0;observeUIStage();let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;observeUIStage();guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.element
+   uiStage=stage;uiDetail=0;observeUIStage();let windows=app.windows.matching(identifier:scene.nonce),count=windows.count;uiDetail=min(count,2)+1;observeUIStage();guard count==1 else{throw OwnedUI705Error.refused};let w=windows.firstMatch
+   uiStage=stage+1;uiDetail=0;observeUIStage();let exists=w.sheets.firstMatch.waitForExistence(timeout:try remaining());uiDetail=exists ? 2:1;observeUIStage();guard exists else{throw OwnedUI705Error.refused}
+   uiStage=stage+2;uiDetail=0;observeUIStage();let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;observeUIStage();guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.firstMatch
   }
   uiStage=2;uiDetail=0;observeUIStage();try ready(.first,1);let first=try sheet(3)
   uiStage=6;uiDetail=0;observeUIStage();_ = try remaining();first.typeKey("g",modifierFlags:[.command,.shift])
