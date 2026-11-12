@@ -188,7 +188,19 @@ async function chat(page, threadId, message) {
 let providerCalls = 0
 let toolRequested = false
 let toolReceived = false
+const taskTabIds = []
+let sourceLookups = 0
+let currentSourceLookup = ''
+function toolPayload(message) {
+  const text = typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
+  return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1))
+}
 const provider = createServer(async (req, res) => {
+  if (req.method === 'GET' && req.url.startsWith('/owned-task-source')) {
+    res.writeHead(200, { 'content-type': 'text/html' })
+    res.end('<title>Owned task source</title><p>Owned task source evidence ' + req.url + '</p>')
+    return
+  }
   if (req.method === 'GET' && req.url === '/owned-release-tab') {
     res.writeHead(200, { 'content-type': 'text/html' })
     res.end('<title>Owned release test tab</title>')
@@ -212,6 +224,50 @@ const provider = createServer(async (req, res) => {
     res.setHeader('content-type', 'text/event-stream')
     const emit = (delta, finish = null) => res.write('data: ' + JSON.stringify({ id:'owned', object:'chat.completion.chunk', choices:[{ index:0, delta, finish_reason:finish }] }) + '\n\n')
     const last = body.messages.at(-1)
+    const userText = JSON.stringify(body.messages.findLast(message => message.role === 'user')?.content)
+    const call = (name, args, id) => {
+      assert.ok(body.tools?.some(tool => tool.function?.name === name), name + ' advertised by installed companion')
+      emit({ role:'assistant', tool_calls:[{ index:0, id, type:'function', function:{ name, arguments:JSON.stringify(args) } }] })
+      emit({}, 'tool_calls')
+    }
+    if (userText.includes('acceptance task tab lifecycle')) {
+      const payload = last.role === 'tool' ? toolPayload(last) : null
+      if (payload) assert.equal(payload.success, true, last.tool_call_id)
+      if (last.role === 'user') call('run_progress_propose', { items:[{ text:'Read and archive owned temporary sources' }] }, 'owned-task-plan')
+      else if (last.tool_call_id === 'owned-task-plan') call('create_tab', { url:'http://127.0.0.1:' + provider.address().port + '/owned-task-source-one', active:false }, 'owned-task-create-one')
+      else if (last.tool_call_id === 'owned-task-create-one') {
+        assert.ok(Number.isSafeInteger(payload.data.id)); assert.equal(payload.data.task_tab, undefined)
+        taskTabIds.push(payload.data.id); call('get_page_text', { tabId:payload.data.id }, 'owned-task-read-one')
+      } else if (last.tool_call_id === 'owned-task-read-one') {
+        assert.equal(payload.data.evidence_capture.capture_status, 'captured')
+        call('close_tab', { tabId:taskTabIds[0] }, 'owned-task-close-one')
+      } else if (last.tool_call_id === 'owned-task-close-one') call('create_tab', { url:'http://127.0.0.1:' + provider.address().port + '/owned-task-source-two', active:false }, 'owned-task-create-two')
+      else if (last.tool_call_id === 'owned-task-create-two') {
+        assert.ok(Number.isSafeInteger(payload.data.id)); taskTabIds.push(payload.data.id)
+        call('get_page_text', { tabId:payload.data.id }, 'owned-task-read-two')
+      } else if (last.tool_call_id === 'owned-task-read-two') {
+        assert.equal(payload.data.evidence_capture.capture_status, 'captured')
+        emit({ role:'assistant', content:'owned acceptance reply: task sources read' }); emit({}, 'stop')
+      } else throw Error('Unexpected installed task-page phase: ' + last.tool_call_id)
+      res.end('data: [DONE]\\n\\n'); return
+    }
+    if (userText.includes('acceptance saved sources')) {
+      if (last.role === 'user') {
+        currentSourceLookup = 'owned-sources-' + ++sourceLookups
+        call('browser_sources', {}, currentSourceLookup)
+      } else if (last.tool_call_id === currentSourceLookup) {
+        const sources = toolPayload(last); assert.equal(sources.success, true)
+        const archived = sources.data.sources.filter(source => source.url.includes('/owned-task-source'))
+        assert.equal(archived.length, 2)
+        for (const source of archived) { assert.equal(source.state, 'closed'); assert.ok(source.observation_ids.length) }
+        call('browser_sources', { observation_id:archived[0].observation_ids[0] }, currentSourceLookup + '-evidence')
+      } else if (last.tool_call_id === currentSourceLookup + '-evidence') {
+        const evidence = toolPayload(last); assert.equal(evidence.success, true)
+        assert.ok(evidence.data.observation.content.includes('Owned task source evidence'))
+        emit({ role:'assistant', content:'owned acceptance reply: archived evidence retained' }); emit({}, 'stop')
+      } else throw Error('Unexpected installed source lookup phase: ' + last.tool_call_id)
+      res.end('data: [DONE]\\n\\n'); return
+    }
     if (last.role === 'tool' && last.tool_call_id === 'owned-list-tabs') toolReceived = JSON.stringify(last.content).includes('/owned-release-tab')
     if (!toolRequested && last.role === 'user' && JSON.stringify(last.content).includes('acceptance upgraded tool')) {
       assert.ok(body.tools?.some(t => t.function?.name === 'list_tabs'), 'list_tabs advertised by installed companion')
@@ -242,6 +298,7 @@ async function main() {
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve))
   await fs.writeFile(path.join(data, 'config.json'), JSON.stringify({
     port:23401, llm:{ base_url:'http://127.0.0.1:' + provider.address().port + '/v1', api_key:'sk-owned-test', model_name:'owned', context_window:8000 },
+    auto_approved_domains:['127.0.0.1'],
   }))
   let peer
   let workError
@@ -286,6 +343,13 @@ async function main() {
     await ownedTab.goto('http://127.0.0.1:' + provider.address().port + '/owned-release-tab')
     await chat(newBrowser.page, threadId, 'acceptance upgraded tool')
     assert.ok(toolRequested && toolReceived, 'provider saw completion of the browser tool call')
+    await chat(newBrowser.page, threadId, 'acceptance task tab lifecycle')
+    assert.equal(taskTabIds.length, 2)
+    await eventually(() => browser.pages().every(page => !page.url().includes('/owned-task-source')), 'owned temporary pages closed after evidence capture')
+    assert.equal(ownedTab.isClosed(), false, 'pre-existing user page survives task cleanup')
+    assert.ok(ownedTab.url().endsWith('/owned-release-tab'))
+    await chat(newBrowser.page, threadId, 'acceptance saved sources')
+    mark('Actual installed extension archived both task sources; early/final tab closure and evidence lookup passed; original user page retained')
     peer = await connect()
     await verifySnapshot(peer, threadId, projectId, 'acceptance upgraded tool')
     await peer.close(); peer = null
@@ -295,6 +359,7 @@ async function main() {
     peer = await connect()
     assert.equal((await peer.send('activity.state')).state.config.extraction_prompt, 'Owned release fixture')
     await chat(newBrowser.page, threadId, 'acceptance reconnected')
+    await chat(newBrowser.page, threadId, 'acceptance saved sources after reconnect')
     await peer.close(); peer = null
     await browser.close(); browser = null
     await stop()

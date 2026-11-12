@@ -18,8 +18,8 @@ jobs:
     timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
-      CANDIDATE: 0f7de1049d44df049c1572cfe2da8a693eaac1e2
-      INSTALL_RUN: 42629681034
+      CANDIDATE: c1f6497c3c68d4da7816d341e395fd390dd8dd1d
+      INSTALL_RUN: 43164467995
       PLATFORM: ${{ matrix.platform }}
       BASELINE_ASSET: ${{ matrix.baseline }}
     steps:
