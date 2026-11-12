@@ -228,6 +228,28 @@ function stubDocumentChat() {
   })()
 }
 
+const wordImportSampleDir = process.env.CMSPARK_WORD_IMPORT_SAMPLE_DIR
+test("local four-file Word regression reaches chat with real parsing and an isolated LLM", {
+  skip: !wordImportSampleDir,
+}, async () => {
+  saveUploadConfig(LEGACY_UPLOAD_MIMES)
+  stubDocumentChat()
+  const files = ["sample-1.doc", "sample-2.docx", "sample-3.docx", "sample-4.docx"].map(name => ({
+    name,
+    type: name.endsWith(".doc") ? DOCUMENT_MIMES.doc : DOCUMENT_MIMES.docx,
+    content: fs.readFileSync(path.join(wordImportSampleDir!, name)).toString("base64"),
+  }))
+  const svc = services()
+  const result = await router.handleMessage({ type: "file.upload", thread_id: svc.thread.id, message: "读取四份文档", files }, svc, session())
+  assert.equal(result.type, "file.uploaded", JSON.stringify(result))
+  assert.deepEqual(result.files, files.map(file => file.name))
+  const user = svc.threadManager.getMessages(svc.thread.id).find(message => message.role === "user")
+  assert.ok(user)
+  const content = typeof user.content === "string" ? user.content : JSON.stringify(user.content)
+  for (const file of files) assert.ok(content.includes(file.name))
+  assert.ok(content.length > 28_000, "all four document bodies must reach the saved chat turn")
+})
+
 test("chat accepts Word bytes in a .wps only under the DOC upload policy", async () => {
   const bytes = fs.readFileSync(path.join(fixtureRoot, "one-page.doc"))
   stubDocumentChat()

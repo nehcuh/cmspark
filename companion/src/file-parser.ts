@@ -7,7 +7,7 @@ import AdmZip from "adm-zip"
 import type { SupportedFileType } from "officeparser"
 import { logger } from "./logger"
 import { CONVERTED_EXTENSIONS, DOCUMENT_MIMES, OFFICE_MIMES, documentExtension, resolveDocumentMime, unsupportedWpsError } from "./file-formats"
-import { isWpsWithWordDocContent } from "./wps-doc"
+import { isWpsWithWordDocContent, padWordDocFinalSector } from "./wps-doc"
 import { convertOfficeDocument, OFFICE_OUTPUT_MAX_BYTES, OFFICE_ARCHIVE_MAX_BYTES, OFFICE_IMAGE_MAX_BYTES, OFFICE_IMAGES_MAX_BYTES } from "./office-runtime"
 import { validateOdfExpansion } from "./odf-expansion"
 
@@ -229,7 +229,7 @@ async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: strin
     let parsedExt = sourceExt
     let parsedBuffer = buffer
     let inputPath = path.join(tmpDir, `input.${sourceExt}`)
-    fs.writeFileSync(inputPath, buffer)
+    fs.writeFileSync(inputPath, sourceExt === "doc" ? padWordDocFinalSector(buffer) : buffer)
     let conversionWarning = ""
     const destination = CONVERTED_EXTENSIONS[sourceExt]
     if (destination) {
@@ -249,7 +249,17 @@ async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: strin
     signal.throwIfAborted()
     const officeResult = await cancellable(officeparser.convert(parsedBuffer, "md", {
       parseConfig: { abortSignal: signal, fileType: (parsedExt === "htm" ? "html" : parsedExt) as SupportedFileType },
-      generatorConfig: { abortSignal: signal, includeImages: false },
+      generatorConfig: {
+        abortSignal: signal,
+        includeImages: false,
+        onNode(node) {
+          if (node.type === "list" && node.metadata && "indentation" in node.metadata && node.metadata.indentation < 0) {
+            // Word's numId=0 cancels numbering; WPS may also emit ilvl=-1.
+            if (node.metadata.listId === "0") Object.assign(node, { type: "paragraph" })
+            else node.metadata.indentation = 0
+          }
+        },
+      },
     }), signal)
     signal.throwIfAborted()
     const text = stripEmbeddedDataUris(typeof officeResult.value === "string" ? officeResult.value : "")
