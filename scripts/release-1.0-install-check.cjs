@@ -173,7 +173,7 @@ async function openExtension(asset, pair) {
   } else {
     assert.ok((await page.evaluate(() => chrome.runtime.sendMessage({ type:'ws.getPairingStatus' }))).paired, 'browser profile kept pairing')
   }
-  return { page, id }
+  return { page, id, worker }
 }
 
 async function chat(page, threadId, message) {
@@ -343,6 +343,30 @@ async function main() {
     await ownedTab.goto('http://127.0.0.1:' + provider.address().port + '/owned-release-tab')
     await chat(newBrowser.page, threadId, 'acceptance upgraded tool')
     assert.ok(toolRequested && toolReceived, 'provider saw completion of the browser tool call')
+    await newBrowser.worker.evaluate(() => {
+      const parse = JSON.parse, send = WebSocket.prototype.send
+      globalThis.ownedTaskFrames = []
+      const remember = frame => { if (globalThis.ownedTaskFrames.length < 32) globalThis.ownedTaskFrames.push(frame) }
+      JSON.parse = function(...args) {
+        const value = Reflect.apply(parse, this, args)
+        if (value?.type === 'tool.execute' && value.tool_call_id?.startsWith('owned-task-')) remember({
+          direction:'request', id:value.tool_call_id, tool:value.tool_name, task_context:!!value.task_context,
+          execution_id:typeof value.task_context?.execution_id === 'string', cleanup:!!value.params?.__task_tab_cleanup,
+        })
+        return value
+      }
+      WebSocket.prototype.send = function(value) {
+        try {
+          const frame = parse(value)
+          if (frame.type === 'tool.result' && frame.tool_call_id?.startsWith('owned-task-')) remember({
+            direction:'result', id:frame.tool_call_id, success:frame.result?.success,
+            creation_claim:!!frame.result?.data?.task_tab, provenance:frame.result?.data?.provenance?.capture_status,
+          })
+        } catch { /* observation never alters dispatch */ }
+        return Reflect.apply(send, this, [value])
+      }
+      globalThis.restoreOwnedTaskFrames = () => { JSON.parse = parse; WebSocket.prototype.send = send }
+    })
     await chat(newBrowser.page, threadId, 'acceptance task tab lifecycle')
     assert.equal(taskTabIds.length, 2)
     try {
@@ -355,9 +379,15 @@ async function main() {
         const file = JSON.parse(await fs.readFile(path.join(evidenceDir, name), 'utf8'))
         for (const source of file.task_pages || []) saved.push({ tab_id:source.tab_id, state:source.state, reason:source.reason, observations:source.observation_ids.length })
       }
-      console.error('Owned task tab snapshot:', JSON.stringify({ tabs:tabState, sources:saved }))
+      const frames = await newBrowser.worker.evaluate(() => globalThis.ownedTaskFrames)
+      const observer = await connect(), threads = await observer.send('thread.list')
+      const thread = threads.threads.find(thread => thread.id === threadId)
+      await observer.close()
+      console.error('Owned task tab snapshot:', JSON.stringify({ tabs:tabState, sources:saved, frames,
+        run:{ execution_id:!!thread?.last_run_execution_id, terminal:thread?.last_run_terminal ?? 'unset-or-normal' } }))
       throw error
     }
+    await newBrowser.worker.evaluate(() => globalThis.restoreOwnedTaskFrames())
     assert.equal(ownedTab.isClosed(), false, 'pre-existing user page survives task cleanup')
     assert.ok(ownedTab.url().endsWith('/owned-release-tab'))
     await chat(newBrowser.page, threadId, 'acceptance saved sources')
