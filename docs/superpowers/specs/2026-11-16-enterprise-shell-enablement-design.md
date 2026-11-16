@@ -12,8 +12,11 @@ GitHub: #853
 
 - `companion/src/packs/pack-engine.ts` 的 `setCapabilityProfile` 升到 enterprise 时只写 `capability_profile`。降到 community 时把已经 `enabled === true` 的 shell 和 netsec 写成 `enabled: false`。
 - `companion/src/capability/modules.ts` 的 `setModuleEnabled` 在 community 下拒绝打开 shell 或 netsec，错误是 `enterprise_profile_required`。shell 默认 `enabled: false`，`policy` 默认 `confirm_per_command`。
-- `requireModule("shell")` 只看 `available && enabled`。`checkShellScope` 先走这道门，再走命令策略。`commandAllowedByPolicy` 在 `confirm_per_command` 下放到后续 L2，不把策略本身当成电源。
-- `modules.set_enabled` 成功时返回 `modules.updated`。`modules.update` 会丢掉 patch 里的 `enabled`，不能用来开电源。
+- `requireModule("shell")` 在未启用时返回 `module_disabled:shell — enable in settings (modules.set_enabled) before use`。这句不能原样留下：新语义已经没有这颗电源。`checkShellScope` 先走这道门，再走命令策略。`commandAllowedByPolicy` 在 `confirm_per_command` 下放到后续 L2。
+- `setModuleEnabled` 自己决定拒绝或写入。`message-router.ts` 的 `modules.set_enabled` 只是把它的错误原样返回。`restoreTrustSnapshot`（`pack-engine.ts` 369–374）调用它后不看返回值。`computeApplyBlocked`（1391–1394）仍用 `m.enabled !== true` 判断，其中包含 shell。`acp/capability-context.ts` 27–30 在 Linux 上仍写「需先在设置启用 shell」。
+- `config.set` 在 `message-router/handlers/config.ts` 把请求抄进显式白名单 `normalized`。白名单没有 `modules`。未列入的键被丢掉，正常的模型、安全和编程助手字段仍会保存。
+- `setCapabilityProfile` 在 `from === target` 时直接返回当前快照，不会把 enterprise 下的 `shell.enabled: false` 补成 true。
+- `modules.update` 会丢掉 patch 里的 `enabled`，不能用来开电源。
 - 设置页 `CapabilityProfileSection` 和 `buildProfileSwitchConfirm` 写明：enterprise 只解锁资格，不自动打开模块。场景页 `PacksPanel` 对未开启的 shell 显示「开启」并发送 `modules.set_enabled`。
 - 设置助手目录 `companion/src/settings-assistant/catalog.ts` 没有能力档，也没有 shell。模型只能从目录出候选。因此「如何开启 shell」会得到目录中没有这项，而不是去执行写入。
 - 模式 C 本机终端、内嵌终端、ACP 是另外的配置和入口。内嵌终端的平台限制是 macOS / Windows。`shell_exec` 不使用这道 PTY 限制。
@@ -40,7 +43,11 @@ shellProvision(config) =
 
 ## 持久化与迁移
 
-任何成功持久化的配置，在写入返回前都经过同一次归一化：
+归一化是纯函数，作用在即将写入的配置对象上。`saveConfigInternal` 在原子写入前对这份对象调用一次。它不调用 `getConfig`，也不再调用 `saveConfig`，所以没有读副作用，也不会写回环。
+
+加载配置时若投影和磁盘不一致，只额外调用一次 `saveConfig` 写入 shell 的 `enabled` / `enabled_at` / `enabled_by`。这次调用进入 `saveConfigInternal` 后投影已经一致，不会再触发第二次修复。修复写入失败时不把内存状态当成已提供或已关闭，并向 `modules.list` 返回 `SHELL_PROVISION_RESULT_UNKNOWN`。
+
+成功写入的配置在返回前满足：
 
 - enterprise 且 `shellProvision` 为 provided：`modules.shell.enabled = true`，`enabled_by = "profile.enterprise"`。若原值不是 true，`enabled_at` 写成这次归一化的时间；原值已是 true 则不改 `enabled_at`。保留原有 `policy` 和 `allowlist_commands`。
 - community，或 shell 不可用：`modules.shell.enabled = false`，`enabled_at = null`，`enabled_by = null`。同样保留策略字段。
@@ -49,6 +56,8 @@ shellProvision(config) =
 已经是 enterprise 且磁盘上 `shell.enabled === false` 的安装，在 Companion 加载配置后、响应 `modules.list` 或执行 `shell_exec` 之前完成这次归一化。归一化是幂等的。完成后，列表、设置、场景和工具门看到的都是 provided。不允许解释成「保留用户旧的关闭」。
 
 归一化失败或写后快照读不回上述结果时，调用方得到 `SHELL_PROVISION_RESULT_UNKNOWN`。这时不宣告 shell 已提供，也不宣告用户的旧关闭仍然有效。
+
+设置页和场景页收到该错误时显示「shell 提供状态未知」，不显示已提供或未提供。旁边的恢复动作只发送 `modules.list`。列表返回明确投影后，两处改成对应的只读句子。列表失败或仍是未知，就保持未知。已经是 enterprise 时，这个按钮不是再次升档：`setCapabilityProfile` 对相同档位早返回，不会修补 `shell.enabled: false`。加载归一化才是这条旧数据的修复路径。
 
 ## 档位切换
 
@@ -67,7 +76,7 @@ shellProvision(config) =
 
 ## 旧客户端写入
 
-`modules.set_enabled` 且 `module === "shell"`，无论 `enabled` 是 true 还是 false，都不写盘，不返回 `{ type: "modules.updated" }`。返回：
+拒绝发生在 `setModuleEnabled`，不是只发生在 WebSocket handler。`module === "shell"` 时，无论 `enabled` 是 true 还是 false，函数返回错误并且不调用 `saveConfig`。handler 因此不能返回 `{ type: "modules.updated" }`。错误文本是：
 
 ```text
 type: error
@@ -78,16 +87,22 @@ error: shell_switch_removed — shell availability follows capability_profile; d
 
 `modules.set_enabled` 对 netsec、appsec、devsec-workspace 保持现有行为。community 下打开 netsec 仍返回 `enterprise_profile_required`。
 
-`config.set` 或其它补丁若显式包含 `modules.shell.enabled`，整次写入拒绝，错误同样是 `shell_switch_removed`，磁盘不变。不把该字段悄悄丢掉再返回成功。`modules.update` 继续丢弃 patch 中的 `enabled`，不能用来改变 shell 是否提供；策略字段仍按现有 enterprise 条件更新。
+`config.set` 只有在请求体显式带有 `config.modules.shell.enabled` 时整次拒绝，错误同样是 `shell_switch_removed`，已允许的字段也不写入。没有这个路径的请求保持现有白名单：未知键继续被忽略，模型、安全、编程助手等已允许字段仍按今天的规则保存。不能因为请求里有其它未知键就让正常配置失败。
 
-`pack.apply` 在成功把档位写成 enterprise 的同一次结果里必须满足 `shellProvision`。它不能把 enterprise 留下、同时把 `shell.enabled` 留成 false。pack 若要求关闭 shell 而结果档位仍是 enterprise，这次 apply 失败，不写这组矛盾状态。pack 对 netsec 的启用和信任短语保持现有门，不因 shell 语义被打开。
+`modules.update` 继续丢弃 patch 中的 `enabled`，不能用来改变 shell 是否提供；策略字段仍按现有 enterprise 条件更新。
+
+`restoreTrustSnapshot` 不再对 shell 调用 `setModuleEnabled`，也不再忽略它的返回值来假装恢复了 `enabled: false`。它先按现有方式写回档位和安全旗；`saveConfig` 内的归一化决定 shell 投影。快照里的 shell `enabled: false` 在结果档位仍是 enterprise 时不被恢复。netsec 及其它模块仍调用 `setModuleEnabled`，返回不成功时写入审计并保留该错误，不把它当成已恢复。
+
+`computeApplyBlocked` 对 `requires_modules` 里的 shell 改调用 `shellProvision`。provided 时不因为磁盘 `enabled !== true` 返回 `module_disabled:shell`。community 返回 `enterprise_profile_required`，不返回教用户调用 `modules.set_enabled` 的句子。其它模块仍看 `available` 和 `enabled`。
+
+`pack.apply` 成功把档位写成 enterprise 时，同一次 `saveConfig` 的归一化使 shell 为 provided。它不能留下 enterprise 加 `shell.enabled: false`。pack 对 netsec 的启用和信任短语保持现有门。
 
 ## 执行门
 
 `checkShellScope` 先调用 `shellProvision`：
 
-- not_provided 且原因是 community：返回现有可识别的 `enterprise_profile_required` 或包含 `module_disabled:shell` 的错误文本，供界面指向升档，而不是指向一颗已删除的电源。
-- not_provided 且原因是 unavailable：返回模块不可用，不提示去开电源。
+- not_provided 且原因是 community：返回 `enterprise_profile_required — set capability_profile=enterprise for shell`。文本里不出现 `modules.set_enabled`，也不出现「在设置里启用 shell」。现有工具卡、场景页和 ACP 提示如果匹配旧的 `module_disabled:shell — enable in settings (modules.set_enabled)`，要改成匹配这句新错误。
+- not_provided 且原因是 unavailable：返回 `module not available: shell`。不提示去开电源，也不把这个缺口写成 Linux PTY 未实现。
 - provided：不再因为 `enabled === false` 拒绝。继续执行现有的命令长度、空命令、`commandAllowedByPolicy` 和 L2。`confirm_per_command` 仍不在这一层放行执行。
 
 界面在 enterprise 下不得显示「shell 已开启」之后，又只因为旧的 `enabled: false` 被后端拒绝。
@@ -109,11 +124,17 @@ netsec、应用安全、工作区读写的电源按钮保留。
 - enterprise 下不再出现「去打开 shell 电源」。若命令被策略或 L2 拦住，文案说明授权或策略，不说能力未启用。
 - 模式 C 本机终端、内嵌终端、ACP 的文案继续使用各自的名字，不称它们为 shell。
 
-设置助手新增一条目录项，`scope: "manual"`，没有 `patch`。模型只能选择这项，不能发明键名。
+设置助手不能靠目录里的固定句子区分两种状态。现有 manual 项的 `read` 固定返回「需在对应设置核对」，apply 对 manual 固定返回「尚未修改：请进入原设置入口核对并单独确认。」规则导航只认识会议、场景和语音。这些都覆盖不了 community 与 enterprise 的差别。
 
-- 用户说「如何开启 shell」或「帮我开启 shell」时，community 的说明指向能力档确认，并给出打开「本机与工具」的导航。
-- enterprise 的说明是 shell 已提供，命令仍要单独授权；若失败，原因是连接、命令策略或 L2，不是缺少电源。
-- 提交这项只得到 manual 回执，不发送 `config.set`、`modules.set_enabled`、`modules.set_profile` 或 `pack.apply`。模型自由文本不能直接变成这些消息。
+实现时由 Companion 在生成候选之后、把候选返回扩展之前，用当前 `shellProvision` 填入受控文案，而不是让模型写这句说明：
+
+- community：`shell 随 enterprise 档提供。请打开「本机与工具」，确认升档。命令执行仍需单独授权。`
+- provided：`shell 已由 enterprise 档提供，没有单独电源。命令仍需策略和 L2 授权。`
+- unknown：`shell 提供状态未知。请刷新本机能力列表，不要再次切换相同档位。`
+
+导航按钮由扩展按这个状态打开「本机与工具」。它不发送 `config.set`、`modules.set_enabled`、`modules.set_profile` 或 `pack.apply`。模型自由文本不能变成这些消息，也不能改写上面三句。apply 这条候选仍是 manual，回执使用同一句受控文案，不使用固定的「尚未修改」。
+
+`buildCodingHandoffContext` 的 Linux 分支不再写「需先在设置启用 shell」。community 使用升档那句；provided 仍可说明用 `shell_exec` 安装 zenity，并遵守现有命令策略和确认；unavailable 说明模块不可用。这段不提及内嵌 PTY。
 
 首次引导不新增流程。能力档确认文案就是升级时看到的说明。
 
@@ -155,10 +176,13 @@ netsec、应用安全、工作区读写的电源按钮保留。
 Companion：
 
 - enterprise 且磁盘 `shell.enabled: false`，加载后 `shellProvision` 为 provided，`modules.list` 的 `shell.enabled` 为 true，原 `policy` 与 `allowlist_commands` 仍在。
-- community 时 `checkShellScope` 失败，错误指向档位而不是电源；不执行命令。
-- `modules.set_enabled` shell true 和 false 都返回 `shell_switch_removed`，且没有 `modules.updated`。
+- community 时 `requireModule("shell")` 和 `checkShellScope` 的错误是 `enterprise_profile_required — set capability_profile=enterprise for shell`，不含 `modules.set_enabled`，且不执行命令。
+- `setModuleEnabled("shell", true|false)` 返回 `shell_switch_removed` 且不调用 `saveConfig`。`restoreTrustSnapshot` 在快照要求 shell 关闭、结果档位为 enterprise 时不把该关闭当成已恢复；netsec 的失败返回不被忽略。
+- `computeApplyBlocked` 在 enterprise、`shell.available === true` 且磁盘 `enabled: false` 时，不因为 shell 需求返回 `module_disabled:shell`。community 返回 `enterprise_profile_required`。
+- `buildCodingHandoffContext` 在 Linux 且 community 时不包含「启用 shell」。
+- `modules.set_enabled` shell true 和 false 都没有 `modules.updated`。
 - 同一请求不改变 netsec。`modules.set_enabled` netsec 在 community 仍是 `enterprise_profile_required`，在 enterprise 仍可开启。
-- 带 `modules.shell.enabled: false` 的 `config.set` 整次拒绝，其它字段也不写入。
+- 请求体显式带 `config.modules.shell.enabled` 的 `config.set` 整次拒绝。只有未知键、没有这个路径的 `config.set` 仍保存白名单字段。
 - 升档确认的成功快照同时是 enterprise 和 `shell.enabled: true`，netsec 与写入前相同。
 - 取消确认不产生 `modules.set_profile`。
 - 修订冲突、结果未知、通道错误不产生成功快照。
@@ -170,14 +194,19 @@ Companion：
 
 - 能力档确认文案包含「提供 shell」和「netsec 不自动开启」。取消不发送。
 - 场景页没有 shell 的开启按钮；enterprise 与 community 分别显示上一节的只读句子。netsec 按钮仍在。
-- 设置助手对「如何开启 shell」只生成手动候选和导航。点击导航不发送 `config.set`、`modules.set_enabled`、`modules.set_profile`、`pack.apply`。
-- enterprise 的工具失败不再出现「打开 shell 电源」。模式 C、内嵌终端、ACP 的标签不变。
+- 设置助手对「如何开启 shell」的可见句子来自当前 `shellProvision`，community 与 enterprise 不同。点击导航不发送 `config.set`、`modules.set_enabled`、`modules.set_profile`、`pack.apply`。
+- 加载归一化失败时，设置页和场景页显示未知。刷新只发送 `modules.list`。当前已是 enterprise 时不发送 `modules.set_profile`。
+- enterprise 的工具失败不再出现「打开 shell 电源」。模式 C、内嵌终端、ACP 的标签不变。Linux ACP 提示不再要求启用 shell 电源。
 
 ## 自审
 
 - 与「升级时开一次、之后可关」冲突的句子已删除。enterprise 期间没有生效的 shell 电源。
 - 旧的 `enabled: false` 会被归一化，不会被保留成关闭。
+- `requireModule` 不再保留「enable in settings (modules.set_enabled)」这句。
 - `shell_switch_removed` 对 true 和 false 都是错误，避免假成功。
+- `config.set` 的整次拒绝只覆盖显式的 `config.modules.shell.enabled`。未知键不拖垮白名单写入。
+- 相同档位的 `setCapabilityProfile` 不负责修补旧的 false。加载归一化负责，失败时界面保持未知并用 `modules.list` 刷新。
+- 助手文案由 `shellProvision` 生成，不依赖 manual 项的固定「需在对应设置核对」。
 - netsec、L2、三旗、确认短语、命令策略没有被并进资格。
 - 本机终端、内嵌终端、ACP 没有被定义成 shell。
 - 菜单六层是职责划分，不是本轮要做的六个新开关。
