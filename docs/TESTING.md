@@ -1,5 +1,20 @@
 # TESTING
 
+## 活状态（2026-11-16）
+
+产品版本 **1.0.1**。本段核对的基线提交是 `16f3048b9b83b813648830517d0a1bd9994bf564`。Node 要求看 `companion/package.json` 与仓库根 `package.json` 的 `engines.node`（`>=22.23.4 <23`）。CI 固定版本看 `.github/workflows/ci.yml` 的 `node-version`（`22.23.4`）。`chrome-extension/package.json` 没有单独的 `engines` 字段。
+
+现行测试规模以上面两条命令的现数为准。口径是对应目录中文件名匹配 `*.test.ts` 的个数。`*.test.mjs`、`*.test.js` 和 `scripts/tests` 另计。该文件数也不同于 `node:test` 跑出来的用例条数。
+
+```bash
+find companion/tests -name '*.test.ts' | wc -l
+find chrome-extension/tests -name '*.test.ts' | wc -l
+```
+
+2026-11-16 在上述基线上按该口径数到 Companion **761**、扩展 **211**。这是当天快照，以后以命令结果为准。
+
+下文各票笔记保留写作当时的版本说法，其中包括 0.5.0 与 0.6.14。那些句子记录笔记所属时期。当前发行状态以本节为准。Issue 开闭以 GitHub 为准。
+
 ### #705 原生工作区的测试 Runner 签名
 
 macOS 固定 `OwnedPickerUITests` 是未发布的 UI 验收目标。其 Debug 配置显式使用 fixture 内唯一的 entitlement 文件，将 `com.apple.security.app-sandbox` 设为 false，使同次 Runner 可以在 Node 自有场景目录发布握手；不改变生产应用或 observer 权限。构建声明不等于实际签名，须核实际生成 Runner 的签名及原生用例结果。
@@ -65,7 +80,7 @@ Windows 原 Node 标量九项之后、Registry 和完整 census 之前，运行�
 
 `registration-framing` 也覆盖 PS 成功后的 receipt 数量断言，不能单凭阶段名判定 PS／C#／Registry 或 pipe 根因。子进程 exit0 后的控制器拒绝与子进程失败分别记录。此证据修复不是原生注册修复；完整 canonical、原有 Windows 回归和真实 Chrome pipe／PID／HWND 身份门仍须实际通过。不得据新回执延时、重试、跳过断言或启用遮罩。
 
-> 与产品 **0.5.0** 对齐（2026-08-09 体检后刷新）。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
+> 框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。产品版本与 `*.test.ts` 文件规模以文首「活状态」为准。2026-08-09 体检时曾与产品 0.5.0 对齐，当时文件规模约 186 / 66；该组数字只属于那次体检。
 
 Windows／跨平台变更先读 [Windows 开发与失败定位](windows-development.md)：包含系统化调试、路径／换行／真实消费者预检和原生证据边界；只选本次必要回归，不新增全仓或模型门。
 
@@ -139,10 +154,10 @@ case36 的数值句柄可被当前子进程的无关对象复用，不能单用 
 
 Windows 单一、无引号／变量展开／控制符／链／管道／重定向／分组／开关的非 ASCII literal cmd `echo`，使用原选定 cmd、原 `/d /s /c` 引号与原命令，仅新增 `/u` 输出模式；stdout 据该启动合同按 UTF-16LE 流式解码／严格校验，不靠字节猜码。非法／奇数结束／孤立 surrogate／NUL 输出仍标不可判定，非空 stderr 不宣称已知格式。`type` 和所有不满足该严格语法、自定义非 cmd shell、外部 exe/com、非 Windows 均保留旧路径；禁止全局 `/u` 或 `chcp`。新增实际模块惰性 spawn 控覆盖原 argv/命令/options、全部拆分、stderr/空流、上限／退出和不适用语法；没有执行 cmd 或 native。UTF-16LE 仍需同新 head 真实 Windows 断言确认，CPU 格式假设不能冒平台通过或整个 #731 关闭。
 
-| 端 | 测试框架 | 测试目录 | 规模（约） | 运行命令 |
+| 端 | 测试框架 | 测试目录 | 规模 | 运行命令 |
 |----|---------|---------|-----------|---------|
-| Companion | `node:test` | `companion/tests/`（含 `security/`、`integration/` 子目录） | **~186** `*.test.ts` | `npm --prefix companion test` |
-| Extension | `node:test` | `chrome-extension/tests/` | **~66** 纯逻辑测试 | `npm --prefix chrome-extension test` |
+| Companion | `node:test` | `companion/tests/`（含 `security/`、`integration/` 子目录） | 文首活状态的 `*.test.ts` 现数 | `npm --prefix companion test` |
+| Extension | `node:test` | `chrome-extension/tests/` | 文首活状态的 `*.test.ts` 现数 | `npm --prefix chrome-extension test` |
 
 - Companion 编译：`companion/tsconfig.test.json`（`outDir: .test-dist`）
 - Extension 编译：`chrome-extension/tsconfig.test.json`

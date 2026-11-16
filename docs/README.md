@@ -109,6 +109,8 @@
 
 ## 后续工作（Active backlog）
 
+本表只做导航。Issue 是否仍开放以 GitHub 为准；本索引不把未经该票自己验收的旧票标成完成。产品版本以包清单 **1.0.1** 与 [release-status.md](release-status.md) 为准。
+
 | 文档 | 说明 |
 |------|------|
 | [optimization-plan-post-adr-020.md](optimization-plan-post-adr-020.md) | **历史骨架**（0.4.0；P1 已 FIXED，**勿当活排序**） |
