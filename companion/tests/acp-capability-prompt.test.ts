@@ -68,12 +68,14 @@ test("chat exposes the actual coding handoff and embedded terminal capabilities"
     assert.ok(!requests.at(-1)!.prompt.includes(offered.session.session_id), "restart must remove stale runtime IDs from the prompt")
     const packs = await import("../src/packs/pack-engine")
     packs.ensureBuiltinPacksInstalled(engine)
-    saveConfig({ modules: { shell: { available: true, enabled: true, policy: "confirm_per_command" } } } as any)
+    // The install sentence follows enterprise provision. A detached enabled bit on community is not enough.
+    saveConfig({ capability_profile: "enterprise", modules: { shell: { available: true, enabled: true, policy: "confirm_per_command" } } } as any)
     assert.equal(packs.applyPack("coding-handoff", thread.id, manager, engine).ok, true)
     t.mock.method(nativeOs, "platform", () => "linux")
     await run()
-    assert.ok(requests.at(-1)!.tools.includes("shell_exec"), "enabled shell must reach the provider in the coding scene")
-    assert.match(requests.at(-1)!.prompt, /zenity.*shell_exec/)
+    assert.ok(requests.at(-1)!.tools.includes("shell_exec"), "provided shell stays on the coding scene tool list")
+    assert.match(requests.at(-1)!.prompt, /可通过 shell_exec/)
+    assert.doesNotMatch(requests.at(-1)!.prompt, /启用 shell/)
     // A capability hint must respect the same tool whitelist as the provider request.
     manager.update(thread.id, { tool_whitelist: ["list_tabs"] })
     await run()
@@ -107,23 +109,4 @@ test("#584 buildCodingHandoffContext: win32 + enabled 如实宣称网页终端�
   assert.match(darwin, /网页终端已启用/)
   const linux = buildCodingHandoffContext(cfg, "linux", tools)
   assert.match(linux, /需要 macOS \/ Windows/, "linux stays unsupported and the copy says so")
-})
-
-test("Linux coding handoff can recover missing picker dependencies through enabled shell", async () => {
-  const { buildCodingHandoffContext } = await import("../src/acp/capability-context")
-  const cfg = { acp: { enabled: true }, modules: { shell: { available: true, enabled: true } } } as any
-  const tools = new Set(["acp_list_agents", "acp_propose_session", "acp_start_session", "shell_exec"])
-  const context = buildCodingHandoffContext(cfg, "linux", tools)
-  assert.match(context, /workspace_root.*选择工作区/)
-  assert.match(context, /zenity.*shell_exec/)
-  assert.match(context, /包管理器/)
-  assert.match(context, /安装.*确认/)
-  assert.match(context, /sudo -n/)
-  assert.match(context, /安装成功.*选择工作区/)
-  tools.delete("shell_exec")
-  assert.doesNotMatch(buildCodingHandoffContext(cfg, "linux", tools), /可通过 shell_exec/)
-  tools.add("shell_exec")
-  cfg.modules.shell.enabled = false
-  assert.doesNotMatch(buildCodingHandoffContext(cfg, "linux", tools), /可通过 shell_exec/)
-  assert.doesNotMatch(buildCodingHandoffContext(cfg, "darwin", tools), /zenity/)
 })

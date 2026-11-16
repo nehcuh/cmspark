@@ -34,6 +34,7 @@ import {
 } from "./types"
 import { getAllToolDefinitions } from "../bridge/tool-definitions"
 import { setModuleEnabled, ensureModulesDefaults } from "../capability/modules"
+import { repairShellProjection, shellDesiredEnabled } from "../capability/shell-provision"
 import { copyModulesConfigSnapshot, type ModulesConfigSnapshot } from "../capability/module-snapshot"
 import {
   isValidSecurityArmPhrase,
@@ -225,10 +226,12 @@ export function applyUserPackTrust(
 
   for (const mod of modulesToEnable) {
     const r = setModuleEnabled(mod, true, by)
-    // Shell no longer has a power switch. The profile write above already projected it.
-    if (!r.ok && !(mod === "shell" && r.error.includes("shell_switch_removed"))) {
-      return { ok: false, error: r.error }
+    // The profile write already projected shell. A removed switch is success only when that projection provided it.
+    if (!r.ok && mod === "shell" && r.error.includes("shell_switch_removed")) {
+      if (!shellDesiredEnabled(getConfig() as any)) return { ok: false, error: "module not available: shell" }
+      continue
     }
+    if (!r.ok) return { ok: false, error: r.error }
   }
 
   appendCapabilityAudit({
@@ -355,8 +358,8 @@ export function setCapabilityProfile(
 
 }
 
-/** Restore Trust snapshot captured before pack.apply (best-effort). */
-export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack.unapply"): void {
+/** Restore Trust snapshot captured before pack.apply. Shell follows the profile projection. */
+export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack.unapply"): { ok: true } | { ok: false; error: string } {
   const cfg = getConfig() as any
   saveConfig({
     capability_profile: snap.capability_profile || "community",
@@ -367,18 +370,32 @@ export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack
       allow_all_schemes: snap.allow_all_schemes === true,
     },
   } as any)
+  const errors: string[] = []
   for (const [id, st] of Object.entries(snap.modules || {})) {
+    if (id === "shell") continue
     const want = st?.enabled === true
     const cur = (getConfig() as any).modules?.[id]?.enabled === true
-    if (want !== cur) {
-      setModuleEnabled(id, want, by)
+    if (want === cur) continue
+    const restored = setModuleEnabled(id, want, by)
+    if (!restored.ok) {
+      errors.push(restored.error)
+      appendCapabilityAudit({
+        type: "pack.trust_restore_module_failed",
+        module: id,
+        by,
+        at: new Date().toISOString(),
+        error: restored.error,
+      })
     }
   }
   appendCapabilityAudit({
     type: "pack.trust_restore",
     by,
     at: new Date().toISOString(),
+    ok: errors.length === 0,
   })
+  if (errors.length) return { ok: false, error: errors.join("; ") }
+  return { ok: true }
 }
 
 /** True when value looks like a PackTrustSnapshot we can restore. */
@@ -396,8 +413,7 @@ export function restoreTrustFromThreadCookie(
 ): boolean {
   if (!isPackTrustSnapshot(trustCookie)) return false
   try {
-    restoreTrustSnapshot(trustCookie, by)
-    return true
+    return restoreTrustSnapshot(trustCookie, by).ok
   } catch {
     return false
   }
@@ -1383,13 +1399,28 @@ export function deleteUserPack(
   return { ok: true, restored_threads: un.restored_threads, packs: listInstalledPacks() }
 }
 
+function packRequestsShell(manifest: PackManifest): boolean {
+  if ((manifest.requires_modules || []).includes("shell")) return true
+  if ((manifest.trust?.enable_modules || []).includes("shell")) return true
+  return false
+}
+
 function computeApplyBlocked(manifest: PackManifest, config: CompanionConfig): string | null {
   const profile = (config as any).capability_profile || "community"
   if (manifest.channel === "enterprise" && profile !== "enterprise") {
     return "enterprise_profile_required"
   }
+  if (packRequestsShell(manifest)) {
+    const ready = repairShellProjection()
+    if (ready === "unknown") return "SHELL_PROVISION_RESULT_UNKNOWN"
+    if (ready !== "ready_provided") {
+      const live = getConfig() as any
+      return live.capability_profile === "enterprise" ? "module not available: shell" : "enterprise_profile_required"
+    }
+  }
   const modules = (config as any).modules || {}
   for (const mod of manifest.requires_modules) {
+    if (mod === "shell") continue
     const m = modules[mod]
     if (!m || m.available !== true) return `module_unavailable:${mod}`
     if (m.enabled !== true) return `module_disabled:${mod}`
@@ -2036,11 +2067,12 @@ export function unapplyPack(
       skillEngine?.setActiveSkillsForThread(threadId, restoredSkills)
     }
     // Product B: restore global Trust if this apply had written it
+    let trustRestored = false
     if (isPackTrustSnapshot(trustSnap)) {
       try {
-        restoreTrustSnapshot(trustSnap, `pack.unapply:${packId}`)
+        trustRestored = restoreTrustSnapshot(trustSnap, `pack.unapply:${packId}`).ok
       } catch {
-        /* best-effort */
+        trustRestored = false
       }
       releaseTrustJournalIfMatch(threadId, packId)
     }
@@ -2055,7 +2087,7 @@ export function unapplyPack(
       pack_id: packId,
       thread_id: threadId,
       at: new Date().toISOString(),
-      trust_restored: !!trustSnap,
+      trust_restored: trustRestored,
     })
     return { ok: true, thread: updated }
   } catch (e: any) {

@@ -60,9 +60,9 @@ export function repairShellProjection(): ShellReadiness
 
 **Files:** `restoreTrustSnapshot`、`computeApplyBlocked`、`buildCodingHandoffContext`。
 
-- [ ] 先写失败测试：enterprise 快照里 shell 关闭不被当成已恢复；`unknown` 时 apply 返回 `SHELL_PROVISION_RESULT_UNKNOWN`；Linux community 提示不含「启用 shell」。
-- [ ] 看到红之后再改这三处。netsec 的 `setModuleEnabled` 返回值不再被忽略。
-- [ ] 变绿后独立评审。通过前不开始任务 3。
+- [x] 先写失败测试：enterprise 快照里 shell 关闭不被当成已恢复；`unknown` 时 apply 返回 `SHELL_PROVISION_RESULT_UNKNOWN`；Linux community 提示不含「启用 shell」。
+- [x] 看到红之后再改这三处。netsec 的 `setModuleEnabled` 返回值不再被忽略。只列出 `shell_exec` 的场景不会被误挡。
+- [x] 变绿后独立评审。通过前不开始任务 3。
 
 ### 任务 3：扩展界面与助手
 
