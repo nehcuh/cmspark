@@ -2,7 +2,7 @@
 
 GitHub: #806
 
-状态：计划。本文件不改产品行为。配套测试 `chrome-extension/tests/settings-immediate-receipt-806.test.ts` 停在红，等独立评审后再做最小修复。
+状态：阶段 1b 已按本文件实现。即时保存用独立的 `immediateSave`，确认和安全审计发生在 SettingsSlideout 的 effect。`config.set` 的既有错误帧和成功帧带回原来的 `settings-save:` id，没有新的超时协议。配套测试应变绿；#806 仍不关闭。
 
 ## 现有回执
 

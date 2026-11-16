@@ -176,6 +176,40 @@ function harness() {
     },
     configSets() { return messages.filter(message => message?.type === "config.set") },
     reduceIsolated(base: any, action: any) { return store.agentReducer(base, action) },
+    errorSocket() {
+      const effects: Array<() => void> = []
+      const refs: any[] = []
+      let cursor = 0
+      let listener: ((message: any) => void) | undefined
+      const react = {
+        useRef(value: any) { const owned = refs[cursor] || { current: value }; refs[cursor] = owned; cursor += 1; return owned },
+        useEffect(effect: () => void) { effects.push(effect) },
+      }
+      const chrome = { runtime: { lastError: null, onMessage: { addListener(fn: any) { listener = fn }, removeListener() {} }, sendMessage() {}, connect: () => ({ disconnect() {} }) }, storage: { local: { get() {}, remove() {} } } }
+      const output: any = {}
+      const code = ts.transpileModule(fs.readFileSync(at("hooks/useWebSocket.ts"), "utf8"), {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+      }).outputText
+      vm.runInNewContext(code, {
+        exports: output, console,
+        require: (id: string) => {
+          if (id === "react") return react
+          if (id === "../store/agentStore") return { useAgentStore: () => ({ state, dispatch }), overlayStandbyFromError: () => null }
+          if (id === "../utils/settings-draft") return load(at("utils/settings-draft.ts"))
+          if (id === "../coding-handoff/workspace-hints") return load(at("coding-handoff/workspace-hints.ts"))
+          const Stub = function Stub() {}
+          const fn: any = new Proxy(Stub, { get: () => fn, apply: () => undefined })
+          return new Proxy({}, { get: () => fn })
+        },
+        chrome, document: { addEventListener() {}, removeEventListener() {} },
+        window: { dispatchEvent: () => true }, setInterval: () => 1, clearInterval() {},
+      }, { timeout: 5000, filename: "useWebSocket.ts" })
+      cursor = 0
+      output.useWebSocket()
+      for (const effect of effects) effect()
+      assert.equal(typeof listener, "function", "settings error listener")
+      return { send: (message: any) => listener!(message) }
+    },
     designedAudit(message: string) {
       const armed = { status: "accepted" as "accepted" | "confirmed" }
       function Probe() {
@@ -335,7 +369,7 @@ function confirmAudited(ui: ReturnType<typeof harness>, patch: Record<string, un
   return gaps
 }
 
-test("disconnect does not show dangerous auto-approve as off or record success", () => {
+test("transport refusal does not show dangerous auto-approve as off or record success", () => {
   const ui = harness()
   const before = ui.state().securityAuditLog.length
   const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true }))
@@ -345,6 +379,7 @@ test("disconnect does not show dangerous auto-approve as off or record success",
   if (ui.checkbox(again, "自动批准所有危险操作").props.checked !== true) gaps.push("checkbox left the snapshot")
   if (ui.state().config.auto_approve_dangerous !== true) gaps.push("state.config left the snapshot")
   if (ui.state().securityAuditLog.length !== before) gaps.push("audit changed")
+  if (!textOf(ui.renderSlideout()).includes("Companion 未连接")) gaps.push("error hidden")
   assert.deepEqual(gaps, [])
 })
 
@@ -355,6 +390,7 @@ test("channel lastError does not commit dangerous auto-approve and marks the sav
   const gaps = rejectedReceipt(ui, "last-error")
   if (ui.state().config.auto_approve_dangerous !== true) gaps.push("state.config left the snapshot")
   if (ui.state().securityAuditLog.length !== 0) gaps.push("audit changed")
+  if (!textOf(ui.renderSlideout()).includes("Could not establish connection")) gaps.push("error hidden")
   assert.deepEqual(gaps, [])
 })
 
@@ -737,6 +773,72 @@ test("accepted transport does not mark full tool history saved before a snapshot
     .sort((left: any, right: any) => textOf(left).length - textOf(right).length)[0]
   if (textOf(ui.rows(shown).find((node: any) => node.type === "button")) !== "默认关闭") gaps.push("history button left the snapshot")
   assert.deepEqual(gaps, [])
+})
+
+test("an unrelated snapshot does not confirm an immediate save", () => {
+  const ui = harness()
+  const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true }))
+  ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
+  const gaps = acceptedReceipt(ui)
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, auto_approve_dangerous: false },
+    revision: "epoch:2",
+    id: "settings-save:someone-else",
+  })
+  ui.renderSlideout()
+  if (ui.state().immediateSave?.status !== "accepted") gaps.push(`status=${String(ui.state().immediateSave?.status)}`)
+  if (ui.state().securityAuditLog.length !== 0) gaps.push(`audit=${ui.state().securityAuditLog.length}`)
+  if (!ui.state().settingsOpen) gaps.push("settings closed")
+  assert.deepEqual(gaps, [])
+})
+
+test("a second immediate change waits instead of replacing the unanswered request", () => {
+  const ui = harness()
+  const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true, auto_approve_enterprise_tools: true }))
+  ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
+  const gaps = acceptedReceipt(ui)
+  const sent = ui.configSets().length
+  ui.checkbox(ui.openAdvanced(ui.renderSlideout()), "全局自动批准企业高危工具").props.onChange({ target: { checked: false } })
+  if (ui.configSets().length !== sent) gaps.push("second request sent")
+  if (ui.state().immediateSave?.status !== "accepted") gaps.push(`status=${String(ui.state().immediateSave?.status)}`)
+  if (!textOf(ui.renderSlideout()).includes("上一次设置还在等待确认")) gaps.push("wait notice hidden")
+  assert.deepEqual(gaps, [])
+})
+
+test("connection loss marks the immediate save unknown and leaves a different main save pending", () => {
+  const ui = harness()
+  const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true, model_name: "old" }))
+  ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
+  const gaps = acceptedReceipt(ui)
+  ui.dispatch({ type: "BEGIN_SETTINGS_SAVE", submission: { id: "settings-save:main", revision: "epoch:1", patch: {}, generations: {} } })
+  if (ui.state().settingsSave.status !== "pending" || ui.state().settingsSave.pending?.id !== "settings-save:main") gaps.push("main save was not pending")
+  ui.dispatch({ type: "SET_CONNECTION", state: "disconnected" })
+  if (ui.state().immediateSave?.status !== "unknown") gaps.push(`immediateSave=${String(ui.state().immediateSave?.status)}`)
+  if (ui.state().settingsSave.status !== "pending" || ui.state().settingsSave.pending?.id !== "settings-save:main") gaps.push(`settingsSave=${ui.state().settingsSave.status}`)
+  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("config changed")
+  if (!ui.state().settingsOpen) gaps.push("settings closed")
+  if (!textOf(ui.renderSlideout()).includes("连接已断开")) gaps.push("error hidden")
+  assert.deepEqual(gaps, [])
+})
+
+test("a settings-save error frame marks only the matching immediate save unknown", () => {
+  const ui = harness()
+  ready(ui, { auto_approve_dangerous: true, model_name: "old" })
+  ui.dispatch({ type: "BEGIN_IMMEDIATE_SAVE", id: "settings-save:immediate", revision: "epoch:1", patch: { auto_approve_dangerous: false } })
+  ui.dispatch({ type: "IMMEDIATE_SAVE_ACCEPTED", id: "settings-save:immediate" })
+  ui.dispatch({ type: "BEGIN_SETTINGS_SAVE", submission: { id: "settings-save:main", revision: "epoch:1", patch: {}, generations: {} } })
+  assert.equal(ui.state().settingsSave.status, "pending")
+  const socket = ui.errorSocket()
+  socket.send({ type: "error", id: "settings-save:immediate", error: "这次设置没有写入" })
+  assert.equal(ui.state().immediateSave?.status, "unknown")
+  assert.equal(ui.state().immediateSave?.error, "这次设置没有写入")
+  assert.equal(ui.state().settingsSave.status, "pending")
+  assert.equal(ui.state().settingsSave.pending?.id, "settings-save:main")
+  socket.send({ type: "error", id: "settings-save:main", error: "主保存失败" })
+  assert.equal(ui.state().settingsSave.status, "unknown")
+  assert.equal(ui.state().settingsDraft?.value.model_name, "old")
+  assert.equal(ui.state().immediateSave?.status, "unknown")
 })
 
 test("concurrency transport ok alone leaves the previous limit in place", () => {

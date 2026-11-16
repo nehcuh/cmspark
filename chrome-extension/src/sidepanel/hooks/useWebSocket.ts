@@ -2390,7 +2390,8 @@ export function useWebSocket() {
           // The handler may throw before or after persistence: the receipt is
           // UNKNOWN, and it must not be appended to an unrelated chat.
           if (isSettingsSaveError(msg)) {
-            dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id: msg.id })
+            const saveError = (msg as unknown as { error?: unknown }).error
+            dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id: msg.id, error: typeof saveError === "string" ? saveError : undefined })
             break
           }
           if (msg.family === "acp" && msg.request_type === "acp.sessions.list") {

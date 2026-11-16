@@ -150,6 +150,18 @@ export type AcpAgentInfo = {
   source?: "config" | "discovered"
 }
 
+/** One immediate settings write. A second click waits until this one leaves sending/accepted. */
+export type ImmediateSave = {
+  id: string
+  baseRevision: string
+  patch: Partial<LLMConfig>
+  status: "sending" | "accepted" | "unknown" | "confirmed"
+  matchedRevision: string | null
+  conflict: boolean
+  error: string | null
+  audit: SecurityAuditEntry | null
+}
+
 export interface AgentState {
   workspaceHints: WorkspaceHintView | null
   connectionState: ConnectionState
@@ -178,6 +190,8 @@ export interface AgentState {
   configEpochInvalid: boolean
   settingsDraft: SettingsDraft<LLMConfig> | null
   settingsSave: { status: "idle" | "pending" | "unknown" | "conflict" | "review" | "saved"; pending: SettingsSubmission<LLMConfig> | null }
+  /** In-flight immediate config.set. Never shares the main-save pending slot. */
+  immediateSave: ImmediateSave | null
   settingsOpen: boolean
   /** Deep-link target for settings accordion (F-UX7). Cleared after Settings applies. */
   settingsFocusSection: string | null
@@ -504,7 +518,10 @@ export type AgentAction =
   | { type: "SET_CONFIG"; config: Partial<LLMConfig> }
   | { type: "SET_CONFIG_SNAPSHOT"; config: Partial<LLMConfig>; revision: string | null; id?: string; conflict?: boolean; appliedRevision?: string; confirmedSecrets?: Array<"api_key" | "vision_api_key"> }
   | { type: "BEGIN_SETTINGS_SAVE"; submission: SettingsSubmission<LLMConfig> }
-  | { type: "SETTINGS_SAVE_UNKNOWN"; id: string }
+  | { type: "SETTINGS_SAVE_UNKNOWN"; id: string; error?: string }
+  | { type: "BEGIN_IMMEDIATE_SAVE"; id: string; revision: string; patch: Partial<LLMConfig>; audit?: SecurityAuditEntry | null }
+  | { type: "IMMEDIATE_SAVE_ACCEPTED"; id: string }
+  | { type: "IMMEDIATE_SAVE_CONFIRMED"; id: string }
   | { type: "RESOLVE_SETTINGS_CONFLICT"; key: keyof LLMConfig; choice: "mine" | "remote" }
   | { type: "BEGIN_SETTINGS_DRAFT" }
   | { type: "END_SETTINGS_DRAFT" }
@@ -775,6 +792,7 @@ export const initialState: AgentState = {
   configEpochInvalid: false,
   settingsDraft: null,
   settingsSave: { status: "idle", pending: null },
+  immediateSave: null,
   settingsOpen: false,
   settingsFocusSection: null,
   tabList: [],
@@ -1172,6 +1190,21 @@ function pruneFleetSuggest(map: AgentState["fleetSuggestByThreadId"], keepIds: s
   return out
 }
 
+function immediateInFlight(save: ImmediateSave | null): boolean {
+  return !!save && (save.status === "sending" || save.status === "accepted")
+}
+
+/** A dropped connection fails only the in-flight immediate write. A different main save stays pending. */
+function savesAfterConnectionDrop(state: AgentState): Pick<AgentState, "settingsSave" | "immediateSave"> {
+  const inFlight = immediateInFlight(state.immediateSave)
+  return {
+    settingsSave: state.settingsSave.pending && !inFlight ? { status: "unknown", pending: null } : state.settingsSave,
+    immediateSave: inFlight
+      ? { ...state.immediateSave!, status: "unknown", error: "连接已断开，这次设置还没有被确认", matchedRevision: null, conflict: false }
+      : state.immediateSave,
+  }
+}
+
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   // Existing singleton seed migrates only its owner-matching selected record.
   if (!state.codingSessionIdsByThread || state.activeCodingSelectionRevision === undefined) state = { ...state,
@@ -1201,7 +1234,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           connectionState: action.state,
           configRevision: null,
           configEpochInvalid: false,
-          settingsSave: state.settingsSave.pending ? { status: "unknown", pending: null } : state.settingsSave,
+          ...savesAfterConnectionDrop(state),
           codingHistoryConnectionRevision,
           codingHistory: null,
           isProcessing: false,
@@ -1213,7 +1246,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, connectionState: action.state, codingHistoryConnectionRevision,
         ...(action.type === "SET_CONNECTION" && action.state !== "connected" ? {
           configRevision: null, configEpochInvalid: false,
-          settingsSave: state.settingsSave.pending ? { status: "unknown" as const, pending: null } : state.settingsSave,
+          ...savesAfterConnectionDrop(state),
         } : {}),
         codingHistory: action.state === "connected" ? state.codingHistory : null,
         workspaceHints: action.state === "connected" ? state.workspaceHints : null }
@@ -1423,7 +1456,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           : Object.keys(settingsDraft.dirty).length || Object.keys(settingsDraft.conflicts).length ? "review" : "saved"
         settingsSave = { status, pending: null }
       }
-      return { ...state, config, configRevision: revision, settingsDraft, settingsSave }
+      let immediateSave = state.immediateSave
+      if (immediateSave && action.id && action.id === immediateSave.id && immediateInFlight(immediateSave)) {
+        immediateSave = action.conflict
+          ? { ...immediateSave, conflict: true }
+          : { ...immediateSave, matchedRevision: revision ?? immediateSave.matchedRevision }
+      }
+      return { ...state, config, configRevision: revision, settingsDraft, settingsSave, immediateSave }
     }
     case "BEGIN_SETTINGS_DRAFT":
       return state.settingsDraft || !state.configHydratedFromCompanion ? state : {
@@ -1445,10 +1484,29 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         Object.keys(state.settingsDraft.conflicts).length ? state : {
           ...state, settingsSave: { status: "pending", pending: action.submission },
         }
-    case "SETTINGS_SAVE_UNKNOWN":
-      return state.settingsSave.pending?.id !== action.id ? state : {
-        ...state, settingsSave: { status: "unknown", pending: null },
+    case "BEGIN_IMMEDIATE_SAVE":
+      if (immediateInFlight(state.immediateSave) || state.connectionState !== "connected" ||
+        !state.configRevision || state.configRevision !== action.revision) return state
+      return { ...state, immediateSave: {
+        id: action.id, baseRevision: action.revision, patch: action.patch, status: "sending",
+        matchedRevision: null, conflict: false, error: null, audit: action.audit ?? null,
+      } }
+    case "IMMEDIATE_SAVE_ACCEPTED":
+      return !state.immediateSave || state.immediateSave.id !== action.id || state.immediateSave.status !== "sending" ? state : {
+        ...state, immediateSave: { ...state.immediateSave, status: "accepted" },
       }
+    case "IMMEDIATE_SAVE_CONFIRMED":
+      return !state.immediateSave || state.immediateSave.id !== action.id || state.immediateSave.status !== "accepted" ? state : {
+        ...state, immediateSave: { ...state.immediateSave, status: "confirmed", error: null },
+      }
+    case "SETTINGS_SAVE_UNKNOWN": {
+      const error = action.error || "这次设置没有被确认"
+      const immediateSave = state.immediateSave && state.immediateSave.id === action.id && immediateInFlight(state.immediateSave)
+        ? { ...state.immediateSave, status: "unknown" as const, error, matchedRevision: null, conflict: false }
+        : state.immediateSave
+      if (state.settingsSave.pending?.id !== action.id) return { ...state, immediateSave }
+      return { ...state, immediateSave, settingsSave: { status: "unknown", pending: null } }
+    }
     case "RESOLVE_SETTINGS_CONFLICT":
       return state.settingsDraft ? {
         ...state, settingsDraft: resolveSettingsConflict(state.settingsDraft, action.key, action.choice),

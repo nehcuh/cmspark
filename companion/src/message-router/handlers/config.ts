@@ -52,6 +52,10 @@ function sanitizeConfig(obj: Record<string, any>): Record<string, any> {
  * settings.get / settings.set. Returns null if type is not in this family.
  */
 export async function handleConfigFamily(type: string, rest: any): Promise<any | null> {
+  const stampSettingsSaveId = (message: Record<string, unknown>) => {
+    const id = rest?.id
+    return typeof id === "string" && /^settings-save:[A-Za-z0-9_-]{1,70}$/.test(id) ? { ...message, id } : message
+  }
   switch (type) {
     case "config.get": {
       // SoT: same redaction as config.updated broadcast (MCP env/headers + llm keys).
@@ -66,15 +70,15 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       const cfg = rest.config
       if (rest.config_revision !== undefined &&
           (typeof rest.config_revision !== "string" || rest.config_revision.length === 0 || rest.config_revision.length > 128)) {
-        return { type: "error", error: "INVALID_CONFIG_REVISION" }
+        return stampSettingsSaveId( { type: "error", error: "INVALID_CONFIG_REVISION" })
       }
       // Reject prototype pollution keys (P0)
       if (hasPrototypePollutionKey(cfg)) {
-        return { type: "error", error: "Invalid config keys detected" }
+        return stampSettingsSaveId( { type: "error", error: "Invalid config keys detected" })
       }
       const hasNestedEffort = cfg.llm != null && Object.prototype.hasOwnProperty.call(cfg.llm, "reasoning_effort")
       const hasFlatEffort = Object.prototype.hasOwnProperty.call(cfg, "reasoning_effort")
-      if ((hasNestedEffort && !isReasoningEffort(cfg.llm.reasoning_effort)) || (hasFlatEffort && !isReasoningEffort(cfg.reasoning_effort))) return { type: "error", error: "INVALID_REASONING_EFFORT" }
+      if ((hasNestedEffort && !isReasoningEffort(cfg.llm.reasoning_effort)) || (hasFlatEffort && !isReasoningEffort(cfg.reasoning_effort))) return stampSettingsSaveId( { type: "error", error: "INVALID_REASONING_EFFORT" })
       // Normalize: if caller sends flat LLM fields, nest them under llm
       const normalized: any = {}
       if (cfg.llm) {
@@ -206,7 +210,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
               reason,
               source: "ws_config_set",
             })
-            return { type: "error", error: securityArmRejectedError(armingFlags) }
+            return stampSettingsSaveId( { type: "error", error: securityArmRejectedError(armingFlags) })
           }
         }
       }
@@ -249,7 +253,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       // configuration, and treat an empty input as an explicit clear.
       if (cfg.obsidian_vault_path !== undefined) {
         if (typeof cfg.obsidian_vault_path !== "string" || cfg.obsidian_vault_path.includes("\0")) {
-          return { type: "error", error: "INVALID_OBSIDIAN_VAULT_PATH" }
+          return stampSettingsSaveId( { type: "error", error: "INVALID_OBSIDIAN_VAULT_PATH" })
         }
         normalized.obsidian = { ...getConfig().obsidian, vault_path: cfg.obsidian_vault_path || null }
       }
@@ -299,7 +303,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         const hasCapacity = Object.prototype.hasOwnProperty.call(src, "max_concurrent_sessions")
         if (hasCapacity) {
           try { validateAcpConcurrencyLimit(src.max_concurrent_sessions) }
-          catch { return { type: "error", error: "acp.max_concurrent_sessions must be a numeric integer from 1 through 4" } }
+          catch { return stampSettingsSaveId( { type: "error", error: "acp.max_concurrent_sessions must be a numeric integer from 1 through 4" }) }
         }
         if (typeof src.enabled === "boolean" || hasCapacity) {
           const current = getConfig()
@@ -338,11 +342,11 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       }
       const currentSnapshot = getConfigSnapshot()
       if (rest.config_revision !== undefined && rest.config_revision !== currentSnapshot.revision) {
-        return {
+        return stampSettingsSaveId( {
           type: "config.conflict",
           config: redactConfigForWire(currentSnapshot.config),
           config_revision: currentSnapshot.revision,
-        }
+        })
       }
       const correlated = typeof rest.id === "string" && /^settings-save:[A-Za-z0-9_-]{1,70}$/.test(rest.id)
         && typeof rest.config_revision === "string"
@@ -388,13 +392,13 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           const visionKey = normalized.vision?.api_key
           if (typeof visionKey === "string" && !isPlaceholderVisionKey(visionKey) && visionKey === written.vision?.api_key) appliedSecretFields.push("vision_api_key")
         }
-        return {
+        return stampSettingsSaveId( {
           type: "config.updated",
           config: redactConfigForWire(savedSnapshot.config),
           config_revision: savedSnapshot.revision,
           ...(appliedRevision ? { config_applied_revision: appliedRevision } : {}),
           ...(appliedSecretFields.length ? { config_applied_secret_fields: appliedSecretFields } : {}),
-        }
+        })
       } finally { getCommittedConfigRevision(written) }
     }
 
