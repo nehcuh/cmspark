@@ -8,6 +8,7 @@ import { TextDecoder } from "util"
 import * as fs from "fs"
 import * as path from "path"
 import { getModule, requireModule } from "./modules"
+import { repairShellProjection } from "./shell-provision"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { getUserEnvVars } from "../user-env"
 import { hardenPath } from "../process-path"
@@ -399,6 +400,8 @@ export function commandAllowedByPolicy(command: string): { ok: true } | { ok: fa
  * Pure pre-L2 / pre-exec scope check for shell_exec (Plan A/B G2).
  */
 export function checkShellScope(command: string): { ok: true } | { ok: false; error: string; error_code?: "SHELL_INPUT_INVALID" } {
+  const ready = repairShellProjection()
+  if (ready === "unknown") return { ok: false, error: "SHELL_PROVISION_RESULT_UNKNOWN" }
   const gate = requireModule("shell")
   if (!gate.ok) return gate
   const cmd = (command || "").trim()

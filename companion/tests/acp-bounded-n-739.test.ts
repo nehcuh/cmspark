@@ -9,6 +9,7 @@ import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
 import { isDeepStrictEqual } from "node:util"
 import ts from "typescript"
+import { projectShellOnto } from "../src/capability/shell-provision"
 
 const root = path.resolve(__dirname, "../../src")
 const source = (file: string) => fs.readFileSync(path.join(root, file), "utf8")
@@ -28,8 +29,9 @@ function configFixture() {
   let current: any = { llm: {}, acp: types.sanitizeAcpConfig({ enabled: true, servers: { A: { enabled: true, command: "INERT" } } }) }
   let revision = 0 // Inert revision transport; no cross-process claim in this fixture.
   let realmClone: (value: unknown) => any = value => value
-  const saveApi = evaluate(`function realmize(value){ if(Array.isArray(value)) return Array.from(value,realmize); if(value && typeof value === "object"){const out={}; for(const key of Object.keys(value)) out[key]=realmize(value[key]); return out} return value } function structuredClone(value){ return realmize(hostClone(value)) } installClone(structuredClone); let cachedConfig, cachedConfigMtimeMs, storedLlmKey = "", storedVisionKey = "", visionUsesLlm = false; let configRevisionEpoch = "owned-fixture", configRevisionSequence = 0; const committedConfigRevisions = new WeakMap(); function advanceConfigRevision(){ recordRevision(++configRevisionSequence) }\n${functions("config.ts", ["saveConfig", "saveConfigWithReceipt", "saveConfigInternal", "saveConfigSnapshot", "observeCommittedConfig", "peekCommittedConfigRevision", "getCommittedConfigRevision", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
+  const saveApi = evaluate(`function realmize(value){ if(Array.isArray(value)) return Array.from(value,realmize); if(value && typeof value === "object"){const out={}; for(const key of Object.keys(value)) out[key]=realmize(value[key]); return out} return value } function structuredClone(value){ return realmize(hostClone(value)) } installClone(structuredClone); let cachedConfig, cachedConfigMtimeMs, storedLlmKey = "", storedVisionKey = "", visionUsesLlm = false; let configRevisionEpoch = "owned-fixture", configRevisionSequence = 0; const committedConfigRevisions = new WeakMap(); function advanceConfigRevision(){ recordRevision(++configRevisionSequence) }\n${functions("config.ts", ["saveConfig", "saveConfigWithReceipt", "saveConfigInternal", "saveConfigInternalBody", "saveConfigSnapshot", "observeCommittedConfig", "peekCommittedConfigRevision", "getCommittedConfigRevision", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
     hostClone: structuredClone, installClone: (clone: (value: unknown) => any) => { realmClone = clone }, isDeepStrictEqual, isMaskedApiKey: () => false,
+    enterConfigWrite() {}, leaveConfigWrite() {}, noteShellReady() {}, projectShellOnto,
     getConfig: () => current, PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), require: (n: string) => {
       assert.equal(n, "./acp/types")
       // The isolated evaluator lives in a different VM realm. Production

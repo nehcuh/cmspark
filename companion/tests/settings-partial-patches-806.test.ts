@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 import ts from 'typescript'
+import { projectShellOnto } from '../src/capability/shell-provision'
 
 const roots = [path.resolve(__dirname, '../..'), path.resolve(__dirname, '../../..')]
 const requiredSources = [
@@ -36,7 +37,7 @@ function producer(field:string, input:unknown) {
 }
 function handler() {
  let current:any={llm:{base_url:'https://owned.invalid', model_name:'owned-model',api_key:'owned-llm',context_compaction_m2:true,native_vision:'auto'},vision:{enabled:true,base_url:'https://different.invalid',model_name:'vision',api_key:'owned-vision',timeout_ms:30000,fallback:'metadata'},security:{auto_approve_dangerous:false,allow_all_schemes:false,auto_approve_enterprise_tools:false},trusted_domains:['owned.invalid']}
- const source=[fn(router,'hasPrototypePollutionKey'),fn(router,'sanitizeConfig'),fn(router,'handleConfigFamily'),fn(config,'deepMerge'),fn(config,'saveConfig'),fn(config,'saveConfigWithReceipt'),fn(config,'saveConfigInternal')].join('\n')+'\nglobalThis.handle=handleConfigFamily'
+ const source=[fn(router,'hasPrototypePollutionKey'),fn(router,'sanitizeConfig'),fn(router,'handleConfigFamily'),fn(config,'deepMerge'),fn(config,'saveConfig'),fn(config,'saveConfigWithReceipt'),fn(config,'saveConfigInternal'),fn(config,'saveConfigInternalBody')].join('\n')+'\nglobalThis.handle=handleConfigFamily'
  const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
  const context:any={PROTOTYPE_POLLUTION_KEYS:new Set(['__proto__','constructor','prototype']),structuredClone, getConfig:()=>current,
   // Revision transport is outside this isolated producer test; the real
@@ -48,6 +49,7 @@ function handler() {
   stripCompanionUiProcessContinueDeny:(v:any)=>v, filterDomainPatterns:(v:any)=>v, isMaskedApiKey:(s:any)=>typeof s==='string'&&s.includes('***'),
   getEnvApiKey:()=>'',resolveInheritedVisionApiKey:()=>undefined,isPlaceholderVisionKey:()=>false,endpointsMatch:()=>false,
   redactConfigForWire:(v:any)=>v, console:{warn:()=>{}}, logger:{warn:()=>{}}, appendCapabilityAudit:()=>{},
+  enterConfigWrite() {}, leaveConfigWrite() {}, projectShellOnto,
   require:()=>{throw Error('UNEXPECTED_REQUIRE')},findArmingSecurityFlags:()=>{throw Error('UNEXPECTED_SECURITY')},findDisarmingSecurityFlags:()=>{throw Error('UNEXPECTED_SECURITY')},
  }
  vm.runInNewContext(code,context,{timeout:1000})

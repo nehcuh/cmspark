@@ -29,15 +29,17 @@ after(() => {
   fs.rmSync(tempHome, { recursive: true, force: true })
 })
 
-test("shell_exec blocked when module disabled", async () => {
+test("shell_exec is refused on community instead of a shell power switch", async () => {
+  // Enterprise no longer has a disabled shell. Community is the remaining closed state.
   saveConfig({
-    capability_profile: "enterprise",
-    modules: { shell: { available: true, enabled: false } },
+    capability_profile: "community",
+    modules: { shell: { available: true, enabled: true } },
   } as any)
   clearConfigCache()
   const r = await shell.shellExec({ command: "echo hi" })
   assert.equal(r.success, false)
-  assert.match(r.error || "", /module_disabled/)
+  assert.match(r.error || "", /enterprise_profile_required/)
+  assert.doesNotMatch(r.error || "", /modules\.set_enabled/)
 })
 
 test("shell_exec runs when enabled", async () => {

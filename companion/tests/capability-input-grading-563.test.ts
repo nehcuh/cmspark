@@ -62,8 +62,13 @@ test("#563 current directory/notfound refusal and unknown fallback remain unchan
 })
 test("#563 module and command policy refusals are not argument codes", async () => {
   try {
-    config.saveConfig({ modules: { shell: { available: true, enabled: false }, "devsec-workspace": { available: true, enabled: false } } } as any); config.clearConfigCache()
-    for (const result of [workspace.workspaceReadFile(root, "binary.bin"), await shell.shellExec({ command: "echo inert", cwd: root })]) { assert.equal(result.success, false); assert.match(result.error || "", /module_disabled/); assert.equal(result.data?.error_code, undefined) }
+    // Enterprise always provides shell, so the closed shell state is community.
+    // Workspace still uses its own module switch. Neither refusal is an argument code, and neither spawns.
+    config.saveConfig({ capability_profile: "community", modules: { shell: { available: true, enabled: true, policy: "allowlist", allowlist_commands: ["echo"] }, "devsec-workspace": { available: true, enabled: false } } } as any); config.clearConfigCache()
+    const workspaceResult = workspace.workspaceReadFile(root, "binary.bin")
+    assert.equal(workspaceResult.success, false); assert.match(workspaceResult.error || "", /module_disabled/); assert.equal(workspaceResult.data?.error_code, undefined)
+    const shellResult = await shell.shellExec({ command: "echo inert", cwd: root })
+    assert.equal(shellResult.success, false); assert.match(shellResult.error || "", /enterprise_profile_required/); assert.equal(shellResult.data?.error_code, undefined)
   } finally { enabled() }
   const denied = await shell.shellExec({ command: "not_allowlisted_inert", cwd: root })
   assert.equal(denied.success, false); assert.match(denied.error || "", /allowlist/); assert.equal(denied.data?.error_code, undefined)

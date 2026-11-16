@@ -5316,6 +5316,8 @@ async function dispatchMessage(
     }
     case "modules.list": {
       if (rest.profile_receipt_protocol !== undefined && rest.profile_receipt_protocol !== 1) return { type: "error", error: "PROFILE_RECEIPT_PROTOCOL_INVALID" }
+      const { repairShellProjection } = require("./capability/shell-provision") as typeof import("./capability/shell-provision")
+      if (repairShellProjection() === "unknown") return { type: "error", error: "SHELL_PROVISION_RESULT_UNKNOWN" }
       if (rest.profile_receipt_protocol === 1) {
         try {
           const snapshot = getModulesConfigSnapshot()

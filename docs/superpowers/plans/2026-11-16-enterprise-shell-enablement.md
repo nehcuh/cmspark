@@ -51,10 +51,10 @@ export function repairShellProjection(): ShellReadiness
 
 **独立测试：** `companion/tests/shell-provision-1.test.ts` 已先写红。实现前不要改这些断言。`setModuleEnabled("shell", true)` 和 `false` 都必须是 `shell_switch_removed` 且 shell 写入次数为 0。不可写目录必须出现一次 `config.json.tmp` 的 `EACCES`，然后 `checkShellScope` 才是 `SHELL_PROVISION_RESULT_UNKNOWN`。过期 revision 用 `saveConfig` 的第三个参数触发 `CONFIG_REVISION_CONFLICT`，缓存和磁盘保留较新的 `trusted_domains`；随后的 `checkShellScope` 也不得回滚该字段。
 
-- [ ] 跑红：`npx tsc -p tsconfig.test.json && node --test .test-dist/tests/shell-provision-1.test.js`，确认失败原因是旧行为。
-- [ ] 按规格实现任务 1 的最小生产代码。`checkShellScope` 在读命令策略之前调用 `repairShellProjection`。协议 1 的 list 在 `getModulesConfigSnapshot` 之前调用它。普通 list 也调用。
-- [ ] 同一测试变绿。再跑 `npm --prefix companion test` 中与 config、shell、modules 相关的现有文件。
-- [ ] 提交并停下来做独立评审。通过前不开始任务 2。
+- [x] 跑红：`npx tsc -p tsconfig.test.json && node --test .test-dist/tests/shell-provision-1.test.js`，确认失败原因是旧行为。
+- [x] 按规格实现任务 1 的最小生产代码。`checkShellScope` 在读命令策略之前调用 `repairShellProjection`。协议 1 的 list 在 `getModulesConfigSnapshot` 之前调用它。普通 list 也调用。
+- [x] 同一测试变绿。再跑相邻的 config、shell、pack 套件。
+- [x] 提交并停下来做独立评审。通过前不开始任务 2。
 
 ### 任务 2：pack 与 ACP 文案
 

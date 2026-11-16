@@ -76,6 +76,14 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (hasPrototypePollutionKey(cfg)) {
         return stampSettingsSaveId( { type: "error", error: "Invalid config keys detected" })
       }
+      const explicitShell = cfg.modules && typeof cfg.modules === "object" && !Array.isArray(cfg.modules)
+        && cfg.modules.shell && typeof cfg.modules.shell === "object" && !Array.isArray(cfg.modules.shell)
+        && Object.prototype.hasOwnProperty.call(cfg.modules.shell, "enabled")
+      if (explicitShell) {
+        const current = getConfig()
+        const derived = current.capability_profile === "enterprise" && current.modules?.shell?.available === true
+        return stampSettingsSaveId({ type: "error", error: `shell_switch_removed — shell availability follows capability_profile; derived_enabled=${derived}` })
+      }
       const hasNestedEffort = cfg.llm != null && Object.prototype.hasOwnProperty.call(cfg.llm, "reasoning_effort")
       const hasFlatEffort = Object.prototype.hasOwnProperty.call(cfg, "reasoning_effort")
       if ((hasNestedEffort && !isReasoningEffort(cfg.llm.reasoning_effort)) || (hasFlatEffort && !isReasoningEffort(cfg.reasoning_effort))) return stampSettingsSaveId( { type: "error", error: "INVALID_REASONING_EFFORT" })

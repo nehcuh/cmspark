@@ -2,6 +2,7 @@
 
 import { getConfig, saveConfig, type CompanionConfig } from "../config"
 import { appendCapabilityAudit } from "../packs/audit-log"
+import { repairShellProjection, shellDesiredEnabled } from "./shell-provision"
 
 export type ModuleId = "appsec" | "devsec-workspace" | "shell" | "netsec"
 
@@ -75,6 +76,17 @@ export function getModule(moduleId: ModuleId): ModuleState | null {
 }
 
 export function requireModule(moduleId: ModuleId): { ok: true } | { ok: false; error: string } {
+  if (moduleId === "shell") {
+    const ready = repairShellProjection()
+    if (ready === "unknown") return { ok: false, error: "SHELL_PROVISION_RESULT_UNKNOWN" }
+    if (ready === "ready_not_provided") {
+      const config = getConfig()
+      return config.capability_profile === "enterprise"
+        ? { ok: false, error: "module not available: shell" }
+        : { ok: false, error: "enterprise_profile_required — set capability_profile=enterprise for shell" }
+    }
+    return { ok: true }
+  }
   if (!isModuleEnabled(moduleId)) {
     return {
       ok: false,
@@ -90,6 +102,10 @@ export function setModuleEnabled(
   by: string = "user",
 ): { ok: true; modules: any } | { ok: false; error: string } {
   const config = ensureModulesDefaults(getConfig()) as any
+  if (moduleId === "shell") {
+    const derived = shellDesiredEnabled(config)
+    return { ok: false, error: `shell_switch_removed — shell availability follows capability_profile; derived_enabled=${derived}` }
+  }
   const mod = config.modules[moduleId]
   if (!mod || mod.available !== true) {
     return { ok: false, error: `module not available: ${moduleId}` }

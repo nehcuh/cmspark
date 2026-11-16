@@ -225,7 +225,8 @@ export function applyUserPackTrust(
 
   for (const mod of modulesToEnable) {
     const r = setModuleEnabled(mod, true, by)
-    if (!r.ok) {
+    // Shell no longer has a power switch. The profile write above already projected it.
+    if (!r.ok && !(mod === "shell" && r.error.includes("shell_switch_removed"))) {
       return { ok: false, error: r.error }
     }
   }
