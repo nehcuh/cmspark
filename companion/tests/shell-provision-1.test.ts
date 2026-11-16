@@ -129,13 +129,29 @@ test("a failed repair is unknown and the next list retries once", async () => {
   await writeLegacy()
   const { checkShellScope, handleMessage } = await mods()
   const before = writeAttempts.length
-  fs.chmodSync(root, 0o500)
+  const tmp = path.join(root, `config.json.tmp-${process.pid}`)
+  // POSIX directory mode 0500 makes creating the atomic tmp fail with EACCES.
+  // Windows chmod does not stop creating a new file, so the same tmp path is a real read-only file and the write fails with EPERM.
+  if (process.platform === "win32") {
+    realWrite(tmp, "locked")
+    fs.chmodSync(tmp, 0o444)
+  } else {
+    fs.chmodSync(root, 0o500)
+  }
   let denied: ReturnType<typeof checkShellScope>
   try { denied = checkShellScope("echo ok") }
-  finally { fs.chmodSync(root, 0o700) }
+  finally {
+    if (process.platform === "win32") {
+      try { fs.chmodSync(tmp, 0o600) } catch { /* the refusal itself is the evidence */ }
+      fs.rmSync(tmp, { force: true })
+    } else {
+      fs.chmodSync(root, 0o700)
+    }
+  }
   const failed = writeAttempts.slice(before).filter(item => item.code)
+  const permission = process.platform === "win32" ? new Set(["EPERM", "EACCES"]) : new Set(["EACCES"])
   const gaps: string[] = []
-  if (!failed.some(item => item.file.includes(`${path.sep}config.json.tmp`) && item.code === "EACCES")) gaps.push(`write attempts=${JSON.stringify(writeAttempts.slice(before))}`)
+  if (!failed.some(item => item.file.includes(`${path.sep}config.json.tmp`) && permission.has(item.code || ""))) gaps.push(`write attempts=${JSON.stringify(writeAttempts.slice(before))}`)
   if (denied.ok || !String(denied.error).includes("SHELL_PROVISION_RESULT_UNKNOWN")) gaps.push(`denied=${denied.ok ? "ok" : denied.error}`)
   const reply = await handleMessage({ type: "modules.list", profile_receipt_protocol: 1 }, {
     threadManager: {} as never, skillEngine: {} as never, historyStore: { record: () => 0 } as never,
