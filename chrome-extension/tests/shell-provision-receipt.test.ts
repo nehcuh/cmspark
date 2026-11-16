@@ -12,6 +12,7 @@ import { createRequire } from "node:module"
 import ts from "typescript"
 
 const nodeRequire = createRequire(path.join(__dirname, "shell-provision-receipt.test.js"))
+let uuidSeq = 0
 
 function repoRoot(): string {
   let dir = __dirname
@@ -98,9 +99,11 @@ function mountSurfaces() {
   let effectCursor = 0
   const effectQueue: Array<() => void> = []
   const flush = () => { while (effectQueue.length) effectQueue.shift()!() }
-  let confirm = false
+    let confirm = false
   let runtimeError: { message: string } | undefined
   let transport: () => any = () => ({ ok: true })
+  let holdTransport = false
+  let lastCallback: ((response?: any) => void) | undefined
   const sent: any[] = []
   const timers = new Map<number, { fn: () => void; delay: number }>()
   let timerSeq = 0
@@ -156,7 +159,9 @@ function mountSurfaces() {
         get lastError() { return runtimeError },
         sendMessage(message: any, callback?: (response?: any) => void) {
           sent.push(message)
-          if (typeof callback === "function") callback(transport())
+          if (typeof callback !== "function") return Promise.resolve()
+          lastCallback = callback
+          if (!holdTransport) callback(transport())
           return Promise.resolve()
         },
         onMessage: {
@@ -167,6 +172,7 @@ function mountSurfaces() {
           },
         },
       } },
+      crypto: { randomUUID: () => `uuid-${++uuidSeq}` },
       window: { confirm: () => confirm },
       setTimeout(fn: () => void, delay?: number) { const id = ++timerSeq; timers.set(id, { fn, delay: delay || 0 }); return id },
       clearTimeout(id: number) { timers.delete(id) },
@@ -214,7 +220,32 @@ function mountSurfaces() {
     },
     refuseSend(error: string) { transport = () => ({ ok: false, error }); runtimeError = undefined },
     runtimeFailure(message: string) { runtimeError = { message }; transport = () => undefined },
-    acceptSend() { runtimeError = undefined; transport = () => ({ ok: true }) },
+    acceptSend() { runtimeError = undefined; transport = () => ({ ok: true }); holdTransport = false },
+    profileSends() { return sent.filter(message => message?.type === "modules.set_profile") },
+    hold() { holdTransport = true },
+    replayCallback(response?: any) { lastCallback?.(response) },
+    doubleClick() {
+      confirm = true
+      const before = sent.length
+      const button = this.switchButton()
+      button.props.onClick()
+      button.props.onClick()
+      confirm = false
+      return sent.slice(before).filter(message => message?.type === "modules.set_profile")
+    },
+    cancelSwitch() {
+      confirm = false
+      const before = sent.length
+      this.switchButton().props.onClick()
+      return sent.slice(before).filter(message => message?.type === "modules.set_profile")
+    },
+    expireSwitch() {
+      const chosen = [...timers.entries()].filter(([, timer]) => timer.delay >= 15000).pop()
+      if (!chosen) return false
+      timers.delete(chosen[0])
+      chosen[1].fn()
+      return true
+    },
     expire() {
       let chosen: number | undefined
       let delay = -1
@@ -382,5 +413,168 @@ test("enterprise netsec receipts keep shell provided and do not settle a profile
     assert.equal(unmounted.profile().includes("结果未知"), false)
   } finally {
     router.cleanup()
+  }
+})
+
+test("profile switch state machine settles only the current attempt", () => {
+  const receipt = (profile: "enterprise" | "community", id?: string) => ({
+    type: "modules.updated",
+    ...(id ? { id } : {}),
+    capability_profile: profile,
+    shell_provision: profile === "enterprise" ? "provided" : "community",
+    modules: {},
+    modules_disabled: [],
+  })
+  const labelOf = (ui: any) => {
+    const text = ui.profile()
+    if (text.includes("当前：enterprise")) return "enterprise"
+    if (text.includes("当前：community")) return "community"
+    throw new Error("profile label missing")
+  }
+  const cases: Array<{ name: string; steps: Array<Record<string, any>> }> = [
+    {
+      name: "sync double click sends one request",
+      steps: [
+        { list: "enterprise" },
+        { double: true },
+        { sends: 1, busy: true, label: "enterprise" },
+      ],
+    },
+    {
+      name: "cancel sends nothing",
+      steps: [
+        { list: "enterprise" },
+        { cancel: true },
+        { sends: 0, busy: false, label: "enterprise" },
+      ],
+    },
+    {
+      name: "success A then B then late or duplicate A does not revert",
+      steps: [
+        { list: "enterprise" },
+        { arm: "A" },
+        { receipt: "A", profile: "community" },
+        { label: "community", busy: false, has: "能力档已更新" },
+        { receipt: "A", profile: "enterprise" },
+        { label: "community" },
+        { arm: "B" },
+        { receipt: "B", profile: "enterprise" },
+        { label: "enterprise", busy: false },
+        { receipt: "A", profile: "community" },
+        { label: "enterprise", lacks: ["当前：community"] },
+      ],
+    },
+    {
+      name: "failed A then retry B ignores late A",
+      steps: [
+        { list: "enterprise" },
+        { arm: "A" },
+        { error: "A", text: "PROFILE_STATE_INVALID" },
+        { busy: false, label: "enterprise", has: "PROFILE_STATE_INVALID" },
+        { arm: "B" },
+        { receipt: "A", profile: "community" },
+        { busy: true, label: "enterprise", lacks: ["能力档已更新", "能力档已切换"] },
+        { receipt: "B", profile: "community" },
+        { label: "community", busy: false },
+      ],
+    },
+    {
+      name: "unknown A then retry B ignores late A",
+      steps: [
+        { list: "enterprise" },
+        { arm: "A" },
+        { expire: true },
+        { label: "enterprise", busy: false, has: "结果未知", lacks: ["未执行", "能力档已更新"] },
+        { receipt: "A", profile: "community" },
+        { label: "enterprise", busy: false },
+        { arm: "B" },
+        { receipt: "A", profile: "community" },
+        { busy: true, label: "enterprise" },
+        { receipt: "B", profile: "community" },
+        { label: "community", busy: false },
+      ],
+    },
+    {
+      name: "late callback timer and disconnect after success do not move the profile",
+      steps: [
+        { hold: true },
+        { list: "enterprise" },
+        { arm: "A" },
+        { receipt: "A", profile: "community" },
+        { label: "community", has: "能力档已更新" },
+        { callback: { ok: false, error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接" } },
+        { callback: { ok: true } },
+        { disconnect: true },
+        { expire: "switch" },
+        { label: "community", busy: false, lacks: ["结果未知", "未连接", "当前：enterprise"] },
+      ],
+    },
+    {
+      name: "unmatched and no-id frames do not consume the current attempt",
+      steps: [
+        { list: "enterprise" },
+        { arm: "A" },
+        { frame: { type: "modules.updated", shell_provision: "provided", modules: { netsec: { enabled: true } } } },
+        { frame: { type: "error", error: "module not available: appsec" } },
+        { frame: { type: "modules.updated", capability_profile: "community", shell_provision: "community" } },
+        { frame: { type: "modules.profile.result", capability_profile: "community", shell_provision: "community" } },
+        { frame: { type: "modules.updated", id: "other-request", capability_profile: "community", shell_provision: "community" } },
+        { busy: true, label: "enterprise", lacks: ["没有权威的能力档回执", "能力档已更新", "module not available"] },
+      ],
+    },
+    {
+      name: "unmount and remount ignore the previous attempt",
+      steps: [
+        { list: "enterprise" },
+        { arm: "A" },
+        { unmount: true },
+        { remount: true },
+        { list: "enterprise" },
+        { receipt: "A", profile: "community" },
+        { label: "enterprise", busy: false, lacks: ["能力档已更新"] },
+        { arm: "B" },
+        { different: ["A", "B"] },
+        { receipt: "A", profile: "community" },
+        { busy: true, label: "enterprise" },
+        { receipt: "B", profile: "community" },
+        { label: "community", busy: false },
+      ],
+    },
+  ]
+  for (const item of cases) {
+    let ui = mountSurfaces()
+    const ids: Record<string, string> = {}
+    const check = (step: Record<string, any>) => {
+      if (step.label) assert.equal(labelOf(ui), step.label, item.name)
+      if (step.busy !== undefined) assert.equal(ui.switchButton().props.disabled, step.busy, item.name)
+      if (step.sends !== undefined) assert.equal(ui.profileSends().length, step.sends, item.name)
+      const text = ui.profile()
+      if (step.has) assert.ok(text.includes(step.has), `${item.name} missing ${step.has}`)
+      for (const absent of step.lacks || []) assert.equal(text.includes(absent), false, `${item.name} unexpectedly has ${absent}`)
+    }
+    for (const step of item.steps) {
+      if (step.hold) ui.hold()
+      if (step.list) ui.deliver({ type: "modules.list", capability_profile: step.list, modules: {} })
+      if (step.double) {
+        const sentNow = ui.doubleClick()
+        assert.equal(sentNow.length, 1, item.name)
+      }
+      if (step.cancel) assert.equal(ui.cancelSwitch().length, 0, item.name)
+      if (step.arm) {
+        const message = ui.confirmSwitch()
+        ids[step.arm] = message.id
+      }
+      if (step.receipt) ui.deliver(receipt(step.profile, step.receipt === "none" ? undefined : ids[step.receipt]))
+      if (step.error) ui.deliver({ type: "error", id: ids[step.error], error: step.text })
+      if (step.frame) ui.deliver(step.frame)
+      if (step.disconnect) ui.deliver({ type: "thread.mutation.connection", state: "disconnected" })
+      if (step.callback) ui.replayCallback(step.callback)
+      if (step.expire === true) assert.equal(ui.expireSwitch(), true, item.name)
+      if (step.expire === "switch") ui.expireSwitch()
+      if (step.unmount) ui.unmountProfile()
+      if (step.remount) ui = mountSurfaces()
+      if (step.different) assert.ok(ids[step.different[0]] !== ids[step.different[1]], item.name)
+      check(step)
+    }
   }
 })

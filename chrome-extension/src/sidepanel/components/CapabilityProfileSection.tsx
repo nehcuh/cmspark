@@ -18,8 +18,10 @@ const PROFILE_SWITCH_UNKNOWN = "能力档切换结果未知。可以重试，或
 let profileSwitchSeq = 0
 
 function nextProfileSwitchId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.()
+  if (uuid) return uuid
   profileSwitchSeq += 1
-  return `profile-switch-${profileSwitchSeq}`
+  return `profile-switch-${profileSwitchSeq}-${Date.now()}`
 }
 
 function authoritativeProfile(next: unknown, view: unknown): next is CapabilityProfile {
@@ -61,6 +63,15 @@ export function CapabilityProfileSection() {
     if (refresh) chrome.runtime.sendMessage({ type: "modules.list" })
   }
 
+  const finishCurrent = (id: string) => {
+    if (pendingProfile.current?.id !== id || retiredIds.current.has(id)) return false
+    retiredIds.current.add(id)
+    pendingProfile.current = null
+    clearTimer()
+    setBusy(false)
+    return true
+  }
+
   useEffect(() => {
     chrome.runtime.sendMessage({ type: "modules.list" })
     const handler = (msg: any) => {
@@ -80,22 +91,11 @@ export function CapabilityProfileSection() {
       }
       if (msg?.type === "modules.updated" || msg?.type === "modules.profile.result") {
         const id = typeof msg.id === "string" ? msg.id : ""
-        if (!id || retiredIds.current.has(id)) return
         const next = msg.capability_profile
-        const view = msg.shell_provision
-        const authoritative = authoritativeProfile(next, view)
-        if (!pendingProfile.current || pendingProfile.current.id !== id) {
-          if (pendingProfile.current || !authoritative) return
-          if (msg.modules) setModules(msg.modules)
-          setProfile(next)
-          return
-        }
-        const expected = pendingProfile.current.to
-        pendingProfile.current = null
-        clearTimer()
-        setBusy(false)
+        const expected = pendingProfile.current?.id === id ? pendingProfile.current.to : undefined
+        if (!finishCurrent(id)) return
+        const authoritative = authoritativeProfile(next, msg.shell_provision)
         if (!authoritative || next !== expected) {
-          retiredIds.current.add(id)
           flash("没有权威的能力档回执，界面保持切换前的状态", 5000)
           return
         }
@@ -119,18 +119,21 @@ export function CapabilityProfileSection() {
     }
   }, [])
 
+  // idle: only modules.list moves the shown profile. pending: only this id may settle.
+  // success, failure, unknown, and unmount retire that id; a second click cannot start another attempt.
   const requestSwitch = (to: CapabilityProfile) => {
+    if (pendingProfile.current) return
     const confirm = buildProfileSwitchConfirm({ from: profile, to, shellEnabled, netsecEnabled })
     // null = same profile — never a switch; nothing to confirm, nothing to send.
     if (!confirm) return
     const confirmed = window.confirm(`${confirm.title}\n\n${confirm.body}`)
     const frame = resolveProfileSwitchSend({ confirmed, from: profile, to })
-    if (!frame) return
+    if (!frame || pendingProfile.current) return
     const id = nextProfileSwitchId()
     pendingProfile.current = { id, to }
     setBusy(true)
     const acceptTransport = (response?: { ok?: boolean; error?: string }) => {
-      if (pendingProfile.current?.id !== id) return
+      if (pendingProfile.current?.id !== id || retiredIds.current.has(id)) return
       if (response?.ok === false) {
         releaseAttempt(response.error || "能力档请求未能发送。可以重试。", false)
         return
@@ -140,7 +143,7 @@ export function CapabilityProfileSection() {
         return
       }
       timer.current = setTimeout(() => {
-        if (pendingProfile.current?.id !== id) return
+        if (pendingProfile.current?.id !== id || retiredIds.current.has(id)) return
         releaseAttempt(PROFILE_SWITCH_UNKNOWN, true)
       }, PROFILE_SWITCH_UNKNOWN_MS)
     }
