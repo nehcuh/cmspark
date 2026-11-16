@@ -25,7 +25,7 @@ function harness() {
   const modules = new Map<string, any>()
   const actions: any[] = []
   const messages: any[] = []
-  const messageCallbacks: Array<(response?: any) => void> = []
+  const messageCallbacks: Array<((response?: any) => void) | undefined> = []
   let lastError: { message: string } | undefined
   const slots = new Map<string, { cells: any[]; effects: any[] }>()
   let frame: { cells: any[]; effects: any[] } | undefined
@@ -70,7 +70,7 @@ function harness() {
     getURL: (value: string) => "chrome-extension://owned/" + value,
     sendMessage: (message: any, callback?: (response?: any) => void) => {
       messages.push(message)
-      if (typeof callback === "function") messageCallbacks.push(callback)
+      messageCallbacks.push(typeof callback === "function" ? callback : undefined)
       return Promise.resolve(undefined)
     },
     onMessage: { addListener() {}, removeListener() {} },
@@ -163,13 +163,42 @@ function harness() {
     state: () => state,
     renderSlideout, openAdvanced, checkbox, handoffUi, textOf, rows, find,
     setLastError(error?: { message: string }) { lastError = error },
+    configSetIndex() {
+      for (let index = messages.length - 1; index >= 0; index -= 1) if (messages[index]?.type === "config.set") return index
+      return -1
+    },
     replyLast(response?: any) {
-      const callback = messageCallbacks.at(-1)
-      assert.ok(callback, "the control registered a sendMessage callback")
+      const index = this.configSetIndex()
+      assert.ok(index >= 0, "config.set was sent")
+      const callback = messageCallbacks[index]
+      assert.equal(typeof callback, "function", "config.set registered a receipt callback")
       callback!(response)
     },
     configSets() { return messages.filter(message => message?.type === "config.set") },
+    receiptGaps(revision = "epoch:1") {
+      const gaps: string[] = []
+      const index = this.configSetIndex()
+      if (index < 0) gaps.push("config.set missing")
+      else {
+        const sent = messages[index]
+        if (typeof sent.id !== "string" || !/^settings-save:[A-Za-z0-9_-]+$/.test(sent.id)) gaps.push(`id=${String(sent.id)}`)
+        if (sent.config_revision !== revision) gaps.push(`config_revision=${String(sent.config_revision)}`)
+        if (typeof messageCallbacks[index] !== "function") gaps.push("config.set has no receipt callback")
+      }
+      return gaps
+    },
   }
+}
+
+function confirmPhrase(ui: ReturnType<typeof harness>, buttonText: string) {
+  let view = ui.renderSlideout()
+  const hosts = ui.rows(view).filter((node: any) => textOf(node).includes(buttonText) && ui.rows(node).some((child: any) => child.type === "input" && child.props?.placeholder))
+  const host = hosts.sort((left: any, right: any) => textOf(left).length - textOf(right).length)[0]
+  assert.ok(host, buttonText)
+  const input = ui.rows(host).find((node: any) => node.type === "input" && node.props.placeholder)
+  input.props.onChange({ target: { value: input.props.placeholder } })
+  view = ui.renderSlideout()
+  ui.find(view, node => node.type === "button" && textOf(node) === buttonText, buttonText).props.onClick()
 }
 
 function ready(ui: ReturnType<typeof harness>, patch: Record<string, unknown>, revision = "epoch:1") {
@@ -221,27 +250,55 @@ test("an older snapshot does not restore a flag replaced by a newer snapshot", (
   assert.equal(ui.state().configRevision, "epoch:3")
 })
 
+function rejectedReceipt(ui: ReturnType<typeof harness>, mode: "ok-false" | "last-error") {
+  const gaps = ui.receiptGaps()
+  const index = ui.configSetIndex()
+  const callback = index >= 0 ? ui.messageCallbacks[index] : undefined
+  if (typeof callback === "function") {
+    if (mode === "last-error") ui.setLastError({ message: "Could not establish connection. Receiving end does not exist." })
+    callback(mode === "ok-false"
+      ? { ok: false, error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接" }
+      : undefined)
+  }
+  if (ui.state().settingsSave.status !== "unknown") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  return gaps
+}
+
 test("disconnect does not show dangerous auto-approve as off or record success", () => {
   const ui = harness()
+  const before = ui.state().securityAuditLog.length
   const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true }))
-  ui.setLastError({ message: "Could not establish connection. Receiving end does not exist." })
   ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
-  if (ui.messageCallbacks.length) ui.replyLast({ ok: false, error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接" })
+  const gaps = rejectedReceipt(ui, "ok-false")
   const again = ui.openAdvanced(ui.renderSlideout())
-  assert.equal(ui.checkbox(again, "自动批准所有危险操作").props.checked, true)
-  assert.equal(ui.state().config.auto_approve_dangerous, true)
-  assert.equal(ui.state().securityAuditLog.length, 0)
+  if (ui.checkbox(again, "自动批准所有危险操作").props.checked !== true) gaps.push("checkbox left the snapshot")
+  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("state.config left the snapshot")
+  if (ui.state().securityAuditLog.length !== before) gaps.push("audit changed")
+  assert.deepEqual(gaps, [])
+})
+
+test("channel lastError does not commit dangerous auto-approve and marks the save unknown", () => {
+  const ui = harness()
+  const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true }))
+  ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
+  const gaps = rejectedReceipt(ui, "last-error")
+  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("state.config left the snapshot")
+  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit changed")
+  assert.deepEqual(gaps, [])
 })
 
 test("transport ok without a snapshot does not commit dangerous auto-approve", () => {
   const ui = harness()
   const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true }))
   ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
-  if (ui.messageCallbacks.length) ui.replyLast({ ok: true })
+  const gaps = ui.receiptGaps()
+  const callback = ui.messageCallbacks[ui.configSetIndex()]
+  if (typeof callback === "function") callback({ ok: true })
+  if (ui.state().settingsSave.status !== "pending") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
   const again = ui.openAdvanced(ui.renderSlideout())
-  assert.equal(ui.checkbox(again, "自动批准所有危险操作").props.checked, true)
-  assert.equal(ui.state().config.auto_approve_dangerous, true)
-  assert.ok(ui.state().settingsSave.status !== "saved")
+  if (ui.checkbox(again, "自动批准所有危险操作").props.checked !== true) gaps.push("checkbox left the snapshot")
+  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("state.config left the snapshot")
+  assert.deepEqual(gaps, [])
 })
 
 test("protocol unlock audit is written only after a newer confirming snapshot", () => {
@@ -264,20 +321,131 @@ test("transport ok does not turn coding suggestions off before a snapshot", () =
   ready(ui, { coding_handoff: { auto_suggest: true, open_local_terminal: false, local_terminal_app: "auto" } })
   const section = ui.handoffUi()
   ui.checkbox(section, codingHandoffCopy.settingsAutoSuggest).props.onChange({ target: { checked: false } })
-  if (ui.messageCallbacks.length) ui.replyLast({ ok: true })
-  assert.equal(ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAutoSuggest).props.checked, true)
-  assert.equal(ui.state().config.coding_handoff.auto_suggest, true)
+  const gaps = ui.receiptGaps()
+  const callback = ui.messageCallbacks[ui.configSetIndex()]
+  if (typeof callback === "function") callback({ ok: true })
+  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAutoSuggest).props.checked !== true) gaps.push("checkbox left the snapshot")
+  if (ui.state().config.coding_handoff.auto_suggest !== true) gaps.push("state.config left the snapshot")
+  if (ui.state().settingsSave.status !== "pending") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  assert.deepEqual(gaps, [])
 })
 
 test("a refused embedded-terminal toggle does not show the terminal as enabled", () => {
   const ui = harness()
   ready(ui, { embedded_terminal: { enabled: false } })
   const section = ui.handoffUi()
-  ui.setLastError({ message: "port closed" })
   ui.checkbox(section, codingHandoffCopy.settingsEmbeddedTerminal).props.onChange({ target: { checked: true } })
-  if (ui.messageCallbacks.length) ui.replyLast({ ok: false, error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接" })
-  assert.equal(ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsEmbeddedTerminal).props.checked, false)
-  assert.equal(ui.state().config.embedded_terminal.enabled, false)
+  const gaps = rejectedReceipt(ui, "last-error")
+  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsEmbeddedTerminal).props.checked !== false) gaps.push("checkbox left the snapshot")
+  if (ui.state().config.embedded_terminal?.enabled !== false) gaps.push("state.config left the snapshot")
+  assert.deepEqual(gaps, [])
+})
+
+test("accepted transport does not arm dangerous auto-approve or enterprise tools before a snapshot", () => {
+  const failures: string[] = []
+  for (const label of ["自动批准所有危险操作", "全局自动批准企业高危工具"]) {
+    const local = harness()
+    const view = local.openAdvanced(ready(local, { auto_approve_dangerous: false, auto_approve_enterprise_tools: false }))
+    local.checkbox(view, label).props.onChange({ target: { checked: true } })
+    confirmPhrase(local, "确认开启")
+    const gaps = local.receiptGaps()
+    const callback = local.messageCallbacks[local.configSetIndex()]
+    if (typeof callback === "function") callback({ ok: true })
+    const again = local.openAdvanced(local.renderSlideout())
+    if (local.checkbox(again, label).props.checked !== false) gaps.push(`${label} checkbox left the snapshot`)
+    if (local.state().config.auto_approve_dangerous !== false || local.state().config.auto_approve_enterprise_tools !== false) gaps.push(`${label} state.config left the snapshot`)
+    if (local.state().securityAuditLog.length !== 0) gaps.push(`${label} audit before snapshot`)
+    if (gaps.length) failures.push(`${label}: ${gaps.join("; ")}`)
+  }
+  assert.deepEqual(failures, [])
+})
+
+test("accepted transport does not arm protocol unlock or write its audit before a snapshot", () => {
+  const ui = harness()
+  const view = ui.openAdvanced(ready(ui, { allow_all_schemes: false }))
+  ui.checkbox(view, "协议解锁（会放行").props.onChange({ target: { checked: true } })
+  confirmPhrase(ui, "确认开启")
+  const gaps = ui.receiptGaps()
+  const callback = ui.messageCallbacks[ui.configSetIndex()]
+  if (typeof callback === "function") callback({ ok: true })
+  const again = ui.openAdvanced(ui.renderSlideout())
+  if (ui.checkbox(again, "协议解锁（会放行").props.checked !== false) gaps.push("checkbox left the snapshot")
+  if (ui.state().config.allow_all_schemes !== false) gaps.push("state.config left the snapshot")
+  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit before snapshot")
+  assert.deepEqual(gaps, [])
+})
+
+test("accepted transport does not open the local terminal or change its app before a snapshot", () => {
+  const ui = harness()
+  ready(ui, { coding_handoff: { auto_suggest: true, open_local_terminal: false, local_terminal_app: "auto" } })
+  let section = ui.handoffUi()
+  ui.checkbox(section, codingHandoffCopy.settingsOpenLocalTerminal).props.onChange({ target: { checked: true } })
+  const gaps = ui.receiptGaps()
+  if (ui.state().config.coding_handoff.open_local_terminal !== false) gaps.push("open_local_terminal left the snapshot")
+  assert.deepEqual(gaps, [])
+})
+
+test("accepted transport does not change the local terminal app before a snapshot", () => {
+  const ui = harness()
+  ready(ui, { coding_handoff: { auto_suggest: true, open_local_terminal: true, local_terminal_app: "auto" } })
+  const section = ui.handoffUi()
+  const select = ui.rows(section).filter((node: any) => node.type === "select" && node.props["aria-label"] !== "编程接力并发上限")
+    .find((node: any) => ui.rows(node).some((option: any) => option.props?.value === "Terminal"))
+  assert.ok(select, "local terminal app select")
+  select.props.onChange({ target: { value: "Terminal" } })
+  const gaps = ui.receiptGaps()
+  if (ui.state().config.coding_handoff.local_terminal_app !== "auto") gaps.push("local_terminal_app left the snapshot")
+  if (ui.rows(ui.handoffUi()).some((node: any) => node.type === "select" && node.props.value === "Terminal")) gaps.push("terminal app select left the snapshot")
+  assert.deepEqual(gaps, [])
+})
+
+test("accepted transport does not enable ACP before a snapshot", () => {
+  const ui = harness()
+  ready(ui, { acp: { enabled: false, max_concurrent_sessions: 1 } })
+  ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAcpEnabled).props.onChange({ target: { checked: true } })
+  const gaps = ui.receiptGaps()
+  if (ui.state().config.acp.enabled !== false) gaps.push("state.config.acp.enabled left the snapshot")
+  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAcpEnabled).props.checked !== false) gaps.push("checkbox left the snapshot")
+  assert.deepEqual(gaps, [])
+})
+
+test("arming cruise writes no audit and keeps flags until a newer snapshot", () => {
+  const ui = harness()
+  ready(ui, { auto_approve_dangerous: false, auto_approve_enterprise_tools: false, allow_all_schemes: false })
+  ui.find(ui.renderSlideout(), node => node.type === "button" && textOf(node) === "武装…", "arm cruise").props.onClick()
+  confirmPhrase(ui, "确认武装")
+  const gaps = ui.receiptGaps()
+  if (ui.state().config.auto_approve_dangerous !== false) gaps.push("dangerous flag left the snapshot")
+  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit before snapshot")
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, auto_approve_dangerous: true },
+    revision: "epoch:2",
+    id: ui.configSets().at(-1)?.id,
+  })
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, auto_approve_dangerous: false },
+    revision: "epoch:1",
+    id: ui.configSets().at(-1)?.id,
+  })
+  if (ui.state().configRevision !== "epoch:2") gaps.push("older snapshot overwrote the newer revision")
+  if (ui.state().securityAuditLog.length > 1) gaps.push("audit duplicated")
+  assert.deepEqual(gaps, [])
+})
+
+test("disarming cruise after the channel accepts still waits for a snapshot before audit", () => {
+  const ui = harness()
+  ready(ui, { auto_approve_dangerous: true, auto_approve_enterprise_tools: false, allow_all_schemes: false })
+  ui.find(ui.renderSlideout(), node => node.type === "button" && textOf(node) === "解除武装", "disarm cruise").props.onClick()
+  let disarmIndex = -1
+  for (let index = ui.messages.length - 1; index >= 0; index -= 1) if (ui.messages[index]?.type === "security.unattended.disarm") { disarmIndex = index; break }
+  assert.equal(typeof ui.messageCallbacks[disarmIndex], "function", "disarm registered a channel callback")
+  ui.messageCallbacks[disarmIndex]!()
+  const gaps = ui.receiptGaps()
+  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("dangerous flag left the snapshot")
+  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit before snapshot")
+  assert.deepEqual(gaps, [])
 })
 
 test("a late concurrency callback does not replace a newer snapshot", () => {
@@ -292,6 +460,14 @@ test("a late concurrency callback does not replace a newer snapshot", () => {
   const again = ui.find(ui.handoffUi(), node => node.type === "select" && node.props["aria-label"] === "编程接力并发上限", "concurrency after late reply")
   assert.equal(String(again.props.value), "3")
   assert.equal(ui.state().config.acp.max_concurrent_sessions, 3)
+})
+
+test("concurrency config.set carries the existing save id and revision", () => {
+  const ui = harness()
+  ready(ui, { acp: { enabled: false, max_concurrent_sessions: 1 } })
+  const select = ui.find(ui.handoffUi(), node => node.type === "select" && node.props["aria-label"] === "编程接力并发上限", "concurrency")
+  select.props.onChange({ target: { value: "2" } })
+  assert.deepEqual(ui.receiptGaps(), [])
 })
 
 test("concurrency transport ok alone leaves the previous limit in place", () => {

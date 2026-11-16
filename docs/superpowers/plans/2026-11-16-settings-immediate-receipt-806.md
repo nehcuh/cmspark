@@ -13,25 +13,30 @@ GitHub: #806
 - 侧栏：`useWebSocket.ts` 把 `config.updated` / `config.conflict` 派成已有的 `SET_CONFIG_SNAPSHOT`。`agentStore.tsx` 忽略更旧或无法比较的修订；断连且存在 pending 保存时把 `settingsSave.status` 标成 `unknown`。
 - 主保存按钮已经带 `id` 与 `config_revision`，传输 `{ ok: true }` 不关页面，也不把状态标成 `saved`。
 
-即时开关没有走这套回执。`SettingsSlideout.tsx` 里三旗和编程接力的建议、本机终端、内嵌终端在发送前执行 `SET_CONFIG`。协议解锁关闭时立刻 `ADD_SECURITY_AUDIT`。`sendSecurityFlagConfig` 不读取回调。并发上限的回调只有在看到 `response.type === "config.updated"` 时才 `SET_CONFIG`，而后台实际只回 `{ ok: true }`；若回调里真带上一份配置，这次 `SET_CONFIG` 不看修订，会盖住更新的快照。
+即时 `config.set` 没有走这套回执。`SettingsSlideout.tsx` 在发送前或发送后立刻 `SET_CONFIG`，并且多数调用不登记回调、不带 `id` / `config_revision`。核对过的入口：
+
+- 危险操作关闭 `470-473`，武装确认 `484-494`
+- 企业工具关闭 `497-500`，武装确认 `510-520`
+- 协议解锁关闭 `536-552`（含立即审计），武装确认 `555-578`（含立即审计）
+- `applySecurityFlagsTarget` `607-621`：运行自主度武装在 `710-714` 同步调用；解除武装在通道回调 `733-737` 里调用。两者都会合并三旗并写审计
+- 编程建议 `3220-3233`，本机终端 `3235-3248`，内嵌终端 `3254-3262`，本机终端应用 `3264-3277`，ACP 总开关 `3279-3292`
+- 并发上限 `3200-3205` 有回调，但消息仍没有 `id` / `config_revision`；回调看到 `response.type === "config.updated"` 才 `SET_CONFIG`。后台 `config.set` 实际只回 `{ ok: true }` 或 `{ ok: false, error }`
+
+`config.set` 没有墙钟超时。现有「未知」只来自三处：保存回调里的 `chrome.runtime.lastError` 或 `ok: false`（`SettingsSlideout.tsx` `415`）、WebSocket 上 `id` 匹配 `settings-save:` 的 `error` 帧（`useWebSocket.ts` `2389-2393`）、以及 pending 保存期间断连（`agentStore.tsx` `1197-1204`）。本计划不新造超时消息。
 
 ## 最小修复（本阶段不实施）
 
-只改 `chrome-extension/src/sidepanel/components/SettingsSlideout.tsx` 里这些提交回调：
+只改 `chrome-extension/src/sidepanel/components/SettingsSlideout.tsx` 里上面列出的提交回调。
 
-- `sendSecurityFlagConfig` 与三旗开关
-- `onToggleAutoSuggest`、`onToggleOpenLocalTerminal`、`onToggleEmbeddedTerminal`、`onChangeLocalTerminalApp`
-- `onChangeMaxConcurrentSessions`
+1. 点击后不执行 `SET_CONFIG`。勾选、并发数字和终端应用继续显示最后一次已应用快照。
+2. 每次即时 `config.set` 带主保存已有的 `settings-save:` id 和当前 `config_revision`，并登记回调。武装三旗时继续附带现有 `confirmation_phrase`。短语常量、Companion 校验、三旗含义都不改。
+3. 回调 `{ ok: false }` 或 `lastError`：快照值不动，`settingsSave.status` 变为已有的 `unknown`，审计不增加。
+4. 回调 `{ ok: true }` 只表示传输被接受，状态保持 `pending`。值和审计都等到对应 `config.updated` 快照。
+5. 更旧修订、无法比较的修订，以及迟到回调里的配置，都不得盖住更新的快照，也不得把同一次 `id` 的审计再写一条。
+6. 协议解锁和运行自主度的本地审计只在匹配的更新快照证明请求值已经落定后写一次。
+7. 并发上限不再用回调里的 `config` 做 `SET_CONFIG`。值只跟随后的快照走。
 
-做法：
-
-1. 点击后不执行 `SET_CONFIG`。界面勾选和并发数字继续读最后一次已应用的快照。
-2. 发送沿用主保存的 `config.set`：带 `settings-save:` 前缀的 `id` 和当前 `config_revision`。武装三旗时继续附带现有 `confirmation_phrase`。短语常量、Companion 对短语的校验、三旗含义都不改。
-3. 回调 `{ ok: false }` 或 `chrome.runtime.lastError`：保持快照值，把这次保存标为未知，不写本地成功审计。
-4. 回调 `{ ok: true }` 只表示传输被接受。勾选、`state.config` 和审计都保持不动，直到对应的 `config.updated` 快照到达。
-5. 更新的快照按现有 reducer 合并。更旧的修订、无法比较的修订、以及迟到的回调配置都不得盖住更新的快照。不把失败理解成“把界面回滚到点击前的本地猜测”。
-6. 协议解锁的本地审计只在匹配的更新快照证明 `allow_all_schemes` 已经变成请求值之后写一次。同一 `id` 的重复快照不再追加。
-7. 并发上限不再用回调里的 `config` 做 `SET_CONFIG`。值只跟随后的 `config.updated` 快照走。
+无人值守武装 `638-694` 走的是已有 `security.unattended.arm`，不是这组 `config.set`。它的回调在 `{ ok: true }` 后写审计，但仍等待 `security.unattended.status`，不在本计划里改它的授权语义。
 
 不改 `companion/src/message-router/handlers/config.ts` 的授权判断，不改 capability 模型，不改 outbound，不改 Linux 终端或 Whisper。不关闭 #806。
 
