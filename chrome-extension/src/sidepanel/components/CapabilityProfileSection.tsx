@@ -12,12 +12,28 @@ import {
 
 type ModuleStateView = { available?: boolean; enabled?: boolean }
 
+const PROFILE_SWITCH_UNKNOWN_MS = 15000
+const PROFILE_SWITCH_UNKNOWN = "能力档切换结果未知。可以重试，或刷新本机能力列表核对。"
+
+let profileSwitchSeq = 0
+
+function nextProfileSwitchId(): string {
+  profileSwitchSeq += 1
+  return `profile-switch-${profileSwitchSeq}`
+}
+
+function authoritativeProfile(next: unknown, view: unknown): next is CapabilityProfile {
+  return (next === "enterprise" && view === "provided") || (next === "community" && (view === "community" || view === "unavailable"))
+}
+
 export function CapabilityProfileSection() {
   const [profile, setProfile] = useState<CapabilityProfile>("community")
   const [modules, setModules] = useState<Record<string, ModuleStateView>>({})
   const [status, setStatus] = useState("")
   const [busy, setBusy] = useState(false)
-  const pendingProfile = useRef<CapabilityProfile | null>(null)
+  const pendingProfile = useRef<{ id: string; to: CapabilityProfile } | null>(null)
+  const retiredIds = useRef<Set<string>>(new Set())
+  const timer = useRef<number | null>(null)
 
   const shellEnabled = modules.shell?.enabled === true
   const netsecEnabled = modules.netsec?.enabled === true
@@ -28,9 +44,30 @@ export function CapabilityProfileSection() {
     setTimeout(() => setStatus(""), ms)
   }
 
+  const clearTimer = () => {
+    if (timer.current != null) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+  }
+
+  const releaseAttempt = (message: string, refresh: boolean) => {
+    const id = pendingProfile.current?.id
+    if (id) retiredIds.current.add(id)
+    pendingProfile.current = null
+    clearTimer()
+    setBusy(false)
+    flash(message)
+    if (refresh) chrome.runtime.sendMessage({ type: "modules.list" })
+  }
+
   useEffect(() => {
     chrome.runtime.sendMessage({ type: "modules.list" })
     const handler = (msg: any) => {
+      if (msg?.type === "thread.mutation.connection" && msg.state !== "connected" && pendingProfile.current) {
+        releaseAttempt(PROFILE_SWITCH_UNKNOWN, true)
+        return
+      }
       if (msg?.type === "modules.list") {
         if (msg.modules) setModules(msg.modules)
         if (typeof msg.capability_profile === "string") {
@@ -42,34 +79,44 @@ export function CapabilityProfileSection() {
         return
       }
       if (msg?.type === "modules.updated" || msg?.type === "modules.profile.result") {
+        const id = typeof msg.id === "string" ? msg.id : ""
+        if (!id || retiredIds.current.has(id)) return
         const next = msg.capability_profile
         const view = msg.shell_provision
-        const authoritative = (next === "enterprise" && view === "provided") || (next === "community" && (view === "community" || view === "unavailable"))
-        if (pendingProfile.current == null) {
-          if (!authoritative) return
+        const authoritative = authoritativeProfile(next, view)
+        if (!pendingProfile.current || pendingProfile.current.id !== id) {
+          if (pendingProfile.current || !authoritative) return
           if (msg.modules) setModules(msg.modules)
-          setProfile(next === "enterprise" ? "enterprise" : "community")
+          setProfile(next)
           return
         }
-        const expected = pendingProfile.current
+        const expected = pendingProfile.current.to
         pendingProfile.current = null
+        clearTimer()
         setBusy(false)
         if (!authoritative || next !== expected) {
+          retiredIds.current.add(id)
           flash("没有权威的能力档回执，界面保持切换前的状态", 5000)
           return
         }
         if (msg.modules) setModules(msg.modules)
-        setProfile(next === "enterprise" ? "enterprise" : "community")
+        setProfile(next)
         const disabled = Array.isArray(msg.modules_disabled) ? msg.modules_disabled : []
         flash(disabled.length > 0 ? `能力档已切换；已关闭 ${disabled.join("、")}` : "能力档已更新", 3500)
       }
       if (msg?.type === "error") {
-        flash(msg.error || "操作失败", 5000)
-        setBusy(false)
+        const id = typeof msg.id === "string" ? msg.id : ""
+        if (!pendingProfile.current || id !== pendingProfile.current.id) return
+        releaseAttempt(msg.error || "操作失败", false)
       }
     }
     chrome.runtime.onMessage.addListener(handler)
-    return () => chrome.runtime.onMessage.removeListener(handler)
+    return () => {
+      chrome.runtime.onMessage.removeListener(handler)
+      if (timer.current != null) clearTimeout(timer.current)
+      if (pendingProfile.current) retiredIds.current.add(pendingProfile.current.id)
+      pendingProfile.current = null
+    }
   }, [])
 
   const requestSwitch = (to: CapabilityProfile) => {
@@ -79,9 +126,29 @@ export function CapabilityProfileSection() {
     const confirmed = window.confirm(`${confirm.title}\n\n${confirm.body}`)
     const frame = resolveProfileSwitchSend({ confirmed, from: profile, to })
     if (!frame) return
-    pendingProfile.current = to
+    const id = nextProfileSwitchId()
+    pendingProfile.current = { id, to }
     setBusy(true)
-    chrome.runtime.sendMessage(frame)
+    const acceptTransport = (response?: { ok?: boolean; error?: string }) => {
+      if (pendingProfile.current?.id !== id) return
+      if (response?.ok === false) {
+        releaseAttempt(response.error || "能力档请求未能发送。可以重试。", false)
+        return
+      }
+      if (chrome.runtime.lastError || response?.ok !== true) {
+        releaseAttempt(PROFILE_SWITCH_UNKNOWN, true)
+        return
+      }
+      timer.current = setTimeout(() => {
+        if (pendingProfile.current?.id !== id) return
+        releaseAttempt(PROFILE_SWITCH_UNKNOWN, true)
+      }, PROFILE_SWITCH_UNKNOWN_MS)
+    }
+    try {
+      chrome.runtime.sendMessage({ ...frame, id }, acceptTransport)
+    } catch {
+      acceptTransport(undefined)
+    }
   }
 
   return (

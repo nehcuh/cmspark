@@ -70,6 +70,7 @@ function loadRouter() {
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, ctx)
   config.saveConfig({ capability_profile: "enterprise", modules: { shell: { available: true, enabled: false }, netsec: { available: true, enabled: false, target_allowlist: [] } } })
   return {
+    config,
     route: ctx.route as (type: string, rest: Record<string, unknown>) => Promise<any>,
     cleanup() {
       if (previousData === undefined) delete process.env.CMSPARK_DATA_DIR
@@ -98,6 +99,11 @@ function mountSurfaces() {
   const effectQueue: Array<() => void> = []
   const flush = () => { while (effectQueue.length) effectQueue.shift()!() }
   let confirm = false
+  let runtimeError: { message: string } | undefined
+  let transport: () => any = () => ({ ok: true })
+  const sent: any[] = []
+  const timers = new Map<number, { fn: () => void; delay: number }>()
+  let timerSeq = 0
   const react: any = {
     useState: (initial: any) => {
       const owned = frame!
@@ -146,10 +152,24 @@ function mountSurfaces() {
         if (id === "../utils/shell-enable-navigation" || id === "./gate-error-copy" || id === "../types") return {}
         throw new Error(`unexpected ${id}`)
       },
-      chrome: { runtime: { sendMessage() { return Promise.resolve() }, onMessage: { addListener(fn: any) { listeners.push(fn) }, removeListener() {} } } },
-      window: { confirm: () => confirm, setTimeout: () => 1, clearTimeout() {} },
-      setTimeout: () => 1,
-      clearTimeout() {},
+      chrome: { runtime: {
+        get lastError() { return runtimeError },
+        sendMessage(message: any, callback?: (response?: any) => void) {
+          sent.push(message)
+          if (typeof callback === "function") callback(transport())
+          return Promise.resolve()
+        },
+        onMessage: {
+          addListener(fn: any) { listeners.push(fn) },
+          removeListener(fn: any) {
+            const index = listeners.indexOf(fn)
+            if (index >= 0) listeners.splice(index, 1)
+          },
+        },
+      } },
+      window: { confirm: () => confirm },
+      setTimeout(fn: () => void, delay?: number) { const id = ++timerSeq; timers.set(id, { fn, delay: delay || 0 }); return id },
+      clearTimeout(id: number) { timers.delete(id) },
       console,
     }, { timeout: 5000, filename })
     return output
@@ -185,8 +205,31 @@ function mountSurfaces() {
     },
     confirmSwitch() {
       confirm = true
+      const before = sent.length
       this.switchButton().props.onClick()
       confirm = false
+      const message = sent.slice(before).reverse().find(item => item?.type === "modules.set_profile")
+      assert.ok(message, "profile switch must send modules.set_profile")
+      return message
+    },
+    refuseSend(error: string) { transport = () => ({ ok: false, error }); runtimeError = undefined },
+    runtimeFailure(message: string) { runtimeError = { message }; transport = () => undefined },
+    acceptSend() { runtimeError = undefined; transport = () => ({ ok: true }) },
+    expire() {
+      let chosen: number | undefined
+      let delay = -1
+      for (const [id, timer] of timers) {
+        if (timer.delay >= delay) { delay = timer.delay; chosen = id }
+      }
+      if (chosen == null) return false
+      const timer = timers.get(chosen)
+      timers.delete(chosen)
+      timer?.fn()
+      return true
+    },
+    unmountProfile() {
+      const cleanup = slots.get("profile")?.effects?.[0]?.cleanup
+      if (typeof cleanup === "function") cleanup()
     },
   }
 }
@@ -221,7 +264,8 @@ test("enterprise netsec receipts keep shell provided and do not settle a profile
     assert.equal(ui.scene().includes("提供状态未知"), false)
     assert.equal(ui.profile().includes("没有权威的能力档回执"), false)
 
-    ui.confirmSwitch()
+    const firstSwitch = ui.confirmSwitch()
+    assert.equal(typeof firstSwitch.id, "string")
     assert.equal(ui.switchButton().props.disabled, true)
     ui.deliver(enabled)
     ui.deliver(updated)
@@ -238,7 +282,7 @@ test("enterprise netsec receipts keep shell provided and do not settle a profile
     const profileReply = await router.route("modules.set_profile", { profile: "community", by: "owned-test" })
     assert.equal(profileReply.type, "modules.updated")
     assert.equal(profileReply.capability_profile, "community")
-    const missing = { ...profileReply }
+    const missing = { ...profileReply, id: firstSwitch.id }
     delete missing.shell_provision
     ui.deliver(missing)
     assert.match(ui.profile(), /没有权威的能力档回执/)
@@ -246,12 +290,96 @@ test("enterprise netsec receipts keep shell provided and do not settle a profile
     assert.match(ui.profile(), /enterprise/)
     assert.equal(ui.switchButton().props.disabled, false)
 
-    ui.confirmSwitch()
-    ui.deliver(profileReply)
+    const retrySwitch = ui.confirmSwitch()
+    assert.ok(retrySwitch.id !== firstSwitch.id)
+    ui.deliver({ ...profileReply, id: retrySwitch.id })
     assert.match(ui.profile(), /能力档已更新|能力档已切换/)
     assert.match(ui.profile(), /community/)
     assert.equal(ui.profile().includes("没有权威的能力档回执"), false)
     assert.match(ui.scene(), /确认升档后可用/)
+
+    const lifecycle = fs.readFileSync(path.join(repoRoot(), "companion/src/ws/lifecycle.ts"), "utf8")
+    const background = fs.readFileSync(path.join(repoRoot(), "chrome-extension/src/background/index.ts"), "utf8")
+    assert.match(lifecycle, /\{ \.\.\.response, id: msg\?\.id \}/)
+    assert.match(background, /if \(!sent\) \{/)
+    assert.match(background, /Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接/)
+
+    router.config.saveConfig({ capability_profile: "enterprise", modules: { shell: { available: true, enabled: true, enabled_by: "profile.enterprise" }, netsec: { available: true, enabled: false, target_allowlist: [] } } })
+    const failed = mountSurfaces()
+    failed.deliver(await router.route("modules.list", {}))
+    const failedSwitch = failed.confirmSwitch()
+    failed.deliver({ type: "error", id: failedSwitch.id, error: "PROFILE_STATE_INVALID" })
+    assert.equal(failed.switchButton().props.disabled, false)
+    assert.match(failed.profile(), /PROFILE_STATE_INVALID/)
+    assert.equal(failed.profile().includes("能力档已更新"), false)
+    assert.equal(failed.profile().includes("能力档已切换"), false)
+    assert.match(failed.profile(), /enterprise/)
+    const late = await router.route("modules.set_profile", { profile: "community", by: "owned-test" })
+    failed.deliver({ ...late, id: failedSwitch.id })
+    assert.equal(failed.profile().includes("能力档已更新"), false)
+    assert.equal(failed.profile().includes("能力档已切换"), false)
+    assert.match(failed.profile(), /enterprise/)
+    const failedRetry = failed.confirmSwitch()
+    assert.ok(failedRetry.id !== failedSwitch.id)
+    failed.deliver({ ...late, id: failedRetry.id, shell_provision: "community" })
+    assert.match(failed.profile(), /能力档已更新|能力档已切换/)
+    assert.match(failed.profile(), /community/)
+
+    router.config.saveConfig({ capability_profile: "enterprise", modules: { shell: { available: true, enabled: true, enabled_by: "profile.enterprise" }, netsec: { available: true, enabled: false, target_allowlist: [] } } })
+    const refused = mountSurfaces()
+    refused.deliver(await router.route("modules.list", {}))
+    refused.refuseSend("Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接")
+    const refusedSwitch = refused.confirmSwitch()
+    assert.equal(refused.switchButton().props.disabled, false)
+    assert.match(refused.profile(), /未连接/)
+    assert.match(refused.profile(), /enterprise/)
+    refused.deliver({ ...late, id: refusedSwitch.id, shell_provision: "community" })
+    assert.equal(refused.profile().includes("能力档已切换"), false)
+    assert.match(refused.profile(), /enterprise/)
+    refused.runtimeFailure("The message port closed before a response was received")
+    const runtimeSwitch = refused.confirmSwitch()
+    assert.ok(runtimeSwitch.id !== refusedSwitch.id)
+    assert.equal(refused.switchButton().props.disabled, false)
+    assert.match(refused.profile(), /结果未知/)
+    assert.equal(refused.profile().includes("未执行"), false)
+    assert.match(refused.profile(), /enterprise/)
+
+    router.config.saveConfig({ capability_profile: "enterprise", modules: { shell: { available: true, enabled: true, enabled_by: "profile.enterprise" }, netsec: { available: true, enabled: false, target_allowlist: [] } } })
+    const pending = mountSurfaces()
+    pending.deliver(await router.route("modules.list", {}))
+    const pendingSwitch = pending.confirmSwitch()
+    pending.deliver({ type: "error", id: "netsec-request", error: "enterprise_profile_required — set capability_profile=enterprise for shell/netsec" })
+    pending.deliver({ type: "error", error: "module not available: appsec" })
+    pending.deliver(enabled)
+    assert.equal(pending.switchButton().props.disabled, true)
+    assert.match(pending.profile(), /enterprise/)
+    assert.equal(pending.profile().includes("没有权威的能力档回执"), false)
+    assert.equal(pending.profile().includes("module not available"), false)
+    pending.deliver({ type: "thread.mutation.connection", state: "disconnected" })
+    assert.equal(pending.switchButton().props.disabled, false)
+    assert.match(pending.profile(), /结果未知/)
+    assert.equal(pending.profile().includes("未执行"), false)
+    assert.match(pending.profile(), /enterprise/)
+    pending.deliver({ ...late, id: pendingSwitch.id, shell_provision: "community" })
+    assert.equal(pending.profile().includes("能力档已切换"), false)
+    assert.match(pending.profile(), /enterprise/)
+    const timed = pending.confirmSwitch()
+    assert.equal(pending.expire(), true)
+    assert.equal(pending.switchButton().props.disabled, false)
+    assert.match(pending.profile(), /结果未知/)
+    pending.deliver({ ...late, id: timed.id, shell_provision: "community" })
+    assert.equal(pending.profile().includes("能力档已切换"), false)
+    assert.match(pending.profile(), /enterprise/)
+
+    const unmounted = mountSurfaces()
+    unmounted.deliver(await router.route("modules.list", {}))
+    const unmountedSwitch = unmounted.confirmSwitch()
+    unmounted.unmountProfile()
+    unmounted.expire()
+    unmounted.deliver({ ...late, id: unmountedSwitch.id, shell_provision: "community" })
+    assert.match(unmounted.profile(), /enterprise/)
+    assert.equal(unmounted.profile().includes("能力档已切换"), false)
+    assert.equal(unmounted.profile().includes("结果未知"), false)
   } finally {
     router.cleanup()
   }
