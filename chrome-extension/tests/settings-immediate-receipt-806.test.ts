@@ -250,18 +250,31 @@ test("an older snapshot does not restore a flag replaced by a newer snapshot", (
   assert.equal(ui.state().configRevision, "epoch:3")
 })
 
-function rejectedReceipt(ui: ReturnType<typeof harness>, mode: "ok-false" | "last-error") {
-  const gaps = ui.receiptGaps()
+function configSetCallback(ui: ReturnType<typeof harness>) {
   const index = ui.configSetIndex()
-  const callback = index >= 0 ? ui.messageCallbacks[index] : undefined
-  if (typeof callback === "function") {
-    if (mode === "last-error") ui.setLastError({ message: "Could not establish connection. Receiving end does not exist." })
-    callback(mode === "ok-false"
-      ? { ok: false, error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接" }
-      : undefined)
-  }
-  if (ui.state().settingsSave.status !== "unknown") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  return index >= 0 ? ui.messageCallbacks[index] : undefined
+}
+
+/** Invoke the real config.set callback. A missing callback is a recorded failure, not a skip. */
+function deliverConfigSet(ui: ReturnType<typeof harness>, response: any, status: "pending" | "unknown", auditBaseline = 0) {
+  const gaps = ui.receiptGaps()
+  const callback = configSetCallback(ui)
+  if (typeof callback !== "function") gaps.push("did not invoke config.set callback")
+  else callback(response)
+  if (ui.state().settingsSave.status !== status) gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  if (ui.state().securityAuditLog.length !== auditBaseline) gaps.push(`audit=${ui.state().securityAuditLog.length}`)
   return gaps
+}
+
+function rejectedReceipt(ui: ReturnType<typeof harness>, mode: "ok-false" | "last-error") {
+  if (mode === "last-error") ui.setLastError({ message: "Could not establish connection. Receiving end does not exist." })
+  return deliverConfigSet(ui, mode === "ok-false"
+    ? { ok: false, error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接" }
+    : undefined, "unknown")
+}
+
+function acceptedReceipt(ui: ReturnType<typeof harness>, auditBaseline = 0) {
+  return deliverConfigSet(ui, { ok: true }, "pending", auditBaseline)
 }
 
 test("disconnect does not show dangerous auto-approve as off or record success", () => {
@@ -291,13 +304,21 @@ test("transport ok without a snapshot does not commit dangerous auto-approve", (
   const ui = harness()
   const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true }))
   ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
-  const gaps = ui.receiptGaps()
-  const callback = ui.messageCallbacks[ui.configSetIndex()]
-  if (typeof callback === "function") callback({ ok: true })
-  if (ui.state().settingsSave.status !== "pending") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  const gaps = acceptedReceipt(ui)
   const again = ui.openAdvanced(ui.renderSlideout())
   if (ui.checkbox(again, "自动批准所有危险操作").props.checked !== true) gaps.push("checkbox left the snapshot")
   if (ui.state().config.auto_approve_dangerous !== true) gaps.push("state.config left the snapshot")
+  assert.deepEqual(gaps, [])
+})
+
+test("accepted transport does not turn enterprise tools off before a snapshot", () => {
+  const ui = harness()
+  const view = ui.openAdvanced(ready(ui, { auto_approve_enterprise_tools: true }))
+  ui.checkbox(view, "全局自动批准企业高危工具").props.onChange({ target: { checked: false } })
+  const gaps = acceptedReceipt(ui)
+  const again = ui.openAdvanced(ui.renderSlideout())
+  if (ui.checkbox(again, "全局自动批准企业高危工具").props.checked !== true) gaps.push("checkbox left the snapshot")
+  if (ui.state().config.auto_approve_enterprise_tools !== true) gaps.push("state.config left the snapshot")
   assert.deepEqual(gaps, [])
 })
 
@@ -305,15 +326,17 @@ test("protocol unlock audit is written only after a newer confirming snapshot", 
   const ui = harness()
   const view = ui.openAdvanced(ready(ui, { allow_all_schemes: true }))
   ui.checkbox(view, "协议解锁（会放行").props.onChange({ target: { checked: false } })
-  assert.equal(ui.state().securityAuditLog.length, 0)
-  assert.equal(ui.checkbox(ui.openAdvanced(ui.renderSlideout()), "协议解锁（会放行").props.checked, true)
+  const gaps = acceptedReceipt(ui)
+  const again = ui.openAdvanced(ui.renderSlideout())
+  if (ui.checkbox(again, "协议解锁（会放行").props.checked !== true) gaps.push("checkbox left the snapshot")
+  if (ui.state().config.allow_all_schemes !== true) gaps.push("state.config left the snapshot")
   ui.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { ...ui.state().config, allow_all_schemes: false }, revision: "epoch:2", id: ui.configSets().at(-1)?.id })
+  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after confirm=${ui.state().securityAuditLog.length}`)
+  ui.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { ...ui.state().config, allow_all_schemes: false }, revision: "epoch:2", id: ui.configSets().at(-1)?.id })
+  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after repeat=${ui.state().securityAuditLog.length}`)
   const confirmed = ui.openAdvanced(ui.renderSlideout())
-  assert.equal(ui.checkbox(confirmed, "协议解锁（会放行").props.checked, false)
-  assert.equal(ui.state().securityAuditLog.length, 1)
-  assert.match(ui.state().securityAuditLog[0].message, /已关闭协议解锁/)
-  ui.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { ...ui.state().config, allow_all_schemes: false }, revision: "epoch:2", id: ui.configSets().at(-1)?.id })
-  assert.equal(ui.state().securityAuditLog.length, 1)
+  if (ui.checkbox(confirmed, "协议解锁（会放行").props.checked !== false) gaps.push("confirmed checkbox stayed on")
+  assert.deepEqual(gaps, [])
 })
 
 test("transport ok does not turn coding suggestions off before a snapshot", () => {
@@ -321,12 +344,9 @@ test("transport ok does not turn coding suggestions off before a snapshot", () =
   ready(ui, { coding_handoff: { auto_suggest: true, open_local_terminal: false, local_terminal_app: "auto" } })
   const section = ui.handoffUi()
   ui.checkbox(section, codingHandoffCopy.settingsAutoSuggest).props.onChange({ target: { checked: false } })
-  const gaps = ui.receiptGaps()
-  const callback = ui.messageCallbacks[ui.configSetIndex()]
-  if (typeof callback === "function") callback({ ok: true })
+  const gaps = acceptedReceipt(ui)
   if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAutoSuggest).props.checked !== true) gaps.push("checkbox left the snapshot")
   if (ui.state().config.coding_handoff.auto_suggest !== true) gaps.push("state.config left the snapshot")
-  if (ui.state().settingsSave.status !== "pending") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
   assert.deepEqual(gaps, [])
 })
 
@@ -348,9 +368,7 @@ test("accepted transport does not arm dangerous auto-approve or enterprise tools
     const view = local.openAdvanced(ready(local, { auto_approve_dangerous: false, auto_approve_enterprise_tools: false }))
     local.checkbox(view, label).props.onChange({ target: { checked: true } })
     confirmPhrase(local, "确认开启")
-    const gaps = local.receiptGaps()
-    const callback = local.messageCallbacks[local.configSetIndex()]
-    if (typeof callback === "function") callback({ ok: true })
+    const gaps = acceptedReceipt(local)
     const again = local.openAdvanced(local.renderSlideout())
     if (local.checkbox(again, label).props.checked !== false) gaps.push(`${label} checkbox left the snapshot`)
     if (local.state().config.auto_approve_dangerous !== false || local.state().config.auto_approve_enterprise_tools !== false) gaps.push(`${label} state.config left the snapshot`)
@@ -365,9 +383,7 @@ test("accepted transport does not arm protocol unlock or write its audit before 
   const view = ui.openAdvanced(ready(ui, { allow_all_schemes: false }))
   ui.checkbox(view, "协议解锁（会放行").props.onChange({ target: { checked: true } })
   confirmPhrase(ui, "确认开启")
-  const gaps = ui.receiptGaps()
-  const callback = ui.messageCallbacks[ui.configSetIndex()]
-  if (typeof callback === "function") callback({ ok: true })
+  const gaps = acceptedReceipt(ui)
   const again = ui.openAdvanced(ui.renderSlideout())
   if (ui.checkbox(again, "协议解锁（会放行").props.checked !== false) gaps.push("checkbox left the snapshot")
   if (ui.state().config.allow_all_schemes !== false) gaps.push("state.config left the snapshot")
@@ -380,7 +396,8 @@ test("accepted transport does not open the local terminal or change its app befo
   ready(ui, { coding_handoff: { auto_suggest: true, open_local_terminal: false, local_terminal_app: "auto" } })
   let section = ui.handoffUi()
   ui.checkbox(section, codingHandoffCopy.settingsOpenLocalTerminal).props.onChange({ target: { checked: true } })
-  const gaps = ui.receiptGaps()
+  const gaps = acceptedReceipt(ui)
+  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsOpenLocalTerminal).props.checked !== false) gaps.push("checkbox left the snapshot")
   if (ui.state().config.coding_handoff.open_local_terminal !== false) gaps.push("open_local_terminal left the snapshot")
   assert.deepEqual(gaps, [])
 })
@@ -393,7 +410,7 @@ test("accepted transport does not change the local terminal app before a snapsho
     .find((node: any) => ui.rows(node).some((option: any) => option.props?.value === "Terminal"))
   assert.ok(select, "local terminal app select")
   select.props.onChange({ target: { value: "Terminal" } })
-  const gaps = ui.receiptGaps()
+  const gaps = acceptedReceipt(ui)
   if (ui.state().config.coding_handoff.local_terminal_app !== "auto") gaps.push("local_terminal_app left the snapshot")
   if (ui.rows(ui.handoffUi()).some((node: any) => node.type === "select" && node.props.value === "Terminal")) gaps.push("terminal app select left the snapshot")
   assert.deepEqual(gaps, [])
@@ -403,7 +420,7 @@ test("accepted transport does not enable ACP before a snapshot", () => {
   const ui = harness()
   ready(ui, { acp: { enabled: false, max_concurrent_sessions: 1 } })
   ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAcpEnabled).props.onChange({ target: { checked: true } })
-  const gaps = ui.receiptGaps()
+  const gaps = acceptedReceipt(ui)
   if (ui.state().config.acp.enabled !== false) gaps.push("state.config.acp.enabled left the snapshot")
   if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAcpEnabled).props.checked !== false) gaps.push("checkbox left the snapshot")
   assert.deepEqual(gaps, [])
@@ -414,15 +431,22 @@ test("arming cruise writes no audit and keeps flags until a newer snapshot", () 
   ready(ui, { auto_approve_dangerous: false, auto_approve_enterprise_tools: false, allow_all_schemes: false })
   ui.find(ui.renderSlideout(), node => node.type === "button" && textOf(node) === "武装…", "arm cruise").props.onClick()
   confirmPhrase(ui, "确认武装")
-  const gaps = ui.receiptGaps()
+  const gaps = acceptedReceipt(ui)
   if (ui.state().config.auto_approve_dangerous !== false) gaps.push("dangerous flag left the snapshot")
-  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit before snapshot")
   ui.dispatch({
     type: "SET_CONFIG_SNAPSHOT",
     config: { ...ui.state().config, auto_approve_dangerous: true },
     revision: "epoch:2",
     id: ui.configSets().at(-1)?.id,
   })
+  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after confirm=${ui.state().securityAuditLog.length}`)
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, auto_approve_dangerous: true },
+    revision: "epoch:2",
+    id: ui.configSets().at(-1)?.id,
+  })
+  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after repeat=${ui.state().securityAuditLog.length}`)
   ui.dispatch({
     type: "SET_CONFIG_SNAPSHOT",
     config: { ...ui.state().config, auto_approve_dangerous: false },
@@ -430,7 +454,7 @@ test("arming cruise writes no audit and keeps flags until a newer snapshot", () 
     id: ui.configSets().at(-1)?.id,
   })
   if (ui.state().configRevision !== "epoch:2") gaps.push("older snapshot overwrote the newer revision")
-  if (ui.state().securityAuditLog.length > 1) gaps.push("audit duplicated")
+  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("older snapshot restored the flag")
   assert.deepEqual(gaps, [])
 })
 
@@ -442,9 +466,22 @@ test("disarming cruise after the channel accepts still waits for a snapshot befo
   for (let index = ui.messages.length - 1; index >= 0; index -= 1) if (ui.messages[index]?.type === "security.unattended.disarm") { disarmIndex = index; break }
   assert.equal(typeof ui.messageCallbacks[disarmIndex], "function", "disarm registered a channel callback")
   ui.messageCallbacks[disarmIndex]!()
-  const gaps = ui.receiptGaps()
+  const gaps = acceptedReceipt(ui)
   if (ui.state().config.auto_approve_dangerous !== true) gaps.push("dangerous flag left the snapshot")
-  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit before snapshot")
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, auto_approve_dangerous: false, auto_approve_enterprise_tools: false, allow_all_schemes: false },
+    revision: "epoch:2",
+    id: ui.configSets().at(-1)?.id,
+  })
+  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after confirm=${ui.state().securityAuditLog.length}`)
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, auto_approve_dangerous: false },
+    revision: "epoch:2",
+    id: ui.configSets().at(-1)?.id,
+  })
+  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after repeat=${ui.state().securityAuditLog.length}`)
   assert.deepEqual(gaps, [])
 })
 
@@ -467,7 +504,27 @@ test("concurrency config.set carries the existing save id and revision", () => {
   ready(ui, { acp: { enabled: false, max_concurrent_sessions: 1 } })
   const select = ui.find(ui.handoffUi(), node => node.type === "select" && node.props["aria-label"] === "编程接力并发上限", "concurrency")
   select.props.onChange({ target: { value: "2" } })
-  assert.deepEqual(ui.receiptGaps(), [])
+  const gaps = acceptedReceipt(ui)
+  if (ui.state().config.acp.max_concurrent_sessions !== 1) gaps.push("limit left the snapshot")
+  assert.deepEqual(gaps, [])
+})
+
+test("receipt checker flags config and audit writes performed inside callback ok", () => {
+  const ui = harness()
+  ready(ui, { auto_approve_dangerous: true })
+  ui.messages.push({ type: "config.set", id: "settings-save:probe", config_revision: "epoch:1", config: { auto_approve_dangerous: false } })
+  ui.messageCallbacks.push(() => {
+    ui.dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: false } })
+    ui.dispatch({ type: "ADD_SECURITY_AUDIT", entry: {
+      id: "probe", ts: "t", level: "info", tool_name: "probe", action: "changed",
+      risk_level: "low", risk_score: 0, source: "ui_phrase_confirmed", message: "probe",
+    } })
+  })
+  const gaps = acceptedReceipt(ui)
+  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("state.config left the snapshot")
+  assert.ok(gaps.includes("state.config left the snapshot"))
+  assert.ok(gaps.some(gap => gap.startsWith("audit=")))
+  assert.equal(gaps.includes("did not invoke config.set callback"), false)
 })
 
 test("concurrency transport ok alone leaves the previous limit in place", () => {

@@ -31,7 +31,7 @@ GitHub: #806
 1. 点击后不执行 `SET_CONFIG`。勾选、并发数字和终端应用继续显示最后一次已应用快照。
 2. 每次即时 `config.set` 带主保存已有的 `settings-save:` id 和当前 `config_revision`，并登记回调。武装三旗时继续附带现有 `confirmation_phrase`。短语常量、Companion 校验、三旗含义都不改。
 3. 回调 `{ ok: false }` 或 `lastError`：快照值不动，`settingsSave.status` 变为已有的 `unknown`，审计不增加。
-4. 回调 `{ ok: true }` 只表示传输被接受，状态保持 `pending`。值和审计都等到对应 `config.updated` 快照。
+4. 回调 `{ ok: true }` 只表示传输被接受，状态保持 `pending`。测试必须实际调用这个回调后再看勾选、`state.config` 和审计；缺回调本身失败，不能跳过。值和审计都等到对应 `config.updated` 快照。审计入口在快照前是 0，匹配快照后恰好 1，重复同一快照仍是 1。
 5. 更旧修订、无法比较的修订，以及迟到回调里的配置，都不得盖住更新的快照，也不得把同一次 `id` 的审计再写一条。
 6. 协议解锁和运行自主度的本地审计只在匹配的更新快照证明请求值已经落定后写一次。
 7. 并发上限不再用回调里的 `config` 做 `SET_CONFIG`。值只跟随后的快照走。
@@ -39,6 +39,19 @@ GitHub: #806
 无人值守武装 `638-694` 走的是已有 `security.unattended.arm`，不是这组 `config.set`。它的回调在 `{ ok: true }` 后写审计，但仍等待 `security.unattended.status`，不在本计划里改它的授权语义。
 
 不改 `companion/src/message-router/handlers/config.ts` 的授权判断，不改 capability 模型，不改 outbound，不改 Linux 终端或 Whisper。不关闭 #806。
+
+## 入口覆盖
+
+每个入口都锁住「`callback({ ok: true })` 之后仍是权威快照、`settingsSave.status` 为 `pending`、审计没有提前增加」。拒绝、`lastError` 和断连共用危险操作关闭上的未知路径。协议解锁与运行自主度另外锁住确认前 0、确认后恰好 1、重复确认仍是 1。更旧修订不能盖住更新快照。并发上限的 `{ ok: true }` 不改变数字；它的回调若带上一份旧配置，也不能盖住更新快照。
+
+| 入口 | 传输 ok 后仍未成功 | 拒绝或 lastError | 确认后审计恰好 1 |
+|---|---|---|---|
+| 危险操作关 / 开 | 有 | 关有两种 | 开不写审计 |
+| 企业工具关 / 开 | 有 | 共用 | 开不写审计 |
+| 协议解锁关 / 开 | 有 | 共用 | 关、开都有 |
+| 编程建议、本机终端开关、本机终端应用、内嵌终端、ACP | 有 | 内嵌终端有 lastError | 无审计 |
+| 并发上限 | 有，且迟到 `config.updated` 不盖新快照 | 共用未知机制 | 无审计 |
+| 运行自主度武装 / 解除 | 有 | 解除先等通道回调 | 都有 |
 
 ## 红绿顺序
 
