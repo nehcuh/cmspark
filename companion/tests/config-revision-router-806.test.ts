@@ -66,11 +66,24 @@ test("config handler rejects stale revisions without bypassing security or expos
     assert.equal(JSON.stringify(stale).includes("owned-test-key"), false)
     assert.equal(config.getConfig().llm.model_name, "owned-first")
 
+    assert.equal(first.id, "settings-save:owned")
     const rejected = await set({
       config: { auto_approve_dangerous: true }, config_revision: first.config_revision,
     })
     assert.equal(rejected.type, "error")
+    assert.equal(rejected.id, "settings-save:owned")
     assert.notEqual(config.getConfig().security?.auto_approve_dangerous, true)
+    const uncorrelated = await handleConfigFamily("config.set", {
+      config: { model_name: "owned-no-id" }, config_revision: config.getConfigRevision(),
+    })
+    assert.equal(uncorrelated.type, "config.updated")
+    assert.equal(uncorrelated.id, undefined)
+    const next = await handleConfigFamily("config.set", {
+      id: "settings-save:next", config: { model_name: "owned-next-id" }, config_revision: uncorrelated.config_revision,
+    })
+    assert.equal(next.type, "config.updated")
+    assert.equal(next.id, "settings-save:next")
+    assert.equal(stale.id, "settings-save:owned")
 
     const secretRevision = config.getConfigRevision()
     const secret = await set({ config: { api_key: "owned-next-key" }, config_revision: secretRevision })

@@ -1194,12 +1194,11 @@ function immediateInFlight(save: ImmediateSave | null): boolean {
   return !!save && (save.status === "sending" || save.status === "accepted")
 }
 
-/** A dropped connection fails only the in-flight immediate write. A different main save stays pending. */
+/** A dropped connection fails each in-flight save on its own. Matching an error id never does this. */
 function savesAfterConnectionDrop(state: AgentState): Pick<AgentState, "settingsSave" | "immediateSave"> {
-  const inFlight = immediateInFlight(state.immediateSave)
   return {
-    settingsSave: state.settingsSave.pending && !inFlight ? { status: "unknown", pending: null } : state.settingsSave,
-    immediateSave: inFlight
+    settingsSave: state.settingsSave.pending ? { status: "unknown", pending: null } : state.settingsSave,
+    immediateSave: immediateInFlight(state.immediateSave)
       ? { ...state.immediateSave!, status: "unknown", error: "连接已断开，这次设置还没有被确认", matchedRevision: null, conflict: false }
       : state.immediateSave,
   }

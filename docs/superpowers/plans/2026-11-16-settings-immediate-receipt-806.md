@@ -43,7 +43,7 @@ GitHub: #806
 
 ## 入口覆盖
 
-每个入口都锁住「`callback({ ok: true })` 之后仍是权威快照、`immediateSave.status` 为 `accepted`、主保存 `settingsSave` 不变成 `pending` / `saved` / `unknown`、设置页保持打开、审计没有提前增加」。拒绝、`lastError` 和断连共用危险操作关闭上的未知路径，但未知写在 `immediateSave`，不写进主保存。协议解锁与运行自主度另外锁住：派发快照后、effect 刷新前审计仍是 0；刷新后恰好 1 且文案匹配；再刷新仍是 1。关是「已关闭协议解锁」，开是「已启用协议解锁」。更旧修订不能盖住更新快照，也不能再写一条审计或关掉设置页。并发上限的 `{ ok: true }` 不改变数字；它的回调若带上一份旧配置，也不能盖住更新快照。
+每个入口都锁住「`callback({ ok: true })` 之后仍是权威快照、`immediateSave.status` 为 `accepted`、主保存 `settingsSave` 不变成 `pending` / `saved` / `unknown`、设置页保持打开、审计没有提前增加」。拒绝和 `lastError` 只把匹配的即时请求标成 `unknown`。连接断开时，主保存 pending 和即时 `sending`/`accepted` 各自变成 `unknown`，草稿保留；重连不会把它们标成成功。某个 `settings-save:` error 只影响 id 相同的那一槽。协议解锁与运行自主度另外锁住：派发快照后、effect 刷新前审计仍是 0；刷新后恰好 1 且文案匹配；再刷新仍是 1。关是「已关闭协议解锁」，开是「已启用协议解锁」。更旧修订不能盖住更新快照，也不能再写一条审计或关掉设置页。并发上限的 `{ ok: true }` 不改变数字；它的回调若带上一份旧配置，也不能盖住更新快照。
 
 测试里另有不替代组件用例的探针：effect 只在刷新后写一次；正确的即时确认模型在无 draft、干净 draft、未保存 draft 下都能通过上述断言，且迟到旧快照不回滚、不关页、不重复审计；在 `ok: true` 回调里改配置或写审计会被抓住；在快照 dispatch 时同步写审计也会被刷新前的计数抓住。主保存探针保持现有行为：传输 ok 仍是 pending 且页面开着；匹配快照后干净 draft 会关页；没有 draft 的匹配快照是 `unknown`。
 

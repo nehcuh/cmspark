@@ -27,6 +27,7 @@ function harness() {
   const messages: any[] = []
   const messageCallbacks: Array<((response?: any) => void) | undefined> = []
   let lastError: { message: string } | undefined
+  let uuidCount = 0
   const slots = new Map<string, { cells: any[]; effects: any[] }>()
   let frame: { cells: any[]; effects: any[] } | undefined
   let cursor = 0
@@ -119,7 +120,7 @@ function harness() {
       exports: output, require: loadDependency, chrome: chromeValue, window: { setTimeout: () => 1, clearTimeout() {}, location: { pathname: "/sidepanel.html", search: "" }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true },
       document: { querySelector: () => null }, localStorage: { getItem: () => null, setItem() {} },
       CustomEvent: class { type: string; detail: any; constructor(type: string, options?: any) { this.type = type; this.detail = options?.detail } },
-      URL, URLSearchParams, AbortController, TextEncoder, TextDecoder, crypto: { randomUUID: () => "owned-uuid" },
+      URL, URLSearchParams, AbortController, TextEncoder, TextDecoder, crypto: { randomUUID: () => { uuidCount += 1; return uuidCount === 1 ? "owned-uuid" : `owned-uuid-${uuidCount}` } },
       requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout: () => 1, clearTimeout() {}, console,
     }, { timeout: 5000, filename })
     return output
@@ -806,19 +807,43 @@ test("a second immediate change waits instead of replacing the unanswered reques
   assert.deepEqual(gaps, [])
 })
 
-test("connection loss marks the immediate save unknown and leaves a different main save pending", () => {
+test("connection loss fails a pending main save and an immediate save without discarding the draft", () => {
   const ui = harness()
-  const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true, model_name: "old" }))
+  ready(ui, { auto_approve_dangerous: true, model_name: "old" })
+  ui.dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+  ui.find(ui.renderSlideout(), node => node.type === "button" && node.props.className === "cm-settings-save", "save").props.onClick()
+  const mainId = ui.state().settingsSave.pending?.id
+  assert.equal(ui.state().settingsSave.status, "pending")
+  const view = ui.openAdvanced(ui.renderSlideout())
   ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
   const gaps = acceptedReceipt(ui)
-  ui.dispatch({ type: "BEGIN_SETTINGS_SAVE", submission: { id: "settings-save:main", revision: "epoch:1", patch: {}, generations: {} } })
-  if (ui.state().settingsSave.status !== "pending" || ui.state().settingsSave.pending?.id !== "settings-save:main") gaps.push("main save was not pending")
+  const immediateId = ui.state().immediateSave?.id
+  if (!mainId || !immediateId || mainId === immediateId) gaps.push(`ids collided ${String(mainId)} ${String(immediateId)}`)
   ui.dispatch({ type: "SET_CONNECTION", state: "disconnected" })
+  if (ui.state().settingsSave.status !== "unknown" || ui.state().settingsSave.pending) gaps.push(`settingsSave=${ui.state().settingsSave.status}`)
   if (ui.state().immediateSave?.status !== "unknown") gaps.push(`immediateSave=${String(ui.state().immediateSave?.status)}`)
-  if (ui.state().settingsSave.status !== "pending" || ui.state().settingsSave.pending?.id !== "settings-save:main") gaps.push(`settingsSave=${ui.state().settingsSave.status}`)
-  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("config changed")
+  if (ui.state().settingsDraft?.value.model_name !== "mine") gaps.push("draft lost")
+  if (ui.state().config.auto_approve_dangerous !== true) gaps.push("flag changed")
+  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit increased")
   if (!ui.state().settingsOpen) gaps.push("settings closed")
-  if (!textOf(ui.renderSlideout()).includes("连接已断开")) gaps.push("error hidden")
+  ui.dispatch({ type: "SET_CONNECTION", state: "connected" })
+  if (ui.state().settingsSave.status !== "unknown") gaps.push(`reconnected settingsSave=${ui.state().settingsSave.status}`)
+  if (ui.state().immediateSave?.status === "accepted" || ui.state().immediateSave?.status === "confirmed") gaps.push("reconnected immediate looked successful")
+  if (ui.state().settingsDraft?.value.model_name !== "mine") gaps.push("draft lost on reconnect")
+  ui.find(ui.renderSlideout(), node => node.type === "button" && textOf(node) === "我已核对，允许重新保存", "retry").props.onClick()
+  if (ui.state().settingsSave.status !== "idle") gaps.push(`after retry=${ui.state().settingsSave.status}`)
+  if (ui.state().settingsDraft?.value.model_name !== "mine") gaps.push("draft lost on retry")
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, model_name: "old", auto_approve_dangerous: true },
+    revision: "epoch:2",
+  })
+  const save = ui.find(ui.renderSlideout(), node => node.type === "button" && node.props.className === "cm-settings-save", "save again")
+  if (save.props.disabled) gaps.push("save stayed disabled")
+  save.props.onClick()
+  if (ui.state().settingsSave.status !== "pending") gaps.push(`retry save=${ui.state().settingsSave.status}`)
+  if (ui.state().settingsDraft?.value.model_name !== "mine") gaps.push("draft lost after retry save")
+  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit after retry")
   assert.deepEqual(gaps, [])
 })
 
