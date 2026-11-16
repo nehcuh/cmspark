@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
+import { ShellFailureNavigation } from "./ShellEnableActions"
 import {
   DISTILL_ALL_ENTRY_LABEL,
   DISTILL_DISARM_LABEL,
@@ -1370,7 +1371,7 @@ export function PacksPanel() {
         要安装技能？→ 打开 Skills 导入
       </button>
 
-      {status && <div style={styles.status}>{status}</div>}
+      {status && <div style={styles.status}>{status}<ShellFailureNavigation text={status} /></div>}
 
       {segment === "scene" && (
         <>

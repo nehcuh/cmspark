@@ -1,6 +1,12 @@
 import { useAgentStore } from "../store/agentStore"
-import { runShellEnableNavigation, type ShellEnableNavigation } from "../utils/shell-enable-navigation"
+import { runShellEnableNavigation, shellEnableNavigationFor, type ShellEnableNavigation } from "../utils/shell-enable-navigation"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
+
+export function ShellFailureNavigation({ text }: { text: string }) {
+  const navigation = shellEnableNavigationFor(text)
+  if (!navigation) return null
+  return <ShellEnableActions navigation={navigation} />
+}
 
 export function ShellEnableActions({ navigation }: { navigation: ShellEnableNavigation }) {
   const host = useContextPanelHostOptional()

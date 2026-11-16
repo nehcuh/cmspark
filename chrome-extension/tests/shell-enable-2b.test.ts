@@ -9,6 +9,7 @@ import path from "node:path"
 import vm from "node:vm"
 import ts from "typescript"
 import { humanizeSidepanelGateError } from "../src/sidepanel/utils/gate-error-copy"
+import { extractShellCardData } from "../src/sidepanel/utils/shell-card-utils"
 
 const FORBIDDEN = ["modules.set_enabled", "modules.set_profile", "config.set", "pack.apply"]
 
@@ -59,6 +60,43 @@ test("navigation buttons open packs and the capability page without sending perm
   assert.deepEqual(sent.filter(message => FORBIDDEN.includes(message?.type)), [])
 })
 
+test("the first shell_exec module failure renders navigation on the tool card", async () => {
+  const result = {
+    success: false,
+    error: "module_disabled:shell — enable in settings (modules.set_enabled) before use",
+    data: { error_code: "SHELL_SCOPE_DENIED" },
+  }
+  const card = extractShellCardData({ command: "pwd" }, result)
+  assert.match(card.stderr, /module_disabled:shell/)
+  assert.match(card.body, /\[stderr\][\s\S]*module_disabled:shell/)
+  const unrelated = extractShellCardData({ command: "pwd" }, { success: false, error: "command not found", data: { stderr: "command not found", exit_code: 127 } })
+  const sent: any[] = []
+  const opened: string[] = []
+  const actions: any[] = []
+  const ports = { send(message: any) { sent.push(message) }, openPacks(id: string) { opened.push(id); return Promise.resolve(true) }, dispatch(action: any) { actions.push(action) } }
+  const shown = renderNavigation(null, { text: card.stderr }, ports)
+  assert.equal(shown.rows(shown.render()).filter((node: any) => node.type === "button").length, 2)
+  shown.rows(shown.render()).filter((node: any) => node.type === "button").forEach((node: any) => node.props.onClick())
+  const hidden = renderNavigation(null, { text: unrelated.stderr }, ports)
+  assert.equal(hidden.rows(hidden.render()).filter((node: any) => node.type === "button").length, 0)
+  assert.deepEqual(opened, ["packs"])
+  assert.equal(JSON.stringify(actions), JSON.stringify([{ type: "OPEN_SETTINGS_SECTION", section: "integrations" }]))
+  assert.deepEqual(sent.filter(message => FORBIDDEN.includes(message?.type)), [])
+})
+
+test("a formatted enterprise gate chat.error still exposes navigation after the machine code is removed", async () => {
+  const { gateErrorChatMessage } = await import("../src/sidepanel/utils/shell-enable-navigation")
+  const format = loadFormatChatErrorLine()
+  const formatted = format("non_recoverable", "enterprise_profile_required — set capability_profile=enterprise for shell/netsec")
+  assert.equal(formatted.includes("enterprise_profile_required"), false)
+  assert.match(formatted, /本机能力未开启或当前安装通道不足/)
+  const message = gateErrorChatMessage(formatted, "thread-a", "id-formatted")
+  assert.deepEqual(message.shellEnableNavigation, { packs: true, settingsSection: "integrations" })
+  assert.match(message.content, /本机能力/)
+  const other = gateErrorChatMessage(format("non_recoverable", "NETSEC_SCOPE target denied"), "thread-a", "id-other")
+  assert.equal(other.shellEnableNavigation, undefined)
+})
+
 test("module power stays off until modules.updated and recovers through refresh", () => {
   const ui = packsPanel()
   ui.deliver({ type: "modules.list", modules: { shell: { available: true, enabled: false }, netsec: { available: true, enabled: false } } })
@@ -86,7 +124,13 @@ test("module power stays off until modules.updated and recovers through refresh"
 
   ui.buttonIn(ui.render(), "本机命令", "开启").props.onClick()
   ui.deliver({ type: "error", error: "enterprise_profile_required — set capability_profile=enterprise for shell/netsec" })
-  assert.match(textOf(ui.render()), /enterprise_profile_required/)
+  const rejected = ui.render()
+  assert.match(textOf(rejected), /enterprise_profile_required/)
+  const gateButtons = ui.rows(rejected).filter((node: any) => node.type === "button" && /打开场景里的本机能力|打开能力档/.test(textOf(node)))
+  assert.equal(gateButtons.length, 2)
+  const before = ui.messages.length
+  gateButtons.forEach((node: any) => node.props.onClick())
+  assert.deepEqual(ui.messages.slice(before).filter(message => FORBIDDEN.includes(message?.type)), [])
   assert.match(textOf(ui.render()), /未开启：本机命令/)
   assert.equal(ui.button("选择工作区").props.disabled, false)
   ui.buttonIn(ui.render(), "本机命令", "开启").props.onClick()
@@ -111,6 +155,16 @@ test("module power stays off until modules.updated and recovers through refresh"
   assert.equal(enabled.includes("未开启：本机命令"), false)
 })
 
+function loadFormatChatErrorLine() {
+  const output: any = {}
+  const source = fs.readFileSync(path.resolve(process.cwd(), "../companion/src/capability/user-gate-copy.ts"), "utf8")
+  vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
+    exports: output,
+    require: () => { throw new Error("user-gate-copy must stay pure") },
+  }, { timeout: 5000, filename: "user-gate-copy.ts" })
+  return output.formatChatErrorLine as (level: string, raw: string) => string
+}
+
 function loadNavigationModule() {
   const output: any = {}
   const source = fs.readFileSync(path.resolve(process.cwd(), "src/sidepanel/utils/shell-enable-navigation.ts"), "utf8")
@@ -125,7 +179,36 @@ function loadNavigationModule() {
   return output
 }
 
+function renderNavigation(Component: any, props: any, ports: { send: (message: any) => void; openPacks: (id: string) => Promise<boolean>; dispatch: (action: any) => void }) {
+  return renderComponent(Component, props, ports)
+}
+
 function renderActions(load: () => Promise<any>, ports: { send: (message: any) => void; openPacks: (id: string) => Promise<boolean>; dispatch: (action: any) => void }) {
+  return renderComponent(loadNavigationComponent(), { navigation: { packs: true, settingsSection: "integrations" } }, ports, load)
+}
+
+function loadNavigationComponent() {
+  return renderComponentModule().ShellEnableActions
+}
+
+function renderComponentModule() {
+  const output: any = {}
+  const source = fs.readFileSync(path.resolve(process.cwd(), "src/sidepanel/components/ShellEnableActions.tsx"), "utf8")
+  vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText, {
+    exports: output,
+    require: (id: string) => {
+      if (id === "react") return { useState: (v: any) => [v, () => {}], useRef: (v: any) => ({ current: v }), useEffect() {} }
+      if (id === "react/jsx-runtime") return { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }), Fragment: "fragment" }
+      if (id === "../store/agentStore") return { useAgentStore: () => ({ dispatch() {} }) }
+      if (id === "./ContextPanelHost") return { useContextPanelHostOptional: () => null }
+      if (id === "../utils/shell-enable-navigation") return loadNavigationModule()
+      throw new Error(id)
+    },
+  }, { timeout: 5000, filename: "ShellEnableActions.tsx" })
+  return output
+}
+
+function renderComponent(Component: any, props: any, ports: { send: (message: any) => void; openPacks: (id: string) => Promise<boolean>; dispatch: (action: any) => void }, load?: () => Promise<any>) {
   const slots = new Map<string, { cells: any[]; effects: any[] }>()
   let frame: { cells: any[]; effects: any[] } | undefined
   let cursor = 0
@@ -168,8 +251,13 @@ function renderActions(load: () => Promise<any>, ports: { send: (message: any) =
     chrome: { runtime: { sendMessage: ports.send } },
   }, { timeout: 5000, filename: "ShellEnableActions.tsx" })
   void load
-  const rows = (node: any): any[] => !node || typeof node !== "object" ? [] : Array.isArray(node) ? node.flatMap(rows) : [node, ...rows(node.props?.children)]
-  return { rows, render() { if (!slots.has("actions")) slots.set("actions", { cells: [], effects: [] }); frame = slots.get("actions"); cursor = 0; effectCursor = 0; const ui = output.ShellEnableActions({ navigation: { packs: true, settingsSection: "integrations" } }); frame = undefined; flush(); return ui } }
+  const rows = (node: any, depth = 0): any[] => {
+    if (!node || typeof node !== "object" || depth > 6) return []
+    if (Array.isArray(node)) return node.flatMap(child => rows(child, depth))
+    const rendered = typeof node.type === "function" ? rows(node.type(node.props), depth + 1) : []
+    return [node, ...rows(node.props?.children, depth), ...rendered]
+  }
+  return { rows, render() { if (!slots.has("actions")) slots.set("actions", { cells: [], effects: [] }); frame = slots.get("actions"); cursor = 0; effectCursor = 0; const ui = (props.text !== undefined ? output.ShellFailureNavigation : output.ShellEnableActions)(props); frame = undefined; flush(); return ui } }
 }
 
 function packsPanel() {
@@ -219,6 +307,9 @@ function packsPanel() {
         if (id === "react/jsx-runtime") return { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }), Fragment: "fragment" }
         if (id === "../store/agentStore") return { useAgentStore: () => ({ state: { activeThreadId: "thread-a", threads: [], knowledgeDocs: [] }, dispatch: stableDispatch }) }
         if (id === "./ContextPanelHost") return { useContextPanelHostOptional: () => null }
+        if (id === "./ShellEnableActions") return load(path.join(root, "components/ShellEnableActions.tsx"))
+        if (id === "../utils/shell-enable-navigation" || id === "./gate-error-copy") return id.endsWith("gate-error-copy") ? { humanizeSidepanelGateError } : loadNavigationModule()
+        if (id === "../types") return {}
         if (id === "../ui/tokens") return load(path.join(root, "ui/tokens.ts"))
         if (id === "../packs-panel-logic") return load(path.join(root, "packs-panel-logic.ts"))
         throw new Error(`unexpected ${id}`)
@@ -237,9 +328,15 @@ function packsPanel() {
   }
   const stableDispatch = () => {}
   const panel = load(path.join(root, "components/PacksPanel.tsx"))
-  const rows = (node: any): any[] => !node || typeof node !== "object" ? [] : Array.isArray(node) ? node.flatMap(rows) : [node, ...rows(node.props?.children)]
+  const rows = (node: any, depth = 0): any[] => {
+    if (!node || typeof node !== "object" || depth > 6) return []
+    if (Array.isArray(node)) return node.flatMap(child => rows(child, depth))
+    const rendered = typeof node.type === "function" ? rows(node.type(node.props), depth + 1) : []
+    return [node, ...rows(node.props?.children, depth), ...rendered]
+  }
   const api = {
     messages,
+    rows,
     render() {
       if (!slots.has("packs")) slots.set("packs", { cells: [], effects: [] })
       frame = slots.get("packs"); cursor = 0; effectCursor = 0

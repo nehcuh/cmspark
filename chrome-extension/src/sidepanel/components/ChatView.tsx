@@ -11,7 +11,7 @@ import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 import { extractComputerCardData } from "../utils/computer-utils"
 import { DocumentWarning } from "./DocumentWarning"
-import { ShellEnableActions } from "./ShellEnableActions"
+import { ShellEnableActions, ShellFailureNavigation } from "./ShellEnableActions"
 import {
   SETTINGS_POINTER_CTA,
   extractSettingsPointer,
@@ -1563,6 +1563,7 @@ function ToolCallCard({ tc }: { tc: any }) {
                   ? shellCard.body
                   : shellCard.body.slice(0, SHELL_BODY_PREVIEW_CHARS) + "\n…"}
               </pre>
+              <ShellFailureNavigation text={shellCard.stderr} />
               {(shellBodyLong || hasResult) && (
                 <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
                   {shellBodyLong && (
