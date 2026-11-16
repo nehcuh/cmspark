@@ -5454,7 +5454,9 @@ async function dispatchMessage(
       }
       const r = setModuleEnabled(rest.module, rest.enabled, rest.by || "user")
       if (!r.ok) return { type: "error", error: r.error }
-      return { type: "modules.updated", modules: r.modules }
+      const { repairShellProjection, shellProvisionView } = await import("./capability/shell-provision")
+      repairShellProjection()
+      return { type: "modules.updated", modules: r.modules, shell_provision: shellProvisionView(getConfig()) }
     }
     case "modules.set_profile": {
       // #284: settings 能力档 switch — same pack-engine persistence path; the
@@ -5490,7 +5492,9 @@ async function dispatchMessage(
       }
       const r = updateModuleConfig(rest.module as any, rest.patch || {})
       if (!r.ok) return { type: "error", error: r.error }
-      return { type: "modules.updated", module: r.module, modules: structuredClone(getConfig().modules) }
+      const { repairShellProjection, shellProvisionView } = await import("./capability/shell-provision")
+      repairShellProjection()
+      return { type: "modules.updated", module: r.module, modules: structuredClone(getConfig().modules), shell_provision: shellProvisionView(getConfig()) }
     }
     case "workspace.pick": {
       // Optional thread_id: pick + bind in one step (avoids UI race / stale set)

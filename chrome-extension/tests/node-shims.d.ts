@@ -10,6 +10,7 @@ declare module "node:timers" {
 
 declare module "node:fs" {
   export function readFileSync(path: string, encoding: string): string
+  export function writeFileSync(path: string, data: string): void
   export function mkdtempSync(prefix: string): string
   export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void
   export function existsSync(path: string): boolean

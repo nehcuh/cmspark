@@ -2,7 +2,7 @@
 // settings (NOT the L2 forceConfirm tool system); sends only modules.set_profile
 // via the consent-gated helper — never the raw settings-config channel.
 
-import { useEffect, useState, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import {
   buildProfileSwitchConfirm,
@@ -17,6 +17,7 @@ export function CapabilityProfileSection() {
   const [modules, setModules] = useState<Record<string, ModuleStateView>>({})
   const [status, setStatus] = useState("")
   const [busy, setBusy] = useState(false)
+  const pendingProfile = useRef<CapabilityProfile | null>(null)
 
   const shellEnabled = modules.shell?.enabled === true
   const netsecEnabled = modules.netsec?.enabled === true
@@ -36,17 +37,29 @@ export function CapabilityProfileSection() {
           setProfile(msg.capability_profile === "enterprise" ? "enterprise" : "community")
         }
       }
+      if (msg?.type === "modules.updated" && msg.capability_profile !== "community" && msg.capability_profile !== "enterprise") {
+        if (msg.modules) setModules(msg.modules)
+        return
+      }
       if (msg?.type === "modules.updated" || msg?.type === "modules.profile.result") {
-        setBusy(false)
         const next = msg.capability_profile
         const view = msg.shell_provision
         const authoritative = (next === "enterprise" && view === "provided") || (next === "community" && (view === "community" || view === "unavailable"))
-        if (!authoritative) {
+        if (pendingProfile.current == null) {
+          if (!authoritative) return
+          if (msg.modules) setModules(msg.modules)
+          setProfile(next === "enterprise" ? "enterprise" : "community")
+          return
+        }
+        const expected = pendingProfile.current
+        pendingProfile.current = null
+        setBusy(false)
+        if (!authoritative || next !== expected) {
           flash("没有权威的能力档回执，界面保持切换前的状态", 5000)
           return
         }
         if (msg.modules) setModules(msg.modules)
-        if (typeof next === "string") setProfile(next === "enterprise" ? "enterprise" : "community")
+        setProfile(next === "enterprise" ? "enterprise" : "community")
         const disabled = Array.isArray(msg.modules_disabled) ? msg.modules_disabled : []
         flash(disabled.length > 0 ? `能力档已切换；已关闭 ${disabled.join("、")}` : "能力档已更新", 3500)
       }
@@ -66,6 +79,7 @@ export function CapabilityProfileSection() {
     const confirmed = window.confirm(`${confirm.title}\n\n${confirm.body}`)
     const frame = resolveProfileSwitchSend({ confirmed, from: profile, to })
     if (!frame) return
+    pendingProfile.current = to
     setBusy(true)
     chrome.runtime.sendMessage(frame)
   }
