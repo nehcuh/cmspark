@@ -4,7 +4,7 @@
 
 产品版本 **1.0.1**。本段核对的基线提交是 `16f3048b9b83b813648830517d0a1bd9994bf564`。Node 要求看 `companion/package.json` 与仓库根 `package.json` 的 `engines.node`（`>=22.23.4 <23`）。CI 固定版本看 `.github/workflows/ci.yml` 的 `node-version`（`22.23.4`）。`chrome-extension/package.json` 没有单独的 `engines` 字段。
 
-现行测试规模以上面两条命令的现数为准。口径是对应目录中文件名匹配 `*.test.ts` 的个数。`*.test.mjs`、`*.test.js` 和 `scripts/tests` 另计。该文件数也不同于 `node:test` 跑出来的用例条数。
+在仓库根执行下面两条命令。现行 `*.test.ts` 数以命令结果为准。口径是对应目录中文件名匹配 `*.test.ts` 的个数。`*.test.mjs`、`*.test.js` 和 `scripts/tests` 另计。该文件数也不同于 `node:test` 跑出来的用例条数。
 
 ```bash
 find companion/tests -name '*.test.ts' | wc -l
