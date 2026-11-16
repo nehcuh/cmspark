@@ -2,7 +2,7 @@
 
 GitHub: #806
 
-状态：阶段 1b 已按本文件实现。即时保存用独立的 `immediateSave`，确认和安全审计发生在 SettingsSlideout 的 effect。`config.set` 的既有错误帧和成功帧带回原来的 `settings-save:` id，没有新的超时协议。阶段 3a 只追加设计和会失败的编程面板测试，不改生产代码。#806 仍不关闭。
+状态：阶段 1b 与阶段 3b 已按本文件实现。即时保存用独立的 `immediateSave`，确认和安全审计发生在 SettingsSlideout 的 effect。编程面板的本机终端勾选复用这一槽。#806 仍不关闭。
 
 ## 现有回执
 
@@ -108,4 +108,16 @@ ACP 首次启用在 `doStart` 和绑定工作区后的 effect。它明确不 `SE
 
 ### 本节点红绿
 
-阶段 3a 的四条产品用例应当失败，失败原因是提前 `SET_CONFIG`、缺少回执，或并发点击仍发送并改 config。探针和 ACP 基线应当通过。不在本节点修生产代码。
+阶段 3a 的四条产品用例先失败，原因是提前 `SET_CONFIG`、缺少回执，断连和匹配 error 的后半段没有执行。探针和 ACP 基线通过。3a 不改生产代码。
+
+### 阶段 3b
+
+`CodingAgentPanel.tsx` 的本机终端勾选不再 `SET_CONFIG`。未连接或没有 `configRevision` 时不发送，并显示「尚未连接到 Companion，这次设置没有发送」。`sending` / `accepted` 时不另发、不换 id、不清审计，面板显示「上一次设置还在等待确认」。`unknown` 不挡住下一次点击。新的点击使用新的 `settings-save:` id 和当前 revision，不带审计。
+
+传输 `{ ok: true }` 只把状态标成 `accepted`。匹配快照后，仍由常驻的 SettingsSlideout effect 确认。勾选继续读 store 里的权威值。`lastError`、`ok: false`、断连和 id 匹配的 error 把这一槽标成 `unknown`，只有补丁含 `open_local_terminal` 时才显示在编程面板。其它即时保存的错误不显示成这项。主保存仍只用 `settingsSave`。
+
+ACP 的 `doStart`、`acp.list` 和 `acp.ui_start` 顺序没有改。没有新增短语、三旗、capability、outbound 或 Linux 行为。
+
+3b 之前，断连与匹配 error 的后半段因为没有回调而没有执行。接线后这两段和权威确认段都会跑到。`unknown` 后的新 id、无修订、断连不发送、其它错误不误显示，以及设置页请求进行中时面板点击不覆盖，都有对应用例。
+
+接线后的本地回归：`npx tsc -p chrome-extension/tsconfig.json --noEmit` 退出码 0。`npm --prefix chrome-extension test` 退出码 0，1935 通过，0 失败，0 跳过。`npm --prefix companion test` 退出码 0，9691 项，9502 通过，0 失败，189 跳过。这些是隔离测试，不是浏览器点击。

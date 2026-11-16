@@ -27,6 +27,7 @@ function harness() {
   const messages: any[] = []
   const callbacks: Array<((response?: any) => void) | undefined> = []
   let lastError: { message: string } | undefined
+  let uuid = 0
   const slots = new Map<string, { cells: any[]; effects: any[] }>()
   let frame: { cells: any[]; effects: any[] } | undefined
   let cursor = 0
@@ -111,7 +112,7 @@ function harness() {
       window: { setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {}, requestAnimationFrame: () => 1, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { pathname: "/sidepanel.html", search: "" } },
       document: { addEventListener() {}, removeEventListener() {}, hidden: false },
       navigator: { userAgent: "node", clipboard: { writeText: async () => {} } },
-      crypto: { randomUUID: () => "panel-uuid" },
+      crypto: { randomUUID: () => `panel-${++uuid}` },
       setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
       console,
     }, { timeout: 5000, filename: path.basename(filename) })
@@ -245,7 +246,8 @@ test("the coding panel local terminal waits for an authoritative snapshot", () =
   if (ui.terminalInput(again)?.props.checked !== false) gaps.push("checkbox left the snapshot")
   const index = ui.messages.findIndex(message => message?.type === "config.set" && message.config?.coding_handoff)
   gaps.push(...receiptGaps(ui, index))
-  if (typeof ui.callbacks[index] === "function") {
+  if (typeof ui.callbacks[index] !== "function") gaps.push("authoritative confirmation did not run")
+  else {
     ui.callbacks[index]!({ ok: true })
     ui.renderPanel()
     ui.renderClosedSettings()
@@ -294,7 +296,8 @@ test("disconnect and a matching error recover the coding panel request without t
   if (ui.state().config.coding_handoff?.open_local_terminal !== false) gaps.push("config changed before disconnect recovery")
   const index = ui.messages.findIndex(message => message?.type === "config.set" && message.config?.coding_handoff)
   gaps.push(...receiptGaps(ui, index))
-  if (typeof ui.callbacks[index] === "function") {
+  if (typeof ui.callbacks[index] !== "function") gaps.push("disconnect recovery did not run")
+  else {
     ui.callbacks[index]!({ ok: true })
     ui.dispatch({ type: "SET_CONNECTION", state: "disconnected" })
     const dropped = ui.renderPanel()
@@ -311,7 +314,8 @@ test("disconnect and a matching error recover the coding panel request without t
   assert.ok(rejectedInput)
   rejectedInput.props.onChange({ target: { checked: true } })
   const rejectedIndex = rejected.messages.findIndex(message => message?.type === "config.set" && message.config?.coding_handoff)
-  if (typeof rejected.messages[rejectedIndex]?.id === "string") {
+  if (typeof rejected.messages[rejectedIndex]?.id !== "string") gaps.push("matching error recovery did not run")
+  else {
     if (typeof rejected.callbacks[rejectedIndex] === "function") rejected.callbacks[rejectedIndex]!({ ok: true })
     rejected.errorSocket().send({ type: "error", id: rejected.messages[rejectedIndex].id, error: "这次写入被拒绝" })
     const view = rejected.renderPanel()
@@ -342,6 +346,95 @@ test("a coding panel click does not replace an in-flight immediate save or its a
   if (ui.messages.slice(before).some(message => message?.type === "config.set")) gaps.push("panel sent config.set while another immediate save was in flight")
   if (!textOf(ui.renderPanel()).includes("上一次设置还在等待确认")) gaps.push("rejected click is not visible")
   assert.deepEqual(gaps, [])
+})
+
+test("an unknown terminal save can be retried with a new id", () => {
+  const ui = harness()
+  const first = ui.terminalInput(ui.prepare())
+  assert.ok(first)
+  first.props.onChange({ target: { checked: true } })
+  const index = ui.messages.findIndex(message => message?.type === "config.set" && message.config?.coding_handoff)
+  assert.equal(typeof ui.callbacks[index], "function")
+  ui.callbacks[index]!({ ok: false, error: "写入失败" })
+  const failed = ui.renderPanel()
+  assert.equal(ui.state().immediateSave?.status, "unknown")
+  assert.equal(textOf(failed).includes("写入失败"), true)
+  const retry = ui.terminalInput(failed)
+  assert.ok(retry)
+  const before = ui.messages.length
+  retry.props.onChange({ target: { checked: true } })
+  const again = ui.messages.slice(before).filter(message => message?.type === "config.set")
+  assert.equal(again.length, 1)
+  assert.ok(again[0].id !== ui.messages[index].id)
+  assert.match(again[0].id, /^settings-save:[A-Za-z0-9_-]+$/)
+  const callback = ui.callbacks[ui.messages.lastIndexOf(again[0])]
+  assert.equal(typeof callback, "function")
+  callback!({ ok: true })
+  assert.equal(ui.state().immediateSave?.status, "accepted")
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT", id: again[0].id, revision: "epoch:2",
+    config: { ...ui.state().config, coding_handoff: { open_local_terminal: true } },
+  })
+  ui.renderClosedSettings()
+  const confirmed = ui.renderPanel()
+  assert.equal(ui.state().immediateSave?.status, "confirmed")
+  assert.equal(ui.terminalInput(confirmed)?.props.checked, true)
+  assert.equal(textOf(confirmed).includes("写入失败"), false)
+})
+
+test("no revision and a dropped connection do not send a terminal config.set", () => {
+  const offline = harness()
+  offline.prepare()
+  offline.dispatch({ type: "SET_CONNECTION", state: "disconnected" })
+  offline.dispatch({ type: "SET_CONNECTION", state: "connected" })
+  assert.equal(offline.state().connectionState, "connected")
+  assert.equal(offline.state().configRevision, null)
+  const before = offline.messages.length
+  const input = offline.terminalInput(offline.renderPanel())
+  assert.ok(input)
+  input.props.onChange({ target: { checked: true } })
+  assert.equal(offline.messages.slice(before).some(message => message?.type === "config.set"), false)
+  assert.equal(textOf(offline.renderPanel()).includes("没有发送"), true)
+  assert.equal(offline.state().config.coding_handoff?.open_local_terminal, false)
+
+  const dropped = harness()
+  dropped.prepare()
+  dropped.dispatch({ type: "SET_CONNECTION", state: "disconnected" })
+  const droppedBefore = dropped.messages.length
+  const droppedInput = dropped.terminalInput(dropped.renderPanel())
+  assert.ok(droppedInput)
+  droppedInput.props.onChange({ target: { checked: true } })
+  assert.equal(dropped.messages.slice(droppedBefore).some(message => message?.type === "config.set"), false)
+  assert.equal(dropped.state().config.coding_handoff?.open_local_terminal, false)
+})
+
+test("another immediate save error is not shown as the terminal switch", () => {
+  const ui = harness()
+  ui.prepare()
+  ui.dispatch({ type: "BEGIN_IMMEDIATE_SAVE", id: "settings-save:other", revision: "epoch:1", patch: { allow_all_schemes: false }, audit: null })
+  ui.dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id: "settings-save:other", error: "协议解锁失败" })
+  const view = ui.renderPanel()
+  assert.equal(textOf(view).includes("协议解锁失败"), false)
+  assert.equal(ui.terminalInput(view)?.props.checked, false)
+})
+
+test("a settings terminal request and the next panel click do not overwrite each other", () => {
+  const ui = harness()
+  ui.prepare()
+  ui.dispatch({ type: "SET_SETTINGS_OPEN", open: true })
+  const settings = ui.renderClosedSettings()
+  const section = ui.rows(settings).find((node: any) => node.type?.name === "CodingHandoffSettingsSection")
+  assert.ok(section, "settings coding section")
+  section.props.onToggleOpenLocalTerminal(true)
+  const sent = ui.configSets().filter(message => message.config?.coding_handoff)
+  assert.equal(sent.length, 1)
+  const panel = ui.renderPanel()
+  const before = ui.messages.length
+  ui.terminalInput(panel).props.onChange({ target: { checked: false } })
+  assert.equal(ui.messages.slice(before).some(message => message?.type === "config.set"), false)
+  assert.equal(ui.state().immediateSave?.id, sent[0].id)
+  assert.equal(ui.state().config.coding_handoff.open_local_terminal, false)
+  assert.equal(textOf(ui.renderPanel()).includes("上一次设置还在等待确认"), true)
 })
 
 test("baseline: first ACP enable waits for acp.list and does not change local config", () => {
