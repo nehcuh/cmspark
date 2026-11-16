@@ -2,7 +2,7 @@
 
 GitHub: #806
 
-状态：阶段 1b 已按本文件实现。即时保存用独立的 `immediateSave`，确认和安全审计发生在 SettingsSlideout 的 effect。`config.set` 的既有错误帧和成功帧带回原来的 `settings-save:` id，没有新的超时协议。配套测试应变绿；#806 仍不关闭。
+状态：阶段 1b 已按本文件实现。即时保存用独立的 `immediateSave`，确认和安全审计发生在 SettingsSlideout 的 effect。`config.set` 的既有错误帧和成功帧带回原来的 `settings-save:` id，没有新的超时协议。阶段 3a 只追加设计和会失败的编程面板测试，不改生产代码。#806 仍不关闭。
 
 ## 现有回执
 
@@ -59,8 +59,53 @@ GitHub: #806
 
 ## 红绿顺序
 
-当前停在红。下一节点先让上述测试变绿，再跑 `settings-draft-store-806.test.ts` 和 `npm --prefix chrome-extension test`。Companion 全量测试不因这次 UI 回执而必须重跑，除非修复碰到了 Companion。
+阶段 1b 已让上述测试变绿，并跑过 `settings-draft-store-806.test.ts` 和扩展全量。Companion 全量测试不因这次 UI 回执而必须重跑，除非修复碰到了 Companion。
 
 ## 本阶段不解释的原生失败
 
 `680e790697c80ed4e8aa5fa736ff10551412ab0b` 的 CI `build` 成功。`smoke (windows-native)` 失败：`activity-apps-825.test.js` 的 Windows PowerShell Apps producer 约 15 秒后 `D825_PRODUCER_PROCESS {"code":null,"killed":true,"signal":"SIGTERM"}`。评审当时 `smoke (windows-latest)` 仍在运行；随后对同一 SHA 的复查显示它已成功结束。日志没有给出这次 SIGTERM 的唯一原因。这里不把它记成产品缺陷，也不改原生代码。
+
+## 阶段 3a：编程面板本机终端
+
+阶段 2 独立评审通过 `8ed7b534914d5966d54afb62c59937b265c9badb`。本节点只写设计和失败测试，不改生产代码。3b 才能接线。
+
+### 已核对的真实路径
+
+`App.tsx` 始终挂着 `SettingsSlideout` 和 `CodingAgentPanel`。设置页关闭时 `SettingsSlideout` 仍执行 `if (!state.settingsOpen) return null` 之前的 hook。确认 effect 在这个 return 之前，所以设置页关闭时它仍然能把 `accepted` 的 `immediateSave` 收成 `confirmed`。探针已覆盖这条路径。不能把确认 effect 只放进设置页打开后的分支，否则编程面板在设置页关闭时会永远停在 `accepted`。
+
+编程面板的本机终端勾选在 `CodingAgentPanel.tsx` `toggleOpenLocalTerminal`。它先 `SET_CONFIG`，再发没有 id、没有 `config_revision`、没有回调的 `config.set`。勾选读的是 store 里的 `coding_handoff.open_local_terminal`。这和设置页同一项，但没有走 `immediateSave`。
+
+ACP 首次启用在 `doStart` 和绑定工作区后的 effect。它明确不 `SET_CONFIG`、不乐观 `SET_ACP_LIST`。传输 `{ ok: true }` 之后轮询 `acp.list`，store 变成 enabled 才 `acp.ui_start`。会话创建的授权前提是 `acp.list`，不是设置回执。给它补 `settings-save:` id 并要求先等 `immediateSave` 确认，会把启动改成依赖设置页 effect；effect 不到达时界面会一直等。这不是本轮「先改本地 config」的同类缺陷，3a/3b 不改这两处。基线测试锁住：传输 ok 不改本地 config，也不发 `acp.ui_start`。
+
+### 最小设计
+
+不新增第二套保存协议，也不拆 `immediateSave`。编程面板本机终端复用现有单槽：
+
+```text
+点击
+  未连接或没有 configRevision：不改 config，不发送，面板显示尚未连接
+  immediateSave 已是 sending/accepted：不改 config，不发送，保留原 id 和 audit，面板显示上一次设置还在等待确认
+  否则 BEGIN_IMMEDIATE_SAVE
+    config.set { id: settings-save:…, config_revision, config: { coding_handoff: { open_local_terminal } } }
+    lastError 或 ok 不是 true：SETTINGS_SAVE_UNKNOWN，勾选留在快照，面板显示错误
+    ok true：只到 accepted，勾选仍是快照
+    匹配的 config.updated 把补丁写进快照后，仍由 SettingsSlideout 的 effect 确认
+    冲突快照：同一 effect 标 unknown
+断连：主保存 pending 和即时 sending/accepted 各自 unknown
+匹配的 error 帧：只影响同一个 id
+主保存继续只用 settingsSave，面板不 BEGIN_SETTINGS_SAVE
+```
+
+面板在设置页关闭时自己渲染这条 `immediateSave` 的错误。错误只在补丁含 `open_local_terminal` 时出现在编程面板，避免把协议解锁的失败显示成本机终端失败。确认仍由已挂载的 SettingsSlideout effect 完成。本机终端这项没有安全审计；进行中的别的即时保存审计不能被这次点击清掉或替换。
+
+3b 只改 `CodingAgentPanel.tsx` 的这个勾选和它的可见错误。不改 Companion 授权、capability、outbound、短语、三旗、Linux 专项，也不改 ACP 的 list/创建顺序。
+
+### 验收
+
+产品用例渲染真实 `CodingAgentPanel`。探针只证明关闭的设置页仍能确认，不代替面板点击。ACP 用例是排除基线，不是新产品要求。
+
+正确实现要通过：点击后 config 和勾选不变；消息带 `settings-save:` id 与当前 revision；传输 ok 仍是 `accepted`；权威快照和关闭状态下的设置页 effect 之后变成 `confirmed` 且勾选跟上；lastError、断连、匹配 error 可见且勾选回到快照；主保存 pending 不被面板请求替换；已有即时保存的 id 和 audit 保留，面板不另发 `config.set`。阶段 1 和阶段 2 套件保持绿色。
+
+### 本节点红绿
+
+阶段 3a 的四条产品用例应当失败，失败原因是提前 `SET_CONFIG`、缺少回执，或并发点击仍发送并改 config。探针和 ACP 基线应当通过。不在本节点修生产代码。
