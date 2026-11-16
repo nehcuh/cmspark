@@ -20,18 +20,19 @@ GitHub: #806
 - 协议解锁关闭 `536-552`（含立即审计），武装确认 `555-578`（含立即审计）
 - `applySecurityFlagsTarget` `607-621`：运行自主度武装在 `710-714` 同步调用；解除武装在通道回调 `733-737` 里调用。两者都会合并三旗并写审计
 - 编程建议 `3220-3233`，本机终端 `3235-3248`，内嵌终端 `3254-3262`，本机终端应用 `3264-3277`，ACP 总开关 `3279-3292`
+- 保存完整操作史 `3449-3458`：同样先 `SET_CONFIG` 再发没有回执的 `config.set`，纳入同一个 `immediateSave`，不另做权限模型
 - 并发上限 `3200-3205` 有回调，但消息仍没有 `id` / `config_revision`；回调看到 `response.type === "config.updated"` 才 `SET_CONFIG`。后台 `config.set` 实际只回 `{ ok: true }` 或 `{ ok: false, error }`
 
 `config.set` 没有墙钟超时。现有「未知」只来自三处：保存回调里的 `chrome.runtime.lastError` 或 `ok: false`（`SettingsSlideout.tsx` `415`）、WebSocket 上 `id` 匹配 `settings-save:` 的 `error` 帧（`useWebSocket.ts` `2389-2393`）、以及 pending 保存期间断连（`agentStore.tsx` `1197-1204`）。本计划不新造超时消息。
 
 ## 最小修复（本阶段不实施）
 
-只改 `chrome-extension/src/sidepanel/components/SettingsSlideout.tsx` 里上面列出的提交回调。
+改 `chrome-extension/src/sidepanel/components/SettingsSlideout.tsx` 的提交回调和确认 effect，并在 `chrome-extension/src/sidepanel/store/agentStore.tsx` 增加与 `settingsSave` 分开的 `immediateSave`。`SET_CONFIG_SNAPSHOT` 不把即时保存的 id 当成主保存 pending。
 
 1. 点击后不执行 `SET_CONFIG`。勾选、并发数字和终端应用继续显示最后一次已应用快照。
 2. 每次即时 `config.set` 带主保存已有的 `settings-save:` id 和当前 `config_revision`，并登记回调。武装三旗时继续附带现有 `confirmation_phrase`。短语常量、Companion 校验、三旗含义都不改。
-3. 回调 `{ ok: false }` 或 `lastError`：快照值不动，`settingsSave.status` 变为已有的 `unknown`，审计不增加。
-4. 回调 `{ ok: true }` 只表示传输被接受，状态保持 `pending`。测试必须实际调用这个回调后再看勾选、`state.config` 和审计；缺回调本身失败，不能跳过。值和审计都等到对应 `config.updated` 快照。审计入口在快照前是 0，匹配快照后恰好 1，重复同一快照仍是 1。
+3. 回调 `{ ok: false }` 或 `lastError`：快照值不动，单独的 `immediateSave.status` 变为 `unknown`，不占用主保存的 `settingsSave`，审计不增加，设置页保持打开。
+4. 回调 `{ ok: true }` 只把 `immediateSave.status` 标成 `accepted`。这是尚未被权威快照确认的进展，不复用 `BEGIN_SETTINGS_SAVE`。主保存的 `pending/saved/unknown` 保持原语义：匹配快照且没有 draft 会 `unknown`，干净 draft 会 `saved`，`SettingsSlideout` 在 `saved` 后关闭设置页。即时保存成功不能走这条路径，所以不误报 `unknown`、不关闭设置页，也不清掉用户已经改过的 draft。审计由设置页在下一次真实 render 的 effect 里写，不写进 `SET_CONFIG_SNAPSHOT` reducer。确认前审计是 0；effect 刷新后恰好 1，重复刷新仍是 1。
 5. 更旧修订、无法比较的修订，以及迟到回调里的配置，都不得盖住更新的快照，也不得把同一次 `id` 的审计再写一条。
 6. 协议解锁和运行自主度的本地审计只在匹配的更新快照证明请求值已经落定后写一次。
 7. 并发上限不再用回调里的 `config` 做 `SET_CONFIG`。值只跟随后的快照走。
@@ -42,7 +43,9 @@ GitHub: #806
 
 ## 入口覆盖
 
-每个入口都锁住「`callback({ ok: true })` 之后仍是权威快照、`settingsSave.status` 为 `pending`、审计没有提前增加」。拒绝、`lastError` 和断连共用危险操作关闭上的未知路径。协议解锁与运行自主度另外锁住确认前 0、确认后恰好 1、重复确认仍是 1。更旧修订不能盖住更新快照。并发上限的 `{ ok: true }` 不改变数字；它的回调若带上一份旧配置，也不能盖住更新快照。
+每个入口都锁住「`callback({ ok: true })` 之后仍是权威快照、`immediateSave.status` 为 `accepted`、主保存 `settingsSave` 不变成 `pending` / `saved` / `unknown`、设置页保持打开、审计没有提前增加」。拒绝、`lastError` 和断连共用危险操作关闭上的未知路径，但未知写在 `immediateSave`，不写进主保存。协议解锁与运行自主度另外锁住：派发快照后、effect 刷新前审计仍是 0；刷新后恰好 1 且文案匹配；再刷新仍是 1。关是「已关闭协议解锁」，开是「已启用协议解锁」。更旧修订不能盖住更新快照，也不能再写一条审计或关掉设置页。并发上限的 `{ ok: true }` 不改变数字；它的回调若带上一份旧配置，也不能盖住更新快照。
+
+测试里另有不替代组件用例的探针：effect 只在刷新后写一次；正确的即时确认模型在无 draft、干净 draft、未保存 draft 下都能通过上述断言，且迟到旧快照不回滚、不关页、不重复审计；在 `ok: true` 回调里改配置或写审计会被抓住；在快照 dispatch 时同步写审计也会被刷新前的计数抓住。主保存探针保持现有行为：传输 ok 仍是 pending 且页面开着；匹配快照后干净 draft 会关页；没有 draft 的匹配快照是 `unknown`。
 
 | 入口 | 传输 ok 后仍未成功 | 拒绝或 lastError | 确认后审计恰好 1 |
 |---|---|---|---|
@@ -51,7 +54,8 @@ GitHub: #806
 | 协议解锁关 / 开 | 有 | 共用 | 关、开都有 |
 | 编程建议、本机终端开关、本机终端应用、内嵌终端、ACP | 有 | 内嵌终端有 lastError | 无审计 |
 | 并发上限 | 有，且迟到 `config.updated` 不盖新快照 | 共用未知机制 | 无审计 |
-| 运行自主度武装 / 解除 | 有 | 解除先等通道回调 | 都有 |
+| 保存完整操作史 | 有 | 共用未知机制 | 无审计 |
+| 运行自主度武装 / 解除 | 有 | 解除先等通道回调 | 都有，effect 刷新后恰好 1 |
 
 ## 红绿顺序
 

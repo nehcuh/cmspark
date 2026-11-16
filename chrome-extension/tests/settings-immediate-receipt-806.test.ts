@@ -175,6 +175,43 @@ function harness() {
       callback!(response)
     },
     configSets() { return messages.filter(message => message?.type === "config.set") },
+    reduceIsolated(base: any, action: any) { return store.agentReducer(base, action) },
+    designedAudit(message: string) {
+      const armed = { status: "accepted" as "accepted" | "confirmed" }
+      function Probe() {
+        const revision = state.configRevision
+        const flag = state.config.auto_approve_dangerous
+        const once = react.useRef(false)
+        react.useEffect(() => {
+          if (once.current || armed.status !== "accepted") return
+          if (revision !== "epoch:2" || flag !== false) return
+          once.current = true
+          armed.status = "confirmed"
+          dispatch({
+            type: "ADD_SECURITY_AUDIT",
+            entry: {
+              id: "designed", ts: "t", level: "info", tool_name: "auto_approve_dangerous", action: "changed",
+              risk_level: "low", risk_score: 0, source: "ui_phrase_confirmed", message,
+            },
+          })
+        }, [revision, flag])
+        return null
+      }
+      return { status: () => armed.status, render: () => render("designed-audit", Probe) }
+    },
+    flushProbe() {
+      let writes = 0
+      function Probe(props: { token: number }) {
+        react.useEffect(() => { if (props.token > 0) writes += 1 }, [props.token])
+        return null
+      }
+      render("timing-probe", Probe, { token: 0 })
+      const before = writes
+      render("timing-probe", Probe, { token: 1 })
+      const after = writes
+      render("timing-probe", Probe, { token: 1 })
+      return { before, after, repeat: writes }
+    },
     receiptGaps(revision = "epoch:1") {
       const gaps: string[] = []
       const index = this.configSetIndex()
@@ -256,12 +293,14 @@ function configSetCallback(ui: ReturnType<typeof harness>) {
 }
 
 /** Invoke the real config.set callback. A missing callback is a recorded failure, not a skip. */
-function deliverConfigSet(ui: ReturnType<typeof harness>, response: any, status: "pending" | "unknown", auditBaseline = 0) {
+function deliverConfigSet(ui: ReturnType<typeof harness>, response: any, outcome: "accepted" | "unknown", auditBaseline = 0) {
   const gaps = ui.receiptGaps()
   const callback = configSetCallback(ui)
   if (typeof callback !== "function") gaps.push("did not invoke config.set callback")
   else callback(response)
-  if (ui.state().settingsSave.status !== status) gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  if (!ui.state().settingsOpen) gaps.push("settings closed")
+  if (ui.state().settingsSave.status === "saved" || ui.state().settingsSave.status === "unknown") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  if (ui.state().immediateSave?.status !== outcome) gaps.push(`immediateSave=${String(ui.state().immediateSave?.status)}`)
   if (ui.state().securityAuditLog.length !== auditBaseline) gaps.push(`audit=${ui.state().securityAuditLog.length}`)
   return gaps
 }
@@ -274,7 +313,26 @@ function rejectedReceipt(ui: ReturnType<typeof harness>, mode: "ok-false" | "las
 }
 
 function acceptedReceipt(ui: ReturnType<typeof harness>, auditBaseline = 0) {
-  return deliverConfigSet(ui, { ok: true }, "pending", auditBaseline)
+  return deliverConfigSet(ui, { ok: true }, "accepted", auditBaseline)
+}
+
+/** Count audit only after the slide-out renders and flushes effects. Reducer dispatch alone must not be treated as confirmation. */
+function confirmAudited(ui: ReturnType<typeof harness>, patch: Record<string, unknown>, message: RegExp) {
+  const gaps: string[] = []
+  if (ui.state().securityAuditLog.length !== 0) gaps.push(`audit before confirm=${ui.state().securityAuditLog.length}`)
+  const id = ui.configSets().at(-1)?.id
+  ui.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { ...ui.state().config, ...patch }, revision: "epoch:2", id })
+  if (ui.state().securityAuditLog.length !== 0) gaps.push(`audit before effect flush=${ui.state().securityAuditLog.length}`)
+  ui.renderSlideout()
+  const log = ui.state().securityAuditLog
+  if (log.length !== 1) gaps.push(`audit after render=${log.length}`)
+  else if (!message.test(String(log[0]?.message ?? ""))) gaps.push(`audit message=${String(log[0]?.message)}`)
+  if (!ui.state().settingsOpen) gaps.push("settings closed after confirm")
+  if (ui.state().settingsSave.status === "saved" || ui.state().settingsSave.status === "unknown") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  if (ui.state().immediateSave?.status !== "confirmed") gaps.push(`immediateSave=${String(ui.state().immediateSave?.status)}`)
+  ui.renderSlideout()
+  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after repeat=${ui.state().securityAuditLog.length}`)
+  return gaps
 }
 
 test("disconnect does not show dangerous auto-approve as off or record success", () => {
@@ -330,10 +388,7 @@ test("protocol unlock audit is written only after a newer confirming snapshot", 
   const again = ui.openAdvanced(ui.renderSlideout())
   if (ui.checkbox(again, "协议解锁（会放行").props.checked !== true) gaps.push("checkbox left the snapshot")
   if (ui.state().config.allow_all_schemes !== true) gaps.push("state.config left the snapshot")
-  ui.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { ...ui.state().config, allow_all_schemes: false }, revision: "epoch:2", id: ui.configSets().at(-1)?.id })
-  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after confirm=${ui.state().securityAuditLog.length}`)
-  ui.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { ...ui.state().config, allow_all_schemes: false }, revision: "epoch:2", id: ui.configSets().at(-1)?.id })
-  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after repeat=${ui.state().securityAuditLog.length}`)
+  gaps.push(...confirmAudited(ui, { allow_all_schemes: false }, /已关闭协议解锁/))
   const confirmed = ui.openAdvanced(ui.renderSlideout())
   if (ui.checkbox(confirmed, "协议解锁（会放行").props.checked !== false) gaps.push("confirmed checkbox stayed on")
   assert.deepEqual(gaps, [])
@@ -387,7 +442,7 @@ test("accepted transport does not arm protocol unlock or write its audit before 
   const again = ui.openAdvanced(ui.renderSlideout())
   if (ui.checkbox(again, "协议解锁（会放行").props.checked !== false) gaps.push("checkbox left the snapshot")
   if (ui.state().config.allow_all_schemes !== false) gaps.push("state.config left the snapshot")
-  if (ui.state().securityAuditLog.length !== 0) gaps.push("audit before snapshot")
+  gaps.push(...confirmAudited(ui, { allow_all_schemes: true }, /已启用协议解锁/))
   assert.deepEqual(gaps, [])
 })
 
@@ -433,28 +488,19 @@ test("arming cruise writes no audit and keeps flags until a newer snapshot", () 
   confirmPhrase(ui, "确认武装")
   const gaps = acceptedReceipt(ui)
   if (ui.state().config.auto_approve_dangerous !== false) gaps.push("dangerous flag left the snapshot")
-  ui.dispatch({
-    type: "SET_CONFIG_SNAPSHOT",
-    config: { ...ui.state().config, auto_approve_dangerous: true },
-    revision: "epoch:2",
-    id: ui.configSets().at(-1)?.id,
-  })
-  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after confirm=${ui.state().securityAuditLog.length}`)
-  ui.dispatch({
-    type: "SET_CONFIG_SNAPSHOT",
-    config: { ...ui.state().config, auto_approve_dangerous: true },
-    revision: "epoch:2",
-    id: ui.configSets().at(-1)?.id,
-  })
-  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after repeat=${ui.state().securityAuditLog.length}`)
+  gaps.push(...confirmAudited(ui, { auto_approve_dangerous: true }, /武装运行自主度/))
   ui.dispatch({
     type: "SET_CONFIG_SNAPSHOT",
     config: { ...ui.state().config, auto_approve_dangerous: false },
     revision: "epoch:1",
     id: ui.configSets().at(-1)?.id,
   })
+  ui.renderSlideout()
   if (ui.state().configRevision !== "epoch:2") gaps.push("older snapshot overwrote the newer revision")
   if (ui.state().config.auto_approve_dangerous !== true) gaps.push("older snapshot restored the flag")
+  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after late snapshot=${ui.state().securityAuditLog.length}`)
+  if (!ui.state().settingsOpen) gaps.push("settings closed by late snapshot")
+  if (ui.state().settingsSave.status === "saved" || ui.state().settingsSave.status === "unknown") gaps.push(`late settingsSave.status=${ui.state().settingsSave.status}`)
   assert.deepEqual(gaps, [])
 })
 
@@ -468,20 +514,11 @@ test("disarming cruise after the channel accepts still waits for a snapshot befo
   ui.messageCallbacks[disarmIndex]!()
   const gaps = acceptedReceipt(ui)
   if (ui.state().config.auto_approve_dangerous !== true) gaps.push("dangerous flag left the snapshot")
-  ui.dispatch({
-    type: "SET_CONFIG_SNAPSHOT",
-    config: { ...ui.state().config, auto_approve_dangerous: false, auto_approve_enterprise_tools: false, allow_all_schemes: false },
-    revision: "epoch:2",
-    id: ui.configSets().at(-1)?.id,
-  })
-  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after confirm=${ui.state().securityAuditLog.length}`)
-  ui.dispatch({
-    type: "SET_CONFIG_SNAPSHOT",
-    config: { ...ui.state().config, auto_approve_dangerous: false },
-    revision: "epoch:2",
-    id: ui.configSets().at(-1)?.id,
-  })
-  if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit after repeat=${ui.state().securityAuditLog.length}`)
+  gaps.push(...confirmAudited(ui, {
+    auto_approve_dangerous: false,
+    auto_approve_enterprise_tools: false,
+    allow_all_schemes: false,
+  }, /解除运行自主度/))
   assert.deepEqual(gaps, [])
 })
 
@@ -525,6 +562,181 @@ test("receipt checker flags config and audit writes performed inside callback ok
   assert.ok(gaps.includes("state.config left the snapshot"))
   assert.ok(gaps.some(gap => gap.startsWith("audit=")))
   assert.equal(gaps.includes("did not invoke config.set callback"), false)
+})
+
+test("a matched main-save snapshot with no draft is unknown", () => {
+  const ui = harness()
+  const base = {
+    ...ui.state(),
+    connectionState: "connected",
+    configHydratedFromCompanion: true,
+    configRevision: "epoch:1",
+    settingsOpen: true,
+    settingsDraft: null,
+    settingsSave: {
+      status: "pending",
+      pending: { id: "settings-save:probe", revision: "epoch:1", patch: { auto_approve_dangerous: false }, generations: { auto_approve_dangerous: 1 } },
+    },
+  }
+  const next = ui.reduceIsolated(base, {
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...base.config, auto_approve_dangerous: false },
+    revision: "epoch:2",
+    id: "settings-save:probe",
+  })
+  assert.equal(next.settingsSave.status, "unknown")
+  assert.equal(next.settingsOpen, true)
+})
+
+test("a clean draft matched through the main save mode closes settings", () => {
+  const ui = harness()
+  ready(ui, { model_name: "old" })
+  assert.equal(Object.keys(ui.state().settingsDraft.dirty).length, 0)
+  ui.dispatch({ type: "BEGIN_SETTINGS_SAVE", submission: { id: "settings-save:clean", revision: "epoch:1", patch: {}, generations: {} } })
+  assert.equal(ui.state().settingsSave.status, "pending")
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config },
+    revision: "epoch:2",
+    id: "settings-save:clean",
+    appliedRevision: "epoch:2",
+  })
+  assert.equal(ui.state().settingsSave.status, "saved")
+  ui.renderSlideout()
+  assert.equal(ui.state().settingsOpen, false)
+})
+
+test("designed immediate confirmation records one audit after effect flush", () => {
+  for (const draft of ["clean", "dirty", "none"] as const) {
+    const ui = harness()
+    ready(ui, { auto_approve_dangerous: true, model_name: "old" })
+    if (draft === "dirty") ui.dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+    if (draft === "none") ui.dispatch({ type: "END_SETTINGS_DRAFT" })
+    const probe = ui.designedAudit("已关闭协议解锁（恢复协议保护）")
+    const gaps: string[] = []
+    if (ui.state().securityAuditLog.length !== 0) gaps.push("audit before confirm")
+    ui.dispatch({
+      type: "SET_CONFIG_SNAPSHOT",
+      config: { ...ui.state().config, auto_approve_dangerous: false, model_name: "old" },
+      revision: "epoch:2",
+      id: "settings-save:designed",
+    })
+    if (ui.state().securityAuditLog.length !== 0) gaps.push("audit before effect flush")
+    if (ui.state().settingsSave.status === "unknown" || ui.state().settingsSave.status === "saved") gaps.push(`settingsSave=${ui.state().settingsSave.status}`)
+    probe.render()
+    if (ui.state().securityAuditLog.length !== 1) gaps.push(`audit=${ui.state().securityAuditLog.length}`)
+    else if (!/已关闭协议解锁/.test(String(ui.state().securityAuditLog[0]?.message ?? ""))) gaps.push("message")
+    if (probe.status() !== "confirmed") gaps.push(probe.status())
+    probe.render()
+    if (ui.state().securityAuditLog.length !== 1) gaps.push("repeat")
+    ui.renderSlideout()
+    if (!ui.state().settingsOpen) gaps.push("closed")
+    if (draft === "dirty" && ui.state().settingsDraft?.value.model_name !== "mine") gaps.push("draft lost")
+    if (draft === "none" && ui.state().settingsSave.status === "unknown") gaps.push("unknown")
+    ui.dispatch({
+      type: "SET_CONFIG_SNAPSHOT",
+      config: { ...ui.state().config, auto_approve_dangerous: true },
+      revision: "epoch:1",
+      id: "settings-save:designed",
+    })
+    probe.render()
+    ui.renderSlideout()
+    if (ui.state().config.auto_approve_dangerous !== false) gaps.push("rolled back")
+    if (ui.state().securityAuditLog.length !== 1) gaps.push("late audit")
+    if (!ui.state().settingsOpen) gaps.push("late close")
+    assert.deepEqual(gaps, [], draft)
+  }
+})
+
+test("audit written at snapshot dispatch is not an effect confirmation", () => {
+  const ui = harness()
+  ready(ui, { auto_approve_dangerous: true })
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, auto_approve_dangerous: false },
+    revision: "epoch:2",
+    id: "settings-save:sync",
+  })
+  ui.dispatch({
+    type: "ADD_SECURITY_AUDIT",
+    entry: {
+      id: "sync", ts: "t", level: "info", tool_name: "allow_all_schemes", action: "changed",
+      risk_level: "low", risk_score: 0, source: "ui_phrase_confirmed", message: "已关闭协议解锁",
+    },
+  })
+  const gaps: string[] = []
+  if (ui.state().securityAuditLog.length !== 0) gaps.push(`audit before effect flush=${ui.state().securityAuditLog.length}`)
+  ui.renderSlideout()
+  assert.deepEqual(gaps, ["audit before effect flush=1"])
+  assert.equal(ui.state().securityAuditLog.length, 1)
+})
+
+test("effect flush records one confirmation only after render", () => {
+  const timing = harness().flushProbe()
+  assert.equal(timing.before, 0)
+  assert.equal(timing.after, 1)
+  assert.equal(timing.repeat, 1)
+})
+
+test("a confirmed main save still closes settings", () => {
+  const ui = harness()
+  ready(ui, { model_name: "old" })
+  ui.dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { model_name: "kept" } })
+  ui.find(ui.renderSlideout(), node => node.type === "button" && node.props.className === "cm-settings-save", "save").props.onClick()
+  assert.equal(ui.state().settingsSave.status, "pending")
+  assert.equal(ui.state().settingsOpen, true)
+  ui.dispatch({
+    type: "SET_CONFIG_SNAPSHOT",
+    config: { ...ui.state().config, model_name: "kept" },
+    revision: "epoch:2",
+    id: "settings-save:owned-uuid",
+    appliedRevision: "epoch:2",
+  })
+  ui.renderSlideout()
+  assert.equal(ui.state().settingsOpen, false)
+})
+
+test("immediate confirmation keeps drafts open and does not borrow the main save result", () => {
+  const failures: string[] = []
+  for (const mode of ["dirty", "clean", "none"] as const) {
+    const ui = harness()
+    const view = ui.openAdvanced(ready(ui, { auto_approve_dangerous: true, model_name: "old" }))
+    if (mode === "dirty") ui.dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { model_name: "mine" } })
+    if (mode === "none") ui.dispatch({ type: "END_SETTINGS_DRAFT" })
+    ui.checkbox(view, "自动批准所有危险操作").props.onChange({ target: { checked: false } })
+    const gaps = acceptedReceipt(ui)
+    ui.dispatch({
+      type: "SET_CONFIG_SNAPSHOT",
+      config: { ...ui.state().config, auto_approve_dangerous: false, model_name: "old" },
+      revision: "epoch:2",
+      id: ui.configSets().at(-1)?.id,
+    })
+    if (ui.state().securityAuditLog.length !== 0) gaps.push(`audit before effect flush=${ui.state().securityAuditLog.length}`)
+    ui.renderSlideout()
+    if (mode === "dirty" && ui.state().settingsDraft?.value.model_name !== "mine") gaps.push("draft lost")
+    if (!ui.state().settingsOpen) gaps.push("settings closed")
+    if (ui.state().settingsSave.status === "saved" || ui.state().settingsSave.status === "unknown") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+    if (ui.state().immediateSave?.status !== "confirmed") gaps.push(`immediateSave=${String(ui.state().immediateSave?.status)}`)
+    ui.renderSlideout()
+    if (!ui.state().settingsOpen) gaps.push("repeat closed settings")
+    if (gaps.length) failures.push(`${mode}: ${gaps.join("; ")}`)
+  }
+  assert.deepEqual(failures, [])
+})
+
+test("accepted transport does not mark full tool history saved before a snapshot", () => {
+  const ui = harness()
+  ready(ui, { persist_full_tool_history: false })
+  const hosts = ui.rows(ui.renderSlideout()).filter((node: any) => textOf(node).includes("保存完整操作史") && ui.rows(node).some((child: any) => child.type === "button"))
+  const host = hosts.sort((left: any, right: any) => textOf(left).length - textOf(right).length)[0]
+  assert.ok(host, "full tool history control")
+  ui.rows(host).find((node: any) => node.type === "button").props.onClick()
+  const gaps = acceptedReceipt(ui)
+  if (ui.state().config.persist_full_tool_history) gaps.push("persist flag left the snapshot")
+  const shown = ui.rows(ui.renderSlideout()).filter((node: any) => textOf(node).includes("保存完整操作史") && ui.rows(node).some((child: any) => child.type === "button"))
+    .sort((left: any, right: any) => textOf(left).length - textOf(right).length)[0]
+  if (textOf(ui.rows(shown).find((node: any) => node.type === "button")) !== "默认关闭") gaps.push("history button left the snapshot")
+  assert.deepEqual(gaps, [])
 })
 
 test("concurrency transport ok alone leaves the previous limit in place", () => {
