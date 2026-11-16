@@ -8,9 +8,19 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-shel
 process.env.CMSPARK_DATA_DIR = root
 const realWrite = fs.writeFileSync
 let configWrites = 0
+const writeAttempts: Array<{ file: string; code?: string }> = []
 fs.writeFileSync = ((file: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: fs.WriteFileOptions) => {
-  if (String(file).includes(`${path.sep}config.json`)) configWrites += 1
-  return realWrite(file, data, options)
+  const target = String(file)
+  if (!target.includes(`${path.sep}config.json`)) return realWrite(file, data, options)
+  configWrites += 1
+  try {
+    const result = realWrite(file, data, options)
+    writeAttempts.push({ file: target })
+    return result
+  } catch (err) {
+    writeAttempts.push({ file: target, code: (err as NodeJS.ErrnoException).code })
+    throw err
+  }
 }) as typeof fs.writeFileSync
 
 type Loaded = {
@@ -87,10 +97,15 @@ test("protocol 1 modules.list repairs before the snapshot return", async () => {
 test("shell switch writes are rejected and other modules still change", async () => {
   await writeLegacy()
   const { setModuleEnabled } = await mods()
+  configWrites = 0
+  const enabled = setModuleEnabled("shell", true)
   const shell = setModuleEnabled("shell", false)
+  const shellWrites = configWrites
   const netsec = setModuleEnabled("netsec", true)
   const gaps: string[] = []
-  if (shell.ok || !String(shell.error).includes("shell_switch_removed")) gaps.push(`shell=${shell.ok ? "ok" : shell.error}`)
+  if (enabled.ok || !String(enabled.error).includes("shell_switch_removed")) gaps.push(`shell true=${enabled.ok ? "ok" : enabled.error}`)
+  if (shell.ok || !String(shell.error).includes("shell_switch_removed")) gaps.push(`shell false=${shell.ok ? "ok" : shell.error}`)
+  if (shellWrites !== 0) gaps.push(`shell writes=${shellWrites}`)
   if (!netsec.ok) gaps.push(`netsec=${netsec.error}`)
   if (disk().modules?.netsec?.enabled !== true) gaps.push("netsec was not enabled")
   assert.deepEqual(gaps, [])
@@ -113,16 +128,40 @@ test("explicit shell.enabled rejects config.set while an unknown key does not", 
 test("a failed repair is unknown and the next list retries once", async () => {
   await writeLegacy()
   const { checkShellScope, handleMessage } = await mods()
+  const before = writeAttempts.length
   fs.chmodSync(root, 0o500)
   let denied: ReturnType<typeof checkShellScope>
   try { denied = checkShellScope("echo ok") }
   finally { fs.chmodSync(root, 0o700) }
+  const failed = writeAttempts.slice(before).filter(item => item.code)
   const gaps: string[] = []
+  if (!failed.some(item => item.file.includes(`${path.sep}config.json.tmp`) && item.code === "EACCES")) gaps.push(`write attempts=${JSON.stringify(writeAttempts.slice(before))}`)
   if (denied.ok || !String(denied.error).includes("SHELL_PROVISION_RESULT_UNKNOWN")) gaps.push(`denied=${denied.ok ? "ok" : denied.error}`)
   const reply = await handleMessage({ type: "modules.list", profile_receipt_protocol: 1 }, {
     threadManager: {} as never, skillEngine: {} as never, historyStore: { record: () => 0 } as never,
   })
   if (reply.modules?.shell?.enabled !== true) gaps.push(`retry enabled=${reply.modules?.shell?.enabled}`)
+  assert.deepEqual(gaps, [])
+})
+
+test("a stale revision does not replace the newer config", async () => {
+  await writeLegacy()
+  const { config, checkShellScope } = await mods()
+  config.clearConfigCache()
+  config.getConfig()
+  const stale = config.getConfigRevision()
+  config.saveConfig({ trusted_domains: ["newer.example"] })
+  let conflict = ""
+  try { config.saveConfig({ trusted_domains: ["stale.example"] }, undefined, stale) }
+  catch (err) { conflict = (err as Error).message }
+  const scope = checkShellScope("echo ok")
+  const gaps: string[] = []
+  if (conflict !== "CONFIG_REVISION_CONFLICT") gaps.push(`conflict=${conflict}`)
+  if (config.getConfig().trusted_domains?.[0] !== "newer.example") gaps.push("cache lost newer domain")
+  if (disk().trusted_domains?.[0] !== "newer.example") gaps.push("disk lost newer domain")
+  if (!scope.ok) gaps.push(`scope=${scope.error}`)
+  if (disk().modules?.shell?.enabled !== true) gaps.push("newer config was not projected")
+  if (disk().trusted_domains?.[0] !== "newer.example") gaps.push("projection replaced newer domain")
   assert.deepEqual(gaps, [])
 })
 })
