@@ -23,7 +23,7 @@ GitHub: #853
 
 ## 权威定义
 
-Companion 增加一个函数，名字实现时定，下文叫 `shellProvision`。它是 shell 是否提供的唯一判断。`requireModule("shell")`、`modules.list`、档位回执快照、场景页和设置页所展示的 shell 状态都调用它，或调用它写入后再投影的结果。禁止在 UI、工具门和 pack 应用里各自写「profile 是 enterprise 吗」。
+Companion 增加一个函数，名字实现时定，下文叫 `shellProvision`。它在就绪为 ready 时计算 shell 是否提供。`requireModule("shell")`、`modules.list`、档位回执、场景页和设置页都先看同一个就绪状态，再使用它的结果。禁止在这些位置各自写「profile 是 enterprise 吗」，也禁止在 `unknown` 时把档位直接当成已提供。
 
 ```text
 shellProvision(config) =
@@ -37,15 +37,31 @@ shellProvision(config) =
   unavailable      shell 模块缺失，或 available 不是 true
 ```
 
-`modules.shell.enabled` 不再是输入。它只保存与 `shellProvision` 相同的投影，供旧客户端读取。`policy`、`allowlist_commands`、`enabled_at` 以外的策略字段继续是运行策略，不是电源。
+`modules.shell.enabled` 不再是用户输入。它只是已就绪投影的存储字段。工具门不能只看档位和 `available` 就放行：还要看本次进程的就绪状态。三态是：
+
+- `ready_provided`：已成功读到或写回 enterprise 且 `available === true`，磁盘投影 `enabled === true`。
+- `ready_not_provided`：已成功读到或写回 community，或 shell 不可用，磁盘投影 `enabled === false`。
+- `unknown`：该次修复没有写回一致快照。工具门拒绝，界面显示未知。未知不进入 L2。
+
+`shellProvision` 只在就绪不是 `unknown` 时计算 provided 或 not_provided。`unknown` 不是 provided。失败的修复不得把内存标成 provided。
 
 本子项目不新增「企业策略关闭 shell」的开关。仓库里没有这样的独立字段。若 `available !== true`，shell 不提供，错误沿用模块不可用，不把它做成第二颗电源。连接失败仍是传输或回执错误，不写成 shell 未启用。操作系统对 `shell_exec` 没有单独的启用门；Linux PTY 和 Whisper 不在本子项目实现。
 
 ## 持久化与迁移
 
-归一化是纯函数，作用在即将写入的配置对象上。`saveConfigInternal` 在原子写入前对这份对象调用一次。它不调用 `getConfig`，也不再调用 `saveConfig`，所以没有读副作用，也不会写回环。
+`getConfig`（`config.ts` 882–899）在缓存为空时调用 `loadConfigFile` 读磁盘，然后把结果放进 `cachedConfig`。`saveConfigInternal`（1458 行）在合并前一定调用 `getConfig`。因此加载函数里再调用 `saveConfig` 会在缓存尚未建立时重入读盘；磁盘这时仍是 `enabled: false`，修复会再被触发。投影函数自己不调用 `getConfig` 挡不住这条外层重入。不能用「投影已经一致，所以不会第二次修复」解释它。
 
-加载配置时若投影和磁盘不一致，只额外调用一次 `saveConfig` 写入 shell 的 `enabled` / `enabled_at` / `enabled_by`。这次调用进入 `saveConfigInternal` 后投影已经一致，不会再触发第二次修复。修复写入失败时不把内存状态当成已提供或已关闭，并向 `modules.list` 返回 `SHELL_PROVISION_RESULT_UNKNOWN`。
+调用顺序固定为：
+
+1. `loadConfigFile` 只解析磁盘，不调用 `saveConfig`。
+2. `getConfig` 把该对象放进缓存后才返回。
+3. 显式的 `modules.list` 或 `shell_exec` 入口调用一次 `repairShellProjection`。它不在 `getConfig` 或 `loadConfigFile` 内部。
+4. `repairShellProjection` 先 `getConfig`，得到本次已缓存的读对象和当时的 `config_revision`。投影已一致则把就绪设为 `ready_provided` 或 `ready_not_provided`，不写盘。
+5. 不一致时调用一次 `saveConfig`，只带 shell 的 `enabled`、`enabled_at`、`enabled_by`，并带上刚读到的 revision。进入 `saveConfigInternal` 时缓存已在，`getConfig` 不再读盘。写入前的纯投影只改这份合并结果，不再调用 `saveConfig`。
+6. `saveConfigInternal` 用一个同步深度计数。深度大于 0 时，`repairShellProjection` 直接返回，不开始另一次写入。同一次调用因此不能递归，也不能循环重试。
+7. 写入返回后重新 `getConfig`。快照与目标投影一致，就绪改为对应的 ready。写入抛错、修订冲突，或快照仍不一致，就绪改为 `unknown`，不替换缓存里的其它字段，不宣告成功。
+
+`setCapabilityProfile` 在档位相同时早返回，不是这条修复。修复只来自上面的 `repairShellProjection`。
 
 成功写入的配置在返回前满足：
 
@@ -57,7 +73,9 @@ shellProvision(config) =
 
 归一化失败或写后快照读不回上述结果时，调用方得到 `SHELL_PROVISION_RESULT_UNKNOWN`。这时不宣告 shell 已提供，也不宣告用户的旧关闭仍然有效。
 
-设置页和场景页收到该错误时显示「shell 提供状态未知」，不显示已提供或未提供。旁边的恢复动作只发送 `modules.list`。列表返回明确投影后，两处改成对应的只读句子。列表失败或仍是未知，就保持未知。已经是 enterprise 时，这个按钮不是再次升档：`setCapabilityProfile` 对相同档位早返回，不会修补 `shell.enabled: false`。加载归一化才是这条旧数据的修复路径。
+`unknown` 不写入长期缓存。下一次显式 `modules.list` 重新从第 3 步执行，再尝试一次修复。同一次 list 或同一次 `saveConfig` 不重试。连续失败每次仍只写一次；用户可以再次发 list 恢复。工具门在 `unknown` 时返回 `SHELL_PROVISION_RESULT_UNKNOWN`，不执行命令，也不进入 L2。设置页和场景页显示同一句「shell 提供状态未知」。恢复按钮只发送 `modules.list`。列表成功后两处改为 ready 对应的只读句子。已经是 enterprise 时，这个按钮不是再次升档。
+
+并发写入使用现有的同步 `saveConfig` 和 `expectedRevision`。修复携带自己读到的 revision。修订不符时现有实现在写入前抛出 `CONFIG_REVISION_CONFLICT`，不覆盖较新的配置，就绪为 `unknown`。不另做互斥协议。另一进程改了文件后，现有 mtime 检查会在下一次 `getConfig` 丢掉缓存并重读；那次读不在修复的内层。
 
 ## 档位切换
 
@@ -93,7 +111,7 @@ error: shell_switch_removed — shell availability follows capability_profile; d
 
 `restoreTrustSnapshot` 不再对 shell 调用 `setModuleEnabled`，也不再忽略它的返回值来假装恢复了 `enabled: false`。它先按现有方式写回档位和安全旗；`saveConfig` 内的归一化决定 shell 投影。快照里的 shell `enabled: false` 在结果档位仍是 enterprise 时不被恢复。netsec 及其它模块仍调用 `setModuleEnabled`，返回不成功时写入审计并保留该错误，不把它当成已恢复。
 
-`computeApplyBlocked` 对 `requires_modules` 里的 shell 改调用 `shellProvision`。provided 时不因为磁盘 `enabled !== true` 返回 `module_disabled:shell`。community 返回 `enterprise_profile_required`，不返回教用户调用 `modules.set_enabled` 的句子。其它模块仍看 `available` 和 `enabled`。
+`computeApplyBlocked` 对 shell 先看就绪。`unknown` 返回 `SHELL_PROVISION_RESULT_UNKNOWN`，既不把它当成 provided，也不返回 `module_disabled:shell`。`ready_provided` 时不因为修复前的 `enabled !== true` 阻断。`ready_not_provided` 且原因是 community 时返回 `enterprise_profile_required`，不教用户调用 `modules.set_enabled`。其它模块仍看 `available` 和 `enabled`。
 
 `pack.apply` 成功把档位写成 enterprise 时，同一次 `saveConfig` 的归一化使 shell 为 provided。它不能留下 enterprise 加 `shell.enabled: false`。pack 对 netsec 的启用和信任短语保持现有门。
 
@@ -175,10 +193,15 @@ netsec、应用安全、工作区读写的电源按钮保留。
 
 Companion：
 
-- enterprise 且磁盘 `shell.enabled: false`，加载后 `shellProvision` 为 provided，`modules.list` 的 `shell.enabled` 为 true，原 `policy` 与 `allowlist_commands` 仍在。
+- enterprise 且磁盘 `shell.enabled: false`，一次修复成功后 `modules.list` 的 `shell.enabled` 为 true，原 `policy` 与 `allowlist_commands` 仍在。加载本身不写盘。
+- 冷缓存、enterprise、磁盘 `shell.enabled: false`：`loadConfigFile` 不调用 `saveConfig`。随后一次修复只产生一次写入，`saveConfigInternal` 的 `getConfig` 命中缓存，不重入读盘。
+- 这次写入失败后，`requireModule("shell")` 与设置页、场景页都是 `unknown`，错误为 `SHELL_PROVISION_RESULT_UNKNOWN`，不执行命令，不进入 L2。
+- 下一次 `modules.list` 重新读盘并再尝试一次。成功时返回 `enabled: true` 的权威快照，就绪变为 `ready_provided`。同一次 list 内没有第二次修复。
+- 连续两次 list 都失败时，每次仍只有一次写入尝试，之后仍可再发 list。没有永久不可恢复的缓存。
+- 修复携带的 revision 已过期时不写入，缓存保留较新配置，结果是 `unknown`。
 - community 时 `requireModule("shell")` 和 `checkShellScope` 的错误是 `enterprise_profile_required — set capability_profile=enterprise for shell`，不含 `modules.set_enabled`，且不执行命令。
 - `setModuleEnabled("shell", true|false)` 返回 `shell_switch_removed` 且不调用 `saveConfig`。`restoreTrustSnapshot` 在快照要求 shell 关闭、结果档位为 enterprise 时不把该关闭当成已恢复；netsec 的失败返回不被忽略。
-- `computeApplyBlocked` 在 enterprise、`shell.available === true` 且磁盘 `enabled: false` 时，不因为 shell 需求返回 `module_disabled:shell`。community 返回 `enterprise_profile_required`。
+- `computeApplyBlocked` 在修复成功并进入 `ready_provided` 后，不因为修复前的 `enabled: false` 返回 `module_disabled:shell`。修复失败时返回 `SHELL_PROVISION_RESULT_UNKNOWN`。community 的 ready 状态返回 `enterprise_profile_required`。
 - `buildCodingHandoffContext` 在 Linux 且 community 时不包含「启用 shell」。
 - `modules.set_enabled` shell true 和 false 都没有 `modules.updated`。
 - 同一请求不改变 netsec。`modules.set_enabled` netsec 在 community 仍是 `enterprise_profile_required`，在 enterprise 仍可开启。
@@ -205,7 +228,7 @@ Companion：
 - `requireModule` 不再保留「enable in settings (modules.set_enabled)」这句。
 - `shell_switch_removed` 对 true 和 false 都是错误，避免假成功。
 - `config.set` 的整次拒绝只覆盖显式的 `config.modules.shell.enabled`。未知键不拖垮白名单写入。
-- 相同档位的 `setCapabilityProfile` 不负责修补旧的 false。加载归一化负责，失败时界面保持未知并用 `modules.list` 刷新。
+- 相同档位的 `setCapabilityProfile` 不负责修补旧的 false。修复在缓存建立之后只写一次，失败为 `unknown`，下一次显式 `modules.list` 可以再试。
 - 助手文案由 `shellProvision` 生成，不依赖 manual 项的固定「需在对应设置核对」。
 - netsec、L2、三旗、确认短语、命令策略没有被并进资格。
 - 本机终端、内嵌终端、ACP 没有被定义成 shell。
