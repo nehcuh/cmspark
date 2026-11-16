@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
+import { ShellFailureNavigation } from "./ShellEnableActions"
 import {
   DISTILL_ALL_ENTRY_LABEL,
   DISTILL_DISARM_LABEL,
@@ -75,6 +76,14 @@ export type PackListItem = {
 /** C5: client-side gate — server also rejects missing phrase when cruise flags write. */
 function packNeedsTrustPhrase(p: Pick<PackListItem, "has_trust" | "trust_skip_l2"> | null): boolean {
   return !!(p?.trust_skip_l2 || p?.has_trust)
+}
+
+function moduleEnableErrorAttributable(error: unknown): boolean {
+  const text = typeof error === "string" ? error : ""
+  return /enterprise_profile_required\b/.test(text)
+    || text.includes("module not available")
+    || text.includes("module required")
+    || text.includes("enabled boolean required")
 }
 
 type ModuleStateView = {
@@ -210,7 +219,12 @@ export function PacksPanel() {
   const [packs, setPacks] = useState<PackListItem[]>([])
   const [modules, setModules] = useState<Record<string, ModuleStateView>>({})
   const [status, setStatus] = useState("")
-  const [busy, setBusy] = useState<string | null>(null)
+  const [busy, setBusyState] = useState<string | null>(null)
+  const busyRef = useRef<string | null>(null)
+  const setBusy = (value: string | null) => {
+    busyRef.current = value
+    setBusyState(value)
+  }
   const [confirmPack, setConfirmPack] = useState<PackListItem | null>(null)
   const [trustPhrase, setTrustPhrase] = useState("")
   const [trustConflict, setTrustConflict] = useState<TrustConflictState | null>(null)
@@ -664,7 +678,7 @@ export function PacksPanel() {
       }
       if (msg?.type === "modules.list" || msg?.type === "modules.updated") {
         if (msg.modules) setModules(msg.modules)
-        if (msg.type === "modules.updated") setBusy(null)
+        if (msg.type === "modules.updated" || (msg.type === "modules.list" && busyRef.current === "modules")) setBusy(null)
       }
       if (msg?.type === "workspace.pick_result") {
         if (msg.error && !msg.bound) {
@@ -696,6 +710,11 @@ export function PacksPanel() {
           const pend = pendingApplyRef.current
           pendingApplyRef.current = null
           openTrustConflict(pend.packId, pend.packName, pend.threadId, holders, msg.error || "")
+        } else if (busyRef.current === "modules") {
+          if (moduleEnableErrorAttributable(msg.error)) {
+            flash(msg.error || "操作失败", 5000)
+            setBusy(null)
+          }
         } else {
           flash(msg.error || "操作失败", 5000)
           setBusy(null)
@@ -710,7 +729,13 @@ export function PacksPanel() {
 
   const enableModule = (mod: string) => {
     setBusy("modules")
-    chrome.runtime.sendMessage({ type: "modules.set_enabled", module: mod, enabled: true })
+    chrome.runtime.sendMessage({ type: "modules.set_enabled", module: mod, enabled: true }, (resp?: { ok?: boolean; error?: string }) => {
+      const channel = chrome.runtime.lastError?.message
+      if (channel || resp?.ok === false) {
+        flash(channel || resp?.error || "本机能力请求没有发出", 5000)
+        setBusy(null)
+      }
+    })
     setTimeout(refresh, 400)
     flash(`已请求开启本机能力：${mod}`, 2500)
   }
@@ -1346,7 +1371,7 @@ export function PacksPanel() {
         要安装技能？→ 打开 Skills 导入
       </button>
 
-      {status && <div style={styles.status}>{status}</div>}
+      {status && <div style={styles.status}>{status}<ShellFailureNavigation text={status} /></div>}
 
       {segment === "scene" && (
         <>

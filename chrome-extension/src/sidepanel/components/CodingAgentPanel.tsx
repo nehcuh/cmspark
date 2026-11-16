@@ -33,6 +33,7 @@ import {
   cloneCommand,
 } from "../coding-handoff/repo-context"
 import { useAgentStore, selectCodingSession, codingSessionBelongsToThread, selectCodingOperationError, selectCodingManualEntry } from "../store/agentStore"
+import type { LLMConfig } from "../types"
 import { MinimalConfirm } from "./MinimalConfirm"
 import { codingHistoryLabel } from "../coding-handoff/history"
 
@@ -55,6 +56,12 @@ function displayProgressTail(
   const lines = charCapped.split("\n")
   if (lines.length <= maxLines) return charCapped
   return lines.slice(-maxLines).join("\n")
+}
+
+function terminalReceiptError(save: { status: string; error: string | null; patch: object } | null): string {
+  const handoff = (save?.patch as { coding_handoff?: { open_local_terminal?: boolean } } | undefined)?.coding_handoff
+  if (!handoff || !Object.prototype.hasOwnProperty.call(handoff, "open_local_terminal")) return ""
+  return save?.status === "unknown" && save.error ? save.error : ""
 }
 
 /** Companion / SW errors that mean master switch still off (retry must re-enable). */
@@ -186,6 +193,7 @@ export function CodingAgentPanel({
   const [embedOpenError, setEmbedOpenError] = useState("")
   /** #543: workspace-pick failures stay visible (with retry hint) instead of a 6s flash. */
   const [pickError, setPickError] = useState("")
+  const [terminalNotice, setTerminalNotice] = useState("")
   const [controlError, setControlError] = useState("")
   const [commandClock, setCommandClock] = useState(Date.now())
   useEffect(() => {
@@ -778,21 +786,35 @@ export function CodingAgentPanel({
   }
 
   const toggleOpenLocalTerminal = useCallback((v: boolean) => {
-    dispatch({
-      type: "SET_CONFIG",
-      config: {
-        coding_handoff: {
-          ...((state.config as { coding_handoff?: object } | undefined)?.coding_handoff ||
-            {}),
-          open_local_terminal: v,
-        },
-      } as any,
-    })
+    if (state.connectionState !== "connected" || !state.configRevision) {
+      setTerminalNotice("尚未连接到 Companion，这次设置没有发送")
+      return
+    }
+    if (state.immediateSave?.status === "sending" || state.immediateSave?.status === "accepted") {
+      setTerminalNotice("上一次设置还在等待确认")
+      return
+    }
+    setTerminalNotice("")
+    const id = `settings-save:${crypto.randomUUID()}`
+    const revision = state.configRevision
+    const patch = { coding_handoff: { open_local_terminal: v } } as Partial<LLMConfig>
+    dispatch({ type: "BEGIN_IMMEDIATE_SAVE", id, revision, patch, audit: null })
     chrome.runtime.sendMessage({
       type: "config.set",
-      config: { coding_handoff: { open_local_terminal: v } },
+      id,
+      config_revision: revision,
+      config: patch,
+    }, (response?: { ok?: boolean; error?: string }) => {
+      const channel = chrome.runtime.lastError?.message
+      if (channel || response?.ok !== true) {
+        if (channel || response?.ok === false) {
+          dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id, error: channel || response?.error || "这次设置没有发出" })
+        }
+        return
+      }
+      dispatch({ type: "IMMEDIATE_SAVE_ACCEPTED", id })
     })
-  }, [dispatch, state.config])
+  }, [dispatch, state.connectionState, state.configRevision, state.immediateSave])
 
   const onApply = () => {
     if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return
@@ -1091,6 +1113,8 @@ export function CodingAgentPanel({
                   />
                   {codingHandoffCopy.panelOpenLocalTerminal}
                 </label>
+                {terminalNotice ? <p role="status" style={styles.footnote}>{terminalNotice}</p> : null}
+                {terminalReceiptError(state.immediateSave) ? <p role="status" style={styles.footnote}>{terminalReceiptError(state.immediateSave)}</p> : null}
                 {(() => {
                   // Disable while starting OR any pending L2 confirm (avoid double ui_start)
                   const ctaDisabled =

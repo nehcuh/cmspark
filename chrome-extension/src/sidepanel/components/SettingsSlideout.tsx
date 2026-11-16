@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { prepareSettingsSubmission } from "../utils/settings-draft"
-import type { LLMConfig } from "../types"
+import type { LLMConfig, SecurityAuditEntry } from "../types"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
 import { effectiveReasoningEffort, reasoningSupport, type ReasoningEffort } from "../utils/reasoning-effort"
@@ -123,6 +123,16 @@ const BROWSER_STT_SUPPORT = detectSpeechRecognition(
   typeof window !== "undefined" ? (window as any) : {},
 )
 
+function immediatePatchApplied(config: any, patch: any): boolean {
+  if (!patch || typeof patch !== "object") return false
+  return Object.keys(patch).every(key => {
+    const want = patch[key]
+    const got = config?.[key]
+    if (want && typeof want === "object" && !Array.isArray(want)) return immediatePatchApplied(got, want)
+    return JSON.stringify(got) === JSON.stringify(want)
+  })
+}
+
 export function SettingsSlideout() {
   const { state, dispatch } = useAgentStore()
   const host = useContextPanelHostOptional()
@@ -144,6 +154,7 @@ export function SettingsSlideout() {
   // Alias of GODMODE_CONFIRM_PHRASE (companion SECURITY_ARM_CONFIRM_PHRASE) — one literal in this file.
   const ENT_B_PHRASE = GODMODE_CONFIRM_PHRASE
   // auto_approve_dangerous phrase gate (P1-1 — companion requires step-up on arm)
+  const [immediateNotice, setImmediateNotice] = useState<string | null>(null)
   const [autoDangerConfirm, setAutoDangerConfirm] = useState(false)
   const [autoDangerPhrase, setAutoDangerPhrase] = useState("")
   const [autoDangerMsg, setAutoDangerMsg] = useState<string | null>(null)
@@ -385,6 +396,26 @@ export function SettingsSlideout() {
     }
   }, [state.settingsOpen, state.settingsSave.status, dispatch])
 
+  const immediateSave = state.immediateSave
+  const immediateConfigRef = useRef(state.config)
+  const immediateSaveRef = useRef(immediateSave)
+  immediateConfigRef.current = state.config
+  immediateSaveRef.current = immediateSave
+  const immediateKey = immediateSave && immediateSave.status === "accepted"
+    ? `${immediateSave.id}:${immediateSave.matchedRevision ?? ""}:${immediateSave.conflict ? "conflict" : immediatePatchApplied(state.config, immediateSave.patch) ? "ready" : "wait"}`
+    : ""
+  useEffect(() => {
+    const save = immediateSaveRef.current
+    if (!save || save.status !== "accepted") return
+    if (save.conflict) {
+      dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id: save.id, error: "配置已在其他地方更新，这次修改没有写入" })
+      return
+    }
+    if (!save.matchedRevision || !immediatePatchApplied(immediateConfigRef.current, save.patch)) return
+    dispatch({ type: "IMMEDIATE_SAVE_CONFIRMED", id: save.id })
+    if (save.audit) dispatch({ type: "ADD_SECURITY_AUDIT", entry: save.audit })
+  }, [immediateKey, dispatch])
+
   if (!state.settingsOpen) return null
 
   // Security controls with their own immediate, phrase-protected writes keep
@@ -412,7 +443,36 @@ export function SettingsSlideout() {
     dispatch({ type: "BEGIN_SETTINGS_SAVE", submission })
     chrome.runtime.sendMessage({ type: "config.set", id, config_revision: submission.revision, config: submission.patch }, (response) => {
       // This callback only reports transport admission, never persistence.
-      if (chrome.runtime.lastError || !response?.ok) dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id })
+      if (chrome.runtime.lastError || !response?.ok) dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id, error: chrome.runtime.lastError?.message || response?.error })
+    })
+  }
+
+  const submitImmediate = (patch: Partial<LLMConfig>, audit?: SecurityAuditEntry | null, confirmation_phrase?: string) => {
+    if (state.connectionState !== "connected" || !state.configRevision) {
+      setImmediateNotice("尚未连接到 Companion，这次设置没有发送")
+      return
+    }
+    if (state.immediateSave?.status === "sending" || state.immediateSave?.status === "accepted") {
+      setImmediateNotice("上一次设置还在等待确认")
+      return
+    }
+    setImmediateNotice(null)
+    const id = `settings-save:${crypto.randomUUID()}`
+    const revision = state.configRevision
+    dispatch({ type: "BEGIN_IMMEDIATE_SAVE", id, revision, patch, audit: audit ?? null })
+    chrome.runtime.sendMessage({
+      type: "config.set",
+      id,
+      config_revision: revision,
+      config: patch,
+      ...(confirmation_phrase ? { confirmation_phrase } : {}),
+    }, (response?: { ok?: boolean; error?: string }) => {
+      const channel = chrome.runtime.lastError?.message
+      if (channel || response?.ok !== true) {
+        if (channel || response?.ok === false) dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id, error: channel || response?.error || "这次设置没有发出" })
+        return
+      }
+      dispatch({ type: "IMMEDIATE_SAVE_ACCEPTED", id })
     })
   }
 
@@ -456,21 +516,9 @@ export function SettingsSlideout() {
   // P1-1: arm paths send focused config.set + confirmation_phrase so companion
   // step-up is not UI theater. Disarm needs no phrase. handleSave re-sends
   // already-true flags without phrase (transition-only gate).
-  const sendSecurityFlagConfig = (
-    partial: Record<string, boolean>,
-    confirmation_phrase?: string,
-  ) => {
-    chrome.runtime.sendMessage({
-      type: "config.set",
-      config: partial,
-      ...(confirmation_phrase != null ? { confirmation_phrase } : {}),
-    })
-  }
-
   const handleAutoApproveDangerousChange = (checked: boolean) => {
     if (!checked) {
-      dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: false } })
-      sendSecurityFlagConfig({ auto_approve_dangerous: false })
+      submitImmediate({ auto_approve_dangerous: false })
       setAutoDangerConfirm(false)
       setAutoDangerPhrase("")
       setAutoDangerMsg(null)
@@ -487,8 +535,7 @@ export function SettingsSlideout() {
       return
     }
     const phrase = autoDangerPhrase.trim()
-    dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: true } })
-    sendSecurityFlagConfig({ auto_approve_dangerous: true }, phrase)
+    submitImmediate({ auto_approve_dangerous: true }, null, phrase)
     setAutoDangerConfirm(false)
     setAutoDangerPhrase("")
     setAutoDangerMsg(null)
@@ -496,8 +543,7 @@ export function SettingsSlideout() {
 
   const handleEnterpriseAutoApproveToggle = (checked: boolean) => {
     if (!checked) {
-      dispatch({ type: "SET_CONFIG", config: { auto_approve_enterprise_tools: false } })
-      sendSecurityFlagConfig({ auto_approve_enterprise_tools: false })
+      submitImmediate({ auto_approve_enterprise_tools: false })
       setEntBConfirm(false)
       setEntBPhrase("")
       setEntBMsg(null)
@@ -514,8 +560,7 @@ export function SettingsSlideout() {
       return
     }
     const phrase = entBPhrase.trim()
-    dispatch({ type: "SET_CONFIG", config: { auto_approve_enterprise_tools: true } })
-    sendSecurityFlagConfig({ auto_approve_enterprise_tools: true }, phrase)
+    submitImmediate({ auto_approve_enterprise_tools: true }, null, phrase)
     setEntBConfirm(false)
     setEntBPhrase("")
     setEntBMsg(null)
@@ -533,22 +578,16 @@ export function SettingsSlideout() {
       setGodmodeMsg(null)
       return
     }
-    // Disarming is safe — flip immediately + audit + companion config.set (no phrase).
-    dispatch({ type: "SET_CONFIG", config: { allow_all_schemes: false } })
-    sendSecurityFlagConfig({ allow_all_schemes: false })
-    dispatch({
-      type: "ADD_SECURITY_AUDIT",
-      entry: {
-        id: `godmode-off-${crypto.randomUUID()}`,
-        ts: new Date().toISOString(),
-        level: "info",
-        tool_name: "allow_all_schemes",
-        action: "changed",
-        risk_level: "low",
-        risk_score: 0,
-        source: "ui_phrase_confirmed",
-        message: "已关闭协议解锁（恢复协议保护：L1 scheme 硬阻断 + 网页 L2 确认门重新生效）",
-      },
+    submitImmediate({ allow_all_schemes: false }, {
+      id: `godmode-off-${crypto.randomUUID()}`,
+      ts: new Date().toISOString(),
+      level: "info",
+      tool_name: "allow_all_schemes",
+      action: "changed",
+      risk_level: "low",
+      risk_score: 0,
+      source: "ui_phrase_confirmed",
+      message: "已关闭协议解锁（恢复协议保护：L1 scheme 硬阻断 + 网页 L2 确认门重新生效）",
     })
   }
 
@@ -558,24 +597,18 @@ export function SettingsSlideout() {
       return
     }
     const phrase = godmodePhrase.trim()
-    dispatch({ type: "SET_CONFIG", config: { allow_all_schemes: true } })
-    // P1-1: companion requires confirmation_phrase on false→true (not theater).
-    sendSecurityFlagConfig({ allow_all_schemes: true }, phrase)
-    dispatch({
-      type: "ADD_SECURITY_AUDIT",
-      entry: {
-        id: `protocol-unlock-on-${crypto.randomUUID()}`,
-        ts: new Date().toISOString(),
-        level: "error",
-        tool_name: "allow_all_schemes",
-        action: "changed",
-        risk_level: "high",
-        risk_score: 100,
-        source: "ui_phrase_confirmed",
-        message:
-          "已启用协议解锁（allow_all_schemes）— L1 scheme 硬阻断 + 部分网页 L2 已绕过；不含 shell/CU/spawn forceConfirm",
-      },
-    })
+    submitImmediate({ allow_all_schemes: true }, {
+      id: `protocol-unlock-on-${crypto.randomUUID()}`,
+      ts: new Date().toISOString(),
+      level: "error",
+      tool_name: "allow_all_schemes",
+      action: "changed",
+      risk_level: "high",
+      risk_score: 100,
+      source: "ui_phrase_confirmed",
+      message:
+        "已启用协议解锁（allow_all_schemes）— L1 scheme 硬阻断 + 部分网页 L2 已绕过；不含 shell/CU/spawn forceConfirm",
+    }, phrase)
     setGodmodeConfirm(false)
     setGodmodePhrase("")
     setGodmodeMsg(null)
@@ -597,28 +630,18 @@ export function SettingsSlideout() {
     }
     const toDisarm = flagsNeedingDisarm(current, target)
     const toArm = flagsNeedingArm(current, target)
-    for (const k of toDisarm) {
-      sendSecurityFlagConfig({ [k]: false })
-    }
-    for (const k of toArm) {
-      if (!phrase) return
-      sendSecurityFlagConfig({ [k]: true }, phrase)
-    }
-    dispatch({ type: "SET_CONFIG", config: { ...target } })
-    dispatch({
-      type: "ADD_SECURITY_AUDIT",
-      entry: {
-        id: `autopilot-${crypto.randomUUID()}`,
-        ts: new Date().toISOString(),
-        level: toArm.length > 0 ? "error" : "info",
-        tool_name: "autopilot_packaging",
-        action: "changed",
-        risk_level: toArm.length > 0 ? "high" : "low",
-        risk_score: toArm.length > 0 ? 80 : 0,
-        source: "ui_phrase_confirmed",
-        message: `${auditMessage} [${[...toArm, ...toDisarm.map((k) => `-${k}`)].join(", ") || "noop"}]`,
-      },
-    })
+    if (toArm.length > 0 && !phrase) return
+    submitImmediate(target, {
+      id: `autopilot-${crypto.randomUUID()}`,
+      ts: new Date().toISOString(),
+      level: toArm.length > 0 ? "error" : "info",
+      tool_name: "autopilot_packaging",
+      action: "changed",
+      risk_level: toArm.length > 0 ? "high" : "low",
+      risk_score: toArm.length > 0 ? 80 : 0,
+      source: "ui_phrase_confirmed",
+      message: `${auditMessage} [${[...toArm, ...toDisarm.map((k) => `-${k}`)].join(", ") || "noop"}]`,
+    }, toArm.length > 0 ? phrase : undefined)
   }
 
   const handleAutopilotArmConfirm = () => {
@@ -796,7 +819,8 @@ export function SettingsSlideout() {
         </div>
 
         <div className="cm-settings-status">
-          <span className="cm-sr-only" role="status" aria-live="polite">{[wsPaired === null ? "正在检测连接" : wsPaired === false ? "尚未配对" : "", elevatedTrust ? "有高权限开关已开启" : ""].filter(Boolean).join("；")}</span>
+          <span className="cm-sr-only" role="status" aria-live="polite">{[wsPaired === null ? "正在检测连接" : wsPaired === false ? "尚未配对" : "", elevatedTrust ? "有高权限开关已开启" : "", state.immediateSave?.status === "unknown" ? state.immediateSave.error : "", immediateNotice].filter(Boolean).join("；")}</span>
+          {(state.immediateSave?.status === "unknown" && state.immediateSave.error) || immediateNotice ? <div role="status">{state.immediateSave?.status === "unknown" && state.immediateSave.error ? state.immediateSave.error : immediateNotice}</div> : null}
           {wsPaired !== true && <button type="button" onClick={() => selectSettingsPage("connection", true)}>{wsPaired === null ? "正在检测连接" : "尚未配对 · 前往连接设置"}</button>}
           {elevatedTrust && <button type="button" onClick={() => selectSettingsPage("security", true)}>有高权限开关已开启 · 查看安全设置</button>}
         </div>
@@ -3198,11 +3222,7 @@ export function SettingsSlideout() {
             acpEnabled={!!(config as { acp?: { enabled?: boolean } }).acp?.enabled}
             maxConcurrentSessions={(config as { acp?: { max_concurrent_sessions?: 1 | 2 | 3 | 4 } }).acp?.max_concurrent_sessions ?? 1}
             onChangeMaxConcurrentSessions={value => {
-              // Keep the previous selection until the daemon validates and persists it.
-              chrome.runtime.sendMessage({ type: "config.set", config: { acp: { max_concurrent_sessions: value } } }, response => {
-                if (chrome.runtime.lastError || response?.type !== "config.updated" || !response.config) return
-                dispatch({ type: "SET_CONFIG", config: response.config })
-              })
+              submitImmediate({ acp: { max_concurrent_sessions: value } } as Partial<LLMConfig>)
             }}
             acpAgents={state.acpAgents}
             autoSuggest={
@@ -3218,78 +3238,23 @@ export function SettingsSlideout() {
                 ?.local_terminal_app || "auto"
             }
             onToggleAutoSuggest={(v) => {
-              dispatch({
-                type: "SET_CONFIG",
-                config: {
-                  coding_handoff: {
-                    ...((config as { coding_handoff?: object }).coding_handoff || {}),
-                    auto_suggest: v,
-                  },
-                } as any,
-              })
-              chrome.runtime.sendMessage({
-                type: "config.set",
-                config: { coding_handoff: { auto_suggest: v } },
-              })
+              submitImmediate({ coding_handoff: { auto_suggest: v } } as Partial<LLMConfig>)
             }}
             onToggleOpenLocalTerminal={(v) => {
-              dispatch({
-                type: "SET_CONFIG",
-                config: {
-                  coding_handoff: {
-                    ...((config as { coding_handoff?: object }).coding_handoff || {}),
-                    open_local_terminal: v,
-                  },
-                } as any,
-              })
-              chrome.runtime.sendMessage({
-                type: "config.set",
-                config: { coding_handoff: { open_local_terminal: v } },
-              })
+              submitImmediate({ coding_handoff: { open_local_terminal: v } } as Partial<LLMConfig>)
             }}
             embeddedTerminal={
               (config as { embedded_terminal?: { enabled?: boolean } }).embedded_terminal
                 ?.enabled === true
             }
             onToggleEmbeddedTerminal={(v) => {
-              dispatch({
-                type: "SET_CONFIG",
-                config: { embedded_terminal: { enabled: v } } as any,
-              })
-              chrome.runtime.sendMessage({
-                type: "config.set",
-                config: { embedded_terminal: { enabled: v } },
-              })
+              submitImmediate({ embedded_terminal: { enabled: v } } as Partial<LLMConfig>)
             }}
             onChangeLocalTerminalApp={(v) => {
-              dispatch({
-                type: "SET_CONFIG",
-                config: {
-                  coding_handoff: {
-                    ...((config as { coding_handoff?: object }).coding_handoff || {}),
-                    local_terminal_app: v,
-                  },
-                } as any,
-              })
-              chrome.runtime.sendMessage({
-                type: "config.set",
-                config: { coding_handoff: { local_terminal_app: v } },
-              })
+              submitImmediate({ coding_handoff: { local_terminal_app: v } } as Partial<LLMConfig>)
             }}
             onToggleAcp={(v) => {
-              dispatch({
-                type: "SET_CONFIG",
-                config: {
-                  acp: {
-                    ...((config as { acp?: object }).acp || {}),
-                    enabled: v,
-                  },
-                } as any,
-              })
-              chrome.runtime.sendMessage({
-                type: "config.set",
-                config: { acp: { enabled: v } },
-              })
+              submitImmediate({ acp: { enabled: v } } as Partial<LLMConfig>)
               // Refresh agent list after master switch (list is independent of enabled)
               chrome.runtime.sendMessage({ type: "acp.list" }, () => {
                 void chrome.runtime.lastError
@@ -3447,15 +3412,7 @@ export function SettingsSlideout() {
                     : {}),
                 }}
                 onClick={() => {
-                  const next = !config.persist_full_tool_history
-                  dispatch({
-                    type: "SET_CONFIG",
-                    config: { persist_full_tool_history: next },
-                  })
-                  chrome.runtime.sendMessage({
-                    type: "config.set",
-                    config: { persist_full_tool_history: next },
-                  })
+                  submitImmediate({ persist_full_tool_history: !config.persist_full_tool_history } as Partial<LLMConfig>)
                 }}
               >
                 {config.persist_full_tool_history ? "已开启" : "默认关闭"}
