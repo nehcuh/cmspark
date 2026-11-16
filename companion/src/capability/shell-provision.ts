@@ -1,6 +1,7 @@
 import type { CompanionConfig } from "../config"
 
 export type ShellReadiness = "ready_provided" | "ready_not_provided" | "unknown"
+export type ShellProvisionView = "provided" | "community" | "unavailable" | "unknown"
 
 let readiness: ShellReadiness = "unknown"
 let saveDepth = 0
@@ -15,6 +16,29 @@ export function shellProvision(config: { capability_profile?: string; modules?: 
 
 export function shellReadiness(): ShellReadiness {
   return readiness
+}
+
+/** One view for list, profile receipt, scene row, and the settings assistant. */
+export function shellProvisionView(config: { capability_profile?: string }, readinessState: ShellReadiness = readiness): ShellProvisionView {
+  if (readinessState === "unknown") return "unknown"
+  if (readinessState === "ready_provided") return "provided"
+  return config.capability_profile === "enterprise" ? "unavailable" : "community"
+}
+
+export function shellProvisionSentence(view: ShellProvisionView): string {
+  if (view === "provided") return "shell 已由 enterprise 档提供，没有单独电源。命令仍需策略和 L2 授权。"
+  if (view === "unknown") return "shell 提供状态未知。请刷新本机能力列表，不要再次切换相同档位。"
+  if (view === "unavailable") return "shell 模块不可用。这不是未开启的电源。"
+  return "shell 随 enterprise 档提供。请打开「本机与工具」，确认升档。命令执行仍需单独授权。"
+}
+
+export function describeShellProvision(config: { capability_profile?: string; modules?: { shell?: { available?: boolean } } }): ShellProvisionView {
+  try {
+    const { getConfig } = require("../config") as typeof import("../config")
+    if (config === getConfig()) return shellProvisionView(getConfig(), repairShellProjection())
+  } catch { /* a detached snapshot has no repair result */ }
+  if (config.capability_profile === "enterprise") return config.modules?.shell?.available === false ? "unavailable" : "provided"
+  return "community"
 }
 
 export function invalidateShellReadiness(): void {

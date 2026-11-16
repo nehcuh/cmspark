@@ -100,6 +100,14 @@ export function humanizeChatErrorForUser(raw: string): string {
     )
   }
 
+  if (/enterprise_profile_required|module_disabled:shell|module not available: shell|SHELL_PROVISION_RESULT_UNKNOWN|shell_switch_removed/.test(body)) {
+    return (
+      "本机能力未开启或当前安装通道不足\n" +
+      "shell 随 enterprise 档提供。请打开设置 → 本机与工具 的能力档确认升档。不要去找 shell 电源。\n" +
+      "说明：这与确认弹窗 / 协议解锁不是同一道门。"
+    )
+  }
+
   if (/module_disabled|module_unavailable|enterprise_profile/i.test(body)) {
     return (
       "本机能力未开启或当前安装通道不足\n" +

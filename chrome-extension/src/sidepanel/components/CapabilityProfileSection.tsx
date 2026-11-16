@@ -30,21 +30,25 @@ export function CapabilityProfileSection() {
   useEffect(() => {
     chrome.runtime.sendMessage({ type: "modules.list" })
     const handler = (msg: any) => {
-      if (msg?.type === "modules.list" || msg?.type === "modules.updated") {
+      if (msg?.type === "modules.list") {
         if (msg.modules) setModules(msg.modules)
         if (typeof msg.capability_profile === "string") {
           setProfile(msg.capability_profile === "enterprise" ? "enterprise" : "community")
         }
-        if (msg.type === "modules.updated") {
-          setBusy(false)
-          const disabled = Array.isArray(msg.modules_disabled) ? msg.modules_disabled : []
-          flash(
-            disabled.length > 0
-              ? `能力档已切换；已强制关闭 ${disabled.join("、")}`
-              : "能力档已更新",
-            3500,
-          )
+      }
+      if (msg?.type === "modules.updated" || msg?.type === "modules.profile.result") {
+        setBusy(false)
+        const next = msg.capability_profile
+        const view = msg.shell_provision
+        const authoritative = (next === "enterprise" && view === "provided") || (next === "community" && (view === "community" || view === "unavailable"))
+        if (!authoritative) {
+          flash("没有权威的能力档回执，界面保持切换前的状态", 5000)
+          return
         }
+        if (msg.modules) setModules(msg.modules)
+        if (typeof next === "string") setProfile(next === "enterprise" ? "enterprise" : "community")
+        const disabled = Array.isArray(msg.modules_disabled) ? msg.modules_disabled : []
+        flash(disabled.length > 0 ? `能力档已切换；已关闭 ${disabled.join("、")}` : "能力档已更新", 3500)
       }
       if (msg?.type === "error") {
         flash(msg.error || "操作失败", 5000)
@@ -70,8 +74,7 @@ export function CapabilityProfileSection() {
     <div data-testid="capability-profile-section">
       <div style={styles.sectionTitle}>能力档</div>
       <div style={styles.help}>
-        安装级档位，决定能否开启企业能力。enterprise 才允许 shell（宿主命令执行）、
-        netsec（端口扫描）与应用企业场景包；切换本身不会开启任何模块。
+        enterprise 档提供 shell。netsec 不会随档位自动开启。命令仍需策略和 L2 确认。
       </div>
       {status && <div style={styles.status}>{status}</div>}
       <div style={styles.card}>
@@ -90,7 +93,7 @@ export function CapabilityProfileSection() {
         </div>
         {(shellEnabled || netsecEnabled) && (
           <div style={styles.hint}>
-            shell / netsec 电源当前开着 — 切回 community 会将它们强制断电。
+            切回 community 后 shell 不再提供；已开启的 netsec 会关闭。
           </div>
         )}
       </div>

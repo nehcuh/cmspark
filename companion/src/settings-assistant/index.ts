@@ -6,6 +6,8 @@ import { handleConfigFamily } from "../message-router/handlers/config"
 import { redactSecrets } from "../threads/distill"
 import { SETTINGS_CATALOG, validSettingValue, readSettingValue, type SettingValue, type SettingsSection } from "./catalog"
 
+const SHELL_ASK = /如何开启\s*shell|怎么开启\s*shell|帮我开启\s*shell/i
+
 const id = z.string().min(1).max(100).regex(/^[a-zA-Z0-9_.:-]+$/)
 const proposeRequest = z.object({ type: z.literal("settings.assistant.propose"), id, text: z.string().trim().min(1).max(2000) }).strict()
 const applyRequest = z.object({ type: z.literal("settings.assistant.apply"), id, proposalId: z.string().uuid(), candidateId: id,
@@ -63,10 +65,21 @@ export class SettingsAssistant {
       this.pending.add(owner)
       try {
         const config = this.deps.read()
+        const shellAsk = SHELL_ASK.test(data.text)
         const snapshot = SETTINGS_CATALOG.map(entry => ({ id: entry.id, label: entry.label, description: entry.description, scope: entry.scope,
           before: readSettingValue(entry, config), values: entry.values, min: entry.min, max: entry.max, prerequisites: entry.prerequisites }))
         // Never serialize the config or credentials into a model prompt.
         const text = safeDescription(data.text, config)
+        if (shellAsk) {
+          const entry = SETTINGS_CATALOG.find(item => item.id === "shell.provision")!
+          const sentence = String(readSettingValue(entry, config))
+          const proposal: SemanticProposal = { id: randomUUID(), expiresAt: this.now() + TTL, intent: "了解 shell 如何提供",
+            candidates: [{ id: "candidate-1", title: "查看 shell 资格", reason: sentence, tradeoffs: "只打开已有的能力档确认，不会自动升档或执行命令。",
+              changes: [{ id: "change-1", settingId: entry.id, label: entry.label, before: sentence, after: "review", reason: sentence, scope: "manual", section: "integrations", prerequisites: [...entry.prerequisites] }] }] }
+          for (const [key, existing] of this.proposals) if (existing.owner === owner) this.proposals.delete(key)
+          this.proposals.set(proposal.id, { owner, proposal, used: false })
+          return { type: "settings.assistant.proposal", id: data.id, proposal }
+        }
         const raw = await this.deps.extract(PROMPT, JSON.stringify({ description: text, catalog: snapshot }))
         if (raw.length > 30_000) throw new Error("INVALID_MODEL_OUTPUT")
         if (!current()) return error("SESSION_ENDED", "页面已断开，请重新生成候选。")
@@ -80,8 +93,9 @@ export class SettingsAssistant {
                 const entry = SETTINGS_CATALOG.find(entry => entry.id === change.settingId)
                 if (!entry || !validSettingValue(entry, change.after) || seen.has(entry.id)) throw new Error("INVALID_MODEL_OUTPUT")
                 seen.add(entry.id)
-                return { id: `change-${changeIndex + 1}`, settingId: entry.id, label: entry.label, before: snapshot.find(item => item.id === entry.id)!.before, after: change.after,
-                  reason: change.reason, scope: entry.scope, section: entry.section, destination: entry.destination, prerequisites: [...entry.prerequisites] }
+                const sentence = entry.id === "shell.provision" ? String(readSettingValue(entry, config)) : change.reason
+                return { id: `change-${changeIndex + 1}`, settingId: entry.id, label: entry.label, before: entry.id === "shell.provision" ? sentence : snapshot.find(item => item.id === entry.id)!.before, after: change.after,
+                  reason: sentence, scope: entry.scope, section: entry.section, destination: entry.destination, prerequisites: [...entry.prerequisites] }
               }) }
           }) }
         // Bounded per-process cache; never persist prompts or model prose as config.
@@ -121,6 +135,7 @@ export class SettingsAssistant {
       const actual = this.deps.read()
       const items: SemanticReceipt[] = selected.map(change => {
         const entry = SETTINGS_CATALOG.find(entry => entry.id === change.settingId)!
+        if (change.settingId === "shell.provision") return { settingId: change.settingId, label: change.label, section: change.section, status: "manual", message: String(readSettingValue(entry, actual)) }
         if (change.scope === "manual") return { settingId: change.settingId, label: change.label, section: change.section, destination: change.destination, status: "manual", message: "尚未修改：请进入原设置入口核对并单独确认。" }
         const value = readSettingValue(entry, actual), saved = !failure && value === change.after
         return { settingId: change.settingId, label: change.label, section: change.section, status: saved ? "saved" : "failed", actual: value,

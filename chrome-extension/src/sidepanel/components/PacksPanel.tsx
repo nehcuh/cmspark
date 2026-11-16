@@ -8,6 +8,7 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
 import { ShellFailureNavigation } from "./ShellEnableActions"
+import { ShellProvisionRow, type ShellProvisionRowView } from "./ShellProvisionRow"
 import {
   DISTILL_ALL_ENTRY_LABEL,
   DISTILL_DISARM_LABEL,
@@ -218,6 +219,7 @@ export function PacksPanel() {
   hostRef.current = host
   const [packs, setPacks] = useState<PackListItem[]>([])
   const [modules, setModules] = useState<Record<string, ModuleStateView>>({})
+  const [shellProvision, setShellProvision] = useState<ShellProvisionRowView>("missing")
   const [status, setStatus] = useState("")
   const [busy, setBusyState] = useState<string | null>(null)
   const busyRef = useRef<string | null>(null)
@@ -678,6 +680,7 @@ export function PacksPanel() {
       }
       if (msg?.type === "modules.list" || msg?.type === "modules.updated") {
         if (msg.modules) setModules(msg.modules)
+        if (msg.shell_provision === "provided" || msg.shell_provision === "community" || msg.shell_provision === "unavailable") setShellProvision(msg.shell_provision)
         if (msg.type === "modules.updated" || (msg.type === "modules.list" && busyRef.current === "modules")) setBusy(null)
       }
       if (msg?.type === "workspace.pick_result") {
@@ -710,6 +713,9 @@ export function PacksPanel() {
           const pend = pendingApplyRef.current
           pendingApplyRef.current = null
           openTrustConflict(pend.packId, pend.packName, pend.threadId, holders, msg.error || "")
+        } else if (msg.error === "SHELL_PROVISION_RESULT_UNKNOWN") {
+          setShellProvision("unknown")
+          setBusy(null)
         } else if (busyRef.current === "modules") {
           if (moduleEnableErrorAttributable(msg.error)) {
             flash(msg.error || "操作失败", 5000)
@@ -1574,7 +1580,8 @@ export function PacksPanel() {
       <section style={styles.zone}>
         <div style={styles.zoneTitle}>本机能力</div>
         <div style={styles.hint}>电源开关：允许本机使用某类能力，不等于「用于本对话」。</div>
-        {(["appsec", "devsec-workspace", "shell", "netsec"] as const).map((mod) =>
+        <ShellProvisionRow view={shellProvision} onOpenProfile={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "integrations" })} />
+        {(["appsec", "devsec-workspace", "netsec"] as const).map((mod) =>
           modules[mod] && modules[mod].enabled !== true ? (
             <div key={mod} style={styles.banner}>
               未开启：{moduleLabel[mod] || mod}

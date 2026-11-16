@@ -69,9 +69,9 @@ export function repairShellProjection(): ShellReadiness
 
 **Files:** `capability-profile.ts`、`CapabilityProfileSection.tsx`、`PacksPanel.tsx`、shell 失败导航、设置助手的服务端文案和扩展导航。
 
-- [ ] 先写组件测试：确认文案、场景页没有 shell 开启按钮、未知只发 `modules.list`、助手两句受控文案且导航不发四种写入。
-- [ ] 看到红之后再改界面。
-- [ ] 变绿后跑扩展全量与 Companion 全量。独立评审通过，并且该 head 的 CI 全部成功之后，才由主对话合并。局部变绿不合并。
+- [x] 先写组件测试：确认文案、场景页没有 shell 开启按钮、未知只发 `modules.list`、助手两句受控文案且导航不发四种写入。
+- [x] 看到红之后再改界面。
+- [x] 变绿后跑扩展全量与 Companion 全量。独立评审通过，并且该 head 的 CI 全部成功之后，才由主对话合并。局部变绿不合并。评审、CI 和合并不在这个提交里完成。
 
 ## 规格自查
 
