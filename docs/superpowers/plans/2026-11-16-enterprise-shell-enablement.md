@@ -73,6 +73,14 @@ export function repairShellProjection(): ShellReadiness
 - [x] 看到红之后再改界面。
 - [x] 变绿后跑扩展全量与 Companion 全量。独立评审通过，并且该 head 的 CI 全部成功之后，才由主对话合并。局部变绿不合并。评审、CI 和合并不在这个提交里完成。
 
+最终验证除 `npm test` 外必须再跑 ARM 门禁脚本，不降低 CI：
+
+```bash
+node --test --test-reporter=tap companion/scripts/tests/profile-module-798.test.cjs companion/scripts/tests/profile-router-798.test.cjs
+```
+
+`npm --prefix companion test` 只跑 `.test-dist/tests/*.test.js`。这两个 `.cjs` 在 `companion/scripts/tests/`，由 `.github/workflows/arm-acceptance.yml` 单独执行，所以全量 npm 绿不能代替这 30 项。
+
 ## 规格自查
 
 - 规格里的 enterprise 恒提供、community 不可用、旧 false 迁移、`shell_switch_removed`、白名单、netsec、L2、助手导航、未知拒绝和有界重试都有对应任务。

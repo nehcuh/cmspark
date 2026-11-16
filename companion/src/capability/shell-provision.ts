@@ -53,16 +53,22 @@ export function leaveConfigWrite(): void {
   saveDepth = Math.max(0, saveDepth - 1)
 }
 
+function shellEnabledIsLegacyBoolean(enabled: unknown): boolean {
+  return enabled === undefined || enabled === null || typeof enabled === "boolean"
+}
+
 export function projectionMatches(config: CompanionConfig): boolean {
   const shell = config.modules?.shell
+  if (shell && !shellEnabledIsLegacyBoolean(shell.enabled)) return false
   if (shellDesiredEnabled(config)) return shell?.enabled === true && shell.enabled_by === "profile.enterprise"
   if (!shell) return true
   return shell.enabled === false && shell.enabled_at == null && shell.enabled_by == null
 }
 
-/** Pure. Changes only shell enabled, enabled_at, and enabled_by. */
+/** Pure. Changes only shell enabled, enabled_at, and enabled_by when enabled is a legacy boolean. */
 export function projectShellOnto(config: CompanionConfig): void {
   const shell = config.modules?.shell
+  if (shell && !shellEnabledIsLegacyBoolean(shell.enabled)) return
   if (!shell && !shellDesiredEnabled(config)) return
   const next = { ...(shell || { available: true, enabled: false, policy: "confirm_per_command", allowlist_commands: [] as string[] }) }
   if (shellDesiredEnabled(config)) {
@@ -91,6 +97,10 @@ export function repairShellProjection(): ShellReadiness {
   const { getConfig, getConfigRevision, saveConfig } = require("../config") as typeof import("../config")
   const before = getConfig()
   const revision = getConfigRevision()
+  if (before.modules?.shell && !shellEnabledIsLegacyBoolean(before.modules.shell.enabled)) {
+    readiness = "unknown"
+    return readiness
+  }
   if (projectionMatches(before)) {
     markReady(before)
     return readiness

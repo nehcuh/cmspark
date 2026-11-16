@@ -681,6 +681,7 @@ export function PacksPanel() {
       if (msg?.type === "modules.list" || msg?.type === "modules.updated") {
         if (msg.modules) setModules(msg.modules)
         if (msg.shell_provision === "provided" || msg.shell_provision === "community" || msg.shell_provision === "unavailable") setShellProvision(msg.shell_provision)
+        else setShellProvision("unknown")
         if (msg.type === "modules.updated" || (msg.type === "modules.list" && busyRef.current === "modules")) setBusy(null)
       }
       if (msg?.type === "workspace.pick_result") {
