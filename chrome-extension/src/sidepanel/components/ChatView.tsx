@@ -11,6 +11,7 @@ import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 import { extractComputerCardData } from "../utils/computer-utils"
 import { DocumentWarning } from "./DocumentWarning"
+import { ShellEnableActions } from "./ShellEnableActions"
 import {
   SETTINGS_POINTER_CTA,
   extractSettingsPointer,
@@ -866,6 +867,7 @@ const MessageRow = memo(function MessageRow({
                 msg.tool_calls?.map((tc: any) => (
                   <ToolCallCard key={tc.id} tc={tc} />
                 ))}
+              {msg.shellEnableNavigation ? <ShellEnableActions navigation={msg.shellEnableNavigation} /> : null}
             </div>
             {honestyChip ? (
               <div style={styles.truncChip} role="status">

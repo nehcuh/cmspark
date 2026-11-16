@@ -355,6 +355,8 @@ export interface Message {
   truncated?: boolean
   incomplete_tools?: boolean
   finish_reason?: string | null
+  /** Present only for the two shell-enable gate errors. Buttons navigate; they do not send. */
+  shellEnableNavigation?: { packs: true; settingsSection: "integrations" }
 }
 
 export interface SecurityConfirmationRequest {
