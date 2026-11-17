@@ -43,7 +43,7 @@ export function businessSupplierProjection(value){
   const passed=versionObserved&&validDisplay&&allClosed&&bothEOF&&childError===false
   return {schema:1,versionObserved,display,childCount,children,allClosed,bothEOF,childError,passed}
 }
-export function finiteReceipt(stage,checks,startup,supplierFacts) {
+export function finiteReceipt(stage,checks,startup,supplierFacts,panel) {
   const stages=['PREFLIGHT','ARTIFACT','DAEMON','BROWSER','PANEL','START','DURABLE','CRASH','RECONNECT','EXISTING_DOCUMENT','RELOAD','TERMINAL','CLEANUP','COMPLETE']
   if(!stages.includes(stage))fail()
   const output={}
@@ -51,7 +51,9 @@ export function finiteReceipt(stage,checks,startup,supplierFacts) {
     let d;try{d=Object.getOwnPropertyDescriptor(checks,key)}catch{}
     output[key]=!!d&&Object.hasOwn(d,'value')&&d.value===true
   }
-  const supplier=businessSupplierProjection(supplierFacts),out={schema:2,stage,boundary:'REAL_DAEMON_PRODUCTION_EXTENSION_TRUE_SIDEPANEL_SYNTHETIC_ACP',checks:output,passed:stage==='COMPLETE'&&Object.values(output).every(Boolean)&&supplier.passed,...browserStartupProjection(startup),supplier}
+  const panelSteps=['native','identity','recent','owner','session']
+  const panelStep=typeof panel==='string'&&panelSteps.includes(panel)?panel:null
+  const supplier=businessSupplierProjection(supplierFacts),out={schema:2,stage,boundary:'REAL_DAEMON_PRODUCTION_EXTENSION_TRUE_SIDEPANEL_SYNTHETIC_ACP',checks:output,passed:stage==='COMPLETE'&&Object.values(output).every(Boolean)&&supplier.passed,...browserStartupProjection(startup),supplier,panel:panelStep}
   if(Buffer.byteLength(JSON.stringify(out))>1024)fail()
   return out
 }
@@ -378,18 +380,33 @@ export function seedOwnedThread(ThreadManager,workspace) {
   if(rows.length!==1||rows[0].id!==made.id||rows[0].alias!==OWNED_THREAD.alias||rows[0].workspace_root!==workspace||read?.id!==made.id||read.workspace_root!==workspace||again.getMessages(made.id).length!==0)refuse()
   return OWNED_THREAD.id
 }
-// Click only existing stock navigation controls. No runtime bind/React entry.
+// Real side-panel project navigation. Hidden ancestors and invisible boxes are not targets.
 export function seededThreadSelectionExpression(operation) {
-  if(!['open','exists','select','selected','close'].includes(operation))fail()
+  if(!['home','recent','ready','owner','session','restored'].includes(operation))fail()
   return `(${function(operation,alias){
     const refuse=()=>{throw Error('OWNED_THREAD_UI_REFUSED')}
-    const rows=()=>[...document.querySelectorAll('.cm-nav-thread')].filter(b=>b.title===alias)
-    if(operation==='open'){if(document.querySelector('.cm-navigation'))return true;const buttons=[...document.querySelectorAll('.cm-navigation-toggle')];if(buttons.length!==1||buttons[0].disabled)refuse();buttons[0].click();return true}
-    if(operation==='close'){const buttons=[...document.querySelectorAll('.cm-navigation-disclosure button[aria-label="关闭导航"]')];if(buttons.length>1)refuse();if(buttons.length)buttons[0].click();return true}
-    const found=rows();if(found.length>1)refuse();if(found.length!==1)return false
-    if(operation==='exists')return !found[0].disabled
-    if(operation==='select'){if(found[0].disabled)refuse();found[0].click();return true}
-    return found[0].getAttribute('aria-current')==='page'
+    const shown=el=>{
+      if(!el||el.nodeType!==1)return false
+      for(let node=el;node;node=node.parentElement)if(node.hidden)return false
+      const style=getComputedStyle(el)
+      if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false
+      return [...el.getClientRects()].some(box=>box.width>0&&box.height>0)
+    }
+    const buttons=text=>[...document.querySelectorAll('button')].filter(button=>button.textContent===text)
+    const usable=list=>list.filter(button=>shown(button)&&!button.disabled)
+    const projects=()=>shown(document.querySelector('.cm-projects'))
+    const location=()=>[...document.querySelectorAll('header[aria-label="会话位置"]')].find(shown)
+    const sessionReady=()=>{
+      const header=location()
+      if(!header||projects())return false
+      return [...header.querySelectorAll('p')].some(line=>shown(line)&&line.textContent.endsWith(' / '+alias))
+    }
+    if(operation==='home'){if(location())refuse();return projects()}
+    if(operation==='recent'){const found=usable(buttons('最近对话'));if(!found.length)refuse();found[0].click();return true}
+    if(operation==='ready'){const found=buttons(alias).filter(shown);if(found.length>1)refuse();if(found.length===1&&found[0].disabled)refuse();return found.length===1&&!found[0].disabled}
+    if(operation==='owner'){const found=usable(buttons(alias));if(found.length!==1)refuse();found[0].click();return true}
+    if(operation==='session'||operation==='restored')return sessionReady()
+    refuse()
   }.toString()})(${JSON.stringify(operation)},${JSON.stringify(OWNED_THREAD.alias)})`
 }
 // Root contents may change; inode/dev/uid/mode/type/canonical path must not.
@@ -402,7 +419,7 @@ export function sameOwnedRoot(root,identity,stat=fs.lstatSync,realpath=fs.realpa
 }
 export async function main() {
   if(!activeSupplier)fail()
-  let stage='PREFLIGHT',browserPhase=null,browserStartup,versionObserved=false,display,displayProof,supplierProof,owned,ownedIdentity,daemon,browser,worker,view,observer,xvfb,chromium,timer,secret,peerIdentity,session,thread
+  let stage='PREFLIGHT',panelStep,browserPhase=null,browserStartup,versionObserved=false,display,displayProof,supplierProof,owned,ownedIdentity,daemon,browser,worker,view,observer,xvfb,chromium,timer,secret,peerIdentity,session,thread
   const checks={},children=new Set(),supplierStates=new Map(),clients=new Set(),observers=new Set(),deadline=Date.now()+BOUNDS.outer,abort=new AbortController()
   const remaining=()=>{const n=deadline-Date.now();if(n<=0||abort.signal.aborted)fail();return n}
   let navigationDeadline;const nav=()=>{const n=Math.min(remaining(),(navigationDeadline??deadline)-Date.now());if(n<=0)fail();return n}
@@ -454,19 +471,17 @@ export async function main() {
     await pairingView.evaluate(`chrome.runtime.sendMessage({type:'ws.setSecret',secret:${JSON.stringify(secret)}}).then(r=>{if(r?.ok!==true)throw new Error('PAIR')})`,Math.min(BOUNDS.auth,remaining()));browserPhase='PAIRED'
     const request=async message=>{if(!observer||observer.readyState!==WebSocket.OPEN)fail();const d=deferred(),on=b=>{let r;try{r=JSON.parse(b.toString())}catch{return}if(message.type==='thread.list'?r.type==='thread.list':r.type==='acp.sessions.list_result'&&r.request_id===message.request_id)d.resolve(r)};observer.on('message',on);observer.send(JSON.stringify(message));try{return await limit(d.promise,Math.min(BOUNDS.auth,remaining()))}finally{observer.off('message',on)}}
     const auth=async()=>{remaining();const socket=new WebSocket('ws://127.0.0.1:23401',{origin}),ready=deferred();socket.closed=new Promise(resolve=>socket.once('close',resolve));observers.add(socket);socket.on('error',()=>ready.reject(new Error('AUTH')));socket.on('message',b=>{let r;try{r=JSON.parse(b.toString())}catch{return}if(r.type==='auth.challenge')socket.send(JSON.stringify({type:'auth.handshake',proof:crypto.createHmac('sha256',secret).update(r.nonce).digest('hex'),protocol_version:1}));if(r.type==='auth.ok')ready.resolve(true)});observer=socket;await limit(ready.promise,Math.min(BOUNDS.auth,remaining()))}
-    await auth();browserPhase='AUTH_DONE';stage='PANEL';const before=await targets();view=await openNativePanel({worker,pairingView,tab,url:origin+'/'+paths.page,before,targets,connect,targetSocket,poll,remaining:nav,nonce:crypto.randomBytes(16).toString('hex')})
+    await auth();browserPhase='AUTH_DONE';stage='PANEL';const before=await targets();view=await openNativePanel({worker,pairingView,tab,url:origin+'/'+paths.page,before,targets,connect,targetSocket,poll,remaining:nav,nonce:crypto.randomBytes(16).toString('hex')});panelStep='native'
     const evaluate=expression=>view.evaluate(expression,nav());const waitDOM=expression=>poll(()=>evaluate(expression),nav())
-    await waitDOM("!!document.querySelector('.cm-header-new')")
+    await waitDOM(seededThreadSelectionExpression('home'))
     const initialList=await request({type:'thread.list'})
     if(!Array.isArray(initialList.threads)||initialList.threads.length!==1)fail()
     const seeded=initialList.threads[0]
     if(seeded.id!==OWNED_THREAD.id||seeded.alias!==OWNED_THREAD.alias||seeded.workspace_root!==workspace)fail()
-    thread=seeded.id
-    await evaluate(seededThreadSelectionExpression('open'));await waitDOM(seededThreadSelectionExpression('exists'))
-    await evaluate(seededThreadSelectionExpression('select'))
-    await waitDOM("!document.querySelector('.cm-navigation-disclosure')")
-    await evaluate(seededThreadSelectionExpression('open'));await waitDOM(seededThreadSelectionExpression('selected'))
-    await evaluate(seededThreadSelectionExpression('close'))
+    thread=seeded.id;panelStep='identity'
+    await evaluate(seededThreadSelectionExpression('recent'));await waitDOM(seededThreadSelectionExpression('ready'));panelStep='recent'
+    await evaluate(seededThreadSelectionExpression('owner'));panelStep='owner'
+    await waitDOM(seededThreadSelectionExpression('session'));panelStep='session'
     const openPanel=()=>evaluate("window.dispatchEvent(new CustomEvent('cmspark:open-coding-handoff'));true");await openPanel()
     await waitDOM(`!![...document.querySelectorAll('[title]')].find(e=>e.title===${JSON.stringify(workspace)})`)
     await waitDOM("[...document.querySelectorAll('select option')].some(x=>x.value==='owned732')")
@@ -477,13 +492,7 @@ export async function main() {
     await poll(()=>{try{return fs.readFileSync(path.join(owned,'peer.stage'),'utf8')==='prompt'}catch{return false}},BOUNDS.tool)
     const pid=Number(fs.readFileSync(path.join(owned,'peer.pid'),'utf8'));if(!Number.isSafeInteger(pid)||pid<=0)fail();const proc=()=>{try{return fs.readFileSync('/proc/'+pid+'/stat','utf8').split(') ')[1].split(' ')[19]}catch{return null}};peerIdentity=proc();if(!peerIdentity)fail()
     const history=async()=>{const h=await request({type:'acp.sessions.list',thread_id:thread,request_id:crypto.randomUUID()});if(h.thread_id!==thread||!Array.isArray(h.rows)||h.rows.length>32||Buffer.byteLength(JSON.stringify(h.rows))>65536||h.rows.some(r=>r.thread_id!==thread||r.agent_id!=='owned732'||r.mode!=='review_readonly'))fail();return h}
-    await restartSequence({first:async()=>daemon,durable:async()=>{stage='DURABLE';const h=await history();if(h.status!=='ok'||h.rows.length!==1||h.rows[0].source!=='live'||h.rows[0].history_status!=='running')fail();session=h.rows[0].session_id;privateRead(env.CMSPARK_DATA_DIR,'acp-history.json');checks.durable=true},crash:async c=>{stage='CRASH';c.kill('SIGKILL')},closed:async c=>{await limit(c.closed,remaining());await poll(async()=>!(await health()),BOUNDS.auth);checks.crashClosed=true},peerClosed:async()=>{await poll(()=>proc()!==peerIdentity,BOUNDS.auth);checks.peerClosed=true},second:async()=>{stage='RECONNECT';const value=privateRead(env.CMSPARK_DATA_DIR,'ws_secret',256).trim();if(value!==secret)fail();await start();observer.terminate();await auth();checks.sameData=true;return daemon},existing:async()=>{stage='EXISTING_DOCUMENT';const h=await history();if(h.status!=='ok'||h.rows.length!==1||h.rows[0].session_id!==session||h.rows[0].source!=='history'||h.rows[0].history_status!=='interrupted')fail();const o=await waitDOM(`(()=>{const r=${historyObservationExpression(session)};return r.interrupted&&r.noGhost?r:false})()`);checks.existingInterrupted=o.interrupted;checks.noGhost=o.noGhost},reload:async()=>{stage='RELOAD';checks.freshDocument=await reloadDocument(view,nav)},fresh:async()=>{await waitDOM("!!document.querySelector('.cm-header-new')");
-    await evaluate(seededThreadSelectionExpression('open'));await waitDOM(seededThreadSelectionExpression('exists'))
-    await evaluate(seededThreadSelectionExpression('select'))
-    await waitDOM("!document.querySelector('.cm-navigation-disclosure')")
-    await evaluate(seededThreadSelectionExpression('open'));await waitDOM(seededThreadSelectionExpression('selected'))
-    await evaluate(seededThreadSelectionExpression('close'))
-    await waitDOM("!document.querySelector('.cm-navigation-disclosure')")
+    await restartSequence({first:async()=>daemon,durable:async()=>{stage='DURABLE';const h=await history();if(h.status!=='ok'||h.rows.length!==1||h.rows[0].source!=='live'||h.rows[0].history_status!=='running')fail();session=h.rows[0].session_id;privateRead(env.CMSPARK_DATA_DIR,'acp-history.json');checks.durable=true},crash:async c=>{stage='CRASH';c.kill('SIGKILL')},closed:async c=>{await limit(c.closed,remaining());await poll(async()=>!(await health()),BOUNDS.auth);checks.crashClosed=true},peerClosed:async()=>{await poll(()=>proc()!==peerIdentity,BOUNDS.auth);checks.peerClosed=true},second:async()=>{stage='RECONNECT';const value=privateRead(env.CMSPARK_DATA_DIR,'ws_secret',256).trim();if(value!==secret)fail();await start();observer.terminate();await auth();checks.sameData=true;return daemon},existing:async()=>{stage='EXISTING_DOCUMENT';const h=await history();if(h.status!=='ok'||h.rows.length!==1||h.rows[0].session_id!==session||h.rows[0].source!=='history'||h.rows[0].history_status!=='interrupted')fail();const o=await waitDOM(`(()=>{const r=${historyObservationExpression(session)};return r.interrupted&&r.noGhost?r:false})()`);checks.existingInterrupted=o.interrupted;checks.noGhost=o.noGhost},reload:async()=>{stage='RELOAD';checks.freshDocument=await reloadDocument(view,nav)},fresh:async()=>{await waitDOM(seededThreadSelectionExpression('restored'));
 await openPanel();const o=await waitDOM(`(()=>{const r=${historyObservationExpression(session)};return r.interrupted&&r.noGhost?r:false})()`);checks.reloadedInterrupted=o.interrupted&&o.noGhost},terminal:async()=>{stage='TERMINAL';await startUI();const secondSession=await poll(async()=>{const h=await history();return h.status==='ok'&&h.rows.find(r=>r.session_id!==session&&r.source==='live'&&r.history_status==='running')?.session_id},BOUNDS.tool);await waitDOM("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='停止编程会话'&&!b.disabled)");await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='停止编程会话'&&!b.disabled).click();true");await poll(async()=>{const h=await history();return h.status==='ok'&&h.rows.some(r=>r.session_id===secondSession&&r.terminal_kind==='cancelled'&&r.history_status==='closed')},BOUNDS.tool);await closeOwnedChild(daemon,remaining);const records=JSON.parse(privateRead(env.CMSPARK_DATA_DIR,'acp-history.json')).records;checks.terminalPreserved=Array.isArray(records)&&records.some(r=>r.session_id===secondSession&&r.terminal_kind==='cancelled')&&records.some(r=>r.session_id===session&&r.observed_state==='running')}})
     stage='COMPLETE'
   }catch{/* Fixed receipt only; no protocol, IDs, paths, titles, errors or secrets. */}
@@ -503,7 +512,7 @@ await openPanel();const o=await waitDOM(`(()=>{const r=${historyObservationExpre
     checks.cleanup=clean;if(!clean)stage='CLEANUP'
     supplierProof={versionObserved,display:displayProof,xvfb:supplierStates.get(xvfb),browser:supplierStates.get(chromium)}
   }
-  Object.assign(console,originalConsole);const out=finiteReceipt(stage,checks,browserStartup,supplierProof);console.log(JSON.stringify(out));return out.passed?0:1
+  Object.assign(console,originalConsole);const out=finiteReceipt(stage,checks,browserStartup,supplierProof,panelStep);console.log(JSON.stringify(out));return out.passed?0:1
 }
 let directEntry=false
 try{directEntry=!!process.argv[1]&&fs.realpathSync(process.argv[1])===fs.realpathSync(fileURLToPath(import.meta.url))}catch{}
