@@ -1317,18 +1317,20 @@ test("coding-handoff permits dependency installation without enabling shell for 
   const { checkShellScope } = await import("../src/capability/shell")
   const previousModules = getConfig().modules
   try {
-    for (const enabled of [false, true]) {
-      saveConfig({ modules: { ...previousModules,
-        shell: { available: true, enabled, policy: "confirm_per_command", allowlist_commands: [] },
-      } } as any)
-      const thread = tm.create(`coding shell ${enabled}`)
-      const applied = packEngine.applyPack("coding-handoff", thread.id, tm, skillEngine)
-      assert.equal(applied.ok, true, "shell remains optional for coding handoff")
-      assert.equal(tm.isToolAllowed(thread.id, "shell_exec"), true,
-        "the scene must not hide shell after the user enables it")
-      assert.equal(getConfig().modules?.shell?.enabled, enabled, "applying the scene must not enable shell")
-      assert.equal(checkShellScope("command -v zenity").ok, enabled)
-    }
+    saveConfig({ capability_profile: "community", modules: { ...previousModules,
+      shell: { available: true, enabled: true, policy: "confirm_per_command", allowlist_commands: [] },
+    } } as any)
+    const communityThread = tm.create("coding shell community")
+    assert.equal(packEngine.applyPack("coding-handoff", communityThread.id, tm, skillEngine).ok, true)
+    assert.equal(getConfig().modules?.shell?.enabled, false, "community cannot keep a shell power bit")
+    assert.equal(checkShellScope("command -v zenity").ok, false)
+    saveConfig({ capability_profile: "enterprise", modules: { ...getConfig().modules,
+      shell: { available: true, enabled: false, policy: "confirm_per_command", allowlist_commands: [] },
+    } } as any)
+    const enterpriseThread = tm.create("coding shell enterprise")
+    assert.equal(packEngine.applyPack("coding-handoff", enterpriseThread.id, tm, skillEngine).ok, true)
+    assert.equal(getConfig().modules?.shell?.enabled, true, "enterprise provides shell without the scene enabling it")
+    assert.equal(checkShellScope("command -v zenity").ok, true)
   } finally {
     saveConfig({ modules: previousModules } as any)
   }

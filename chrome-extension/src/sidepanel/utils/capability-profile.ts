@@ -28,26 +28,21 @@ export function buildProfileSwitchConfirm(input: ProfileSwitchConfirmInput): Pro
     return {
       title: "切换到 enterprise 能力档？",
       body:
-        "enterprise 档只解锁「可开启」以下能力的资格，不会自动开启任何模块：" +
-        "shell（宿主 shell_exec 命令执行）与 netsec（netsec_port_scan 端口扫描）" +
-        "将允许在「本机能力」中开启；企业场景包（channel: enterprise）也允许应用。" +
-        "开启模块与实际调用仍各自需要你在设置中开电源、在确认台中放行（L2）。三旗巡航开关不受此切换影响。",
+        "切换到 enterprise 后，本档会提供 shell。netsec 不会因此打开。" +
+        "每条 shell_exec 命令仍按现有策略和 L2 确认。三旗、确认短语和自动批准不变。",
       confirmLabel: "切换到 enterprise",
     }
   }
 
-  const toPowerOff = [
-    shellEnabled ? "shell" : null,
-    netsecEnabled ? "netsec" : null,
-  ].filter((x): x is string => !!x)
-  const powerOffSentence = toPowerOff.length
-    ? `当前已开启的 ${toPowerOff.join("、")} 电源将被强制断电（一并关闭，模块状态如实变为「未开启」）。`
-    : "当前没有已开启的 shell / netsec 电源，无模块会被关闭。"
+  const netsecSentence = netsecEnabled
+    ? "当前已开启的 netsec 电源将被强制关闭。"
+    : "当前没有已开启的 netsec 电源。"
+  void shellEnabled
   return {
     title: "切回 community 能力档？",
     body:
-      "切回后 shell（宿主命令执行）与 netsec（端口扫描）将被挡在 enterprise 门外。" +
-      powerOffSentence +
+      "切回 community 后 shell 不再提供。" +
+      netsecSentence +
       "企业场景包也会无法应用。此操作会写入能力审计日志。",
     confirmLabel: "切回 community",
   }

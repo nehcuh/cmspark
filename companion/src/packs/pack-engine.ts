@@ -34,6 +34,7 @@ import {
 } from "./types"
 import { getAllToolDefinitions } from "../bridge/tool-definitions"
 import { setModuleEnabled, ensureModulesDefaults } from "../capability/modules"
+import { repairShellProjection, shellDesiredEnabled } from "../capability/shell-provision"
 import { copyModulesConfigSnapshot, type ModulesConfigSnapshot } from "../capability/module-snapshot"
 import {
   isValidSecurityArmPhrase,
@@ -225,9 +226,12 @@ export function applyUserPackTrust(
 
   for (const mod of modulesToEnable) {
     const r = setModuleEnabled(mod, true, by)
-    if (!r.ok) {
-      return { ok: false, error: r.error }
+    // The profile write already projected shell. A removed switch is success only when that projection provided it.
+    if (!r.ok && mod === "shell" && r.error.includes("shell_switch_removed")) {
+      if (!shellDesiredEnabled(getConfig() as any)) return { ok: false, error: "module not available: shell" }
+      continue
     }
+    if (!r.ok) return { ok: false, error: r.error }
   }
 
   appendCapabilityAudit({
@@ -354,8 +358,8 @@ export function setCapabilityProfile(
 
 }
 
-/** Restore Trust snapshot captured before pack.apply (best-effort). */
-export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack.unapply"): void {
+/** Restore Trust snapshot captured before pack.apply. Shell follows the profile projection. */
+export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack.unapply"): { ok: true } | { ok: false; error: string } {
   const cfg = getConfig() as any
   saveConfig({
     capability_profile: snap.capability_profile || "community",
@@ -366,18 +370,32 @@ export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack
       allow_all_schemes: snap.allow_all_schemes === true,
     },
   } as any)
+  const errors: string[] = []
   for (const [id, st] of Object.entries(snap.modules || {})) {
+    if (id === "shell") continue
     const want = st?.enabled === true
     const cur = (getConfig() as any).modules?.[id]?.enabled === true
-    if (want !== cur) {
-      setModuleEnabled(id, want, by)
+    if (want === cur) continue
+    const restored = setModuleEnabled(id, want, by)
+    if (!restored.ok) {
+      errors.push(restored.error)
+      appendCapabilityAudit({
+        type: "pack.trust_restore_module_failed",
+        module: id,
+        by,
+        at: new Date().toISOString(),
+        error: restored.error,
+      })
     }
   }
   appendCapabilityAudit({
     type: "pack.trust_restore",
     by,
     at: new Date().toISOString(),
+    ok: errors.length === 0,
   })
+  if (errors.length) return { ok: false, error: errors.join("; ") }
+  return { ok: true }
 }
 
 /** True when value looks like a PackTrustSnapshot we can restore. */
@@ -395,8 +413,7 @@ export function restoreTrustFromThreadCookie(
 ): boolean {
   if (!isPackTrustSnapshot(trustCookie)) return false
   try {
-    restoreTrustSnapshot(trustCookie, by)
-    return true
+    return restoreTrustSnapshot(trustCookie, by).ok
   } catch {
     return false
   }
@@ -498,10 +515,21 @@ export function releaseOrphanTrustCookie(
   const thread = threadManager.get(threadId)
   if (!thread || !isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) return false
   const snap = thread.mission_pack_trust_snapshot
+  let restored = false
   try {
-    restoreTrustFromThreadCookie(snap, by)
+    restored = restoreTrustFromThreadCookie(snap, by)
   } catch {
-    /* best-effort */
+    restored = false
+  }
+  if (!restored) {
+    appendCapabilityAudit({
+      type: "pack.trust_orphan_cookie_retained",
+      at: new Date().toISOString(),
+      by,
+      thread_id: threadId,
+      pack_id: thread.mission_pack_id || null,
+    })
+    return false
   }
   releaseTrustJournalIfMatch(threadId, thread.mission_pack_id)
   try {
@@ -528,7 +556,7 @@ export function releaseOrphanTrustCookie(
  * Call after ThreadManager is constructed (server initServices).
  */
 export function reconcilePackTrustOnBoot(threadManager: ThreadManager): {
-  action: "none" | "restored_applying" | "restored_orphan_held" | "cleared_stale_held"
+  action: "none" | "restored_applying" | "restored_orphan_held" | "cleared_stale_held" | "restore_failed"
   journal: PackTrustJournal | null
 } {
   const j = readTrustJournal()
@@ -536,7 +564,16 @@ export function reconcilePackTrustOnBoot(threadManager: ThreadManager): {
 
   if (j.phase === "applying") {
     // Crash between trust write and thread cookie commit
-    restoreTrustFromThreadCookie(j.snap, "pack.trust_reconcile:applying")
+    if (!restoreTrustFromThreadCookie(j.snap, "pack.trust_reconcile:applying")) {
+      appendCapabilityAudit({
+        type: "pack.trust_reconcile",
+        at: new Date().toISOString(),
+        action: "restore_failed",
+        thread_id: j.thread_id,
+        pack_id: j.pack_id,
+      })
+      return { action: "restore_failed", journal: j }
+    }
     clearTrustJournal()
     appendCapabilityAudit({
       type: "pack.trust_reconcile",
@@ -555,7 +592,16 @@ export function reconcilePackTrustOnBoot(threadManager: ThreadManager): {
   }
 
   // Orphan held: thread gone or cookie cleared without restore
-  restoreTrustFromThreadCookie(j.snap, "pack.trust_reconcile:orphan_held")
+  if (!restoreTrustFromThreadCookie(j.snap, "pack.trust_reconcile:orphan_held")) {
+    appendCapabilityAudit({
+      type: "pack.trust_reconcile",
+      at: new Date().toISOString(),
+      action: "restore_failed",
+      thread_id: j.thread_id,
+      pack_id: j.pack_id,
+    })
+    return { action: "restore_failed", journal: j }
+  }
   clearTrustJournal()
   appendCapabilityAudit({
     type: "pack.trust_reconcile",
@@ -628,7 +674,30 @@ export function releaseTrustBeforeThreadGone(
   // Pre-S51 rows may still hold a cookie after trash — never re-restore on hard-delete.
   const alreadyTrashed = !!(thread.trashed_at && String(thread.trashed_at).length > 0)
   if (!alreadyTrashed) {
-    restoreTrustFromThreadCookie(thread.mission_pack_trust_snapshot, by)
+    let restored = false
+    try {
+      restored = restoreTrustFromThreadCookie(thread.mission_pack_trust_snapshot, by)
+    } catch {
+      restored = false
+    }
+    if (!restored) {
+      // The thread is leaving. The journal already holds the snapshot for boot retry.
+      // Keeping the cookie on a deleted thread would either vanish with it or block holders.
+      try {
+        if (threadManager) threadManager.update(thread.id, { mission_pack_trust_snapshot: null })
+        else (thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null
+      } catch {
+        try { (thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null } catch { /* best-effort */ }
+      }
+      appendCapabilityAudit({
+        type: "pack.trust_release_failed",
+        at: new Date().toISOString(),
+        by,
+        thread_id: thread.id,
+        pack_id: thread.mission_pack_id || null,
+      })
+      return false
+    }
     releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
   } else {
     releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
@@ -1382,13 +1451,28 @@ export function deleteUserPack(
   return { ok: true, restored_threads: un.restored_threads, packs: listInstalledPacks() }
 }
 
+function packRequestsShell(manifest: PackManifest): boolean {
+  if ((manifest.requires_modules || []).includes("shell")) return true
+  if ((manifest.trust?.enable_modules || []).includes("shell")) return true
+  return false
+}
+
 function computeApplyBlocked(manifest: PackManifest, config: CompanionConfig): string | null {
   const profile = (config as any).capability_profile || "community"
   if (manifest.channel === "enterprise" && profile !== "enterprise") {
     return "enterprise_profile_required"
   }
+  if (packRequestsShell(manifest)) {
+    const ready = repairShellProjection()
+    if (ready === "unknown") return "SHELL_PROVISION_RESULT_UNKNOWN"
+    if (ready !== "ready_provided") {
+      const live = getConfig() as any
+      return live.capability_profile === "enterprise" ? "module not available: shell" : "enterprise_profile_required"
+    }
+  }
   const modules = (config as any).modules || {}
   for (const mod of manifest.requires_modules) {
+    if (mod === "shell") continue
     const m = modules[mod]
     if (!m || m.available !== true) return `module_unavailable:${mod}`
     if (m.enabled !== true) return `module_disabled:${mod}`
@@ -1810,11 +1894,13 @@ export function applyPack(
     if (!tr.ok) {
       // Always roll back to pre-attempt snap (new or reused) — applyUserPackTrust may
       // have partially enabled modules before returning ok:false.
-      if (trustSnap) {
-        restoreTrustFromThreadCookie(trustSnap, `pack.apply_trust_fail:${packId}`)
+      let error = tr.error
+      if (trustSnap && !restoreTrustFromThreadCookie(trustSnap, `pack.apply_trust_fail:${packId}`)) {
+        error = `${error}; trust_rollback_failed`
+      } else {
+        clearTrustJournal()
       }
-      clearTrustJournal()
-      return { ok: false, error: tr.error, code: "trust_apply_failed" }
+      return { ok: false, error, code: "trust_apply_failed" }
     }
     trustJustWritten = true
     config = getConfig()
@@ -1829,22 +1915,25 @@ export function applyPack(
     })
   }
 
-  /** Roll back Trust written in this call + clear applying journal. */
-  const rollbackTrust = (reason: string) => {
-    if (trustSnap && trustJustWritten) {
-      restoreTrustFromThreadCookie(trustSnap, reason)
-      clearTrustJournal()
-    }
+  /** Roll back Trust written in this call. A failed rollback keeps the applying journal. */
+  const rollbackTrust = (reason: string): boolean => {
+    if (!(trustSnap && trustJustWritten)) return true
+    if (!restoreTrustFromThreadCookie(trustSnap, reason)) return false
+    clearTrustJournal()
+    return true
   }
+  const rollbackError = (error: string, reason: string): string => (
+    rollbackTrust(reason) ? error : `${error}; trust_rollback_failed`
+  )
 
   const blocked = computeApplyBlocked(result.manifest, config)
   if (blocked) {
-    if (trustJustWritten) {
-      rollbackTrust(`pack.apply_blocked_rollback:${packId}`)
-    }
+    const error = trustJustWritten
+      ? rollbackError(blocked, `pack.apply_blocked_rollback:${packId}`)
+      : blocked
     return {
       ok: false,
-      error: blocked,
+      error,
       code: blocked.startsWith("module_disabled")
         ? "module_disabled"
         : blocked === "enterprise_profile_required"
@@ -1886,10 +1975,7 @@ export function applyPack(
     skillEngine.refresh()
   } catch (e: any) {
     // S46 P0-2: Trust already written — must restore or cruise sticks with no cookie
-    if (trustJustWritten) {
-      rollbackTrust(`pack.apply_assets_fail:${packId}`)
-    }
-    return { ok: false, error: e?.message || String(e) }
+    return { ok: false, error: rollbackError(e?.message || String(e), `pack.apply_assets_fail:${packId}`) }
   }
 
   const whitelist = computeWhitelist(
@@ -1972,10 +2058,7 @@ export function applyPack(
     return { ok: true, thread: updated }
   } catch (e: any) {
     // Best-effort restore trust if thread patch failed after trust write
-    if (trustJustWritten) {
-      rollbackTrust(`pack.apply_rollback:${packId}`)
-    }
-    return { ok: false, error: e?.message || String(e) }
+    return { ok: false, error: rollbackError(e?.message || String(e), `pack.apply_rollback:${packId}`) }
   }
 }
 
@@ -1993,15 +2076,16 @@ export function unapplyPack(
   if (!thread.mission_pack_id) {
     // Idempotent pack exit — but residual Trust cookie must still be released (Pi nit).
     if (isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) {
-      releaseOrphanTrustCookie(threadId, threadManager, "pack.unapply:orphan_cookie")
+      const released = releaseOrphanTrustCookie(threadId, threadManager, "pack.unapply:orphan_cookie")
       appendCapabilityAudit({
         type: "pack.unapply",
         pack_id: null,
         thread_id: threadId,
         at: new Date().toISOString(),
-        trust_restored: true,
+        trust_restored: released,
         orphan_cookie: true,
       })
+      if (!released) return { ok: false, error: "trust_restore_failed", code: "trust_restore_failed" }
       return { ok: true, thread: threadManager.get(threadId) }
     }
     return { ok: true, thread } // idempotent
@@ -2035,14 +2119,30 @@ export function unapplyPack(
       skillEngine?.setActiveSkillsForThread(threadId, restoredSkills)
     }
     // Product B: restore global Trust if this apply had written it
+    let trustRestored = true
+    let trustError = ""
     if (isPackTrustSnapshot(trustSnap)) {
       try {
-        restoreTrustSnapshot(trustSnap, `pack.unapply:${packId}`)
+        const restored = restoreTrustSnapshot(trustSnap, `pack.unapply:${packId}`)
+        trustRestored = restored.ok
+        if (!restored.ok) trustError = restored.error
       } catch {
-        /* best-effort */
+        trustRestored = false
+        trustError = "trust_restore_failed"
       }
-      releaseTrustJournalIfMatch(threadId, packId)
     }
+    if (!trustRestored) {
+      try { threadManager.update(threadId, { mission_pack_trust_snapshot: trustSnap as any }) } catch { /* journal remains the retry copy */ }
+      appendCapabilityAudit({
+        type: "pack.unapply",
+        pack_id: packId,
+        thread_id: threadId,
+        at: new Date().toISOString(),
+        trust_restored: false,
+      })
+      return { ok: false, error: trustError || "trust_restore_failed", code: "trust_restore_failed" }
+    }
+    if (isPackTrustSnapshot(trustSnap)) releaseTrustJournalIfMatch(threadId, packId)
     // restoreSnapshot nulls cookie via pack_id=null; belt-clear if anything left.
     const after = threadManager.get(threadId)
     if (after && isPackTrustSnapshot(after.mission_pack_trust_snapshot)) {
@@ -2054,7 +2154,7 @@ export function unapplyPack(
       pack_id: packId,
       thread_id: threadId,
       at: new Date().toISOString(),
-      trust_restored: !!trustSnap,
+      trust_restored: trustRestored,
     })
     return { ok: true, thread: updated }
   } catch (e: any) {

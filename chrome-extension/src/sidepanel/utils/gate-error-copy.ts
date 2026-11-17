@@ -56,6 +56,15 @@ export function humanizeSidepanelGateError(raw: string): string {
     )
   }
 
+  if (/enterprise_profile_required|module_disabled:shell|module not available: shell|SHELL_PROVISION_RESULT_UNKNOWN|shell_switch_removed/.test(body + e)) {
+    return (
+      "🔌 **本机能力未开启或当前安装通道不足**\n\n" +
+      "shell 随 enterprise 档提供。请打开 **设置 → 本机与工具** 的能力档确认升档。" +
+      "不要去找 shell 电源。命令执行仍需单独授权。\n\n" +
+      "_说明：这与确认弹窗 / 协议解锁不是同一道门。_"
+    )
+  }
+
   if (/module_disabled|module_unavailable|enterprise_profile|本机能力未开启/i.test(body + e)) {
     return (
       "🔌 **本机能力未开启**\n\n" +

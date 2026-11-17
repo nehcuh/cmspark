@@ -1,4 +1,5 @@
 /** Closed semantic settings catalog. Model output never names arbitrary config keys. */
+import { describeShellProvision, shellProvisionSentence } from "../capability/shell-provision"
 export type SettingValue = boolean | number | string
 export type SettingsSection = "voice" | "export" | "integrations" | "security" | "model"
 export interface CatalogEntry {
@@ -36,6 +37,8 @@ export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
   { ...manual("activity.privacy", "聊天记录与隐私", "仅记录指定应用；暂停采集、缩小应用范围或确认 OCR 文本发送范围。不能把本机截图等同于文本不外发。", "security", ["review", "pause", "localOnly"], ["采集需要独立选择应用与屏幕权限；模型或记录策略的变更需在活动记录入口确认。"]), destination: "activity" },
   { ...manual("tasks.reminders", "待办提醒策略", "减少打扰同时避免漏项：核对单条事项的提醒时间、截止时间及反馈要求；不能假设未实现的汇总或免打扰例外存在。", "integrations", ["review"], ["请到待办面板逐项确认提醒；系统通知权限、免打扰和本机后台服务会影响送达。"]), destination: "todos" },
   manual("security.permissions", "安全与信任", "执行权限或确认频率的调整必须走原安全设置确认流程。", "security", ["review"], ["授权、安装、配对、凭据和危险权限不通过语义候选自动修改。"]),
+  { ...manual("shell.provision", "shell 资格", "shell 是否可由当前能力档使用。这不是电源，也不能代替命令确认。", "integrations", ["review"], ["打开本机与工具的能力档确认；不会自动升档、执行命令或应用场景。"]),
+    read: (config) => shellProvisionSentence(describeShellProvision(config)) },
 ]
 export function validSettingValue(entry: CatalogEntry, value: unknown): value is SettingValue {
   if (entry.values) return entry.values.some(v => v === value)
@@ -43,6 +46,7 @@ export function validSettingValue(entry: CatalogEntry, value: unknown): value is
 }
 export function readSettingValue(entry: CatalogEntry, config: unknown): SettingValue {
   const value = entry.read(config)
+  if (entry.id === "shell.provision") return value
   if (entry.scope === "manual") return "需在对应设置核对"
   if (entry.min !== undefined ? typeof value === "number" && Number.isFinite(value) : typeof value === "boolean") return value
   throw new Error("INVALID_CURRENT_SETTING")

@@ -2,7 +2,7 @@
 // settings (NOT the L2 forceConfirm tool system); sends only modules.set_profile
 // via the consent-gated helper — never the raw settings-config channel.
 
-import { useEffect, useState, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { tokens } from "../ui/tokens"
 import {
   buildProfileSwitchConfirm,
@@ -12,11 +12,30 @@ import {
 
 type ModuleStateView = { available?: boolean; enabled?: boolean }
 
+const PROFILE_SWITCH_UNKNOWN_MS = 15000
+const PROFILE_SWITCH_UNKNOWN = "能力档切换结果未知。可以重试，或刷新本机能力列表核对。"
+
+let profileSwitchSeq = 0
+
+function nextProfileSwitchId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.()
+  if (uuid) return uuid
+  profileSwitchSeq += 1
+  return `profile-switch-${profileSwitchSeq}-${Date.now()}`
+}
+
+function authoritativeProfile(next: unknown, view: unknown): next is CapabilityProfile {
+  return (next === "enterprise" && view === "provided") || (next === "community" && (view === "community" || view === "unavailable"))
+}
+
 export function CapabilityProfileSection() {
   const [profile, setProfile] = useState<CapabilityProfile>("community")
   const [modules, setModules] = useState<Record<string, ModuleStateView>>({})
   const [status, setStatus] = useState("")
   const [busy, setBusy] = useState(false)
+  const pendingProfile = useRef<{ id: string; to: CapabilityProfile } | null>(null)
+  const retiredIds = useRef<Set<string>>(new Set())
+  const timer = useRef<number | null>(null)
 
   const shellEnabled = modules.shell?.enabled === true
   const netsecEnabled = modules.netsec?.enabled === true
@@ -27,51 +46,119 @@ export function CapabilityProfileSection() {
     setTimeout(() => setStatus(""), ms)
   }
 
+  const clearTimer = () => {
+    if (timer.current != null) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+  }
+
+  const releaseAttempt = (message: string, refresh: boolean) => {
+    const id = pendingProfile.current?.id
+    if (id) retiredIds.current.add(id)
+    pendingProfile.current = null
+    clearTimer()
+    setBusy(false)
+    flash(message)
+    if (refresh) chrome.runtime.sendMessage({ type: "modules.list" })
+  }
+
+  const finishCurrent = (id: string) => {
+    if (pendingProfile.current?.id !== id || retiredIds.current.has(id)) return false
+    retiredIds.current.add(id)
+    pendingProfile.current = null
+    clearTimer()
+    setBusy(false)
+    return true
+  }
+
   useEffect(() => {
     chrome.runtime.sendMessage({ type: "modules.list" })
     const handler = (msg: any) => {
-      if (msg?.type === "modules.list" || msg?.type === "modules.updated") {
+      if (msg?.type === "thread.mutation.connection" && msg.state !== "connected" && pendingProfile.current) {
+        releaseAttempt(PROFILE_SWITCH_UNKNOWN, true)
+        return
+      }
+      if (msg?.type === "modules.list") {
         if (msg.modules) setModules(msg.modules)
         if (typeof msg.capability_profile === "string") {
           setProfile(msg.capability_profile === "enterprise" ? "enterprise" : "community")
         }
-        if (msg.type === "modules.updated") {
-          setBusy(false)
-          const disabled = Array.isArray(msg.modules_disabled) ? msg.modules_disabled : []
-          flash(
-            disabled.length > 0
-              ? `能力档已切换；已强制关闭 ${disabled.join("、")}`
-              : "能力档已更新",
-            3500,
-          )
+      }
+      if (msg?.type === "modules.updated" && msg.capability_profile !== "community" && msg.capability_profile !== "enterprise") {
+        if (msg.modules) setModules(msg.modules)
+        return
+      }
+      if (msg?.type === "modules.updated" || msg?.type === "modules.profile.result") {
+        const id = typeof msg.id === "string" ? msg.id : ""
+        const next = msg.capability_profile
+        const expected = pendingProfile.current?.id === id ? pendingProfile.current.to : undefined
+        if (!finishCurrent(id)) return
+        const authoritative = authoritativeProfile(next, msg.shell_provision)
+        if (!authoritative || next !== expected) {
+          flash("没有权威的能力档回执，界面保持切换前的状态", 5000)
+          return
         }
+        if (msg.modules) setModules(msg.modules)
+        setProfile(next)
+        const disabled = Array.isArray(msg.modules_disabled) ? msg.modules_disabled : []
+        flash(disabled.length > 0 ? `能力档已切换；已关闭 ${disabled.join("、")}` : "能力档已更新", 3500)
       }
       if (msg?.type === "error") {
-        flash(msg.error || "操作失败", 5000)
-        setBusy(false)
+        const id = typeof msg.id === "string" ? msg.id : ""
+        if (!pendingProfile.current || id !== pendingProfile.current.id) return
+        releaseAttempt(msg.error || "操作失败", false)
       }
     }
     chrome.runtime.onMessage.addListener(handler)
-    return () => chrome.runtime.onMessage.removeListener(handler)
+    return () => {
+      chrome.runtime.onMessage.removeListener(handler)
+      if (timer.current != null) clearTimeout(timer.current)
+      if (pendingProfile.current) retiredIds.current.add(pendingProfile.current.id)
+      pendingProfile.current = null
+    }
   }, [])
 
+  // idle: only modules.list moves the shown profile. pending: only this id may settle.
+  // success, failure, unknown, and unmount retire that id; a second click cannot start another attempt.
   const requestSwitch = (to: CapabilityProfile) => {
+    if (pendingProfile.current) return
     const confirm = buildProfileSwitchConfirm({ from: profile, to, shellEnabled, netsecEnabled })
     // null = same profile — never a switch; nothing to confirm, nothing to send.
     if (!confirm) return
     const confirmed = window.confirm(`${confirm.title}\n\n${confirm.body}`)
     const frame = resolveProfileSwitchSend({ confirmed, from: profile, to })
-    if (!frame) return
+    if (!frame || pendingProfile.current) return
+    const id = nextProfileSwitchId()
+    pendingProfile.current = { id, to }
     setBusy(true)
-    chrome.runtime.sendMessage(frame)
+    const acceptTransport = (response?: { ok?: boolean; error?: string }) => {
+      if (pendingProfile.current?.id !== id || retiredIds.current.has(id)) return
+      if (response?.ok === false) {
+        releaseAttempt(response.error || "能力档请求未能发送。可以重试。", false)
+        return
+      }
+      if (chrome.runtime.lastError || response?.ok !== true) {
+        releaseAttempt(PROFILE_SWITCH_UNKNOWN, true)
+        return
+      }
+      timer.current = setTimeout(() => {
+        if (pendingProfile.current?.id !== id || retiredIds.current.has(id)) return
+        releaseAttempt(PROFILE_SWITCH_UNKNOWN, true)
+      }, PROFILE_SWITCH_UNKNOWN_MS)
+    }
+    try {
+      chrome.runtime.sendMessage({ ...frame, id }, acceptTransport)
+    } catch {
+      acceptTransport(undefined)
+    }
   }
 
   return (
     <div data-testid="capability-profile-section">
       <div style={styles.sectionTitle}>能力档</div>
       <div style={styles.help}>
-        安装级档位，决定能否开启企业能力。enterprise 才允许 shell（宿主命令执行）、
-        netsec（端口扫描）与应用企业场景包；切换本身不会开启任何模块。
+        enterprise 档提供 shell。netsec 不会随档位自动开启。命令仍需策略和 L2 确认。
       </div>
       {status && <div style={styles.status}>{status}</div>}
       <div style={styles.card}>
@@ -90,7 +177,7 @@ export function CapabilityProfileSection() {
         </div>
         {(shellEnabled || netsecEnabled) && (
           <div style={styles.hint}>
-            shell / netsec 电源当前开着 — 切回 community 会将它们强制断电。
+            切回 community 后 shell 不再提供；已开启的 netsec 会关闭。
           </div>
         )}
       </div>

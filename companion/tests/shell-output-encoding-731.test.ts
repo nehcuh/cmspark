@@ -30,6 +30,7 @@ function fixture(policy = "confirm_per_command", enabled = true, platform = "win
     child_process: { spawn: (...args: any[]) => { spawnCalls.push(args); return child } },
     fs, path, string_decoder: require("node:string_decoder"), util: require("node:util"),
     "./modules": { getModule: () => ({ policy, allowlist_commands: ["echo"] }), requireModule: () => enabled ? { ok: true } : { ok: false, error: "shell module disabled" } },
+    "./shell-provision": { repairShellProjection: () => "ready_provided" },
     "../packs/audit-log": { appendCapabilityAudit: (value: any) => audits.push(value) },
     "../user-env": { getUserEnvVars: () => ({}) }, "../process-path": { hardenPath: ({ pathEnv }: any) => pathEnv },
     "../pty/windows-tree": { killWindowsPtyTree: (_pid: number, fallback: () => void) => fallback() },

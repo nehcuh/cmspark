@@ -96,11 +96,11 @@ test("#284 upgrade to enterprise: writes profile only + audits profile.change (m
   assert.equal(change.by, "settings.profile")
   assert.equal(typeof change.at, "string", "same at-stamp shape as module.enable")
   assert.deepEqual(change.modules_disabled, [])
-  // no module flip may be smuggled by an upgrade
+  // The upgrade does not write a shell power-switch audit. Shell is provided by the profile itself.
   assert.equal(lines.some((l) => l.type === "module.enable" || l.type === "module.disable"), false)
-  // modules stay off — enterprise only unlocks ENABILITY
   const modsUp = getConfig().modules as any
-  assert.equal(modsUp.shell.enabled, false)
+  assert.equal(modsUp.shell.enabled, true)
+  assert.equal(modsUp.shell.enabled_by, "profile.enterprise")
   assert.equal(modsUp.netsec.enabled, false)
 })
 

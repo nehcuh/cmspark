@@ -16,6 +16,7 @@ import type { ObsidianExportConfig } from "./threads/markdown-export"
 import { endpointsMatch, isPlaceholderVisionKey, resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
 import { effectiveReasoningEffort, isReasoningEffort } from "./llm/reasoning-effort"
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
+import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-provision"
 
 export const configEvents = new EventEmitter()
 export const CONFIG_CHANGE_EVENT = "config.change"
@@ -688,6 +689,7 @@ export function clearConfigCache(): void {
   advanceConfigRevision()
   cachedConfig = null
   cachedConfigMtimeMs = null
+  invalidateShellReadiness()
   storedLlmKey = ""
   storedVisionKey = ""
   visionUsesLlm = false
@@ -716,6 +718,7 @@ function saveConfigSnapshot(updated: CompanionConfig, llmKey = storedLlmKey, vis
   visionUsesLlm = inherited
   cachedConfig = updated
   cachedConfigMtimeMs = configFileMtimeMs()
+  noteShellReady(updated)
   if (captureReceipt) {
     try {
       committedConfigRevisions.set(updated, { revision: `${configRevisionEpoch}:${configRevisionSequence}`, baseline: structuredClone(updated), tainted: false })
@@ -888,6 +891,7 @@ export function getConfig(): CompanionConfig {
       advanceConfigRevision()
       cachedConfig = null
       cachedConfigMtimeMs = null
+      invalidateShellReadiness()
     }
   }
   if (cachedConfig) {
@@ -1405,6 +1409,13 @@ export function saveConfigWithReceipt(config: Partial<CompanionConfig>, intent?:
 }
 
 function saveConfigInternal(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string, captureReceipt = false): CompanionConfig {
+  enterConfigWrite()
+  try {
+  return saveConfigInternalBody(config, intent, expectedRevision, captureReceipt)
+  } finally { leaveConfigWrite() }
+}
+
+function saveConfigInternalBody(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string, captureReceipt = false): CompanionConfig {
   if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "reasoning_effort")) {
     const { isReasoningEffort } = require("./llm/reasoning-effort") as typeof import("./llm/reasoning-effort")
     if (!isReasoningEffort(config.llm.reasoning_effort)) throw new Error("INVALID_REASONING_EFFORT")
@@ -1499,6 +1510,7 @@ function saveConfigInternal(config: Partial<CompanionConfig>, intent?: { llmKey?
       nextVisionKey = ""
     }
   }
+  projectShellOnto(updated)
   return saveConfigSnapshot(updated, nextLlmKey, nextVisionKey, inherited, captureReceipt)
 }
 

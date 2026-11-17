@@ -5316,10 +5316,13 @@ async function dispatchMessage(
     }
     case "modules.list": {
       if (rest.profile_receipt_protocol !== undefined && rest.profile_receipt_protocol !== 1) return { type: "error", error: "PROFILE_RECEIPT_PROTOCOL_INVALID" }
+      const { repairShellProjection, shellProvisionView } = require("./capability/shell-provision") as typeof import("./capability/shell-provision")
+      if (repairShellProjection() === "unknown") return { type: "error", error: "SHELL_PROVISION_RESULT_UNKNOWN" }
+      const shell_provision = shellProvisionView(getConfig())
       if (rest.profile_receipt_protocol === 1) {
         try {
           const snapshot = getModulesConfigSnapshot()
-          return { type: "modules.profile.snapshot", profile_receipt_protocol: 1, capability_profile: snapshot.capability_profile, modules: snapshot.modules, config_revision: snapshot.revision }
+          return { type: "modules.profile.snapshot", profile_receipt_protocol: 1, capability_profile: snapshot.capability_profile, modules: snapshot.modules, config_revision: snapshot.revision, shell_provision }
         } catch { return { type: "error", error: "PROFILE_SNAPSHOT_UNAVAILABLE" } }
       }
       const config = getConfig()
@@ -5327,6 +5330,7 @@ async function dispatchMessage(
         type: "modules.list",
         capability_profile: config.capability_profile || "community",
         modules: structuredClone(config.modules || {}),
+        shell_provision,
       }
     }
     // --- Outbound MCP L4+ grants (Settings UI) ---
@@ -5450,7 +5454,9 @@ async function dispatchMessage(
       }
       const r = setModuleEnabled(rest.module, rest.enabled, rest.by || "user")
       if (!r.ok) return { type: "error", error: r.error }
-      return { type: "modules.updated", modules: r.modules }
+      const { repairShellProjection, shellProvisionView } = await import("./capability/shell-provision")
+      repairShellProjection()
+      return { type: "modules.updated", modules: r.modules, shell_provision: shellProvisionView(getConfig()) }
     }
     case "modules.set_profile": {
       // #284: settings 能力档 switch — same pack-engine persistence path; the
@@ -5463,11 +5469,12 @@ async function dispatchMessage(
       const receipt = rest.profile_receipt_protocol === 1
       if (receipt && (typeof rest.config_revision !== "string" || !rest.config_revision || rest.config_revision.length > 128)) return { type: "error", error: "PROFILE_REVISION_INVALID" }
       const { setCapabilityProfile } = await import("./packs/pack-engine")
+      const { shellProvisionView } = await import("./capability/shell-provision")
       const r = setCapabilityProfile(rest.profile, rest.by || "settings.profile", receipt, receipt ? rest.config_revision : undefined)
       if (!r.ok) return { type: "error", error: r.error }
       if (receipt) {
         if (!r.receipt_snapshot) return { type: "error", error: "PROFILE_CHANGE_RESULT_UNKNOWN" }
-        return { type: "modules.profile.result", profile_receipt_protocol: 1, modules: r.receipt_snapshot.modules, capability_profile: r.receipt_snapshot.capability_profile, config_revision: r.receipt_snapshot.revision, modules_disabled: r.modules_disabled, ...(r.config_applied_revision ? { config_applied_revision: r.config_applied_revision } : {}) }
+        return { type: "modules.profile.result", profile_receipt_protocol: 1, modules: r.receipt_snapshot.modules, capability_profile: r.receipt_snapshot.capability_profile, config_revision: r.receipt_snapshot.revision, modules_disabled: r.modules_disabled, shell_provision: shellProvisionView(r.receipt_snapshot), ...(r.config_applied_revision ? { config_applied_revision: r.config_applied_revision } : {}) }
       }
       const config = getConfig()
       return {
@@ -5475,6 +5482,7 @@ async function dispatchMessage(
         modules: structuredClone(config.modules || {}),
         capability_profile: config.capability_profile || "community",
         modules_disabled: r.modules_disabled,
+        shell_provision: shellProvisionView(config),
       }
     }
     case "modules.update": {
@@ -5484,7 +5492,9 @@ async function dispatchMessage(
       }
       const r = updateModuleConfig(rest.module as any, rest.patch || {})
       if (!r.ok) return { type: "error", error: r.error }
-      return { type: "modules.updated", module: r.module, modules: structuredClone(getConfig().modules) }
+      const { repairShellProjection, shellProvisionView } = await import("./capability/shell-provision")
+      repairShellProjection()
+      return { type: "modules.updated", module: r.module, modules: structuredClone(getConfig().modules), shell_provision: shellProvisionView(getConfig()) }
     }
     case "workspace.pick": {
       // Optional thread_id: pick + bind in one step (avoids UI race / stale set)
