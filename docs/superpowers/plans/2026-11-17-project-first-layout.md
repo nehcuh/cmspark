@@ -590,20 +590,31 @@ def test_restore(page):
     body = page.locator("body").inner_text()
     assert "离线" not in body
     assert "没有会话" not in body
-    page.get_by_role("button", name="Alpha", exact=True).click()
-    page.get_by_role("button", name="Alpha", exact=True).click()
+    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connected'})")
+    page.evaluate("() => window.dispatchUI({type:'SET_THREADS', threads:[{id:'demo-0', alias:'笔记', project_id:'11111111-1111-4111-8111-111111111111', trashed_at:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}]})")
+    release(page, {"cmspark.navigation.lastThreadId": "demo-0"})
+    page.get_by_role("banner", name="会话位置").get_by_role("button", name="Alpha", exact=True).click()
     assert page.evaluate("!window.sent.some(m => m.type==='thread.project.set')")
+    page.get_by_role("region", name="项目详情").wait_for()
     page.set_viewport_size({"width": 960, "height": 800})
-    current = page.get_by_role("group", name="当前任务")
-    assert current.get_by_role("button").all_inner_texts()[:3] == ["技能", "知识", "历史"]
-    assert page.get_by_role("navigation", name="工作区").get_by_role("button", name="设置", exact=True).count() == 1
-    assert current.get_by_role("button", name="设置", exact=True).count() == 0
+    nav = page.get_by_role("navigation", name="工作区")
+    nav.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("dialog", name="设置", exact=True).wait_for()
+    assert page.get_by_role("group", name="当前任务").get_by_role("button", name="设置", exact=True).count() == 0
+    assert page.get_by_role("group", name="当前任务").get_by_role("button").all_inner_texts()[:3] == ["技能", "知识", "历史"]
     css = "".join(page.locator("style").all_inner_texts())
     assert "28dvh" not in css and "cm-navigation-disclosure" not in css
     assert page.locator(".cm-navigation-disclosure").count() == 0
+
+def test_browser_tools(playwright, directory):
+    browser, page = launch(playwright, directory, {}, level="browser")
+    page.set_viewport_size({"width": 960, "height": 800})
+    assert page.get_by_role("group", name="当前任务").get_by_role("button").all_inner_texts()[:2] == ["浏览器标签页", "技能"]
+    assert page.get_by_role("navigation", name="工作区").get_by_role("button", name="设置", exact=True).count() == 1
+    browser.close()
 ```
 
-第二次 `release` 是更早那次 callback。生产 ref 已经前进，所以首页文案和空的 active 保持不变。`connecting` 用 `dispatchUI({type:'SET_CONNECTION', state:'connecting'})` 后，记住的会话标题仍在，页面文字不含「离线」和「没有会话」。
+`test_restore(page)`、`test_bind(page)` 和 `test_browser_tools(playwright, directory)` 在第一个 `browser.close()` 之前调用。文件最后一行是 `print("project navigation ui ok")`。
 
 项目内新对话不新增绕过函数。按钮调用现有 `requestProjectThread`，再用 `requestProject("thread.project.set")`。`matchingProjectReply` 拒绝错的 `project_id`。父组件只在 promise resolve 时 `onBindResult(ok)` 并把线程放进当前项目；reject 时不放。本地回执和父组件已有的 `bindNotice` 同时留在页面上。Playwright 用 `locator.wait_for` 等这两次往返，不用单次 `Promise.resolve()`。
 
@@ -670,7 +681,17 @@ export function commitStartupNavigation(input: {
 
 `useNavigationStartup` 在连接或活跃列表代际变化时增加 ref，然后 `chrome.storage.local.get`。callback 调用上面的函数。`ignored` 时直接 return。否则 `dispatch({ type: "COMMIT_NAVIGATION", decision })`。只有 `selectThread` 是字符串时才 `thread.select`。`useWebSocket.ts` 删除第 1454–1496 行的创建和 `incoming[0]`，不读 storage。
 
-`SessionContextBar` 的项目名按钮调用 `onProject`。`ProjectNavigationRoot` 把这个回调接到 `onLayer("project")` 和 `onOpenProject(projectId)`，不调用 `onAssign`。归属按钮在 `connecting` 时禁用，文案是 `projectCopy.connectingMove`，不是 `projectCopy.offlineMove`。
+`SessionContextBar` 渲染为：
+
+```tsx
+<header role="banner" aria-label="会话位置">
+  <p>{projectName ? <button type="button" onClick={onProject}>{projectName}</button> : projectCopy.outside}{` / ${threadTitle}`}</p>
+  <p>{lines.workspace}</p>
+  <p>{lines.execution}</p>
+</header>
+```
+
+`ProjectNavigationRoot` 把 `onProject` 接到 `onLayer("project")` 和 `onOpenProject(projectId)`，不调用 `onAssign`。归属按钮在 `connecting` 时禁用，文案是 `projectCopy.connectingMove`，不是 `projectCopy.offlineMove`。
 
 窄于 960 的导航不再渲染 `.cm-navigation-disclosure`。`workspace-styles.ts` 删除 `28dvh` 和这个 class。
 
@@ -724,7 +745,7 @@ test("tool groups keep the existing primary order", () => {
 })
 ```
 
-浏览器脚本在 960 宽的常驻导航里点「设置」，断言设置 dialog 出现，且该按钮不在 `group[name=当前任务]` 内。`launch(..., level="chat")` 时「当前任务」前三个按钮文字是「技能」「知识」「历史」。再 `launch(..., level="browser")`，前两个是「浏览器标签页」「技能」。设置按钮仍在 `navigation[name=工作区]`，不在这两组里。
+上面的 `test_restore` 已经点击常驻导航里的「设置」并等待 `dialog[name=设置]`，并断言 chat 的「当前任务」前三项。`test_browser_tools(playwright, directory)` 用 `launch(..., level="browser")` 断言前两项是「浏览器标签页」「技能」，且「设置」在 `navigation[name=工作区]` 而不是「当前任务」里。不要再写一份只存在于说明里的点击。
 
 样式断言：
 
