@@ -1,6 +1,14 @@
 # 版本与交付状态
 
-> 源码版本 **1.0.1（已于 2026-11-12 正式发布）**。当前正式安装包见 [v1.0.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.0.1)。
+> 源码开发版本 **1.1.0（尚未正式发布）**。当前已发布的正式安装包仍是 [v1.0.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.0.1)。
+
+## 1.1.0 发布准备
+
+- 准备基线是 main `f598f4a58b266431bcc962164c73c0dbf005e032`。该提交 10 项检查均已通过：[CI](https://github.com/nehcuh/cmspark/actions/runs/43993977410)、[ARM acceptance](https://github.com/nehcuh/cmspark/actions/runs/43993977201)、[Linux integration ARM](https://github.com/nehcuh/cmspark/actions/runs/43993977400)、[Session save recovery](https://github.com/nehcuh/cmspark/actions/runs/43993977259)。本段在打 tag 前只记录准备状态。
+- enterprise 档提供 shell，独立 shell 电源不再生效。遗留布尔 `shell.enabled: false` 迁到已提供；非布尔非法值不会被改成已授权。命令执行授权、L2、确认短语、token、信任和 netsec 保持独立（#853，[PR #854](https://github.com/nehcuh/cmspark/pull/854)）。即时设置保存等到权威快照；编程面板本机终端勾选走同一回执（[PR #852](https://github.com/nehcuh/cmspark/pull/852)，#806 仍开放）。
+- 能力档区任意 `modules.list` 会按 `capability_profile` 直接改显示档位，list 没有 revision 或 generation。迟到 list 可能把新档显示成旧档。独立审查确认这只影响展示，不影响 L2、三旗、netsec 或 shell 执行门，不阻塞 1.1.0。#853 保持开放。这里不把界面状态写成已经一致。
+- 本版不新增 Linux PTY 或 Whisper 验收。既有本机 Whisper 交付保持。正式发布仍提供既有的 macOS／Windows／Linux x64 与 ARM64 安装包和独立 Chrome 扩展 ZIP，共 19 项资产；不省略历史标准资产。tag 与安装器完成之后才核对三个校验清单、名称、大小和 GitHub digest，并核 macOS ARM64 DMG 包内 CLI 返回 `cmspark-agent v1.1.0`。
+- 正式 tag、GitHub Release 与安装器补传尚未执行。
 
 ## 1.0.1 正式发行回执
 

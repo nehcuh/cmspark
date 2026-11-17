@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-11-17（发布准备）
+
+- enterprise 档始终提供 shell，场景不再有生效的独立 shell 电源。已保存的布尔 `shell.enabled: false` 会迁到已提供；非布尔非法值不会被改成已授权。命令执行授权、L2、确认短语、token、信任和 netsec 电源保持独立，不因提供 shell 而打开或自动批准（#853，[#854](https://github.com/nehcuh/cmspark/pull/854)）。
+- 设置里的即时保存只在权威快照到达后确认。连接断开时，主保存和即时保存各自变为未知。编程面板的本机终端勾选走同一条即时保存（[#852](https://github.com/nehcuh/cmspark/pull/852)；#806 仍开放）。
+- 能力档区收到任意 `modules.list` 时会按其中的 `capability_profile` 直接改显示档位，list 没有 revision 或 generation。迟到的 list 可能把界面上的新档显示成旧档。这不影响 L2、三旗、netsec 或 shell 执行门，不阻塞本版。#853 保持开放。本条不表示界面状态已经一致。
+- 本版不新增 Linux PTY 或 Whisper 验收。既有本机 Whisper 交付保持；正式安装仍按既有 macOS／Windows／Linux 的 x64 与 ARM64 资产以及独立 Chrome 扩展 ZIP 发布。
+
 ## [1.0.1] — 2026-11-12（正式发布）
 
 - 修复有效正文与表流完整、仅缺少末扇区填充的 DOC 被拒绝导入；校验后只为私有转换输入补零，保留原附件。
