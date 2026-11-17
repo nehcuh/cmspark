@@ -1,16 +1,18 @@
 import { useEffect } from "react"
 import { createRoot } from "react-dom/client"
 import { AgentStoreProvider, initialState, useAgentStore } from "../src/sidepanel/store/agentStore"
-import { ProjectPanel } from "../src/sidepanel/components/ProjectPanel"
+import { ProjectNavigationRoot } from "../src/sidepanel/components/ProjectNavigationRoot"
+import { useNavigationStartup } from "../src/sidepanel/navigation/useNavigationStartup"
 import { workspaceCSS } from "../src/sidepanel/ui/workspace-styles"
 
 function Bridge() {
+  useNavigationStartup()
   const { state, dispatch } = useAgentStore()
   useEffect(() => {
     ;(window as any).fixtureState = state
     ;(window as any).dispatchUI = dispatch
   })
-  return <ProjectPanel filter="*" onFilter={() => { (window as any).filterCalls = ((window as any).filterCalls || 0) + 1 }} />
+  return <ProjectNavigationRoot surface="sidepanel" />
 }
 
 const demoThreads = [{

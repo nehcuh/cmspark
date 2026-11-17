@@ -13,7 +13,12 @@ import {
 import { ProjectListView } from "./ProjectListView"
 
 /** Organization metadata only. Opening a row is a view, never execution authority. */
-export function ProjectPanel({ filter, onFilter }: { filter: string; onFilter: (id: string) => void }) {
+export function ProjectPanel({ filter, onFilter, onSnapshot, onOpenProject }: {
+  filter: string
+  onFilter: (id: string) => void
+  onSnapshot?: (snapshot: ListSnapshot | null) => void
+  onOpenProject?: (id: string) => void
+}) {
   void filter
   void onFilter
   const { state, dispatch } = useAgentStore()
@@ -84,6 +89,7 @@ export function ProjectPanel({ filter, onFilter }: { filter: string; onFilter: (
       setSnapshot(next)
     })
   }, [])
+  useEffect(() => { onSnapshot?.(snapshot) }, [snapshot])
   useEffect(() => {
     if (previousConnection.current !== "connected" && state.connectionState === "connected" && opened) void refresh()
     previousConnection.current = state.connectionState
@@ -145,9 +151,13 @@ export function ProjectPanel({ filter, onFilter }: { filter: string; onFilter: (
         onQuery={setSearch}
         onClearQuery={() => setSearch("")}
         onToggleArchive={() => setArchiveView(value => !value)}
-        onOpen={id => { setSelected(id); setRename(snapshot?.projects.find(item => item.id === id)?.name || "") }}
+        onOpen={id => {
+          setSelected(id)
+          setRename(snapshot?.projects.find(item => item.id === id)?.name || "")
+          onOpenProject?.(id)
+        }}
       />
-      {selected && <button type="button" onClick={() => setSelected("")}>{projectCopy.back}</button>}
+      {!onOpenProject && selected && <button type="button" onClick={() => setSelected("")}>{projectCopy.back}</button>}
       <details>
         <summary>{projectCopy.createSummary}</summary>
         <form onSubmit={event => { event.preventDefault(); void mutate("project.create", { name }) }}><label>新项目名称<input aria-label="新项目名称" value={name} onChange={event => setName(event.target.value)} maxLength={160} disabled={saving} /></label><button type="submit" disabled={!snapshot || saving || !name.trim()}>创建项目</button></form>

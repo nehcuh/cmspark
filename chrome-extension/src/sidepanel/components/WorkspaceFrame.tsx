@@ -11,6 +11,9 @@ import { CompanionMark, IconChevronDown, IconNewChat, IconSettings } from "../ui
 import { CONTEXT_PANEL_TABS, useContextPanelHost } from "./ContextPanelHost"
 import { createBlankThread } from "./ThreadList"
 import { ProjectPanel } from "./ProjectPanel"
+import { ProjectNavigationRoot } from "./ProjectNavigationRoot"
+import { useNavigationStartup } from "../navigation/useNavigationStartup"
+import { RESIDENT_MIN_WIDTH } from "../navigation/navigation-mode"
 import { PersonalWorkspace, WORKSPACE_DESTINATIONS, type WorkspaceDestination } from "./personal-workspace/PersonalWorkspace"
 import { useActivity } from "./personal-workspace/useActivity"
 import { dueToday } from "./personal-workspace/activity-request"
@@ -18,6 +21,7 @@ import { personalWorkspaceCSS } from "./personal-workspace/styles"
 
 /** Workspace destinations project one Companion state; chat stays mounted during navigation. */
 export function WorkspaceFrame({ children }: { children: ReactNode }) {
+  useNavigationStartup()
   const { state, dispatch } = useAgentStore()
   const { openPanelForce } = useContextPanelHost()
   const full = window.location.pathname === "/tabs/workspace.html"
@@ -28,7 +32,7 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
     try { const saved = localStorage.getItem("cmspark.workspace.destination"); if (WORKSPACE_DESTINATIONS.some(item => item.id === saved)) return saved as WorkspaceDestination } catch { /* View persistence is optional. */ }
     return "today"
   })
-  const [wide, setWide] = useState(() => window.matchMedia("(min-width: 760px)").matches)
+  const [wide, setWide] = useState(() => window.matchMedia(`(min-width: ${RESIDENT_MIN_WIDTH}px)`).matches)
   const [open, setOpen] = useState(false)
   const [openingError, setOpeningError] = useState("")
   const controller = useActivity(state.connectionState === "connected", state.codingHistoryConnectionRevision)
@@ -68,7 +72,7 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
   }, [wide, open])
   const close = () => { setOpen(false); triggerRef.current?.focus() }
   useEffect(() => {
-    const query = window.matchMedia("(min-width: 760px)")
+    const query = window.matchMedia(`(min-width: ${RESIDENT_MIN_WIDTH}px)`)
     const resize = () => { setWide(query.matches); setOpen(false) }
     const toggle = () => setOpen(value => !value)
     query.addEventListener("change", resize)
@@ -116,11 +120,11 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
   const navProps = { full, destination: visibleView, onView: navigate }
   return <div className={`cm-workspace${full ? " cm-workspace-full" : ""}`}>
     <style>{personalWorkspaceCSS}</style>
+    {!full && <ProjectNavigationRoot surface="sidepanel">{children}</ProjectNavigationRoot>}
+    {full && <>
     {wide && <WorkspaceNavigation {...navProps} onNavigate={() => {}} />}
-    {!wide && open && <div ref={navRef} className="cm-navigation-disclosure" role="dialog" aria-modal="false" aria-label="工作区导航" onKeyDown={event => {
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close() }
-    }}><WorkspaceNavigation {...navProps} onNavigate={close} onClose={close} /></div>}
-    <main className="cm-workspace-main" aria-label={full ? "个人工作中心" : "对话工作区"}>
+    {!wide && <WorkspaceNavigation {...navProps} onNavigate={() => {}} />}
+    <main className="cm-workspace-main" aria-label="个人工作中心">
       {full && <nav className="cm-personal-mobile-nav" aria-label="工作中心页面">{WORKSPACE_DESTINATIONS.map(item => <button type="button" key={item.id} aria-current={visibleView === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}<button type="button" disabled={state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)} onClick={() => { navigate("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>设置</button></nav>}
       {!full && <div className="cm-sidebar-summary"><span>{state.connectionState === "connected" ? controller.snapshot ? `今日 ${controller.snapshot.todos.filter(item => dueToday(item)).length} 项 · 待整理 ${controller.snapshot.candidates.filter(item => item.status === "pending").length}` : "待办读取中" : "待办后台未连接"}</span><button type="button" onClick={openFull}>打开工作中心 ↗</button></div>}
       {openingError && <p role="alert" className="cm-personal-fieldnote">{openingError}</p>}
@@ -128,6 +132,7 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
       <div className="cm-chat-mount" hidden={full && visibleView !== "chat"}>{children}</div>
       {full && (["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource} /></div>)}
     </main>
+    </>}
   </div>
 }
 
