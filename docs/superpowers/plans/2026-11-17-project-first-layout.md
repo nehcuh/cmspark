@@ -381,7 +381,7 @@ git commit -m "test: lock project list visibility and stale snapshots"
 
 - [ ] **Step 1: Write the failing browser test**
 
-`render-project-navigation-fixture.cjs` 用现有 `render-workspace-fixture.cjs` 的 esbuild 方式打包生产 `ProjectNavigationRoot`。`chrome.storage.local.get` 在 `--hold-storage` 时把 `{ key, generation, callback }` 推进 `window.storageWaiters`。同一个 key 可以有多条，用 generation 区分。`launch` 只释放 `cmspark.project.list.v1` 的最新一条。恢复测试只释放 `cmspark.navigation.lastThreadId`。合成 `useWebSocket` 不读 `lastThreadId`，也不代替 `decideActiveThreadList` 的 node 测试。
+`render-project-navigation-fixture.cjs` 在页面脚本执行前设置 `window.demoThreads` 和 `window.fixtureState`，名字与 `render-workspace-fixture.cjs` 相同。`window.demoThreads` 至少含 `{ id: "demo-0", alias: "笔记", created_at, updated_at, config_override: {}, tool_whitelist: null, pinned_tabs: [], active_skill_ids: [] }`。每次 store 变化把 `window.fixtureState` 指到当前 state，并设置 `window.dispatchUI`。这个 fixture 的合成 `useWebSocket` 不在启动时 `SET_THREADS` 或 `SET_ACTIVE_THREAD`。`chrome.storage.local.get` 在 `--hold-storage` 时把 `{ key, generation, callback }` 推进 `window.storageWaiters`。同一个 key 可以有多条，用 generation 区分。`launch` 只释放 `cmspark.project.list.v1` 的最新一条。恢复测试只释放 `cmspark.navigation.lastThreadId`。合成 `useWebSocket` 不读 `lastThreadId`，也不代替 `decideActiveThreadList` 的 node 测试。
 
 `chrome-extension/scripts/test-project-navigation-ui.py`：
 
@@ -478,6 +478,33 @@ def test_bind(page):
     assert page.locator(f"[data-project-threads] [data-thread-id='{bad['thread_id']}']").count() == 0
     assert page.locator(f"[data-project-threads] [data-thread-id='{ok['thread_id']}']").count() == 1
 
+def test_wrong_project_receipt(playwright, directory):
+    browser, page = launch(playwright, directory, {LIST_KEY: json.dumps({"format": 1, "revision": 2, "fetchedAt": "t", "projects": [alpha, archived]})})
+    page.get_by_role("button", name="项目", exact=True).focus()
+    page.keyboard.press("Enter")
+    row = page.get_by_role("button", name="Alpha", exact=True)
+    row.wait_for()
+    row.focus()
+    page.keyboard.press("Enter")
+    page.get_by_role("button", name="项目内新对话", exact=True).click()
+    page.wait_for_function("window.sent.some(m => m.type==='thread.create')")
+    created = page.evaluate("() => window.sent.find(m => m.type==='thread.create')")
+    page.evaluate("(msg) => window.emitRuntime({type:'thread.created', id: msg.id, thread:{id: msg.id, alias:'新项目对话', project_id:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}})", created)
+    page.wait_for_function("window.sent.some(m => m.type==='thread.project.set')")
+    ok = page.evaluate("() => window.sent.find(m => m.type==='thread.project.set')")
+    page.evaluate("(msg) => window.emitRuntime({type:'project.changed', id: msg.id, operation_id: msg.operation_id, revision: msg.expected_revision + 1, thread_id: msg.thread_id, project_id: msg.project_id, thread:{id: msg.thread_id, project_id: msg.project_id}})", ok)
+    page.get_by_text("新对话已归入这个项目").wait_for()
+    page.get_by_role("button", name="项目内新对话", exact=True).click()
+    page.wait_for_function("window.sent.filter(m => m.type==='thread.create').length >= 2")
+    created2 = page.evaluate("() => window.sent.filter(m => m.type==='thread.create').at(-1)")
+    page.evaluate("(msg) => window.emitRuntime({type:'thread.created', id: msg.id, thread:{id: msg.id, alias:'新项目对话', project_id:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}})", created2)
+    page.wait_for_function("window.sent.filter(m => m.type==='thread.project.set').length >= 2")
+    bad = page.evaluate("() => window.sent.filter(m => m.type==='thread.project.set').at(-1)")
+    page.evaluate("(msg) => window.emitRuntime({type:'project.changed', id: msg.id, operation_id: msg.operation_id, revision: msg.expected_revision + 1, thread_id: msg.thread_id, project_id: 'other-project', thread:{id: msg.thread_id, project_id: 'other-project'}})", bad)
+    assert page.locator(f"[data-project-threads] [data-thread-id='{bad['thread_id']}']").count() == 0
+    assert "新对话已归入这个项目" in page.locator("body").inner_text()
+    browser.close()
+
 def test_tools(page):
     page.set_viewport_size({"width": 960, "height": 800})
     nav = page.get_by_role("navigation", name="工作区")
@@ -540,6 +567,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
         test_bind(page)
         test_tools(page)
         browser.close()
+        test_wrong_project_receipt(playwright, directory)
         browser, page = launch(playwright, directory, {LIST_KEY: "{not-json"})
         page.get_by_role("button", name="项目", exact=True).focus()
         page.keyboard.press("Enter")
@@ -558,7 +586,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
 print("project navigation ui ok")
 ```
 
-这一份就是完整脚本：辅助函数先定义，主流程再调用 `test_stale_startup`、`test_breadcrumb`、`test_bind`、`test_tools`、`test_browser_tools`，最后一行打印 `project navigation ui ok`。错的 `project_id` 不发 `project.changed`，因为 `matchingProjectReply` 会忽略它直到 15 秒超时，而页面超时是 6 秒。失败回执用同一个 id 的 `project.error`。
+这一份就是完整脚本：辅助函数先定义，主流程再调用它们，最后一行打印 `project navigation ui ok`。`test_bind` 仍用同一个 id 的 `project.error` 覆盖失败并收完 promise。`test_wrong_project_receipt` 在另一页先成功归入，再走 create、`thread.created`、等待 `thread.project.set`，然后发送同 id 与 `operation_id`、但 `project_id` 为 `other-project` 的 `project.changed`。断言立刻执行：新线程的 `data-thread-id` 数量是 0，此前的「新对话已归入这个项目」还在。不等失败句，也不改 15 秒协议超时或 6 秒页面超时。`matchingProjectReply` 忽略这帧后，该页的 pending 随 `browser.close()` 一起结束，不挂住后面的用例。
 
 
 Expected: FAIL。当前 `ProjectPanel` 把项目放在 `select` 里，`get_by_role("button", name="Alpha")` 找不到。不要另写 DOM 替身。
@@ -607,6 +635,7 @@ git commit -m "feat: show registered projects as buttons in Chrome"
 **Files:**
 
 - Create: `chrome-extension/src/sidepanel/navigation/startup-destination.ts`
+- Create: `chrome-extension/src/sidepanel/navigation/navigation-mode.ts`
 - Create: `chrome-extension/src/sidepanel/navigation/useNavigationStartup.ts`
 - Modify: `chrome-extension/src/sidepanel/store/agentStore.tsx`（只加 `COMMIT_NAVIGATION`）
 - Modify: `chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx`
@@ -803,7 +832,32 @@ if (typeof decision.selectThread === "string") {
 
 `navigationRememberedRef` 只镜像 `COMMIT_NAVIGATION` 已经写下的 remembered，不是第二次 `chrome.storage.local.get`。合成 WebSocket fixture 不能代替这个 node 测试。
 
-`useNavigationStartup` 仍是唯一读取 `cmspark.navigation.lastThreadId` 的函数。它每次读取先 `bumpListGeneration`，callback 调用 `commitStartupNavigation`。`ignored` 时不 dispatch、不 `thread.select`。否则 `COMMIT_NAVIGATION`。只有 `selectThread` 是字符串时才 `thread.select`。首页决策的 `remembered` 为 null 时才把 storage 写成 null。
+`useNavigationStartup` 是唯一读取 `cmspark.navigation.lastThreadId` 的函数。`SET_THREADS` 只有在 id 序列和上次不同时才把 `threadListEpoch` 加 1。effect 的依赖只有 `state.connectionState` 和 `state.threadListEpoch`，不依赖 `state.threads` 数组，也不依赖 `activeThreadId`。因此一次渲染里新建数组不会再次读取，`COMMIT_NAVIGATION` 改 active 也不会把代际复位。挂载时 effect 跑第一次 `chrome.storage.local.get`。测试里的 `SET_THREADS` 改变 id 序列，epoch 加 1，effect 再跑，先 `bumpListGeneration`，再发第二次 get。上一次 callback 留在 `storageWaiters` 里。callback 始终调用 `commitStartupNavigation`；`ignored` 时不 dispatch、不 `thread.select`。否则 `COMMIT_NAVIGATION`。只有 `selectThread` 是字符串时才 `thread.select`。首页决策的 `remembered` 为 null 时才把 storage 写成 null。
+
+```tsx
+const generation = useRef(0)
+useEffect(() => {
+  const commitGeneration = bumpListGeneration(generation.current)
+  generation.current = commitGeneration
+  chrome.storage.local.get("cmspark.navigation.lastThreadId", stored => {
+    const remembered = typeof stored?.["cmspark.navigation.lastThreadId"] === "string" ? stored["cmspark.navigation.lastThreadId"] : null
+    const decision = commitStartupNavigation({
+      commitGeneration,
+      currentGeneration: generation.current,
+      rememberedThreadId: remembered,
+      threads: threadsRef.current,
+      activeThreadId: activeRef.current,
+      connection: connectionRef.current,
+      listArrived: listArrivedRef.current,
+    })
+    if (decision.ignored) return
+    dispatch({ type: "COMMIT_NAVIGATION", decision })
+    if (typeof decision.selectThread === "string") chrome.runtime.sendMessage({ type: "thread.select", threadId: decision.selectThread })
+  })
+}, [state.connectionState, state.threadListEpoch])
+```
+
+`threadsRef`、`activeRef`、`connectionRef`、`listArrivedRef` 在渲染时写入当前值，不放进 effect 依赖。这样第二次 get 由连接状态或线程列表 epoch 触发，旧 callback 仍可按代际被测试释放。
 
 `SessionContextBar` 渲染为：
 
@@ -828,7 +882,7 @@ Expected: 浏览器脚本退出码 0，node 测试 `# fail 0`。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add chrome-extension/src/sidepanel/navigation/startup-destination.ts chrome-extension/src/sidepanel/navigation/useNavigationStartup.ts chrome-extension/src/sidepanel/store/agentStore.tsx chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx chrome-extension/src/sidepanel/components/SessionContextBar.tsx chrome-extension/src/sidepanel/hooks/useWebSocket.ts chrome-extension/scripts/test-project-navigation-ui.py chrome-extension/tests/startup-destination.test.ts chrome-extension/src/sidepanel/ui/workspace-styles.ts
+git add chrome-extension/src/sidepanel/navigation/startup-destination.ts chrome-extension/src/sidepanel/navigation/navigation-mode.ts chrome-extension/src/sidepanel/navigation/useNavigationStartup.ts chrome-extension/src/sidepanel/store/agentStore.tsx chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx chrome-extension/src/sidepanel/components/SessionContextBar.tsx chrome-extension/src/sidepanel/hooks/useWebSocket.ts chrome-extension/scripts/test-project-navigation-ui.py chrome-extension/scripts/render-project-navigation-fixture.cjs chrome-extension/tests/startup-destination.test.ts chrome-extension/src/sidepanel/ui/workspace-styles.ts
 git commit -m "feat: restore the last session from one startup commit"
 ```
 
