@@ -1428,6 +1428,7 @@ export function useWebSocket() {
           dispatch({
             type: "SET_THREADS",
             threads: incoming,
+            listScope,
           })
 
           if (isScopedList) break

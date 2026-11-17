@@ -304,6 +304,59 @@ def test_empty_archive(playwright, directory):
     assert page.get_by_role("button", name="Alpha", exact=True).count() == 0
     browser.close()
 
+def launch_hook(playwright, directory):
+    subprocess.run(["node", "scripts/render-project-navigation-fixture.cjs", directory, "--hook"], cwd=root, check=True)
+    browser = playwright.chromium.launch(channel="chrome", headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+    page = browser.new_page(viewport={"width": 320, "height": 800})
+    page.set_default_timeout(6000)
+    page.goto((Path(directory) / "index.html").as_uri())
+    return browser, page
+
+def thread_row(thread_id, alias, trashed=None):
+    return {
+        "id": thread_id, "alias": alias, "trashed_at": trashed, "created_at": "t", "updated_at": "t",
+        "config_override": {}, "tool_whitelist": None, "pinned_tabs": [], "active_skill_ids": [],
+    }
+
+def test_real_hook_keeps_the_selected_session(playwright, directory):
+    browser, page = launch_hook(playwright, directory)
+    release_latest(page, THREAD_KEY, {})
+    page.wait_for_function("() => window.fixtureState.navigationHomeCopy === '没有可恢复的上次对话'")
+    page.evaluate("(row) => window.emitRuntime({type:'thread.list', threads:[row]})", thread_row("demo-0", "笔记"))
+    page.wait_for_function("() => window.fixtureState.threads.some(t => t.id === 'demo-0')")
+    release_latest(page, THREAD_KEY, {})
+    page.wait_for_function("() => window.fixtureState.activeThreadId == null")
+    page.evaluate("""() => {
+      window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:'demo-0'})
+      window.dispatchUI({type:'SET_MESSAGES', messages:[{id:'m1', thread_id:'demo-0', role:'user', content:'还在', created_at:'t'}]})
+    }""")
+    page.wait_for_function("() => window.fixtureState.activeThreadId === 'demo-0' && window.fixtureState.messages[0]?.content === '还在'")
+    page.wait_for_function("() => window.storageSeed['cmspark.navigation.lastThreadId'] === 'demo-0'")
+    before = page.evaluate("(key) => window.storageWaiters.filter(item => item.key === key).length", THREAD_KEY)
+    page.evaluate(
+        "(rows) => window.emitRuntime({type:'thread.list', include_trashed:true, threads: rows})",
+        [thread_row("demo-0", "笔记"), thread_row("trash-1", "旧", "t2")],
+    )
+    page.wait_for_function("() => window.fixtureState.threads.some(t => t.id === 'trash-1')")
+    assert page.evaluate("(key) => window.storageWaiters.filter(item => item.key === key).length", THREAD_KEY) == before
+    assert page.evaluate("window.fixtureState.activeThreadId") == "demo-0"
+    assert page.locator("[data-testid=transcript]").inner_text() == "还在"
+    assert page.evaluate("!window.sent.some(m => m.type==='thread.select' || m.type==='thread.create')")
+    page.evaluate("(rows) => window.emitRuntime({type:'thread.list', threads: rows})", [thread_row("demo-0", "笔记"), thread_row("other-1", "另一条")])
+    page.wait_for_function("(key) => window.storageWaiters.some(item => item.key === key)", arg=THREAD_KEY)
+    saved = page.evaluate("() => window.storageSeed['cmspark.navigation.lastThreadId']")
+    release_latest(page, THREAD_KEY, {THREAD_KEY: saved})
+    assert page.evaluate("window.fixtureState.activeThreadId") == "demo-0"
+    assert page.locator("[data-testid=transcript]").inner_text() == "还在"
+    assert page.evaluate("!window.sent.some(m => m.type==='thread.select' || m.type==='thread.create')")
+    browser.close()
+    browser, page = launch_hook(playwright, directory)
+    release_latest(page, THREAD_KEY, {THREAD_KEY: saved})
+    page.wait_for_function("() => window.fixtureState.activeThreadId === 'demo-0'")
+    assert page.evaluate("window.fixtureState.navigationHomeCopy") is None
+    assert page.evaluate("!window.sent.some(m => m.type==='thread.select' || m.type==='thread.create')")
+    browser.close()
+
 shots.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
     with sync_playwright() as playwright:
@@ -321,4 +374,5 @@ with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
         test_save_failure_survives_list_recovery(playwright, directory)
         test_wrong_project_receipt(playwright, directory)
         test_restore_none(playwright, directory)
+        test_real_hook_keeps_the_selected_session(playwright, directory)
 print("project navigation ui ok")

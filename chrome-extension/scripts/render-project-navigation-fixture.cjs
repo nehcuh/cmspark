@@ -7,7 +7,8 @@ if (!out) {
   process.exit(1)
 }
 fs.mkdirSync(out, { recursive: true })
-const entry = path.join(__dirname, "project-navigation-preview.tsx")
+const entryName = process.argv.includes("--hook") ? "project-navigation-hook-preview.tsx" : "project-navigation-preview.tsx"
+const entry = path.join(__dirname, entryName)
 require(path.join(root, "node_modules/esbuild")).build({
   entryPoints: [entry],
   bundle: true,

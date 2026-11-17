@@ -511,7 +511,8 @@ export type AgentAction =
   | { type: "SET_WORKSPACE_HINTS"; view: WorkspaceHintView | null }
   | { type: "SET_CONNECTION"; state: ConnectionState }
   | { type: "OBSERVE_CODING_HISTORY_CONNECTION"; state: ConnectionState }
-  | { type: "SET_THREADS"; threads: Thread[] }
+  | { type: "SET_THREADS"; threads: Thread[]; listScope?: "active" | "trash" | "all" }
+  | { type: "REMEMBER_THREAD"; threadId: string }
   | { type: "COMMIT_NAVIGATION"; decision: { ignored: false; layer: "session" | "projects"; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null; remembered: string | null } }
   | { type: "NAVIGATE"; layer: "projects" | "project" | "session" | "recent"; projectId: string | null }
   | { type: "SET_ACTIVE_THREAD"; threadId: string }
@@ -1268,12 +1269,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         workspaceHints: action.state === "connected" ? state.workspaceHints : null }
     }
     case "SET_THREADS": {
-      // Keep active thread if it's still in the list; otherwise stay null so that
-      // the upcoming thread.created (fresh blank thread) can be auto-selected.
-      // Guard: companion/WS may omit threads (or send non-array) — never crash Side Panel.
-      // Dual-review B2: when list includes trashed rows, match active against
-      // non-trashed OR full list (active may be trashed only if user is viewing it).
       const threads = Array.isArray(action.threads) ? action.threads : []
+      if (action.listScope === "all" || action.listScope === "trash") {
+        return { ...state, threads }
+      }
       const activeExists = threads.some(t => t.id === state.activeThreadId)
       // Preserve active + messages when active is temporarily absent only if
       // every incoming row is trashed (only_trashed mishap) — otherwise clear.
@@ -1329,6 +1328,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     case "NAVIGATE":
       return { ...state, navigationLayer: action.layer, navigationProjectId: action.projectId }
+    case "REMEMBER_THREAD":
+      if (state.navigationRemembered === action.threadId) return state
+      return { ...state, navigationRemembered: action.threadId }
     case "SET_ACTIVE_THREAD": {
       // Same thread: keep transcript / busy. Re-select used to wipe the
       // in-flight user bubble (确认台 thread.list → auto-select).
