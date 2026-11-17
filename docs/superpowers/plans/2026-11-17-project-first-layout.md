@@ -140,6 +140,10 @@ export function parseProjectListCache(_raw: string | null): StoredProjectList | 
   throw new Error("not implemented")
 }
 
+export function bumpListGeneration(current: number): number {
+  throw new Error("not implemented")
+}
+
 export function membershipEnabled(_input: {
   connection: "connected" | "connecting" | "disconnected"
   busy: boolean
@@ -171,6 +175,7 @@ import type { Project } from "../src/sidepanel/utils/project-request"
 import { falseEmptyCopy, offlineCached, projectCopy } from "../src/sidepanel/navigation/project-copy"
 import {
   applyProjectListResult,
+  bumpListGeneration,
   membershipEnabled,
   parseProjectListCache,
   sessionContextLines,
@@ -208,6 +213,14 @@ test("stale generation and older revision do not replace the newer snapshot", ()
   const next = applyProjectListResult(current, { ...current, revision: 6, generation: 3, fetchedAt: "t6" })
   assert.equal(next.applied, true)
   assert.equal(next.snapshot?.fetchedAt, "t6")
+})
+
+test("reconnect generation makes the previous reply stale", () => {
+  const generation = bumpListGeneration(1)
+  const current: ListSnapshot = { revision: 5, projects: [active], fetchedAt: "t5", generation }
+  const late = applyProjectListResult(current, { ...current, generation: 1, revision: 9, fetchedAt: "late" })
+  assert.equal(late.reason, "stale-generation")
+  assert.equal(late.snapshot?.fetchedAt, "t5")
 })
 
 test("corrupt cache is absence, not an empty project list", () => {
@@ -285,6 +298,11 @@ export function parseProjectListCache(raw: string | null): StoredProjectList | n
   return { format: 1, revision: Number(record.revision), projects: record.projects, fetchedAt: record.fetchedAt }
 }
 
+export function bumpListGeneration(current: number): number {
+  if (!Number.isSafeInteger(current) || current < 0) throw new Error("bad generation")
+  return current + 1
+}
+
 export function membershipEnabled(input: {
   connection: "connected" | "connecting" | "disconnected"
   busy: boolean
@@ -349,8 +367,6 @@ git commit -m "test: lock project list visibility and stale snapshots"
 `chrome-extension/tests/support/interaction-dom.ts`
 
 ```ts
-type Handler = (event: DomEvent) => void
-interface Listener { capture: boolean; fn: Handler }
 export interface DomEvent {
   type: string
   bubbles: boolean
@@ -373,17 +389,18 @@ export class DomNode extends EventTarget {
   parentNode: DomNode | null = null
   childNodes: DomNode[] = []
   attributes: Record<string, string> = {}
-  style: Record<string, string> & { setProperty: (name: string, value: string) => void } = { setProperty: () => undefined }
   className = ""
   value = ""
   disabled = false
   open = false
   textData = ""
-  listeners: Record<string, Listener[]> = {}
+  style: CSSStyleDeclaration
+  listeners: Record<string, Array<{ capture: boolean; fn: EventListener }>> = {}
   constructor(tag: string) {
     super()
     this.tagName = tag.toUpperCase()
     this.nodeName = this.nodeType === 3 ? "#text" : this.tagName
+    this.style = { setProperty() { return undefined } } as unknown as CSSStyleDeclaration
   }
   get firstChild() { return this.childNodes[0] ?? null }
   get lastChild() { return this.childNodes[this.childNodes.length - 1] ?? null }
@@ -438,26 +455,26 @@ export class DomNode extends EventTarget {
   focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this }
   addEventListener(type: string, fn: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) {
     const capture = options === true || (typeof options === "object" && !!options.capture)
-    const listener = typeof fn === "function" ? fn : fn.handleEvent.bind(fn)
+    const listener: EventListener = typeof fn === "function" ? fn : event => fn.handleEvent(event)
     this.listeners[type] = this.listeners[type] ?? []
-    this.listeners[type].push({ capture, fn: listener as Handler })
+    this.listeners[type].push({ capture, fn: listener })
   }
   removeEventListener(type: string, fn: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions) {
     const capture = options === true || (typeof options === "object" && !!options.capture)
     this.listeners[type] = (this.listeners[type] ?? []).filter(item => item.fn !== fn || item.capture !== capture)
   }
-  emit(type: string, extra: Partial<DomEvent> = {}): DomEvent {
+  emit(type: string, extra: { key?: string } = {}): DomEvent {
     const event: DomEvent = {
-      type, bubbles: true, cancelable: true, target: this, currentTarget: this, key: "", defaultPrevented: false, stopped: false,
-      preventDefault() { event.defaultPrevented = true },
-      stopPropagation() { event.stopped = true },
-      ...extra,
-      target: this,
+      type, bubbles: true, cancelable: true, target: this, currentTarget: this, key: extra.key ?? "",
+      defaultPrevented: false, stopped: false, preventDefault() { return undefined }, stopPropagation() { return undefined },
     }
+    event.preventDefault = () => { event.defaultPrevented = true }
+    event.stopPropagation = () => { event.stopped = true }
     const chain: DomNode[] = []
     let cursor: DomNode | null = this
     while (cursor) { chain.push(cursor); cursor = cursor.parentNode }
-    for (const node of [...chain].reverse()) {
+    for (let index = chain.length - 1; index >= 0; index -= 1) {
+      const node = chain[index]
       event.currentTarget = node
       for (const listener of node.listeners[type] ?? []) if (listener.capture) listener.fn(event)
       if (event.stopped) return event
@@ -490,7 +507,10 @@ function matches(node: DomNode, selector: string): boolean {
     const body = selector.slice(1, -1)
     const eq = body.indexOf("=")
     if (eq < 0) return node.getAttribute(body) !== null
-    return node.getAttribute(body.slice(0, eq)) === body.slice(eq + 1).replace(/^"|"$/g, "")
+    const raw = body.slice(eq + 1)
+    const quote = raw[0]
+    const expected = (quote === "\"" || quote === "'") && raw.endsWith(quote) ? raw.slice(1, -1) : raw
+    return node.getAttribute(body.slice(0, eq)) === expected
   }
   return node.tagName.toLowerCase() === selector.toLowerCase()
 }
@@ -528,14 +548,19 @@ export class InteractionDocument extends DomNode {
 
 export function installInteractionDom(): InteractionDocument {
   const document = new InteractionDocument()
-  const globals = globalThis as typeof globalThis & {
-    document: InteractionDocument
-    window: typeof globalThis
-    HTMLElement: typeof DomNode
-    Element: typeof DomNode
-    Node: typeof DomNode
-    Document: typeof InteractionDocument
-    navigator: { userAgent: string }
+  const globals = globalThis as any
+  function HTMLIFrameElement() { return undefined }
+  const NativeMessageChannel = globalThis.MessageChannel
+  class UnrefMessageChannel {
+    port1: MessagePort
+    port2: MessagePort
+    constructor() {
+      const channel = new NativeMessageChannel()
+      ;(channel.port1 as MessagePort & { unref: () => void }).unref()
+      ;(channel.port2 as MessagePort & { unref: () => void }).unref()
+      this.port1 = channel.port1
+      this.port2 = channel.port2
+    }
   }
   globals.document = document
   globals.window = globalThis
@@ -543,6 +568,8 @@ export function installInteractionDom(): InteractionDocument {
   globals.Element = DomNode
   globals.Node = DomNode
   globals.Document = InteractionDocument
+  globals.HTMLIFrameElement = HTMLIFrameElement
+  globals.MessageChannel = UnrefMessageChannel
   globals.navigator = { userAgent: "node-test" }
   return document
 }
@@ -553,7 +580,22 @@ installInteractionDom()
 `chrome-extension/src/sidepanel/components/ProjectListView.tsx`
 
 ```tsx
-export function ProjectListView() {
+import type { Project } from "../utils/project-request"
+
+export interface ProjectListViewProps {
+  projects: Project[]
+  query: string
+  archiveView: boolean
+  phase: "loading" | "refreshing" | "ready" | "list-error" | "offline"
+  fetchedAt: string | null
+  hasSnapshot: boolean
+  onQuery: (value: string) => void
+  onClearQuery: () => void
+  onToggleArchive: () => void
+  onOpen: (projectId: string) => void
+}
+
+export function ProjectListView(_props: ProjectListViewProps) {
   return <div />
 }
 ```
@@ -570,14 +612,21 @@ import { act } from "react-dom/test-utils"
 import type { Project } from "../src/sidepanel/utils/project-request"
 import type { Thread } from "../src/sidepanel/types"
 import { falseEmptyCopy, projectCopy } from "../src/sidepanel/navigation/project-copy"
-import { ProjectListView } from "../src/sidepanel/components/ProjectListView"
+import { ProjectListView, type ProjectListViewProps } from "../src/sidepanel/components/ProjectListView"
 import { ProjectPanel } from "../src/sidepanel/components/ProjectPanel"
 import { AgentStoreProvider, initialState } from "../src/sidepanel/store/agentStore"
 
 const alpha: Project = { id: "11111111-1111-4111-8111-111111111111", name: "Alpha", created_at: "t", updated_at: "t", archived_at: null }
 const archived: Project = { ...alpha, id: "33333333-3333-4333-8333-333333333333", name: "旧项目", archived_at: "t2" }
 
-async function mount(props: Record<string, unknown>) {
+function nodesOf(root: ParentNode, tag: string): Element[] {
+  const nodes = root.querySelectorAll(tag)
+  const out: Element[] = []
+  for (let index = 0; index < nodes.length; index += 1) out.push(nodes[index])
+  return out
+}
+
+async function mount(props: ProjectListViewProps) {
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -585,11 +634,11 @@ async function mount(props: Record<string, unknown>) {
   return {
     container,
     root,
-    async rerender(next: Record<string, unknown>) { await act(async () => { root.render(createElement(ProjectListView, next)) }) },
+    async rerender(next: ProjectListViewProps) { await act(async () => { root.render(createElement(ProjectListView, next)) }) },
   }
 }
 
-function baseProps(over: Record<string, unknown> = {}) {
+function baseProps(over: Partial<ProjectListViewProps> = {}): ProjectListViewProps {
   return {
     projects: [alpha, archived], query: "", archiveView: false, phase: "ready", fetchedAt: "t", hasSnapshot: true,
     onQuery: () => undefined, onClearQuery: () => undefined, onToggleArchive: () => undefined, onOpen: () => undefined,
@@ -627,6 +676,22 @@ test("loading, empty, search, failure, and offline copies stay distinct", async 
   await loading.rerender(baseProps({ projects: [], phase: "offline", hasSnapshot: false, fetchedAt: null }))
   assert.equal(loading.container.textContent?.includes(projectCopy.offlineEmpty), true)
   assert.equal(falseEmptyCopy(loading.container.textContent ?? ""), false)
+  await loading.rerender(baseProps({ phase: "refreshing" }))
+  assert.equal(loading.container.textContent?.includes(projectCopy.updating), true)
+  assert.equal(loading.container.querySelector(`[data-project-id="${alpha.id}"]`)?.tagName, "BUTTON")
+  const cleared = { query: "zzz" }
+  const archivedView = { open: false }
+  await loading.rerender(baseProps({
+    query: "zzz",
+    phase: "ready",
+    onClearQuery: () => { cleared.query = "" },
+    onToggleArchive: () => { archivedView.open = true },
+  }))
+  const clear = nodesOf(loading.container, "button").find(node => node.textContent === projectCopy.clearSearch) as unknown as { emit: (type: string) => void }
+  const archive = nodesOf(loading.container, "button").find(node => node.textContent === projectCopy.showArchived) as unknown as { emit: (type: string) => void }
+  await act(async () => { clear.emit("click"); archive.emit("click") })
+  assert.equal(cleared.query, "")
+  assert.equal(archivedView.open, true)
   loading.root.unmount()
 })
 
@@ -641,15 +706,15 @@ test("opening projects focuses neither the name field nor a select, and browsing
     },
     storage: { local: { get: (_key: string, callback: (value: Record<string, unknown>) => void) => callback({}), set: () => undefined } },
   }
-  const thread = { id: "thread-a", alias: "笔记", created_at: "t", updated_at: "t", project_id: null, config_override: {}, tool_whitelist: null, pinned_tabs: [], active_skill_ids: [] } as Thread
+  const thread = { id: "thread-a", alias: "笔记", created_at: "t", updated_at: "t", project_id: null, config_override: {}, tool_whitelist: null, pinned_tabs: [], active_skill_ids: [] } as unknown as Thread
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
+  const panel = createElement(ProjectPanel, { filter: "*", onFilter: (id: string) => filters.push(id) })
   await act(async () => {
-    root.render(createElement(AgentStoreProvider, { initialState: { ...initialState, connectionState: "connected", threads: [thread], activeThreadId: thread.id } },
-      createElement(ProjectPanel, { filter: "*", onFilter: (id: string) => filters.push(id) })))
+    root.render(createElement(AgentStoreProvider, { initialState: { ...initialState, connectionState: "connected", threads: [thread], activeThreadId: thread.id }, children: panel }))
   })
-  const summary = [...container.querySelectorAll("summary")].find(node => node.textContent === projectCopy.projects) as unknown as { emit: (type: string) => void }
+  const summary = nodesOf(container, "summary").find(node => node.textContent === projectCopy.projects) as unknown as { emit: (type: string) => void }
   await act(async () => { summary.emit("click") })
   const listRequest = sent.find(message => message.type === "project.list")
   await act(async () => {
@@ -657,15 +722,22 @@ test("opening projects focuses neither the name field nor a select, and browsing
     await Promise.resolve()
   })
   const name = container.querySelector("input")
-  assert.notEqual(document.activeElement, name)
+  assert.notStrictEqual(document.activeElement, name)
   assert.equal(container.querySelector("select"), null)
   const row = container.querySelector(`[data-project-id="${alpha.id}"]`) as unknown as { emit: (type: string) => void }
   await act(async () => { row.emit("click") })
   assert.equal(sent.some(message => message.type === "thread.project.set"), false)
   assert.deepEqual(filters, [])
-  const move = [...container.querySelectorAll("button")].find(node => node.textContent === "移入 Alpha") as unknown as { emit: (type: string) => void }
+  const move = nodesOf(container, "button").find(node => node.textContent === "移入 Alpha") as unknown as { emit: (type: string) => void }
   await act(async () => { move.emit("click") })
   assert.equal(sent.filter(message => message.type === "thread.project.set").length, 1)
+  const setRequest = sent.find(message => message.type === "thread.project.set")
+  await act(async () => {
+    listeners.forEach(listener => listener({ id: setRequest?.id, type: "project.error", operation_id: setRequest?.operation_id, error: "rejected" }))
+    await Promise.resolve()
+  })
+  assert.equal(container.textContent?.includes(projectCopy.saveFailed), true)
+  assert.equal(container.querySelector(`[data-project-id="${alpha.id}"]`)?.tagName, "BUTTON")
   root.unmount()
 })
 ```
@@ -676,7 +748,7 @@ test("opening projects focuses neither the name field nor a select, and browsing
 
 Run: `cd chrome-extension && rm -rf .test-dist && npx tsc -p tsconfig.test.json && node --test .test-dist/tests/project-list-interaction.test.js`
 
-Expected: FAIL，`row` 为 `null`，断言 `tagName` 抛错。如果 `createRoot` 因缺 DOM 方法抛错，把缺的方法补进 `interaction-dom.ts` 的同名节点上，直到失败变成断言失败。不要改成 `renderToStaticMarkup`。
+Expected: FAIL，`row` 为 `null`，断言 `tagName` 抛错。不要改成 `renderToStaticMarkup`，也不要在失败时继续追加未列出的 DOM 方法。本计划里的 shim 已经包含 React 18 这里会检查的 `HTMLIFrameElement`，并在 `MessageChannel` 构造时 `unref` 两个 port。
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -687,7 +759,7 @@ import { projectCopy, offlineCached } from "../navigation/project-copy"
 import { visibleProjects } from "../navigation/project-list-model"
 import type { Project } from "../utils/project-request"
 
-export function ProjectListView({ projects, query, archiveView, phase, fetchedAt, hasSnapshot, onQuery, onClearQuery, onToggleArchive, onOpen }: {
+export interface ProjectListViewProps {
   projects: Project[]
   query: string
   archiveView: boolean
@@ -698,7 +770,9 @@ export function ProjectListView({ projects, query, archiveView, phase, fetchedAt
   onClearQuery: () => void
   onToggleArchive: () => void
   onOpen: (projectId: string) => void
-}) {
+}
+
+export function ProjectListView({ projects, query, archiveView, phase, fetchedAt, hasSnapshot, onQuery, onClearQuery, onToggleArchive, onOpen }: ProjectListViewProps) {
   const rows = hasSnapshot ? visibleProjects({ projects, query, archiveView }) : []
   const status = !hasSnapshot && phase === "loading" ? projectCopy.loading
     : phase === "refreshing" ? projectCopy.updating
@@ -730,7 +804,8 @@ export function ProjectListView({ projects, query, archiveView, phase, fetchedAt
 - 删除「项目筛选」「管理项目」「当前对话归属」三个 `<select>`。
 - 在说明文字下渲染 `ProjectListView`。`onOpen` 只 `setSelected(id)` 并设置改名草稿，不调用 `onFilter`，不调用 `mutate`。
 - 列表请求开始时如果已有 snapshot，保留它，`phase` 用 `refreshing`；没有 snapshot 用 `loading`。失败时不把已有 snapshot 设成 `null`，只设 `list-error`。断连且有 snapshot 用 `offline`。断连且无 snapshot 用 `offline` 且 `hasSnapshot` 为 false。
-- 「新建项目」和「管理项目」各自包在默认关闭的 `<details>` 中。管理里的改名、归档、恢复和项目内新对话仍走现有 `mutate`。
+- 「新建项目」和「管理项目」各自包在默认关闭的 `<details>` 中。管理里这一步只有改名、归档和恢复，不放「项目内新对话」。归属失败的 `catch` 显示 `projectCopy.saveFailed`，不清项目行。
+- 每次 `refresh` 和连接变为 `connected` 都调用 `bumpListGeneration`。请求记下发送时的代际，回执代际不同则丢掉。
 - 当前会话归属改成 `membershipEnabled(...)` 为真时才可点的按钮。按钮文案是 `移入 {name}` 和 `移出项目`。点击才 `mutate("thread.project.set", ...)`。禁用时显示 `projectCopy.busyMove` 或 `projectCopy.offlineMove`。
 - 成功应用 `project.list` 时调用 `chrome.storage.local.set({ [PROJECT_LIST_CACHE_KEY]: JSON.stringify({ format: 1, revision, projects, fetchedAt: new Date().toISOString() }) })`。打开时用回调形式 `chrome.storage.local.get(PROJECT_LIST_CACHE_KEY, callback)`，再 `parseProjectListCache`；损坏则当没有快照。代际用 `useRef(0)`，每次 `refresh` 加一，回执只在代际仍相等时调用 `applyProjectListResult`。
 
@@ -770,7 +845,8 @@ git commit -m "feat: show registered projects as buttons"
 
 - Consumes: `projectCopy.restoreInvalid`、`projectCopy.restoreNone`、`sessionContextLines`、`membershipEnabled`、`bind` 结果的 `ok/reason`。
 - Produces:
-  - `resolveStartupDestination({ rememberedThreadId, threads, connection })`
+  - `resolveStartupDestination({ rememberedThreadId, threads, connection, listArrived })`
+  - `openNavigation({ rememberedThreadId, threads, activeThreadId, connection, listArrived })` 返回 `{ layer, activeThreadId, homeCopy, remembered }`
   - `nextRememberedThreadId({ remembered, active, threads, listArrived })`
   - `applyActiveThreadList(...)` 的 `createBlank` 恒为 `false`
   - `navigationMode({ surface, innerWidth })`
@@ -797,22 +873,29 @@ const newer = { id: "newer", trashed_at: null }
 
 test("a remembered live thread restores while disconnected and when connected", () => {
   for (const connection of ["connected", "disconnected"] as const) {
-    assert.deepEqual(resolveStartupDestination({ rememberedThreadId: "older", threads: [newer, older], connection }), { kind: "session", threadId: "older", reason: "restored" })
+    assert.deepEqual(resolveStartupDestination({ rememberedThreadId: "older", threads: [newer, older], connection, listArrived: true }), { kind: "session", threadId: "older", reason: "restored" })
   }
 })
 
 test("disconnect before the thread list arrives keeps the remembered session", () => {
-  assert.deepEqual(resolveStartupDestination({ rememberedThreadId: "older", threads: [], connection: "disconnected" }), { kind: "session", threadId: "older", reason: "restored" })
+  assert.deepEqual(resolveStartupDestination({ rememberedThreadId: "older", threads: [], connection: "disconnected", listArrived: false }), { kind: "session", threadId: "older", reason: "restored" })
 })
 
 test("a missing remembered thread goes home and does not select the first row", () => {
-  const destination = resolveStartupDestination({ rememberedThreadId: "gone", threads: [newer, older], connection: "connected" })
+  const destination = resolveStartupDestination({ rememberedThreadId: "gone", threads: [newer, older], connection: "connected", listArrived: true })
   assert.deepEqual(destination, { kind: "project-home", reason: "invalid-remembered-session" })
-  assert.notEqual("threadId" in destination ? destination.threadId : "", newer.id)
+  assert.equal("threadId" in destination, false)
+})
+
+test("an arrived empty list clears a remembered id instead of saying there was never one", () => {
+  const decision = applyActiveThreadList({ activeThreadId: null, rememberedThreadId: "gone", incoming: [], listScope: "active" })
+  assert.equal(decision.createBlank, false)
+  assert.equal(decision.homeCopy, projectCopy.restoreInvalid)
+  assert.equal(nextRememberedThreadId({ remembered: "gone", active: null, threads: [], listArrived: true }), null)
 })
 
 test("threads without a remembered id are not a restored session", () => {
-  assert.deepEqual(resolveStartupDestination({ rememberedThreadId: null, threads: [newer], connection: "connected" }), { kind: "project-home", reason: "no-valid-session" })
+  assert.deepEqual(resolveStartupDestination({ rememberedThreadId: null, threads: [newer], connection: "connected", listArrived: true }), { kind: "project-home", reason: "no-valid-session" })
 })
 
 test("trash and all list scopes do not create or retarget", () => {
@@ -899,14 +982,15 @@ export function resolveStartupDestination(input: {
   rememberedThreadId: string | null
   threads: StartupThread[]
   connection: "connected" | "connecting" | "disconnected"
+  listArrived: boolean
 }): StartupDestination {
   if (usable(input.threads, input.rememberedThreadId) && input.rememberedThreadId) {
     return { kind: "session", threadId: input.rememberedThreadId, reason: "restored" }
   }
-  if (input.connection !== "connected" && input.rememberedThreadId && input.threads.length === 0) {
+  if (!input.listArrived && input.rememberedThreadId) {
     return { kind: "session", threadId: input.rememberedThreadId, reason: "restored" }
   }
-  if (input.rememberedThreadId && input.threads.length > 0) return { kind: "project-home", reason: "invalid-remembered-session" }
+  if (input.listArrived && input.rememberedThreadId) return { kind: "project-home", reason: "invalid-remembered-session" }
   return { kind: "project-home", reason: "no-valid-session" }
 }
 
@@ -929,7 +1013,7 @@ export function applyActiveThreadList(input: {
   if (usable(input.incoming, input.activeThreadId) && input.activeThreadId) {
     return { activeThreadId: input.activeThreadId, destination: "session", createBlank: false, reason: "keep-active", homeCopy: null }
   }
-  const startup = resolveStartupDestination({ rememberedThreadId: input.rememberedThreadId, threads: input.incoming, connection: "connected" })
+  const startup = resolveStartupDestination({ rememberedThreadId: input.rememberedThreadId, threads: input.incoming, connection: "connected", listArrived: true })
   if (startup.kind === "session") return { activeThreadId: startup.threadId, destination: "session", createBlank: false, reason: "restored", homeCopy: null }
   return {
     activeThreadId: null,
@@ -937,6 +1021,26 @@ export function applyActiveThreadList(input: {
     createBlank: false,
     reason: startup.reason,
     homeCopy: startup.reason === "invalid-remembered-session" ? projectCopy.restoreInvalid : projectCopy.restoreNone,
+  }
+}
+
+export function openNavigation(input: {
+  rememberedThreadId: string | null
+  threads: StartupThread[]
+  activeThreadId: string | null
+  connection: "connected" | "connecting" | "disconnected"
+  listArrived: boolean
+}): { layer: "session" | "projects"; activeThreadId: string | null; homeCopy: string | null; remembered: string | null } {
+  if (usable(input.threads, input.activeThreadId) && input.activeThreadId) {
+    return { layer: "session", activeThreadId: input.activeThreadId, homeCopy: null, remembered: input.activeThreadId }
+  }
+  const startup = resolveStartupDestination(input)
+  if (startup.kind === "session") return { layer: "session", activeThreadId: startup.threadId, homeCopy: null, remembered: startup.threadId }
+  return {
+    layer: "projects",
+    activeThreadId: null,
+    homeCopy: startup.reason === "invalid-remembered-session" ? projectCopy.restoreInvalid : projectCopy.restoreNone,
+    remembered: null,
   }
 }
 ```
@@ -977,7 +1081,7 @@ export async function bindNewProjectThread(input: {
 }
 ```
 
-`SidePanelLayers.tsx` 是受控组件。resident 时四个 `data-nav` 按钮和主区域同时在；layered 只渲染当前层。`data-back` 在 project 层调用 `onLayer("projects")`，在 projects、recent、session、tools、settings 层调用 `onLayer("nav")`。项目行使用已有 `ProjectListView`，它的 `onOpen` 调 `onOpenProject`。详情里的线程按钮带 `data-thread-id`，只包含 `project_id === projectId` 且没有 `trashed_at` 的线程。没有这样的线程时显示 `projectCopy.emptyProject`。`data-assign` 用 `membershipEnabled` 决定 `disabled`，点击才 `onAssign`。`bindNotice` 原样放进 `role="status"`。工具层用 `toolGroups(toolLevel)` 和 `CONTEXT_PANEL_TABS` 的 label，点击 `onOpenTool(id)`。设置按钮只调用 `onOpenSettings`。
+`SidePanelLayers.tsx` 是受控组件。四个导航按钮的文字依次是 `projectCopy.projects`、`projectCopy.recent`、`projectCopy.tools`、`projectCopy.settings`，`data-nav` 分别是 `projects`、`recent`、`tools`、`settings`。resident 时它们和主区域同时在；layered 只渲染当前层。`data-back` 在 project 层调用 `onLayer("projects")`，在 projects、recent、session、tools、settings 层调用 `onLayer("nav")`。项目层渲染 `homeCopy`（有值时）和 `ProjectListView`。最近层有按钮「全部」「项目外」以及每个未归档项目名，点击只调用 `onRecentFilter("*")`、`onRecentFilter("")` 或 `onRecentFilter(projectId)`，不调用 `onAssign`，也不创建项目。详情里的线程按钮带 `data-thread-id`，只包含 `project_id === projectId` 且没有 `trashed_at` 的线程。没有这样的线程时显示 `projectCopy.emptyProject`。详情里的「项目内新对话」调用 `bindNewProjectThread`：`ok` 时通知父组件并显示 `projectCopy.bindOk`；`bind-failed` 显示 `projectCopy.bindFailed`，父组件不得把该线程放进当前项目；`create-failed` 显示 `projectCopy.createFailed`。回执里的 `project_id` 不是当前项目时，`bindNewProjectThread` 已经返回 `bind-failed`。`data-assign` 只在 session 层，用 `membershipEnabled` 决定 `disabled`。session 层渲染 `SessionContextBar`。工具层用 `toolGroups(toolLevel)` 的现有顺序和 `CONTEXT_PANEL_TABS` 的 label，点击 `onOpenTool(id)`。设置按钮只调用 `onOpenSettings`。
 
 `SessionContextBar.tsx`：
 
@@ -1005,7 +1109,9 @@ export function SessionContextBar({ projectName, threadTitle, connection, worksp
 
 `WorkspaceFrame.tsx`：删除 `min-width: 760px` 和 `.cm-navigation-disclosure` 分支。用 `navigationMode` 和窗口宽度选择 `SidePanelLayers`。`workspace.html` 的 `WORKSPACE_DESTINATIONS` 原样保留。`workspace-styles.ts` 删除 `@media(max-width:759px)` 里的 `.cm-navigation-disclosure` 规则。
 
-`useWebSocket.ts` 在 `incoming.length === 0` 到自动选择第一项的整段（现第 1454–1496 行）换成下面的回调。上面的 `isScopedList` 提前 return 保持不动。不新增 store action，不调用 `thread.create`，不读取 `incoming[0]`。
+`WorkspaceFrame` 在挂载时，以及 `connectionState` 或线程列表变化时，读取 `cmspark.navigation.lastThreadId`，调用 `openNavigation`。`listArrived` 只在收到 `list_scope === "active"` 的 `thread.list` 后为 true。断连且列表还没到时也调用它，不把断连写成没有项目。结果的 `layer` 传给 `SidePanelLayers`；`homeCopy` 在项目层用 `role="status"` 显示。`layer === "session"` 时必须渲染 `SessionContextBar`。结果要求清空 active 时，不调用 `thread.select`，也不选 `incoming[0]`。
+
+`useWebSocket.ts` 只在活跃 `thread.list` 里调用 `applyActiveThreadList`，替换现第 1454–1496 行的自动创建和 `incoming[0]`。`trash` / `all` 的提前 return 保持不动。
 
 ```ts
 chrome.storage.local.get("cmspark.navigation.lastThreadId", stored => {
@@ -1021,13 +1127,14 @@ chrome.storage.local.get("cmspark.navigation.lastThreadId", stored => {
     dispatch({ type: "SET_ACTIVE_THREAD", threadId: decision.activeThreadId })
     chrome.runtime.sendMessage({ type: "thread.select", threadId: decision.activeThreadId })
   }
-  const nextRemembered = nextRememberedThreadId({
-    remembered,
-    active: decision.activeThreadId,
-    threads: incoming,
-    listArrived: true,
+  chrome.storage.local.set({
+    "cmspark.navigation.lastThreadId": nextRememberedThreadId({
+      remembered,
+      active: decision.activeThreadId,
+      threads: incoming,
+      listArrived: true,
+    }),
   })
-  chrome.storage.local.set({ "cmspark.navigation.lastThreadId": nextRemembered })
 })
 ```
 
@@ -1112,7 +1219,70 @@ test("session context keeps a known directory offline without calling it idle", 
 })
 ```
 
-`mount` 的默认 props 含一个未归档项目 Alpha、一条 `project_id` 匹配的线程「笔记」、`connection: "connected"`、`busy: false`、`pending: 0`。`data-nav` 只在 `mode === "resident"` 或 `layer === "nav"` 时渲染。`data-back` 只在 layered 的非 nav 层渲染，点击调用 `onLayer` 回到上一层：project 回到 projects，projects 回到 nav。`data-assign` 是会话层的「移入 Alpha」。`data-thread-id` 只渲染 `project_id` 等于当前项目的未回收线程。
+```
+
+同一文件再写这四个测试。`nodesOf` 与列表测试相同。`openNavigation` 从 `startup-destination.ts` 引入。`create` 与 `setProject` 是 `mount` 的可选回调，详情按钮把它们传给 `bindNewProjectThread`。
+
+```ts
+test("restore renders the session before the list and the home sentence after an invalid id", async () => {
+  const disconnected = openNavigation({ rememberedThreadId: "thread-1", threads: [], activeThreadId: null, connection: "disconnected", listArrived: false })
+  assert.equal(disconnected.layer, "session")
+  const session = await mount({ mode: "layered", layer: disconnected.layer, homeCopy: disconnected.homeCopy, activeThreadId: "thread-1" })
+  assert.equal(session.container.querySelector("[aria-label='会话位置']")?.textContent?.includes("笔记"), true)
+  const invalid = openNavigation({ rememberedThreadId: "gone", threads: [], activeThreadId: null, connection: "connected", listArrived: true })
+  assert.equal(invalid.homeCopy, projectCopy.restoreInvalid)
+  const missing = openNavigation({ rememberedThreadId: null, threads: [thread], activeThreadId: null, connection: "connected", listArrived: true })
+  assert.equal(missing.homeCopy, projectCopy.restoreNone)
+  const home = await mount({ mode: "layered", layer: "projects", homeCopy: missing.homeCopy })
+  assert.equal(home.container.textContent?.includes(projectCopy.restoreNone), true)
+})
+
+test("recent filters and the four navigation labels do not assign a session", async () => {
+  const filters: string[] = []
+  const recent = await mount({ mode: "layered", layer: "recent", onRecentFilter: (filter: string) => filters.push(filter), onAssign: () => filters.push("assign") })
+  for (const label of ["全部", "项目外", "Alpha"]) {
+    const button = nodesOf(recent.container, "button").find(node => node.textContent === label) as unknown as { emit: (type: string) => void }
+    await act(async () => { button.emit("click") })
+  }
+  assert.deepEqual(filters, ["*", "", alpha.id])
+  const nav = await mount({ mode: "layered", layer: "nav" })
+  for (const label of [projectCopy.projects, projectCopy.recent, projectCopy.tools, projectCopy.settings]) {
+    assert.equal(nodesOf(nav.container, "button").some(node => node.textContent === label), true)
+  }
+})
+
+test("in-project creation stays out until the receipt names this project", async () => {
+  const wrong = await mount({
+    mode: "layered", layer: "project", projectId: alpha.id, threads: [],
+    create: async () => ({ id: "thread-9" }),
+    setProject: async () => ({ thread: { id: "thread-9", project_id: "other-project" } }),
+  })
+  const button = nodesOf(wrong.container, "button").find(node => node.textContent === projectCopy.inProject) as unknown as { emit: (type: string) => void }
+  await act(async () => { button.emit("click"); await Promise.resolve() })
+  assert.equal(wrong.container.textContent?.includes(projectCopy.bindFailed), true)
+  assert.equal(wrong.container.querySelector("[data-thread-id='thread-9']"), null)
+  const created = await mount({
+    mode: "layered", layer: "project", projectId: alpha.id, threads: [],
+    create: async () => { throw new Error("unavailable") },
+    setProject: async () => ({ thread: { id: "thread-9", project_id: alpha.id } }),
+  })
+  const again = nodesOf(created.container, "button").find(node => node.textContent === projectCopy.inProject) as unknown as { emit: (type: string) => void }
+  await act(async () => { again.emit("click"); await Promise.resolve() })
+  assert.equal(created.container.textContent?.includes(projectCopy.createFailed), true)
+  const ok = await mount({
+    mode: "layered", layer: "project", projectId: alpha.id, threads: [],
+    create: async () => ({ id: "thread-1" }),
+    setProject: async () => ({ thread: { id: "thread-1", project_id: alpha.id } }),
+  })
+  const success = nodesOf(ok.container, "button").find(node => node.textContent === projectCopy.inProject) as unknown as { emit: (type: string) => void }
+  await act(async () => { success.emit("click"); await Promise.resolve() })
+  await ok.rerender({ threads: [{ id: "thread-1", alias: "笔记", project_id: alpha.id, trashed_at: null }] })
+  assert.equal(ok.container.textContent?.includes(projectCopy.bindOk), true)
+  assert.equal(ok.container.querySelector("[data-thread-id='thread-1']")?.textContent, "笔记")
+})
+```
+
+`mount` 的默认 props 含一个未归档项目 Alpha、一条 `project_id` 匹配的线程「笔记」、`connection: "connected"`、`busy: false`、`pending: 0`。`data-nav` 只在 `mode === "resident"` 或 `layer === "nav"` 时渲染。`data-back` 只在 layered 的非 nav 层渲染，点击调用 `onLayer` 回到上一层：project 回到 projects，projects 回到 nav。`data-assign` 是会话层的「移入 Alpha」。`data-thread-id` 只渲染 `project_id` 等于当前项目的未回收线程。成功归入后，父组件才把线程放进 `threads`；失败结果本身不添加 `data-thread-id`。
 
 Run: `cd chrome-extension && rm -rf .test-dist && npx tsc -p tsconfig.test.json && node --test .test-dist/tests/startup-destination.test.js .test-dist/tests/project-navigation-interaction.test.js .test-dist/tests/project-list-interaction.test.js`
 
@@ -1155,6 +1325,7 @@ git commit -m "feat: restore the last session and layer narrow navigation"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { CONTEXT_PANEL_TABS } from "../src/sidepanel/components/ContextPanelHost"
+import { contextBarOverflowTabsForLevel, contextBarTabsForLevel } from "../src/sidepanel/mode/mode-controller"
 import { toolGroups } from "../src/sidepanel/navigation/tool-groups"
 
 test("every current context panel appears once and shell is absent", () => {
@@ -1162,10 +1333,14 @@ test("every current context panel appears once and shell is absent", () => {
     const groups = toolGroups(level)
     const ids = groups.flatMap(group => group.ids)
     assert.deepEqual(groups.map(group => group.title), ["当前任务", "其他工具"])
+    assert.deepEqual(groups[0].ids, contextBarTabsForLevel(level))
+    assert.deepEqual(groups[1].ids, contextBarOverflowTabsForLevel(level))
     assert.deepEqual([...ids].sort(), CONTEXT_PANEL_TABS.map(tab => tab.id).sort())
     assert.equal(new Set(ids).size, ids.length)
     assert.equal((ids as string[]).includes("shell"), false)
   }
+  assert.deepEqual(toolGroups("chat")[0].ids, ["skills", "knowledge", "history"])
+  assert.deepEqual(toolGroups("browser")[0].ids, ["tabs", "skills"])
 })
 ```
 
@@ -1178,23 +1353,38 @@ Expected: FAIL，`not implemented`。若 `ContextPanelHost` 把测试编译拉�
 - [ ] **Step 3: Write minimal implementation**
 
 ```ts
-import { contextBarTabsForLevel, type ContextBarTabId } from "../mode/mode-controller"
+import { contextBarOverflowTabsForLevel, contextBarTabsForLevel, type ContextBarTabId } from "../mode/mode-controller"
 import type { CapabilityLevel } from "../types"
 
-const ORDER: ContextBarTabId[] = ["tabs", "history", "skills", "knowledge", "packs", "meeting", "board", "mcp", "apps"]
-
 export function toolGroups(level: CapabilityLevel): { title: "当前任务" | "其他工具"; ids: ContextBarTabId[] }[] {
-  const current = new Set<string>(contextBarTabsForLevel(level))
   return [
-    { title: "当前任务", ids: ORDER.filter(id => current.has(id)) },
-    { title: "其他工具", ids: ORDER.filter(id => !current.has(id)) },
+    { title: "当前任务", ids: contextBarTabsForLevel(level) },
+    { title: "其他工具", ids: contextBarOverflowTabsForLevel(level) },
   ]
 }
 ```
 
-`SidePanelLayers` 的工具层按这个分组渲染 `CONTEXT_PANEL_TABS` 的 label，点击仍调用现有 `openPanelForce(id)`。设置层只触发现有设置打开，不渲染新的 shell 开关。导航里删除 `filter(t => t.id !== "history")`。
+`SidePanelLayers` 的工具层按 `toolGroups` 的返回顺序渲染。交互测试追加到 `project-navigation-interaction.test.ts`：
 
-交互测试追加：工具层能按到九个 label；设置按钮的点击回调不是 `openPanelForce`。
+```ts
+test("tools keep the current labels and settings does not open a panel", async () => {
+  const opened: string[] = []
+  let settings = 0
+  const view = await mount({ mode: "layered", layer: "tools", toolLevel: "chat", onOpenTool: (id: string) => opened.push(id), onOpenSettings: () => { settings += 1 } })
+  for (const tab of CONTEXT_PANEL_TABS) {
+    const button = nodesOf(view.container, "button").find(node => node.textContent === tab.label) as unknown as { emit: (type: string) => void }
+    assert.equal(typeof button, "object")
+    await act(async () => { button.emit("click") })
+  }
+  assert.deepEqual(opened, CONTEXT_PANEL_TABS.map(tab => tab.id))
+  const settingsButton = nodesOf(view.container, "button").find(node => node.textContent === projectCopy.settings) as unknown as { emit: (type: string) => void }
+  await act(async () => { settingsButton.emit("click") })
+  assert.equal(settings, 1)
+  assert.equal(opened.includes("settings"), false)
+})
+```
+
+这个测试文件从 `ContextPanelHost` 引入 `CONTEXT_PANEL_TABS`。设置层不渲染新的 shell 开关。导航里删除 `filter(t => t.id !== "history")`。
 
 - [ ] **Step 4: Run test to verify it passes**
 

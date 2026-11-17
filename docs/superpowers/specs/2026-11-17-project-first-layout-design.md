@@ -156,7 +156,7 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 
 - 记住的 id 仍在非回收站线程中：打开该会话。断连也一样，并标离线。
 - 没有记住的 id：项目首页，说明「没有可恢复的上次对话」。不自动 `thread.create`。
-- 记住的 id 无效：项目首页，说明「上次对话已不在，已回到项目首页」。不改选另一个会话。
+- 记住的 id 无效，包括活跃列表已经到达但为空：项目首页，说明「上次对话已不在，已回到项目首页」。不改选另一个会话。
 
 这是对 [useWebSocket.ts 第 1454–1496 行](https://github.com/nehcuh/cmspark/blob/4b1f4891db39d945c31b2b226bfa7eb58db0337d/chrome-extension/src/sidepanel/hooks/useWebSocket.ts#L1454) 的行为变更。空列表不再自动造空白对话。没有线程时，现有输入占位可以继续要求先创建或选择；创建从「新对话」或项目内新对话进入。
 
