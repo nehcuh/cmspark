@@ -11,7 +11,14 @@ import type { CapabilityLevel } from "../types"
 import { ProjectPanel } from "./ProjectPanel"
 import { SessionContextBar } from "./SessionContextBar"
 
-export function ProjectNavigationRoot({ surface, level, children }: { surface: NavigationSurface; level: CapabilityLevel; children?: ReactNode }) {
+export function ProjectNavigationRoot({ surface, level, children, top, bottom, overlays }: {
+  surface: NavigationSurface
+  level: CapabilityLevel
+  children?: ReactNode
+  top?: ReactNode
+  bottom?: ReactNode
+  overlays?: ReactNode
+}) {
   const { state, dispatch } = useAgentStore()
   const { openPanelForce, closePanel } = useContextPanelHost()
   const [width, setWidth] = useState(() => window.innerWidth)
@@ -126,12 +133,17 @@ export function ProjectNavigationRoot({ surface, level, children }: { surface: N
   </section>
   return <div data-navigation-mode={mode} data-navigation-surface={surface} className={mode === "resident" ? "cm-workspace" : "cm-workspace cm-workspace-layered"}>
     <div hidden={!showNav}>{nav}</div>
-    <div className="cm-workspace-main">
-      <div hidden={!showProjects}>{projectsLayer}</div>
-      <div hidden={!showRecent}>{recent}</div>
-      <div hidden={!showDetail}>{detail}</div>
-      <div hidden={!showSession}>{session}</div>
-      <div hidden={!showTools}>{tools}</div>
+    <div className="cm-workspace-main cm-shell-column">
+      {top}
+      <div className="cm-shell-layers">
+        <div hidden={!showProjects}>{projectsLayer}</div>
+        <div hidden={!showRecent}>{recent}</div>
+        <div hidden={!showDetail}>{detail}</div>
+        <div hidden={!showSession}>{session}</div>
+        <div hidden={!showTools}>{tools}</div>
+      </div>
+      <div className="cm-shell-bottom">{bottom}</div>
+      {overlays}
     </div>
   </div>
 }

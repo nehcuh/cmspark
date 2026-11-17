@@ -4,11 +4,14 @@ import { tokens } from "./tokens"
 export const workspaceCSS = `
 .cm-projects{font-size:12px;padding:8px 0;border-bottom:1px solid ${tokens.border}}
 .cm-projects summary{cursor:pointer;min-height:32px}.cm-project-controls{display:flex;flex-direction:column;gap:8px;padding:8px 2px}.cm-project-controls p{margin:0;overflow-wrap:anywhere}.cm-project-controls form,.cm-project-controls label{display:flex;flex-direction:column;gap:6px}.cm-project-controls input,.cm-project-controls select,.cm-project-controls button{box-sizing:border-box;max-width:100%;min-height:32px;font:inherit}.cm-project-controls button{white-space:normal}.cm-project-controls [role=alert]{color:${tokens.danger}}
-.cm-workspace{display:flex;height:100dvh;min-height:0;width:100%;overflow:hidden;background:${tokens.bg};font-family:${tokens.font};color:${tokens.text}}
+.cm-workspace{display:flex;height:100dvh;min-height:0;width:100%;overflow:hidden;position:relative;background:${tokens.bg};font-family:${tokens.font};color:${tokens.text}}
 .cm-workspace-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;position:relative}
 .cm-navigation{width:220px;height:100%;box-sizing:border-box;flex-shrink:0;display:flex;flex-direction:column;padding:20px 12px 12px;background:${tokens.bgMuted};border-right:1px solid ${tokens.border};gap:6px;overflow-y:auto}
-.cm-workspace-layered{display:block;height:100dvh}
+.cm-workspace-layered{display:flex;flex-direction:column;height:100dvh}
 .cm-workspace-layered .cm-navigation{width:100%;height:auto;border-right:0;border-bottom:1px solid ${tokens.border}}
+.cm-shell-column{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
+.cm-shell-layers{flex:1;min-height:0;overflow:auto}
+.cm-shell-bottom{position:relative;z-index:2;flex-shrink:0}
 .cm-tool-groups{display:flex;flex-direction:column;gap:8px;padding:8px 2px}
 .cm-tool-groups p{margin:0;color:${tokens.textMuted};font-size:11px}
 [aria-label="工作区导航"] .cm-navigation{width:100%}
@@ -60,8 +63,8 @@ export const workspaceCSS = `
 .cm-history-panel{max-width:720px;margin:0 auto}
 .cm-history-panel button:focus-visible,.cm-history-panel [role="button"]:focus-visible{outline:2px solid ${tokens.accent};outline-offset:-2px}
 @media(min-width:760px){.cm-navigation-toggle{display:none!important}.cm-status-rail{padding:12px 24px!important;border-bottom:1px solid ${tokens.border}!important}.cm-chat-scroll{padding:28px 32px!important}.cm-composer-dock{padding-bottom:24px!important}}
-@media(max-width:759px){.cm-workspace{flex-direction:column}.cm-task-title{font-size:12px}.cm-composer-dock{padding:8px 12px 12px!important}.cm-settings-panel{align-self:flex-end;width:100%!important;max-height:90dvh!important;border-radius:16px 16px 0 0!important}.cm-settings-header{padding:16px!important}.cm-settings-body{padding:8px 16px 16px!important}}
-@media(max-height:560px){.cm-context-panel{max-height:40vh!important}.cm-composer-dock{padding-top:4px!important;padding-bottom:6px!important}.cm-navigation{padding-top:10px}.cm-nav-brand{padding-bottom:8px}.cm-nav-resources{margin-bottom:4px}.cm-nav-new{margin-bottom:2px}}
+@media(max-width:759px){.cm-workspace{flex-direction:column;height:100dvh;overflow:hidden}.cm-workspace .cm-navigation,.cm-workspace-layered .cm-navigation{flex-shrink:1;width:100%;height:auto;max-height:30dvh;min-height:0;overflow:auto}.cm-shell-column{flex:1;min-height:0}.cm-task-title{font-size:12px}.cm-composer-dock{padding:8px 12px 12px!important}.cm-settings-panel{align-self:flex-end;width:100%!important;max-height:90dvh!important;border-radius:16px 16px 0 0!important}.cm-settings-header{padding:16px!important}.cm-settings-body{padding:8px 16px 16px!important}}
+@media(max-height:560px){.cm-context-panel{max-height:26vh!important}.cm-composer-dock{padding-top:4px!important;padding-bottom:6px!important}.cm-navigation{padding-top:10px}.cm-nav-brand{padding-bottom:8px}.cm-nav-resources{margin-bottom:4px}.cm-nav-new{margin-bottom:2px}}
 @media(prefers-reduced-motion:reduce){.cm-workspace *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 .cm-settings-panel{width:min(980px,100vw - 32px)!important;height:88dvh;max-height:88dvh!important}

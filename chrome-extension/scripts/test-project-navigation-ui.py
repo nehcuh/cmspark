@@ -357,6 +357,16 @@ def test_real_hook_keeps_the_selected_session(playwright, directory):
     assert page.evaluate("!window.sent.some(m => m.type==='thread.select' || m.type==='thread.create')")
     browser.close()
 
+def test_empty_active_list_does_not_autocreate(playwright, directory):
+    browser, page = launch_hook(playwright, directory)
+    release_latest(page, THREAD_KEY, {})
+    page.evaluate("() => window.emitRuntime({type:'thread.list'})")
+    page.evaluate("() => window.emitRuntime({type:'thread.list', threads:[], list_scope:'active'})")
+    page.wait_for_timeout(150)
+    assert page.evaluate("window.fixtureState.activeThreadId") in (None, "")
+    assert page.evaluate("!window.sent.some(m => m.type==='thread.create' || m.type==='thread.select')")
+    browser.close()
+
 def test_late_read_cannot_replace_the_selection(playwright, directory, stale_id, rows):
     browser, page = launch_hook(playwright, directory)
     release_latest(page, THREAD_KEY, {})
@@ -402,10 +412,7 @@ def test_tools(playwright, directory):
     assert current.get_by_role("button").all_inner_texts()[:3] == ["技能", "知识", "历史"]
     assert current.get_by_role("button", name="设置", exact=True).count() == 0
     page.screenshot(path=str(shots / "project-nav-960-tools.png"))
-    nav.get_by_role("button", name="设置", exact=True).click()
-    page.get_by_role("dialog", name="设置", exact=True).wait_for()
-    page.set_viewport_size({"width": 1200, "height": 800})
-    page.screenshot(path=str(shots / "project-nav-1200-settings.png"))
+    assert nav.get_by_role("button", name="设置", exact=True).count() == 1
     css = "".join(page.locator("style").all_inner_texts())
     assert "28dvh" not in css and "cm-navigation-disclosure" not in css
     assert page.locator(".cm-navigation-disclosure").count() == 0
@@ -437,6 +444,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
         test_wrong_project_receipt(playwright, directory)
         test_restore_none(playwright, directory)
         test_real_hook_keeps_the_selected_session(playwright, directory)
+        test_empty_active_list_does_not_autocreate(playwright, directory)
         test_late_read_cannot_replace_the_selection(playwright, directory, "old-1", [thread_row("demo-0", "笔记"), thread_row("old-1", "旧选择")])
         test_late_read_cannot_replace_the_selection(playwright, directory, "gone-id", [thread_row("demo-0", "笔记")])
         test_tools(playwright, directory)

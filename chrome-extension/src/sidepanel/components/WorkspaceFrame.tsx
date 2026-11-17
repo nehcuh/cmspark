@@ -22,7 +22,13 @@ import { dueToday } from "./personal-workspace/activity-request"
 import { personalWorkspaceCSS } from "./personal-workspace/styles"
 
 /** Workspace destinations project one Companion state; chat stays mounted during navigation. */
-export function WorkspaceFrame({ children, level = "chat" }: { children: ReactNode; level?: CapabilityLevel }) {
+export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays }: {
+  children: ReactNode
+  level?: CapabilityLevel
+  top?: ReactNode
+  bottom?: ReactNode
+  overlays?: ReactNode
+}) {
   useNavigationStartup()
   const { state, dispatch } = useAgentStore()
   const { openPanelForce } = useContextPanelHost()
@@ -121,19 +127,26 @@ export function WorkspaceFrame({ children, level = "chat" }: { children: ReactNo
   }, [dispatch, full, destinationOwner, state.settingsOpen, state.activeThreadId, state.activeThreadSelectionRevision, state.pendingSecurityConfirmations.length, state.computerTask])
   const openResource = (panel: Parameters<typeof openPanelForce>[0]) => { navigate("chat"); openPanelForce(panel) }
   const navProps = { full, destination: visibleView, onView: navigate }
-  return <div className={`cm-workspace${full ? " cm-workspace-full" : ""}`}>
+  if (!full) return <>
     <style>{personalWorkspaceCSS}</style>
-    {!full && <ProjectNavigationRoot surface={surface} level={level}>{children}</ProjectNavigationRoot>}
+    <ProjectNavigationRoot surface={surface} level={level} top={top} bottom={bottom} overlays={overlays}>{children}</ProjectNavigationRoot>
+  </>
+  return <div className="cm-workspace cm-workspace-full">
+    <style>{personalWorkspaceCSS}</style>
     {full && <>
     {wide && <WorkspaceNavigation {...navProps} level={level} onNavigate={() => {}} />}
     {!wide && <WorkspaceNavigation {...navProps} level={level} onNavigate={() => {}} />}
-    <main className="cm-workspace-main" aria-label="个人工作中心">
-      {full && <nav className="cm-personal-mobile-nav" aria-label="工作中心页面">{WORKSPACE_DESTINATIONS.map(item => <button type="button" key={item.id} aria-current={visibleView === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}<button type="button" disabled={state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)} onClick={() => { navigate("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>设置</button></nav>}
-      {!full && <div className="cm-sidebar-summary"><span>{state.connectionState === "connected" ? controller.snapshot ? `今日 ${controller.snapshot.todos.filter(item => dueToday(item)).length} 项 · 待整理 ${controller.snapshot.candidates.filter(item => item.status === "pending").length}` : "待办读取中" : "待办后台未连接"}</span><button type="button" onClick={openFull}>打开工作中心 ↗</button></div>}
+    <main className="cm-workspace-main cm-shell-column" aria-label="个人工作中心">
+      {top}
       {openingError && <p role="alert" className="cm-personal-fieldnote">{openingError}</p>}
+      {full && <nav className="cm-personal-mobile-nav" aria-label="工作中心页面">{WORKSPACE_DESTINATIONS.map(item => <button type="button" key={item.id} aria-current={visibleView === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}<button type="button" disabled={state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)} onClick={() => { navigate("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>设置</button></nav>}
       {full && visibleView !== "chat" && state.meetingCaptureActive && <div className="cm-personal-banner" role="status"><span>会议录制中</span><button className="cm-icon-button" type="button" onClick={() => openResource("meeting")}>返回会议</button></div>}
-      <div className="cm-chat-mount" hidden={full && visibleView !== "chat"}>{children}</div>
-      {full && (["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource} /></div>)}
+      <div className="cm-shell-layers">
+        <div className="cm-chat-mount" hidden={visibleView !== "chat"}>{children}</div>
+        {(["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource} /></div>)}
+      </div>
+      <div className="cm-shell-bottom">{bottom}</div>
+      {overlays}
     </main>
     </>}
   </div>

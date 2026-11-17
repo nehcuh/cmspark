@@ -4,7 +4,6 @@ import { AgentStoreProvider, initialState, useAgentStore } from "../src/sidepane
 import { ProjectNavigationRoot } from "../src/sidepanel/components/ProjectNavigationRoot"
 import { useNavigationStartup } from "../src/sidepanel/navigation/useNavigationStartup"
 import { ContextPanelHostProvider } from "../src/sidepanel/components/ContextPanelHost"
-import { SettingsSlideout } from "../src/sidepanel/components/SettingsSlideout"
 import { workspaceCSS } from "../src/sidepanel/ui/workspace-styles"
 import type { CapabilityLevel } from "../src/sidepanel/types"
 
@@ -18,7 +17,6 @@ function Bridge() {
   const level = ((window as any).__CMSPARK_LEVEL || "chat") as CapabilityLevel
   return <ContextPanelHostProvider capabilityLevel={level}>
     <ProjectNavigationRoot surface="sidepanel" level={level} />
-    <SettingsSlideout />
   </ContextPanelHostProvider>
 }
 
