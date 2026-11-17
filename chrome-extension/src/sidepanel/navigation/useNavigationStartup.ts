@@ -40,7 +40,7 @@ export function useNavigationStartup() {
       })
       if ("reason" in decision) return
       const live = threadsRef.current.find(thread => thread.id === activeRef.current && !thread.trashed_at)
-      if (decision.remembered === null && live) {
+      if (live && remembered !== live.id) {
         dispatch({ type: "REMEMBER_THREAD", threadId: live.id })
         chrome.storage.local.set({ [LAST_THREAD_KEY]: live.id })
         return

@@ -357,6 +357,27 @@ def test_real_hook_keeps_the_selected_session(playwright, directory):
     assert page.evaluate("!window.sent.some(m => m.type==='thread.select' || m.type==='thread.create')")
     browser.close()
 
+def test_late_read_cannot_replace_the_selection(playwright, directory, stale_id, rows):
+    browser, page = launch_hook(playwright, directory)
+    release_latest(page, THREAD_KEY, {})
+    page.wait_for_function("() => window.fixtureState.navigationHomeCopy === '没有可恢复的上次对话'")
+    page.evaluate("(rows) => window.emitRuntime({type:'thread.list', threads: rows})", rows)
+    page.wait_for_function("() => window.fixtureState.threads.some(t => t.id === 'demo-0')")
+    page.wait_for_function("(key) => window.storageWaiters.some(item => item.key === key)", arg=THREAD_KEY)
+    generation = page.evaluate("(key) => window.storageWaiters.filter(item => item.key === key).at(-1).generation", THREAD_KEY)
+    page.evaluate("""() => {
+      window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:'demo-0'})
+      window.dispatchUI({type:'SET_MESSAGES', messages:[{id:'m1', thread_id:'demo-0', role:'user', content:'还在', created_at:'t'}]})
+    }""")
+    page.wait_for_function("() => window.fixtureState.activeThreadId === 'demo-0' && window.fixtureState.messages[0]?.content === '还在'")
+    release_generation(page, THREAD_KEY, generation, {THREAD_KEY: stale_id})
+    assert page.evaluate("window.fixtureState.activeThreadId") == "demo-0"
+    assert page.evaluate("window.fixtureState.messages[0]?.content") == "还在"
+    assert page.locator("[data-testid=transcript]").inner_text() == "还在"
+    assert page.evaluate("!window.sent.some(m => m.type==='thread.select' || m.type==='thread.create')")
+    page.wait_for_function("() => window.storageSeed['cmspark.navigation.lastThreadId'] === 'demo-0'")
+    browser.close()
+
 shots.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
     with sync_playwright() as playwright:
@@ -375,4 +396,6 @@ with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
         test_wrong_project_receipt(playwright, directory)
         test_restore_none(playwright, directory)
         test_real_hook_keeps_the_selected_session(playwright, directory)
+        test_late_read_cannot_replace_the_selection(playwright, directory, "old-1", [thread_row("demo-0", "笔记"), thread_row("old-1", "旧选择")])
+        test_late_read_cannot_replace_the_selection(playwright, directory, "gone-id", [thread_row("demo-0", "笔记")])
 print("project navigation ui ok")
