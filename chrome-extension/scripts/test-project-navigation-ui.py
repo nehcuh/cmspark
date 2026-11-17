@@ -2,12 +2,8 @@
 
 cd chrome-extension && nvm use 22
 uv run --no-project --with playwright python scripts/test-project-navigation-ui.py
-
-Task 3 startup, breadcrumb, bind, and tool cases stay in this file.
-Set CMSPARK_PROJECT_NAV_FULL=1 to run them. This node's default run does not.
 """
 import json
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -15,7 +11,6 @@ from playwright.sync_api import sync_playwright
 
 root = Path(__file__).resolve().parent.parent
 LIST_KEY = "cmspark.project.list.v1"
-THREAD_KEY = "cmspark.navigation.lastThreadId"
 shots = Path("/opt/cursor/artifacts")
 alpha = {"id": "11111111-1111-4111-8111-111111111111", "name": "Alpha", "created_at": "t", "updated_at": "t", "archived_at": None}
 empty_named = {"id": "22222222-2222-4222-8222-222222222222", "name": "空项目", "created_at": "t", "updated_at": "t", "archived_at": None}
@@ -89,6 +84,9 @@ def test_list(page):
     assert page.get_by_role("button", name="空项目", exact=True).count() == 0
     page.screenshot(path=str(shots / "project-list-archived.png"))
     page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'disconnected'})")
+    disconnected = page.locator("[aria-label=项目]").inner_text()
+    assert "离线，列表更新于 t" in disconnected
+    assert "还没有项目" not in disconnected
     page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connected'})")
     page.wait_for_function("window.sent.filter(m => m.type==='project.list').length >= 2")
     listed = page.evaluate("() => window.sent.filter(m => m.type==='project.list')[0]")
@@ -102,9 +100,99 @@ def test_bad_cache(playwright, directory):
     browser, page = launch(playwright, directory, {LIST_KEY: "{not-json"})
     open_projects(page)
     text = page.locator("[aria-label=项目]").inner_text()
+    assert "正在读取项目" in text
     assert "还没有项目" not in text
-    assert "无法取回项目列表" in text or "正在读取项目" in text
+    assert "无法取回项目列表" not in text
     page.screenshot(path=str(shots / "project-list-bad-cache.png"))
+    browser.close()
+
+def emit_error(page, message, secret):
+    page.evaluate(
+        "(msg) => window.emitRuntime({id: msg.id, type:'project.error', error: msg.secret})",
+        {"id": message["id"], "secret": secret},
+    )
+
+def region_text(page):
+    return page.locator("[aria-label=项目]").inner_text()
+
+def panel_text(page):
+    return page.locator(".cm-project-controls").inner_text()
+
+def test_connected_list_error_without_cache(playwright, directory):
+    browser, page = launch(playwright, directory, {})
+    open_projects(page)
+    page.wait_for_function("window.sent.some(m => m.type==='project.list')")
+    listed = page.evaluate("() => window.sent.filter(m => m.type==='project.list').at(-1)")
+    emit_error(page, listed, "raw-list-secret")
+    page.locator("[aria-label=项目]").get_by_text("项目列表没有取回", exact=True).wait_for()
+    text = panel_text(page)
+    assert "raw-list-secret" not in text
+    assert "离线" not in text
+    assert "无法取回项目列表" not in text
+    assert "还没有项目" not in text
+    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'disconnected'})")
+    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connected'})")
+    page.wait_for_function("window.sent.filter(m => m.type==='project.list').length >= 2")
+    latest = page.evaluate("() => window.sent.filter(m => m.type==='project.list').at(-1)")
+    page.evaluate("(msg) => window.emitRuntime({id: msg.id, type:'project.state', revision: 1, projects:[]})", latest)
+    page.locator("[aria-label=项目]").get_by_text("还没有项目", exact=True).wait_for()
+    text = region_text(page)
+    assert "项目列表没有取回" not in text
+    assert "无法取回项目列表" not in text
+    browser.close()
+
+def test_save_failure_survives_list_recovery(playwright, directory):
+    browser, page = launch(playwright, directory, {LIST_KEY: json.dumps({"format": 1, "revision": 2, "fetchedAt": "t", "projects": [alpha]})})
+    open_projects(page)
+    page.get_by_role("button", name="Alpha", exact=True).wait_for()
+    page.wait_for_function("window.sent.some(m => m.type==='project.list')")
+    listed = page.evaluate("() => window.sent.filter(m => m.type==='project.list').at(-1)")
+    emit_error(page, listed, "raw-list-secret")
+    page.locator("[aria-label=项目]").get_by_text("项目列表没有取回", exact=True).wait_for()
+    assert page.get_by_role("button", name="Alpha", exact=True).count() == 1
+    text = panel_text(page)
+    assert "raw-list-secret" not in text
+    assert "无法取回项目列表" not in text
+    assert "还没有项目" not in text
+    create_summary = page.locator("summary", has_text="新建项目")
+    create_summary.focus()
+    page.keyboard.press("Enter")
+    page.get_by_role("textbox", name="新项目名称", exact=True).fill("Beta")
+    page.get_by_role("button", name="创建项目", exact=True).click()
+    page.wait_for_function("window.sent.some(m => m.type==='project.create')")
+    created = page.evaluate("() => window.sent.filter(m => m.type==='project.create').at(-1)")
+    emit_error(page, created, "raw-save-secret")
+    page.get_by_role("alert").filter(has_text="项目没有保存").wait_for()
+    assert "raw-save-secret" not in panel_text(page)
+    assert page.get_by_role("button", name="Alpha", exact=True).count() == 1
+    assert "项目列表没有取回" in panel_text(page)
+    page.get_by_role("button", name="Alpha", exact=True).focus()
+    page.keyboard.press("Enter")
+    page.locator("summary", has_text="管理项目").focus()
+    page.keyboard.press("Enter")
+    page.get_by_role("textbox", name="项目新名称", exact=True).fill("Gamma")
+    page.get_by_role("button", name="改名", exact=True).click()
+    page.wait_for_function("window.sent.some(m => m.type==='project.rename')")
+    renamed = page.evaluate("() => window.sent.filter(m => m.type==='project.rename').at(-1)")
+    emit_error(page, renamed, "raw-rename-secret")
+    page.get_by_role("alert").filter(has_text="项目没有保存").wait_for()
+    assert "raw-rename-secret" not in panel_text(page)
+    assert page.get_by_role("button", name="Alpha", exact=True).count() == 1
+    assert page.get_by_role("button", name="Gamma", exact=True).count() == 0
+    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'disconnected'})")
+    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connected'})")
+    page.wait_for_function("window.sent.filter(m => m.type==='project.list').length >= 2")
+    latest = page.evaluate("() => window.sent.filter(m => m.type==='project.list').at(-1)")
+    page.evaluate(
+        "(msg) => window.emitRuntime({id: msg.id, type:'project.state', revision: 3, projects:[{id:'11111111-1111-4111-8111-111111111111', name:'Alpha', created_at:'t', updated_at:'t', archived_at:null}]})",
+        latest,
+    )
+    page.wait_for_function("""() => {
+      const text = document.querySelector('[aria-label=项目]').innerText
+      return !text.includes('项目列表没有取回') && !text.includes('离线，列表更新于')
+    }""")
+    assert "项目没有保存" in panel_text(page)
+    assert page.get_by_role("button", name="Alpha", exact=True).count() == 1
     browser.close()
 
 def test_empty_archive(playwright, directory):
@@ -124,4 +212,6 @@ with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
         browser.close()
         test_bad_cache(playwright, directory)
         test_empty_archive(playwright, directory)
+        test_connected_list_error_without_cache(playwright, directory)
+        test_save_failure_survives_list_recovery(playwright, directory)
 print("project navigation ui ok")

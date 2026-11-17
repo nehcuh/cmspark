@@ -18,7 +18,9 @@ export function ProjectPanel({ filter, onFilter }: { filter: string; onFilter: (
   void onFilter
   const { state, dispatch } = useAgentStore()
   const [snapshot, setSnapshot] = useState<ListSnapshot | null>(null)
-  const [error, setError] = useState(""), [notice, setNotice] = useState("")
+  const [notice, setNotice] = useState("")
+  const [saveFailed, setSaveFailed] = useState(false)
+  const [bindError, setBindError] = useState("")
   const [name, setName] = useState(""), [rename, setRename] = useState("")
   const [selected, setSelected] = useState("")
   const [search, setSearch] = useState("")
@@ -65,10 +67,9 @@ export function ProjectPanel({ filter, onFilter }: { filter: string; onFilter: (
           fetchedAt: applied.snapshot.fetchedAt,
         }),
       })
-    } catch (e) {
+    } catch {
       if (controller.signal.aborted || !sameListGeneration(generation, listGeneration.current)) return
       setListFailed(true)
-      setError((e as Error).message)
     } finally {
       if (sameListGeneration(generation, listGeneration.current)) setRefreshing(false)
     }
@@ -94,7 +95,7 @@ export function ProjectPanel({ filter, onFilter }: { filter: string; onFilter: (
     const ownsView = () => owner.current === submittedOwner && selection.current === submittedSelection ||
       !!admittedCreation.current && owner.current === admittedCreation.current.id && selection.current === admittedCreation.current.selection
     admittedCreation.current = null
-    request.current?.abort(); request.current = controller; setSaving(true); setError(""); setNotice("")
+    request.current?.abort(); request.current = controller; setSaving(true); setSaveFailed(false); setBindError(""); setNotice("")
     const normalized = name.normalize("NFC").trim()
     let operation: string = crypto.randomUUID()
     if (type === "project.create") {
@@ -116,15 +117,17 @@ export function ProjectPanel({ filter, onFilter }: { filter: string; onFilter: (
       setNotice("项目记录已保存。")
       setSaving(false)
       await refresh()
-    } catch (e) {
+    } catch {
       if (!controller.signal.aborted && ownsView()) {
-        setError(created ? "新对话已创建在项目外；归入尚未确认，请刷新后显式整理。" : (e as Error).message)
-        if (created) { dispatch({ type: "SET_ACTIVE_THREAD", threadId: created.id }); chrome.runtime.sendMessage({ type: "thread.select", threadId: created.id }) }
+        if (created) {
+          setBindError("新对话已创建在项目外；归入尚未确认，请刷新后显式整理。")
+          dispatch({ type: "SET_ACTIVE_THREAD", threadId: created.id }); chrome.runtime.sendMessage({ type: "thread.select", threadId: created.id })
+        } else setSaveFailed(true)
       }
     } finally { if (request.current === controller) { request.current = null; setSaving(false) } }
   }
   const offline = state.connectionState === "disconnected"
-  const phase = offline ? "offline" : listFailed && snapshot ? "list-error" : listFailed ? "offline" : refreshing && snapshot ? "refreshing" : snapshot ? "ready" : "loading"
+  const phase = offline ? "offline" : listFailed ? "list-error" : refreshing && snapshot ? "refreshing" : snapshot ? "ready" : "loading"
   return <details className="cm-projects" open={opened} onToggle={event => {
     const open = event.currentTarget.open; setOpened(open)
     if (open) void refresh()
@@ -154,7 +157,9 @@ export function ProjectPanel({ filter, onFilter }: { filter: string; onFilter: (
         {project && <><form onSubmit={event => { event.preventDefault(); void mutate("project.rename", { project_id: project.id, name: rename }) }}><label>项目新名称<input value={rename} onChange={event => setRename(event.target.value)} disabled={saving} maxLength={160} /></label><button disabled={saving || !rename.trim()}>改名</button></form><button type="button" disabled={saving} onClick={() => void mutate(project.archived_at ? "project.restore" : "project.archive", { project_id: project.id })}>{project.archived_at ? "恢复项目" : "归档项目"}</button></>}
       </details>
       <p>当前对话项目：{thread?.project_metadata_unavailable ? "项目状态不可用" : current ? current.name + (current.archived_at ? "（已归档）" : "") : thread?.project_id ? "原项目不可用" : "项目外"}</p>
-      {notice && <p role="status">{notice}</p>}{error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
+      {saveFailed && <p role="alert">{projectCopy.saveFailed}</p>}
+      {bindError && <p role="alert">{bindError}</p>}
     </div>}
   </details>
 }
