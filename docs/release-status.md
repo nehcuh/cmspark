@@ -1,14 +1,14 @@
 # 版本与交付状态
 
-> 源码开发版本 **1.1.0（尚未正式发布）**。当前已发布的正式安装包仍是 [v1.0.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.0.1)。
+> 源码版本 **1.1.0（已于 2026-11-17 正式发布）**。当前正式安装包见 [v1.1.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.1.0)。
 
-## 1.1.0 发布准备
+## 1.1.0 正式发行回执
 
-- 准备基线是 main `f598f4a58b266431bcc962164c73c0dbf005e032`。该提交 10 项检查均已通过：[CI](https://github.com/nehcuh/cmspark/actions/runs/43993977410)、[ARM acceptance](https://github.com/nehcuh/cmspark/actions/runs/43993977201)、[Linux integration ARM](https://github.com/nehcuh/cmspark/actions/runs/43993977400)、[Session save recovery](https://github.com/nehcuh/cmspark/actions/runs/43993977259)。本段在打 tag 前只记录准备状态。
+- 注释标签对象 `5200f045cc213d5f82e6de5943356ce843f12290` 指向 `4b1f4891db39d945c31b2b226bfa7eb58db0337d`，完整 tree 为 `d61de2a1874d3ff6324438a31e90e4a24fe8eb76`。正式发布记录于 2026-11-17 13:35:24（北京时间）成为 latest，draft=false、prerelease=false。[正式 Release 构建](https://github.com/nehcuh/cmspark/actions/runs/44023700348) 的预检、三平台打包和发布 job 全部 success。[同标签安装器构建](https://github.com/nehcuh/cmspark/actions/runs/44023703157) 的六个平台与独立 Chrome ZIP 共 7 个 job 全部 success。两次运行的 `head_sha` 都是上述提交。
+- 先发布的 4 份二进制与两份校验清单没有被同名安装器产物覆盖。随后只补上 12 份缺失安装资产和 [安装器校验清单](https://github.com/nehcuh/cmspark/releases/download/v1.1.0/SHA256SUMS-INSTALLERS.txt)。Release 现为 19 项资产：macOS／Windows／Linux 的 x64 与 ARM64 安装包，以及独立 Chrome 扩展 ZIP。三个校验清单、资产名称、大小和 GitHub SHA-256 摘要已核对，见 [SHA256SUMS](https://github.com/nehcuh/cmspark/releases/download/v1.1.0/SHA256SUMS) 与上述安装器清单。本回执没有挂载 DMG，没有运行包内 CLI，也没有核验应用签名；这三项未验证，不作为这 19 项资产门禁的通过条件。
 - enterprise 档提供 shell，独立 shell 电源不再生效。遗留布尔 `shell.enabled: false` 迁到已提供；非布尔非法值不会被改成已授权。命令执行授权、L2、确认短语、token、信任和 netsec 保持独立（#853，[PR #854](https://github.com/nehcuh/cmspark/pull/854)）。即时设置保存等到权威快照；编程面板本机终端勾选走同一回执（[PR #852](https://github.com/nehcuh/cmspark/pull/852)，[#806](https://github.com/nehcuh/cmspark/issues/806) 已于 2026-11-17T01:29:14Z 完成并关闭）。
-- 能力档区任意 `modules.list` 会按 `capability_profile` 直接改显示档位，list 没有 revision 或 generation。迟到 list 可能把新档显示成旧档。独立审查确认这只影响展示，不影响 L2、三旗、netsec 或 shell 执行门，不阻塞 1.1.0。#853 保持开放。这里不把界面状态写成已经一致。
-- 本版不新增 Linux PTY 或 Whisper 验收。既有本机 Whisper 交付保持。正式发布仍提供既有的 macOS／Windows／Linux x64 与 ARM64 安装包和独立 Chrome 扩展 ZIP，共 19 项资产；不省略历史标准资产。tag 与安装器完成之后才核对三个校验清单、名称、大小和 GitHub digest，并核 macOS ARM64 DMG 包内 CLI 返回 `cmspark-agent v1.1.0`。
-- 正式 tag、GitHub Release 与安装器补传尚未执行。
+- 能力档区任意 `modules.list` 会按 `capability_profile` 直接改显示档位，list 没有 revision 或 generation。迟到 list 可能把新档显示成旧档。这不影响 L2、三旗、netsec 或 shell 执行门。#853 保持开放。这里不把界面状态写成已经一致。
+- 本版不新增 Linux PTY 或 Whisper 验收。既有本机 Whisper 交付保持，19 项标准资产没有因此省略。
 
 ## 1.0.1 正式发行回执
 
