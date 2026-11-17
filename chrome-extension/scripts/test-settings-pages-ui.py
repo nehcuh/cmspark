@@ -13,6 +13,11 @@ with tempfile.TemporaryDirectory() as out:
   page.goto((Path(out)/'index.html').as_uri());page.wait_for_function('Boolean(window.dispatchUI)')
   page.evaluate("window.dispatchUI({type:'OPEN_SETTINGS_SECTION',section:'model'})")
   settings=page.get_by_role('dialog',name='设置',exact=True);settings.wait_for()
+  page.evaluate("""() => {
+    window.dispatchUI({type:'SET_CONFIG_SNAPSHOT', config: window.fixtureState.config, revision:'fixture-rev-1'})
+    window.dispatchUI({type:'SET_CONFIG_HYDRATED', hydrated:true})
+  }""")
+  page.wait_for_function('window.fixtureState.configHydratedFromCompanion===true && window.fixtureState.settingsDraft')
   model=page.get_by_placeholder('输入模型名称或从列表选择',exact=True);model.fill('fixture-model-draft')
   pages=['model','voice','export','connection','security','integrations','secrets','experimental']
   for width,height in [(1440,900),(800,700),(390,740),(320,480)]:
@@ -57,7 +62,9 @@ with tempfile.TemporaryDirectory() as out:
   assistant.get_by_role('button',name='语音',exact=True).click()
   page.evaluate('window.commandRecognition=window.activeRecognition;window.commandRecognition.onresult({results:[Object.assign([{transcript:"开启连续听写"}],{isFinal:true})]})')
   assistant.get_by_role('button',name='停止',exact=True).click()
-  page.wait_for_function('window.fixtureState.voiceDictationMode==="continuous"')
+  page.wait_for_function('(mode) => window.fixtureState.voiceDictationMode===mode', arg=before)
+  assert assistant.get_by_role('textbox', name='描述设置目标', exact=True).input_value()=='开启连续听写'
+  assistant.get_by_text('语音已填入草稿。请检查文字，再点「生成候选」。', exact=True).wait_for()
   # A real store license payload is global to settings, independent of current category.
   page.set_viewport_size({'width':800,'height':700})
   page.evaluate("window.dispatchUI({type:'SET_DICTATION_HOTKEY_ENABLED',enabled:true})")

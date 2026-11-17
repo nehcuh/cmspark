@@ -216,95 +216,92 @@ function AppContent() {
 
   return (
     <ContextPanelHostProvider capabilityLevel={level}>
-    <WorkspaceFrame>
-    <div style={styles.container}>
-      <style>{globalCSS + workspaceCSS}</style>
-      <StatusRail
-        connectionState={connectionState}
-        capabilityLevel={level}
-        badgeLabel={badgeLabel}
-        onCraft={() => setCraftOpen(true)}
-        onToggleLogs={() => setShowLogs(!showLogs)}
-        onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
-        onToast={showToast}
-        onPopout={handlePopout}
-        canPopout={!!appState.activeThreadId}
-      />
-      {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px.
-          #321 PR-2「一条 Now」: SceneStatusBar / RunBusyChip / WorkerScopeBar merged
-          into FocusBand slots — no fourth band above the conversation. */}
-      <FocusBand capabilityLevel={level} />
-      {/* #321 PR-3: toast host lives in a zero-height slot after the priority FocusBand —
-          its top is DOM-anchored below confirmation, so no `top:52` height magic. */}
-      <div style={{ position: "relative", height: 0, flexShrink: 0 }}>
-        <ToastHost toasts={toasts} onClose={closeToast} />
-      </div>
-
-      <ChatView />
-      <FleetWorkerListPortal />
-      {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
-      {/* #321 PR-1: legacy BottomBar strip deleted (was permanently gated off). Host is SoT. */}
-      <ContextPanelHost />
-      <InputArea capabilityLevel={level} />
-      {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
-      <SettingsSlideout />
-      {/* Isolate /code overlay crashes so they cannot white-screen the whole sidepanel. */}
-      <ErrorBoundary>
-      <CodingAgentPanel
-        key={appState.activeThreadId || "no-thread"}
-        open={codingPanelOpen && codingPanelThreadRef.current === appState.activeThreadId}
-        onClose={() => setCodingPanelOpen(false)}
-        workspaceRoot={
-          (
-            appState.threads.find((t) => t.id === appState.activeThreadId) as
-              | { workspace_root?: string | null }
-              | undefined
-          )?.workspace_root ?? null
-        }
-        messages={(appState.messages || []) as Array<{ role?: string; content?: string }>}
-        pageUrl={(appState as { lastTabUrl?: string }).lastTabUrl || null}
-        pageTitle={(appState as { lastTabTitle?: string }).lastTabTitle || null}
-        seedGoal={codingPanelSeed}
-        threadId={appState.activeThreadId}
-        acpEnabled={appState.acpEnabled}
-        acpAgents={appState.acpAgents}
-        openLocalTerminal={
-          (
-            appState.config as
-              | { coding_handoff?: { open_local_terminal?: boolean } }
-              | undefined
-          )?.coding_handoff?.open_local_terminal === true
-        }
-      />
-      </ErrorBoundary>
-      {/* P1 D10′: full confirm dialog removed from Panel — Cockpit ConfirmElevated + MinimalConfirm */}
-      <McpServerForm />
-      {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
-      {nbImporterOpen && <NotebooklmImporterPanel onClose={() => setNbImporterOpen(false)} />}
-      <DisconnectedBanner
-        visible={connectionState === "disconnected"}
-        onRetry={() => {
-          // P1 C-RACE-07: force SW reconnect (reset backoff), then probe status.
-          chrome.runtime.sendMessage({ type: "ws.forceReconnect" }, () => {
-            if (chrome.runtime.lastError) {
-              showToast("无法联系扩展后台，请刷新 Side Panel 后重试", "error")
-              return
-            }
-            chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
+    <WorkspaceFrame
+      level={level}
+      top={<>
+        <style>{globalCSS + workspaceCSS}</style>
+        <StatusRail
+          connectionState={connectionState}
+          capabilityLevel={level}
+          badgeLabel={badgeLabel}
+          onCraft={() => setCraftOpen(true)}
+          onToggleLogs={() => setShowLogs(!showLogs)}
+          onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
+          onToast={showToast}
+          onPopout={handlePopout}
+          canPopout={!!appState.activeThreadId}
+        />
+        <FocusBand capabilityLevel={level} />
+        <div style={{ position: "relative", height: 0, flexShrink: 0 }}>
+          <ToastHost toasts={toasts} onClose={closeToast} />
+        </div>
+      </>}
+      bottom={<>
+        <ContextPanelHost />
+        <InputArea capabilityLevel={level} />
+      </>}
+      overlays={<>
+        {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
+        <SettingsSlideout />
+        <ErrorBoundary>
+        <CodingAgentPanel
+          key={appState.activeThreadId || "no-thread"}
+          open={codingPanelOpen && codingPanelThreadRef.current === appState.activeThreadId}
+          onClose={() => setCodingPanelOpen(false)}
+          workspaceRoot={
+            (
+              appState.threads.find((t) => t.id === appState.activeThreadId) as
+                | { workspace_root?: string | null }
+                | undefined
+            )?.workspace_root ?? null
+          }
+          messages={(appState.messages || []) as Array<{ role?: string; content?: string }>}
+          pageUrl={(appState as { lastTabUrl?: string }).lastTabUrl || null}
+          pageTitle={(appState as { lastTabTitle?: string }).lastTabTitle || null}
+          seedGoal={codingPanelSeed}
+          threadId={appState.activeThreadId}
+          acpEnabled={appState.acpEnabled}
+          acpAgents={appState.acpAgents}
+          openLocalTerminal={
+            (
+              appState.config as
+                | { coding_handoff?: { open_local_terminal?: boolean } }
+                | undefined
+            )?.coding_handoff?.open_local_terminal === true
+          }
+        />
+        </ErrorBoundary>
+        <McpServerForm />
+        {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
+        {nbImporterOpen && <NotebooklmImporterPanel onClose={() => setNbImporterOpen(false)} />}
+        <DisconnectedBanner
+          visible={connectionState === "disconnected"}
+          onRetry={() => {
+            chrome.runtime.sendMessage({ type: "ws.forceReconnect" }, () => {
               if (chrome.runtime.lastError) {
-                showToast("正在尝试重新连接…", "warning")
+                showToast("无法联系扩展后台，请刷新 Side Panel 后重试", "error")
                 return
               }
-              if (response?.connectionState === "connected") {
-                showToast("已连接 Companion", "info")
-                return
-              }
-              showToast("正在尝试重新连接…若 Companion 已启动将自动恢复", "warning")
+              chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
+                if (chrome.runtime.lastError) {
+                  showToast("正在尝试重新连接…", "warning")
+                  return
+                }
+                if (response?.connectionState === "connected") {
+                  showToast("已连接 Companion", "info")
+                  return
+                }
+                showToast("正在尝试重新连接…若 Companion 已启动将自动恢复", "warning")
+              })
             })
-          })
-        }}
-      />
-    </div>
+          }}
+        />
+      </>}
+    >
+      <div style={styles.container}>
+        <ChatView />
+        <FleetWorkerListPortal />
+      </div>
     </WorkspaceFrame>
     </ContextPanelHostProvider>
   )

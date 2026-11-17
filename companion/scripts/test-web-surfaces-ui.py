@@ -12,7 +12,9 @@ with tempfile.TemporaryDirectory() as out:
         page.route('**/*',lambda route:route.abort())
         for name in ['capture','settings']:
             html=(Path(out)/(name+'.html')).read_text()
-            base=subprocess.check_output(['git','show','8656df94:companion/src/'+('summoner-web.ts' if name=='capture' else 'settings-web.ts')],cwd=project,text=True)
+            # Baseline is accepted main 4b1f4891 (blob 8aea7738). 8656df94 was the previous pin;
+            # its settings script is 9580 chars and the accepted main script is 11215. Product source is unchanged.
+            base=subprocess.check_output(['git','show','4b1f4891db39d945c31b2b226bfa7eb58db0337d:companion/src/'+('summoner-web.ts' if name=='capture' else 'settings-web.ts')],cwd=project,text=True)
             current=(project/'src'/('summoner-web.ts' if name=='capture' else 'settings-web.ts')).read_text()
             if name=='settings':
                 assert re.findall(r'<script\b[^>]*>(.*?)</script>',base,re.S)==re.findall(r'<script\b[^>]*>(.*?)</script>',current,re.S), 'Settings script changed'

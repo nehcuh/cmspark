@@ -2,7 +2,12 @@
 const fs=require('fs'),path=require('path');
 const root=process.cwd(),out=process.argv[2] || '/private/tmp/cmspark-workspace-ui';fs.mkdirSync(out,{recursive:true});
 const store=path.join(root,'src/sidepanel/store/agentStore.tsx');
-const syntheticHook=`import {useEffect} from 'react';import {useAgentStore} from ${JSON.stringify(store)};
+const coldHome = process.argv.includes('--cold-home')
+const syntheticHook = coldHome
+  ? `import {useEffect} from 'react';import {useAgentStore} from ${JSON.stringify(store)};
+export const shouldApplyStreamEvent=()=>true;
+export function useWebSocket(){const {state,dispatch}=useAgentStore();window.fixtureState=state;useEffect(()=>{window.dispatchUI=dispatch;dispatch({type:'SET_CONNECTION',state:'connected'});dispatch({type:'SET_THREADS',threads:window.demoThreads});},[]);return {connectionState:state.connectionState};}`
+  : `import {useEffect} from 'react';import {useAgentStore} from ${JSON.stringify(store)};
 export const shouldApplyStreamEvent=()=>true;
 export function useWebSocket(){const {state,dispatch}=useAgentStore();window.fixtureState=state;useEffect(()=>{window.dispatchUI=dispatch;const threads=window.demoThreads;dispatch({type:'SET_CONNECTION',state:'connected'});dispatch({type:'SET_THREADS',threads});dispatch({type:'SET_ACTIVE_THREAD',threadId:threads[0].id});dispatch({type:'SET_MESSAGES',messages:[]});},[]);return {connectionState:state.connectionState};}`;
 // #644 can retain the actual WS hook at the controlled runtime transport seam.

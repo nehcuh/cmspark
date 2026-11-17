@@ -5,11 +5,13 @@ from playwright.sync_api import sync_playwright
 root=Path(__file__).resolve().parent.parent
 shots=Path('/private/tmp/cmspark-473-shots');shots.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory() as out:
- subprocess.run(['node','scripts/render-workspace-fixture.cjs',out],cwd=root,check=True)
+ subprocess.run(['node','scripts/render-workspace-fixture.cjs',out,'--cold-home'],cwd=root,check=True)
  with sync_playwright() as p:
   b=p.chromium.launch(channel='chrome',headless=True);page=b.new_page(viewport={'width':390,'height':740});page.set_default_timeout(7000)
   errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
   page.goto((Path(out)/'index.html').as_uri());page.wait_for_function('Boolean(window.dispatchUI)')
+  page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
+  page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
   page.evaluate("window.dispatchUI({type:'SET_THREADS',threads:window.demoThreads.map((t,i)=>({...t,message_count:4,user_message_count:2,topic_folder:i===0?'人工项目':null,digest:i<2?{tldr:'发布与测试',tags:['支付','发布'],bullets:['核对版本'],extracted_at:new Date().toISOString(),source:'manual'}:null}))})")
   manager=page.get_by_role('dialog',name='历史对话列表',exact=True)
   for width,height in [(320,480),(390,740),(759,740),(760,740),(1440,900)]:
@@ -35,7 +37,7 @@ with tempfile.TemporaryDirectory() as out:
   manager.get_by_role('button',name='关闭历史对话',exact=True).click()
   # Existing AI grouping is a read projection; opening it must not write manual folders.
   assert not page.evaluate('window.sent.some(m=>m.type==="thread.update")')
-  page.get_by_role('button',name='管理对话',exact=True).click();manager.wait_for()
+  page.get_by_role('button',name='对话管理（历史对话）',exact=True).click();manager.wait_for()
   manager.get_by_role('button',name='手动分组',exact=True).click()
   manager.get_by_title('编辑标签与分组',exact=True).first.click()
   form=manager.get_by_role('form',name='编辑对话分类');form.wait_for()

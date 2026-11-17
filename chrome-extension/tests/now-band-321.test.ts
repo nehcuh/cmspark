@@ -169,7 +169,8 @@ test("#321 PR-2: no fourth horizontal band — App stack is StatusRail + FocusBa
   assert.doesNotMatch(app, /<SceneStatusBar\s*\/>/)
   assert.doesNotMatch(app, /<RunBusyChip\s*\/>/)
   assert.doesNotMatch(app, /<WorkerScopeBar\s*\/>/)
-  // Mount order: StatusRail … FocusBand … ChatView (nothing band-like between)
+  // Mount order: StatusRail … FocusBand … ChatView. The top slot ends at the
+  // zero-height toast; input, tools, and settings are later slots, not another band.
   const rail = app.indexOf("<StatusRail")
   const band = app.indexOf("<FocusBand")
   const chat = app.indexOf("<ChatView")
@@ -177,10 +178,14 @@ test("#321 PR-2: no fourth horizontal band — App stack is StatusRail + FocusBa
   // #469: the zero-height notification slot follows confirmation so it cannot cover its controls.
   // (self-closing OR with children — `</?[A-Z]` catches both, comments still fine)
   const bandOpenEnd = app.indexOf("/>", band) + 2
-  const between = app.slice(bandOpenEnd, chat)
+  const topEnd = app.indexOf("</>}", bandOpenEnd)
+  assert.ok(topEnd > bandOpenEnd && chat > topEnd)
+  const between = app.slice(bandOpenEnd, topEnd)
   assert.match(between, /height: 0/)
   assert.match(between, /<ToastHost/)
   assert.doesNotMatch(between.replace(/<ToastHost[^>]*\/>/, ""), /<\/?[A-Z][A-Za-z]*[\s/>]/)
+  const session = app.slice(chat, app.indexOf("</WorkspaceFrame>"))
+  assert.doesNotMatch(session, /<SettingsSlideout|<InputArea|<ContextPanelHost|<StatusRail/)
   // The three old band files are gone (readFileSync must throw ENOENT)
   const gone = (rel: string) => {
     try {

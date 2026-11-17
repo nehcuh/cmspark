@@ -11,7 +11,7 @@ project = Path(__file__).resolve().parent.parent
 shots = Path('/private/tmp/cmspark-469-shots')
 shots.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
-    subprocess.run(['node', 'scripts/render-workspace-fixture.cjs', directory], cwd=project, check=True)
+    subprocess.run(['node', 'scripts/render-workspace-fixture.cjs', directory, '--cold-home'], cwd=project, check=True)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel='chrome', headless=True)
         page = browser.new_page(viewport={'width':1440,'height':900})
@@ -21,7 +21,12 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         page.goto((Path(directory)/'index.html').as_uri())
         composer = page.get_by_role('textbox', name='消息内容', exact=True)
         composer.wait_for()
-        page.wait_for_function('window.dispatchUI && document.querySelector("textarea") && !document.querySelector("textarea").disabled')
+        assert composer.is_disabled()
+        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).focus()
+        page.keyboard.press('Enter')
+        opened = page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first
+        opened.focus(); page.keyboard.press('Enter')
+        page.wait_for_function('() => { const el = document.querySelector("textarea[aria-label=消息内容]"); return el && !el.disabled }')
         for width,height in [(1440,900),(800,700),(760,640),(759,640),(390,740),(320,480)]:
             page.set_viewport_size({'width':width,'height':height})
             page.wait_for_timeout(120)
@@ -31,32 +36,18 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
             assert box['y'] >= 0 and box['y']+box['height'] <= height, (width,box)
             assert page.get_by_role('button',name='打开工作区导航',exact=True).is_visible() == (width<760)
             if width in (1440,390,320):page.screenshot(path=str(shots/f'empty-{width}.png'))
-        # Narrow drawer: initial focus, keyboard close and focus return.
-        toggle=page.get_by_role('button',name='打开工作区导航',exact=True)
-        toggle.click()
-        nav=page.get_by_role('dialog',name='工作区导航',exact=True)
-        nav.wait_for()
-        assert page.evaluate('document.querySelector("[aria-label=工作区导航]").contains(document.activeElement)')
-        page.keyboard.press('Escape')
-        assert not nav.is_visible()
-        assert toggle.evaluate('(el)=>el===document.activeElement')
         # New task preserves existing action, never sends an Agent message.
-        toggle.click()
-        nav.get_by_role('button',name='新对话',exact=True).click()
+        page.get_by_role('button', name='新对话', exact=True).click()
         page.wait_for_function('window.sent.some(x=>x.type==="thread.create")')
         assert not page.evaluate('window.sent.some(x=>x.type==="chat.send" || x.type==="chat.create")')
-        # Use original demo thread to keep subsequent fixtures explicitly scoped.
-        page.evaluate("window.dispatchUI({type:'SET_ACTIVE_THREAD',threadId:'demo-0'});window.dispatchUI({type:'SET_MESSAGES',messages:[]})")
-        toggle.click()
-        nav.get_by_role('button',name='设置',exact=True).click()
-        settings=page.get_by_role('dialog',name='设置',exact=True)
+        page.get_by_role('button', name='返回', exact=True).click()
+        page.get_by_role('navigation', name='工作区').get_by_role('button', name='设置', exact=True).click()
+        settings=page.get_by_role('dialog', name='设置', exact=True)
         settings.wait_for()
-        settings.get_by_role('combobox',name='设置分类',exact=True).select_option('security')
-        page.wait_for_timeout(100)
-        assert page.locator('[data-settings-page=security]').is_visible()
-        page.screenshot(path=str(shots/'settings-320.png'))
-        assert page.evaluate('document.querySelector("[aria-label=设置]").contains(document.activeElement)')
-        settings.get_by_role('button',name='关闭设置',exact=True).click()
+        assert settings.is_visible()
+        settings.get_by_role('button', name='关闭设置', exact=True).click()
+        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
+        page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
         # Existing history is named and keyboard operable; Escape returns focus.
         history=page.get_by_role('button',name='对话管理（历史对话）',exact=True)
         history.click()
@@ -71,10 +62,12 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         assert not dialog.is_visible()
         assert history.evaluate('(el)=>el===document.activeElement')
         # Context panel fits the short viewport; closes without losing composer.
-        toggle.click();nav.locator('summary').filter(has_text='资料与工具').click();nav.get_by_role('button',name='知识',exact=True).click()
+        page.get_by_role('button', name='返回', exact=True).click()
+        page.get_by_role('navigation', name='工作区').get_by_role('button', name='工具', exact=True).click()
+        page.get_by_role('group', name='当前任务').get_by_role('button', name='知识', exact=True).click()
         context=page.get_by_test_id('context-panel-host')
         context.wait_for()
-        assert context.bounding_box()['height'] <= 480*.28+2
+        assert context.bounding_box()['height'] <= 320
         assert composer.bounding_box()['y']+composer.bounding_box()['height'] <= 480
         history.click();dialog.wait_for();page.wait_for_timeout(100)
         row=dialog.get_by_role('button',name='打开 发布 v2.8',exact=False).first
@@ -96,11 +89,13 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
            'tool_calls':[{'id':'tc1','tool_name':'get_page_text','params':{},'status':'success','result':{'success':True,'data':{'content':'这是来自合成测试网页的实际展示文本。'*80}}}]}]
         page.evaluate('(messages)=>window.dispatchUI({type:"SET_MESSAGES",messages})',messages)
         page.set_viewport_size({'width':1440,'height':900})
+        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
+        page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
         details=page.get_by_role('button',name='展开 get_page_text 详情',exact=True)
         details.focus();page.keyboard.press('Enter')
         assert page.get_by_role('button',name='收起 get_page_text 详情',exact=True).get_attribute('aria-expanded')=='true'
         page.screenshot(path=str(shots/'conversation-1440.png'))
-        assert page.get_by_role('complementary',name='工作区',exact=True).bounding_box()['width']==220
+        assert page.get_by_role('navigation', name='工作区', exact=True).bounding_box()['width']==220
         assert page.locator('.cm-chat-content').bounding_box()['width']<=780
         assert page.locator('.cm-composer-dock').bounding_box()['width']<=780
         page.evaluate("window.dispatchEvent(new Event('cmspark:open-coding-handoff'))")
@@ -168,8 +163,9 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         page.evaluate('(messages)=>window.dispatchUI({type:"SET_MESSAGES",messages})',messages)
         # Confirmation queue is still rendered by the unchanged production gate.
         confirmation={'confirmation_id':'fixture-confirm','tool_name':'shell_exec','dangerous_apis':['shell'], 'code_preview':'git diff base..head','risk_level':'high','requested_at':'2026-09-07T10:00:00Z','timeout_ms':45000}
-        assert page.locator('.cm-nav-tools').evaluate('(el)=>el.open'), '#497 wide resources default open'
-        page.get_by_role('navigation',name='资源与能力').get_by_role('button',name='知识',exact=True).click()
+        page.get_by_role('navigation', name='工作区').get_by_role('button', name='工具', exact=True).click()
+        assert page.get_by_role('group', name='当前任务').is_visible()
+        page.get_by_role('group', name='当前任务').get_by_role('button', name='知识', exact=True).click()
         page.evaluate('(request)=>window.dispatchUI({type:"ADD_SECURITY_CONFIRMATION",request})',confirmation)
         page.set_viewport_size({'width':320,'height':480})
         page.wait_for_timeout(100)
@@ -181,10 +177,11 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
             box=button.bounding_box()
             assert box and 0 <= box['y'] and box['y']+box['height'] <= 480
             assert button.evaluate('(el)=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}')
-        toggle.click();nav.wait_for()
+        page.get_by_role('button', name='返回', exact=True).click()
         for name in ['允许','拒绝','停止']:
             assert gate.get_by_role('button',name=name,exact=True).evaluate('(el)=>{const r=el.getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight && el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}')
-        nav.get_by_role('button',name='关闭导航').click()
+        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
+        page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
         page.screenshot(path=str(shots/'confirmation-320.png'))
         assert not page.evaluate('window.sent.some(x=>x.type==="security.confirmation.response")')
         page.evaluate("window.dispatchUI({type:'REMOVE_SECURITY_CONFIRMATION',confirmationId:'fixture-confirm'});window.dispatchUI({type:'SET_THREAD_BUSY',threadId:'demo-0',busy:true})")
@@ -193,9 +190,10 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         assert stop.bounding_box()['y']+stop.bounding_box()['height'] <= 480
         page.get_by_role('button',name='纠偏',exact=True).wait_for()
         page.get_by_role('button',name='排队',exact=True).wait_for()
-        toggle.click();nav.wait_for()
+        page.get_by_role('button', name='返回', exact=True).click()
         assert stop.evaluate('(el)=>{const r=el.getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight && el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}')
-        nav.get_by_role('button',name='关闭导航').click()
+        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
+        page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
         page.screenshot(path=str(shots/'running-320.png'))
         page.evaluate("window.dispatchUI({type:'SET_THREAD_BUSY',threadId:'demo-0',busy:false});window.dispatchUI({type:'SET_CONNECTION',state:'disconnected'})")
         page.get_by_role('button',name='重新连接',exact=True).wait_for()

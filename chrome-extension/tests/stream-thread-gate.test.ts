@@ -88,8 +88,10 @@ test("thread.list request echo must not be treated as an empty hydrate", () => {
   const body = src.slice(start, src.indexOf("case \"quickAction.start\"", start))
   assert.match(body, /Array\.isArray\(msg\.threads\)/)
   const guardIdx = body.indexOf("Array.isArray(msg.threads)")
-  const createIdx = body.indexOf("thread.create")
-  assert.ok(guardIdx >= 0 && createIdx > guardIdx, "auto-create must sit behind threads-array hydrate guard")
+  assert.ok(guardIdx >= 0, "thread.list must ignore a request echo before treating it as a list")
+  assert.equal(body.indexOf("thread.create"), -1, "an empty active list must not auto-create")
+  assert.equal(body.indexOf("incoming[0]"), -1, "an active list must not select the first row")
+  assert.ok(body.indexOf("decideActiveThreadList") > guardIdx, "the list decision stays behind the array guard")
 })
 
 test("apps.list/acp.list request echo must not clear entries or flip enabled", () => {
