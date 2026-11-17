@@ -7,6 +7,8 @@ if (!out) {
   process.exit(1)
 }
 fs.mkdirSync(out, { recursive: true })
+const levelArg = process.argv.find(arg => arg.startsWith("--level="))
+const level = levelArg ? levelArg.slice("--level=".length) : "chat"
 const entryName = process.argv.includes("--hook") ? "project-navigation-hook-preview.tsx" : "project-navigation-preview.tsx"
 const entry = path.join(__dirname, entryName)
 require(path.join(root, "node_modules/esbuild")).build({
@@ -18,7 +20,7 @@ require(path.join(root, "node_modules/esbuild")).build({
   jsx: "automatic",
   loader: { ".css": "css", ".woff2": "dataurl", ".woff": "dataurl", ".ttf": "dataurl" },
 }).then(() => {
-  fs.writeFileSync(path.join(out, "index.html"), "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><body style=\"margin:0\"><div id=\"root\"></div><script src=\"app.js\"></script></body></html>")
+  fs.writeFileSync(path.join(out, "index.html"), `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><body style="margin:0"><div id="root"></div><script>window.__CMSPARK_LEVEL=${JSON.stringify(level)}</script><script src="app.js"></script></body></html>`)
   console.log(out)
 }).catch(error => {
   console.error(error)

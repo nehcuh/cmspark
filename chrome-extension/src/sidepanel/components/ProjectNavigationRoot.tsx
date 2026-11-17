@@ -5,11 +5,15 @@ import { requestProject, requestProjectThread } from "../utils/project-request"
 import { projectCopy } from "../navigation/project-copy"
 import { membershipEnabled, type ListSnapshot } from "../navigation/project-list-model"
 import { navigationMode, type NavigationSurface } from "../navigation/navigation-mode"
+import { toolGroups } from "../navigation/tool-groups"
+import { CONTEXT_PANEL_TABS, useContextPanelHost } from "./ContextPanelHost"
+import type { CapabilityLevel } from "../types"
 import { ProjectPanel } from "./ProjectPanel"
 import { SessionContextBar } from "./SessionContextBar"
 
-export function ProjectNavigationRoot({ surface, children }: { surface: NavigationSurface; children?: ReactNode }) {
+export function ProjectNavigationRoot({ surface, level, children }: { surface: NavigationSurface; level: CapabilityLevel; children?: ReactNode }) {
   const { state, dispatch } = useAgentStore()
+  const { openPanelForce, closePanel } = useContextPanelHost()
   const [width, setWidth] = useState(() => window.innerWidth)
   const [projects, setProjects] = useState<ListSnapshot | null>(null)
   const [bindNotice, setBindNotice] = useState("")
@@ -98,14 +102,36 @@ export function ProjectNavigationRoot({ surface, children }: { surface: Navigati
     </fieldset>
     {children}
   </div>
-  const showProjects = mode === "resident" || layer === "projects"
+  const showProjects = layer === "projects"
   const showRecent = layer === "recent"
   const showDetail = layer === "project"
   const showSession = layer === "session"
-  return <div data-navigation-mode={mode} data-navigation-surface={surface}>
-    <div hidden={!showProjects}>{projectsLayer}</div>
-    <div hidden={!showRecent}>{recent}</div>
-    <div hidden={!showDetail}>{detail}</div>
-    <div hidden={!showSession}>{session}</div>
+  const showTools = layer === "tools"
+  const showNav = mode === "resident" || layer === "projects"
+  const groups = toolGroups(level)
+  const labelFor = (id: string) => id === "board" ? "Agent 执行记录" : CONTEXT_PANEL_TABS.find(tab => tab.id === id)?.label || id
+  const nav = <nav className="cm-navigation" aria-label="工作区">
+    <div className="cm-nav-brand"><strong>CMspark</strong></div>
+    <button type="button" className="cm-nav-item" onClick={() => dispatch({ type: "NAVIGATE", layer: "projects", projectId: null })}>{projectCopy.projects}</button>
+    <button type="button" className="cm-nav-item" onClick={() => dispatch({ type: "NAVIGATE", layer: "recent", projectId: null })}>{projectCopy.recent}</button>
+    <button type="button" className="cm-nav-item" onClick={() => dispatch({ type: "NAVIGATE", layer: "tools", projectId: null })}>{projectCopy.tools}</button>
+    <button type="button" className="cm-nav-item cm-nav-settings" onClick={() => { closePanel(); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>{projectCopy.settings}</button>
+  </nav>
+  const tools = <section aria-label="工具" className="cm-tool-groups">
+    {mode === "layered" && <button type="button" onClick={() => dispatch({ type: "NAVIGATE", layer: "projects", projectId: null })}>{projectCopy.back}</button>}
+    {groups.map(group => <div role="group" aria-label={group.title} key={group.title}>
+      <p>{group.title}</p>
+      {group.ids.map(id => <button type="button" className="cm-nav-item" key={id} onClick={() => void openPanelForce(id as typeof CONTEXT_PANEL_TABS[number]["id"])}>{labelFor(id)}</button>)}
+    </div>)}
+  </section>
+  return <div data-navigation-mode={mode} data-navigation-surface={surface} className={mode === "resident" ? "cm-workspace" : "cm-workspace cm-workspace-layered"}>
+    <div hidden={!showNav}>{nav}</div>
+    <div className="cm-workspace-main">
+      <div hidden={!showProjects}>{projectsLayer}</div>
+      <div hidden={!showRecent}>{recent}</div>
+      <div hidden={!showDetail}>{detail}</div>
+      <div hidden={!showSession}>{session}</div>
+      <div hidden={!showTools}>{tools}</div>
+    </div>
   </div>
 }

@@ -216,7 +216,7 @@ function AppContent() {
 
   return (
     <ContextPanelHostProvider capabilityLevel={level}>
-    <WorkspaceFrame>
+    <WorkspaceFrame level={level}>
     <div style={styles.container}>
       <style>{globalCSS + workspaceCSS}</style>
       <StatusRail

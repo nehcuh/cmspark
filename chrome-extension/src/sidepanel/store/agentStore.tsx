@@ -173,7 +173,7 @@ export interface AgentState {
   threadListEpoch: number
   threadListSignature: string
   threadListArrived: boolean
-  navigationLayer: "projects" | "project" | "session" | "recent"
+  navigationLayer: "projects" | "project" | "session" | "recent" | "tools"
   navigationProjectId: string | null
   navigationHomeCopy: string | null
   navigationRemembered: string | null
@@ -514,7 +514,7 @@ export type AgentAction =
   | { type: "SET_THREADS"; threads: Thread[]; listScope?: "active" | "trash" | "all" }
   | { type: "REMEMBER_THREAD"; threadId: string }
   | { type: "COMMIT_NAVIGATION"; decision: { ignored: false; layer: "session" | "projects"; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null; remembered: string | null } }
-  | { type: "NAVIGATE"; layer: "projects" | "project" | "session" | "recent"; projectId: string | null }
+  | { type: "NAVIGATE"; layer: "projects" | "project" | "session" | "recent" | "tools"; projectId: string | null }
   | { type: "SET_ACTIVE_THREAD"; threadId: string }
   | { type: "ADD_MESSAGE"; message: Message }
   | { type: "REMOVE_MESSAGE"; id: string }

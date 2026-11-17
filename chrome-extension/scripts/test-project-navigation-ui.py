@@ -378,6 +378,47 @@ def test_late_read_cannot_replace_the_selection(playwright, directory, stale_id,
     page.wait_for_function("() => window.storageSeed['cmspark.navigation.lastThreadId'] === 'demo-0'")
     browser.close()
 
+def test_tools(playwright, directory):
+    browser, page = launch(playwright, directory, {LIST_KEY: json.dumps({"format": 1, "revision": 2, "fetchedAt": "t", "projects": [alpha, empty_named, archived]})})
+    open_projects(page)
+    page.get_by_role("button", name="Alpha", exact=True).wait_for()
+    page.set_viewport_size({"width": 320, "height": 800})
+    page.screenshot(path=str(shots / "project-nav-320-projects.png"))
+    page.set_viewport_size({"width": 400, "height": 800})
+    page.get_by_role("button", name="Alpha", exact=True).focus()
+    page.keyboard.press("Enter")
+    page.get_by_role("region", name="项目详情").wait_for()
+    page.screenshot(path=str(shots / "project-nav-400-detail.png"))
+    page.get_by_role("button", name="返回", exact=True).click()
+    page.set_viewport_size({"width": 759, "height": 800})
+    page.evaluate("""() => window.dispatchUI({type:'SET_THREADS', threads:[{id:'demo-0', alias:'笔记', project_id:'11111111-1111-4111-8111-111111111111', trashed_at:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}]})""")
+    release_latest(page, THREAD_KEY, {THREAD_KEY: "demo-0"})
+    page.get_by_role("banner", name="会话位置").wait_for()
+    page.screenshot(path=str(shots / "project-nav-759-session.png"))
+    page.set_viewport_size({"width": 960, "height": 800})
+    nav = page.get_by_role("navigation", name="工作区")
+    nav.get_by_role("button", name="工具", exact=True).click()
+    current = page.get_by_role("group", name="当前任务")
+    assert current.get_by_role("button").all_inner_texts()[:3] == ["技能", "知识", "历史"]
+    assert current.get_by_role("button", name="设置", exact=True).count() == 0
+    page.screenshot(path=str(shots / "project-nav-960-tools.png"))
+    nav.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("dialog", name="设置", exact=True).wait_for()
+    page.set_viewport_size({"width": 1200, "height": 800})
+    page.screenshot(path=str(shots / "project-nav-1200-settings.png"))
+    css = "".join(page.locator("style").all_inner_texts())
+    assert "28dvh" not in css and "cm-navigation-disclosure" not in css
+    assert page.locator(".cm-navigation-disclosure").count() == 0
+    browser.close()
+
+def test_browser_tools(playwright, directory):
+    browser, page = launch(playwright, directory, {}, level="browser")
+    page.set_viewport_size({"width": 960, "height": 800})
+    page.get_by_role("navigation", name="工作区").get_by_role("button", name="工具", exact=True).click()
+    assert page.get_by_role("group", name="当前任务").get_by_role("button").all_inner_texts()[:2] == ["浏览器标签页", "技能"]
+    assert page.get_by_role("navigation", name="工作区").get_by_role("button", name="设置", exact=True).count() == 1
+    browser.close()
+
 shots.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
     with sync_playwright() as playwright:
@@ -398,4 +439,6 @@ with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
         test_real_hook_keeps_the_selected_session(playwright, directory)
         test_late_read_cannot_replace_the_selection(playwright, directory, "old-1", [thread_row("demo-0", "笔记"), thread_row("old-1", "旧选择")])
         test_late_read_cannot_replace_the_selection(playwright, directory, "gone-id", [thread_row("demo-0", "笔记")])
+        test_tools(playwright, directory)
+        test_browser_tools(playwright, directory)
 print("project navigation ui ok")

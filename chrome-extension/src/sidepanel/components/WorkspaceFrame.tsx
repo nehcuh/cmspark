@@ -13,18 +13,21 @@ import { createBlankThread } from "./ThreadList"
 import { ProjectPanel } from "./ProjectPanel"
 import { ProjectNavigationRoot } from "./ProjectNavigationRoot"
 import { useNavigationStartup } from "../navigation/useNavigationStartup"
-import { RESIDENT_MIN_WIDTH } from "../navigation/navigation-mode"
+import { RESIDENT_MIN_WIDTH, type NavigationSurface } from "../navigation/navigation-mode"
+import { toolGroups } from "../navigation/tool-groups"
+import type { CapabilityLevel } from "../types"
 import { PersonalWorkspace, WORKSPACE_DESTINATIONS, type WorkspaceDestination } from "./personal-workspace/PersonalWorkspace"
 import { useActivity } from "./personal-workspace/useActivity"
 import { dueToday } from "./personal-workspace/activity-request"
 import { personalWorkspaceCSS } from "./personal-workspace/styles"
 
 /** Workspace destinations project one Companion state; chat stays mounted during navigation. */
-export function WorkspaceFrame({ children }: { children: ReactNode }) {
+export function WorkspaceFrame({ children, level = "chat" }: { children: ReactNode; level?: CapabilityLevel }) {
   useNavigationStartup()
   const { state, dispatch } = useAgentStore()
   const { openPanelForce } = useContextPanelHost()
   const full = window.location.pathname === "/tabs/workspace.html"
+  const surface: NavigationSurface = full ? "workspace" : new URLSearchParams(window.location.search).get("surface") === "popout" ? "popout" : "sidepanel"
   const [view, setView] = useState<WorkspaceDestination>(() => {
     if (!full) return "chat"
     const requested = new URLSearchParams(window.location.search).get("view")
@@ -120,10 +123,10 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
   const navProps = { full, destination: visibleView, onView: navigate }
   return <div className={`cm-workspace${full ? " cm-workspace-full" : ""}`}>
     <style>{personalWorkspaceCSS}</style>
-    {!full && <ProjectNavigationRoot surface="sidepanel">{children}</ProjectNavigationRoot>}
+    {!full && <ProjectNavigationRoot surface={surface} level={level}>{children}</ProjectNavigationRoot>}
     {full && <>
-    {wide && <WorkspaceNavigation {...navProps} onNavigate={() => {}} />}
-    {!wide && <WorkspaceNavigation {...navProps} onNavigate={() => {}} />}
+    {wide && <WorkspaceNavigation {...navProps} level={level} onNavigate={() => {}} />}
+    {!wide && <WorkspaceNavigation {...navProps} level={level} onNavigate={() => {}} />}
     <main className="cm-workspace-main" aria-label="个人工作中心">
       {full && <nav className="cm-personal-mobile-nav" aria-label="工作中心页面">{WORKSPACE_DESTINATIONS.map(item => <button type="button" key={item.id} aria-current={visibleView === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}<button type="button" disabled={state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)} onClick={() => { navigate("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>设置</button></nav>}
       {!full && <div className="cm-sidebar-summary"><span>{state.connectionState === "connected" ? controller.snapshot ? `今日 ${controller.snapshot.todos.filter(item => dueToday(item)).length} 项 · 待整理 ${controller.snapshot.candidates.filter(item => item.status === "pending").length}` : "待办读取中" : "待办后台未连接"}</span><button type="button" onClick={openFull}>打开工作中心 ↗</button></div>}
@@ -136,15 +139,14 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
   </div>
 }
 
-function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView }: {
-  onNavigate: () => void; onClose?: () => void; full: boolean; destination: WorkspaceDestination; onView: (view: WorkspaceDestination) => void
+function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, level }: {
+  onNavigate: () => void; onClose?: () => void; full: boolean; destination: WorkspaceDestination; onView: (view: WorkspaceDestination) => void; level: CapabilityLevel
 }) {
   const { state, dispatch } = useAgentStore()
   const { activePanel, openPanelForce, closePanel } = useContextPanelHost()
   const [query, setQuery] = useState("")
   const [projectFilter, setProjectFilter] = useState("*")
   const [conversationsOpen, setConversationsOpen] = useState(true)
-  const [resourcesOpen, setResourcesOpen] = useState(!onClose && !full)
   const conversationsId = useId()
   const q = query.toLocaleLowerCase().trim()
   const recent = filterConversationEnum(
@@ -157,14 +159,15 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView }:
     const hay = `${workerBelongTitle(t, parent)} ${t.id || ""} ${t.worker_role_label || ""}`.toLocaleLowerCase()
     return hay.includes(q)
   }).sort((a, b) => threadRecency(b).localeCompare(threadRecency(a))).slice(0, 30)
-  const resources = <details className="cm-nav-tools" open={resourcesOpen} onToggle={event => setResourcesOpen(event.currentTarget.open)}><summary>资料与工具</summary>
-    <nav aria-label="资源与能力" className="cm-nav-resources">
-      {CONTEXT_PANEL_TABS.filter(t => t.id !== "history").map(({ id, label, Icon }) => <button type="button" key={id} className={`cm-nav-item${id === "tabs" ? " cm-nav-browser" : ""}`} title={label} aria-current={activePanel === id ? "true" : undefined} onClick={() => {
-        onView("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
-      }}><Icon size={16} /><span>{id === "board" ? "Agent 执行记录" : label}</span></button>)}
-    </nav>
-  </details>
-  return <aside className="cm-navigation" aria-label="工作区">
+  const resources = <div className="cm-tool-groups">{toolGroups(level).map(group => <div role="group" aria-label={group.title} key={group.title}><p className="cm-nav-section">{group.title}</p><nav aria-label={group.title} className="cm-nav-resources">{group.ids.map(id => {
+    const tab = CONTEXT_PANEL_TABS.find(item => item.id === id)
+    if (!tab) return null
+    const { label, Icon } = tab
+    return <button type="button" key={id} className={`cm-nav-item${id === "tabs" ? " cm-nav-browser" : ""}`} title={label} aria-current={activePanel === id ? "true" : undefined} onClick={() => {
+      onView("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
+    }}><Icon size={16} /><span>{id === "board" ? "Agent 执行记录" : label}</span></button>
+  })}</nav></div>)}</div>
+  return <nav className="cm-navigation" aria-label="工作区">
     <div className="cm-nav-brand"><CompanionMark size={24} /><strong>CMspark</strong>
       {onClose && <button type="button" className="cm-icon-button" aria-label="关闭导航" onClick={onClose}>×</button>}
     </div>
@@ -187,5 +190,5 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView }:
     </section>
     {onClose && resources}
     <button type="button" className="cm-nav-item cm-nav-settings" onClick={() => { onView("chat"); closePanel(); dispatch({ type: "SET_SETTINGS_OPEN", open: true }); onNavigate() }}><IconSettings size={16} />设置</button>
-  </aside>
+  </nav>
 }

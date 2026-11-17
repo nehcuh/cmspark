@@ -7,6 +7,10 @@ export const workspaceCSS = `
 .cm-workspace{display:flex;height:100dvh;min-height:0;width:100%;overflow:hidden;background:${tokens.bg};font-family:${tokens.font};color:${tokens.text}}
 .cm-workspace-main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;position:relative}
 .cm-navigation{width:220px;height:100%;box-sizing:border-box;flex-shrink:0;display:flex;flex-direction:column;padding:20px 12px 12px;background:${tokens.bgMuted};border-right:1px solid ${tokens.border};gap:6px;overflow-y:auto}
+.cm-workspace-layered{display:block;height:100dvh}
+.cm-workspace-layered .cm-navigation{width:100%;height:auto;border-right:0;border-bottom:1px solid ${tokens.border}}
+.cm-tool-groups{display:flex;flex-direction:column;gap:8px;padding:8px 2px}
+.cm-tool-groups p{margin:0;color:${tokens.textMuted};font-size:11px}
 [aria-label="工作区导航"] .cm-navigation{width:100%}
 .cm-nav-brand{display:flex;align-items:center;gap:10px;padding:0 8px 20px;font-size:15px;letter-spacing:-.03em}
 .cm-nav-brand .cm-icon-button{margin-left:auto}
