@@ -149,12 +149,13 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 上次有效对话只来自本机键 `cmspark.navigation.lastThreadId`。写入规则：
 
 - active thread 仍在非回收站列表中时，记住它。
+- 列表还没到时，只要记住的 id 还在，`connected`、`connecting`、`disconnected` 都保留它，不写成 null，也不进项目首页。
 - 列表还没到，或断连后本地仍留着原来的 active id 时，不把记住的 id 擦掉。
 - 活跃列表已经到来，而记住的 id 不在其中或已回收：清掉这个键，原因是无效恢复。
 - `thread.list` 的 `incoming[0]` 不是上次有效对话。
 - `list_scope` 为 `trash` 或 `all` 时，保持现有行为：不自动创建，不改 active id。
 
-冷启动决定由唯一函数 `commitStartupNavigation` 做出。只有 `useNavigationStartup` 读取 `cmspark.navigation.lastThreadId`。`WorkspaceFrame` 和 `useWebSocket` 都不直接读这个键。`useWebSocket` 只负责把活跃 `thread.list` 写进 store，并停掉现在的自动 `thread.create` 和 `incoming[0]`。每次读取先增加代际。回调里的代际不等于当前 ref 时，不改 `activeThreadId`，不发送 `thread.select`，也不改已经显示的恢复文案。项目首页的提交结果是 `activeThreadId: null` 和 `selectThread: false`。
+冷启动决定由唯一函数 `commitStartupNavigation` 做出。只有 `useNavigationStartup` 读取 `cmspark.navigation.lastThreadId`。`WorkspaceFrame` 和 `useWebSocket` 都不直接读这个键。`useWebSocket` 不读这个键。它在活跃 `thread.list` 上只调用 `decideActiveThreadList`：空列表不 `thread.create`，也不选 `incoming[0]`；首页结果是 `activeThreadId: null` 且 `selectThread: false`。每次读取先增加代际。回调里的代际不等于当前 ref 时，不改 `activeThreadId`，不发送 `thread.select`，也不改已经显示的恢复文案。项目首页的提交结果是 `activeThreadId: null` 和 `selectThread: false`。
 
 - 记住的 id 仍在非回收站线程中：打开该会话。断连也一样，并标离线。`connecting` 也留在该会话，但不标离线。
 - 没有记住的 id，包括升级后已有历史对话：项目首页，说明「没有可恢复的上次对话」。不自动 `thread.create`。

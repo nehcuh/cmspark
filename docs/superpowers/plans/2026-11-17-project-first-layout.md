@@ -186,8 +186,6 @@ import {
   parseProjectListCache,
   sameListGeneration,
   sessionContextLines,
-  parseProjectListCache,
-  sessionContextLines,
   visibleProjects,
   type ListSnapshot,
 } from "../src/sidepanel/navigation/project-list-model"
@@ -222,6 +220,7 @@ test("revision decides the snapshot; generation equality is the caller's gate", 
   assert.equal(sameListGeneration(1, 2), false)
   const late: ListSnapshot = { ...current, revision: 9, generation: 1, projects: [{ ...active, name: "Zed" }], fetchedAt: "late" }
   const kept = sameListGeneration(late.generation, current.generation) ? applyProjectListResult(current, late).snapshot : current
+  if (!kept) throw new Error("missing snapshot")
   assert.equal(kept.projects[0].name, "Alpha")
 })
 
@@ -382,7 +381,7 @@ git commit -m "test: lock project list visibility and stale snapshots"
 
 - [ ] **Step 1: Write the failing browser test**
 
-`render-project-navigation-fixture.cjs` 用现有 `render-workspace-fixture.cjs` 的 esbuild 方式打包生产 `ProjectNavigationRoot`。`chrome.storage.local.get` 在 `--hold-storage` 时只把 callback 放进 `window.storageWaiters`，不立刻回。`window.storageSeed` 是下一次释放时的值。合成 `useWebSocket` 只 `SET_THREADS` 和 `SET_CONNECTION`，不读 `cmspark.navigation.lastThreadId`，也不 `SET_ACTIVE_THREAD`。`window.emitRuntime` 调用生产 `chrome.runtime.onMessage` 监听器。
+`render-project-navigation-fixture.cjs` 用现有 `render-workspace-fixture.cjs` 的 esbuild 方式打包生产 `ProjectNavigationRoot`。`chrome.storage.local.get` 在 `--hold-storage` 时把 `{ key, generation, callback }` 推进 `window.storageWaiters`。同一个 key 可以有多条，用 generation 区分。`launch` 只释放 `cmspark.project.list.v1` 的最新一条。恢复测试只释放 `cmspark.navigation.lastThreadId`。合成 `useWebSocket` 不读 `lastThreadId`，也不代替 `decideActiveThreadList` 的 node 测试。
 
 `chrome-extension/scripts/test-project-navigation-ui.py`：
 
@@ -399,22 +398,110 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 root = Path(__file__).resolve().parent.parent
-alpha = {"id":"11111111-1111-4111-8111-111111111111","name":"Alpha","created_at":"t","updated_at":"t","archived_at":None}
-archived = {**alpha,"id":"33333333-3333-4333-8333-333333333333","name":"旧项目","archived_at":"t2"}
+LIST_KEY = "cmspark.project.list.v1"
+THREAD_KEY = "cmspark.navigation.lastThreadId"
+alpha = {"id": "11111111-1111-4111-8111-111111111111", "name": "Alpha", "created_at": "t", "updated_at": "t", "archived_at": None}
+archived = {**alpha, "id": "33333333-3333-4333-8333-333333333333", "name": "旧项目", "archived_at": "t2"}
+
+def release_generation(page, key, generation, seed):
+    page.wait_for_function(
+        "(arg) => window.storageWaiters.some(item => item.key === arg.key && item.generation === arg.generation)",
+        {"key": key, "generation": generation},
+    )
+    released = page.evaluate(
+        """(arg) => {
+          const index = window.storageWaiters.findIndex(item => item.key === arg.key && item.generation === arg.generation)
+          if (index < 0) return false
+          const item = window.storageWaiters.splice(index, 1)[0]
+          item.callback(arg.seed)
+          return true
+        }""",
+        {"key": key, "generation": generation, "seed": seed},
+    )
+    assert released
+
+def release_latest(page, key, seed):
+    page.wait_for_function("(key) => window.storageWaiters.some(item => item.key === key)", key)
+    generation = page.evaluate("(key) => window.storageWaiters.filter(item => item.key === key).at(-1).generation", key)
+    release_generation(page, key, generation, seed)
 
 def launch(playwright, directory, storage, level="chat"):
-    subprocess.run(["node","scripts/render-project-navigation-fixture.cjs",directory,"--hold-storage",f"--level={level}"], cwd=root, check=True)
+    subprocess.run(["node", "scripts/render-project-navigation-fixture.cjs", directory, "--hold-storage", f"--level={level}"], cwd=root, check=True)
     browser = playwright.chromium.launch(channel="chrome", headless=True)
-    page = browser.new_page(viewport={"width":320,"height":800})
+    page = browser.new_page(viewport={"width": 320, "height": 800})
     page.set_default_timeout(6000)
-    page.goto((Path(directory)/"index.html").as_uri())
-    page.wait_for_function("window.storageWaiters && window.storageWaiters.length")
-    page.evaluate("(seed) => { window.storageWaiters.shift()(seed) }", storage)
+    page.goto((Path(directory) / "index.html").as_uri())
+    release_latest(page, LIST_KEY, storage)
     return browser, page
+
+def test_stale_startup(page):
+    page.wait_for_function("(key) => window.storageWaiters.some(item => item.key === key)", THREAD_KEY)
+    held = page.evaluate("(key) => window.storageWaiters.find(item => item.key === key).generation", THREAD_KEY)
+    before = page.evaluate("window.fixtureState.activeThreadId")
+    page.evaluate("() => window.dispatchUI({type:'SET_THREADS', threads: window.demoThreads})")
+    page.wait_for_function(
+        "(arg) => window.storageWaiters.some(item => item.key === arg.key && item.generation !== arg.generationHeld)",
+        {"key": THREAD_KEY, "generationHeld": held},
+    )
+    release_generation(page, THREAD_KEY, held, {THREAD_KEY: "demo-0"})
+    assert page.evaluate("window.fixtureState.activeThreadId") == before
+    assert page.evaluate("!window.sent.some(m => m.type==='thread.select')")
+
+def test_breadcrumb(page):
+    page.evaluate("""() => window.dispatchUI({type:'SET_THREADS', threads:[{id:'demo-0', alias:'笔记', project_id:'11111111-1111-4111-8111-111111111111', trashed_at:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}]})""")
+    release_latest(page, THREAD_KEY, {THREAD_KEY: "demo-0"})
+    page.get_by_role("banner", name="会话位置").get_by_role("button", name="Alpha", exact=True).click()
+    page.get_by_role("region", name="项目详情").wait_for()
+    assert page.evaluate("!window.sent.some(m => m.type==='thread.project.set')")
+
+def test_bind(page):
+    page.get_by_role("button", name="项目内新对话", exact=True).click()
+    page.wait_for_function("window.sent.some(m => m.type==='thread.create')")
+    created = page.evaluate("() => window.sent.find(m => m.type==='thread.create')")
+    page.evaluate("(msg) => window.emitRuntime({type:'thread.created', id: msg.id, thread:{id: msg.id, alias:'新项目对话', project_id:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}})", created)
+    page.wait_for_function("window.sent.some(m => m.type==='thread.project.set')")
+    ok = page.evaluate("() => window.sent.find(m => m.type==='thread.project.set')")
+    page.evaluate("(msg) => window.emitRuntime({type:'project.changed', id: msg.id, operation_id: msg.operation_id, revision: msg.expected_revision + 1, thread_id: msg.thread_id, project_id: msg.project_id, thread:{id: msg.thread_id, project_id: msg.project_id}})", ok)
+    page.locator(f"[data-project-threads] [data-thread-id='{ok['thread_id']}']").wait_for()
+    page.get_by_text("新对话已归入这个项目").wait_for()
+    before = page.evaluate("() => window.sent.filter(m => m.type==='thread.create').length")
+    page.get_by_role("button", name="项目内新对话", exact=True).click()
+    page.wait_for_function(f"() => window.sent.filter(m => m.type==='thread.create').length > {before}")
+    created2 = page.evaluate("() => window.sent.filter(m => m.type==='thread.create').at(-1)")
+    page.evaluate("(msg) => window.emitRuntime({type:'thread.created', id: msg.id, thread:{id: msg.id, alias:'新项目对话', project_id:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}})", created2)
+    page.wait_for_function("window.sent.filter(m => m.type==='thread.project.set').length >= 2")
+    bad = page.evaluate("() => window.sent.filter(m => m.type==='thread.project.set').at(-1)")
+    page.evaluate("(msg) => window.emitRuntime({type:'project.error', id: msg.id, operation_id: msg.operation_id, error:'rejected'})", bad)
+    page.get_by_text("新对话已创建在项目外；归入尚未确认").wait_for()
+    body = page.locator("body").inner_text()
+    assert "新对话已归入这个项目" in body
+    assert page.locator(f"[data-project-threads] [data-thread-id='{bad['thread_id']}']").count() == 0
+    assert page.locator(f"[data-project-threads] [data-thread-id='{ok['thread_id']}']").count() == 1
+
+def test_tools(page):
+    page.set_viewport_size({"width": 960, "height": 800})
+    nav = page.get_by_role("navigation", name="工作区")
+    nav.get_by_role("button", name="工具", exact=True).click()
+    current = page.get_by_role("group", name="当前任务")
+    assert current.get_by_role("button").all_inner_texts()[:3] == ["技能", "知识", "历史"]
+    assert current.get_by_role("button", name="设置", exact=True).count() == 0
+    nav.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("dialog", name="设置", exact=True).wait_for()
+    css = "".join(page.locator("style").all_inner_texts())
+    assert "28dvh" not in css and "cm-navigation-disclosure" not in css
+    assert page.locator(".cm-navigation-disclosure").count() == 0
+
+def test_browser_tools(playwright, directory):
+    browser, page = launch(playwright, directory, {}, level="browser")
+    page.set_viewport_size({"width": 960, "height": 800})
+    page.get_by_role("navigation", name="工作区").get_by_role("button", name="工具", exact=True).click()
+    assert page.get_by_role("group", name="当前任务").get_by_role("button").all_inner_texts()[:2] == ["浏览器标签页", "技能"]
+    assert page.get_by_role("navigation", name="工作区").get_by_role("button", name="设置", exact=True).count() == 1
+    browser.close()
 
 with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
     with sync_playwright() as playwright:
-        cache = {"cmspark.project.list.v1": json.dumps({"format":1,"revision":2,"fetchedAt":"t","projects":[alpha, archived]})}
+        cache = {LIST_KEY: json.dumps({"format": 1, "revision": 2, "fetchedAt": "t", "projects": [alpha, archived]})}
         browser, page = launch(playwright, directory, cache)
         page.get_by_role("button", name="项目", exact=True).focus()
         page.keyboard.press("Enter")
@@ -448,23 +535,31 @@ with tempfile.TemporaryDirectory(prefix="cmspark-project-nav-") as directory:
         page.evaluate("(msg) => window.emitRuntime({id: msg.id, type:'project.state', revision: 9, projects:[{id:'11111111-1111-4111-8111-111111111111', name:'Zed', created_at:'t', updated_at:'t', archived_at:null}]})", listed)
         assert page.get_by_role("button", name="旧项目", exact=True).count() == 1
         assert page.get_by_role("button", name="Zed", exact=True).count() == 0
+        test_stale_startup(page)
+        test_breadcrumb(page)
+        test_bind(page)
+        test_tools(page)
         browser.close()
-        browser, page = launch(playwright, directory, {"cmspark.project.list.v1": "{not-json"})
+        browser, page = launch(playwright, directory, {LIST_KEY: "{not-json"})
         page.get_by_role("button", name="项目", exact=True).focus()
         page.keyboard.press("Enter")
         text = page.locator("[aria-label=项目]").inner_text()
         assert "还没有项目" not in text
         assert "无法取回项目列表" in text or "正在读取项目" in text
         browser.close()
-        browser, page = launch(playwright, directory, {"cmspark.project.list.v1": json.dumps({"format":1,"revision":1,"fetchedAt":"t","projects":[alpha]})})
+        browser, page = launch(playwright, directory, {LIST_KEY: json.dumps({"format": 1, "revision": 1, "fetchedAt": "t", "projects": [alpha]})})
         page.get_by_role("button", name="项目", exact=True).focus()
         page.keyboard.press("Enter")
         page.get_by_role("button", name="查看归档", exact=True).click()
         assert "没有归档项目" in page.locator("[aria-label=项目]").inner_text()
         assert page.get_by_role("button", name="Alpha", exact=True).count() == 0
         browser.close()
-print("helpers follow; call them before this line")
+        test_browser_tools(playwright, directory)
+print("project navigation ui ok")
 ```
+
+这一份就是完整脚本：辅助函数先定义，主流程再调用 `test_stale_startup`、`test_breadcrumb`、`test_bind`、`test_tools`、`test_browser_tools`，最后一行打印 `project navigation ui ok`。错的 `project_id` 不发 `project.changed`，因为 `matchingProjectReply` 会忽略它直到 15 秒超时，而页面超时是 6 秒。失败回执用同一个 id 的 `project.error`。
+
 
 Expected: FAIL。当前 `ProjectPanel` 把项目放在 `select` 里，`get_by_role("button", name="Alpha")` 找不到。不要另写 DOM 替身。
 
@@ -533,7 +628,8 @@ git commit -m "feat: show registered projects as buttons in Chrome"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { projectCopy } from "../src/sidepanel/navigation/project-copy"
-import { commitStartupNavigation } from "../src/sidepanel/navigation/startup-destination"
+import { RESIDENT_MIN_WIDTH, navigationMode } from "../src/sidepanel/navigation/navigation-mode"
+import { commitStartupNavigation, decideActiveThreadList } from "../src/sidepanel/navigation/startup-destination"
 
 test("a stale startup callback does not clear or select", () => {
   const decision = commitStartupNavigation({ commitGeneration: 1, currentGeneration: 2, rememberedThreadId: "older", threads: [{ id: "newer", trashed_at: null }], activeThreadId: "newer", connection: "connected", listArrived: true })
@@ -565,84 +661,55 @@ test("disconnect and connecting keep a remembered session", () => {
       assert.equal(decision.layer, "session")
       assert.equal(decision.homeCopy, null)
       assert.equal(decision.selectThread, false)
+      assert.equal(decision.remembered, "older")
     }
+  }
+})
+
+test("a connected cold start keeps the remembered id until the list arrives", () => {
+  const decision = commitStartupNavigation({ commitGeneration: 1, currentGeneration: 1, rememberedThreadId: "older", threads: [], activeThreadId: null, connection: "connected", listArrived: false })
+  assert.equal(decision.ignored, false)
+  if (!decision.ignored) {
+    assert.equal(decision.layer, "session")
+    assert.equal(decision.activeThreadId, "older")
+    assert.equal(decision.remembered, "older")
+    assert.equal(decision.selectThread, false)
+    assert.equal(decision.homeCopy, null)
+  }
+})
+
+test("an empty active list does not create or select the first row", () => {
+  const incoming = [{ id: "newer", trashed_at: null }]
+  const empty = decideActiveThreadList({ activeThreadId: null, rememberedThreadId: null, incoming: [], listScope: "active" })
+  assert.equal(empty.createBlank, false)
+  assert.equal(empty.selectIncomingFirst, false)
+  assert.equal(empty.activeThreadId, null)
+  assert.equal(empty.selectThread, false)
+  assert.equal(empty.homeCopy, projectCopy.restoreNone)
+  const populated = decideActiveThreadList({ activeThreadId: null, rememberedThreadId: null, incoming, listScope: "active" })
+  assert.equal(populated.createBlank, false)
+  assert.equal(populated.selectIncomingFirst, false)
+  assert.equal(populated.selectThread, false)
+  assert.equal(populated.activeThreadId, null)
+  assert.notStrictEqual(populated.activeThreadId, incoming[0].id)
+})
+
+test("resident navigation starts at 960 on every surface", () => {
+  assert.equal(RESIDENT_MIN_WIDTH, 960)
+  for (const surface of ["sidepanel", "popout", "workspace"] as const) {
+    for (const innerWidth of [320, 400, 759]) assert.equal(navigationMode({ surface, innerWidth }), "layered")
+    for (const innerWidth of [960, 1200]) assert.equal(navigationMode({ surface, innerWidth }), "resident")
   }
 })
 ```
 
 把下面断言加进 `test-project-navigation-ui.py`，仍用 `page.keyboard.press` 和真实 Chrome。测试不计算 layer 再塞进组件。它只释放 storage callback，然后读生产 `ProjectNavigationRoot` 画出的文字。
 
-```python
-def release(page, seed):
-    page.wait_for_function("window.storageWaiters.length")
-    page.evaluate("(seed) => window.storageWaiters.shift()(seed)", seed)
 
-def test_restore(page):
-    release(page, {"cmspark.navigation.lastThreadId": None})
-    page.evaluate("() => window.dispatchUI({type:'SET_THREADS', threads: window.demoThreads})")
-    assert "没有可恢复的上次对话" in page.locator("[aria-label=项目]").inner_text()
-    assert page.evaluate("window.fixtureState.activeThreadId === null")
-    assert page.evaluate("!window.sent.some(m => m.type==='thread.select')")
-    release(page, {"cmspark.navigation.lastThreadId": "demo-0"})
-    assert "没有可恢复的上次对话" in page.locator("[aria-label=项目]").inner_text()
-    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connecting'})")
-    release(page, {"cmspark.navigation.lastThreadId": "demo-0"})
-    body = page.locator("body").inner_text()
-    assert "离线" not in body
-    assert "没有会话" not in body
-    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connected'})")
-    page.evaluate("() => window.dispatchUI({type:'SET_THREADS', threads:[{id:'demo-0', alias:'笔记', project_id:'11111111-1111-4111-8111-111111111111', trashed_at:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}]})")
-    release(page, {"cmspark.navigation.lastThreadId": "demo-0"})
-    page.get_by_role("banner", name="会话位置").get_by_role("button", name="Alpha", exact=True).click()
-    assert page.evaluate("!window.sent.some(m => m.type==='thread.project.set')")
-    page.get_by_role("region", name="项目详情").wait_for()
-    page.set_viewport_size({"width": 960, "height": 800})
-    nav = page.get_by_role("navigation", name="工作区")
-    nav.get_by_role("button", name="设置", exact=True).click()
-    page.get_by_role("dialog", name="设置", exact=True).wait_for()
-    assert page.get_by_role("group", name="当前任务").get_by_role("button", name="设置", exact=True).count() == 0
-    assert page.get_by_role("group", name="当前任务").get_by_role("button").all_inner_texts()[:3] == ["技能", "知识", "历史"]
-    css = "".join(page.locator("style").all_inner_texts())
-    assert "28dvh" not in css and "cm-navigation-disclosure" not in css
-    assert page.locator(".cm-navigation-disclosure").count() == 0
-
-def test_browser_tools(playwright, directory):
-    browser, page = launch(playwright, directory, {}, level="browser")
-    page.set_viewport_size({"width": 960, "height": 800})
-    assert page.get_by_role("group", name="当前任务").get_by_role("button").all_inner_texts()[:2] == ["浏览器标签页", "技能"]
-    assert page.get_by_role("navigation", name="工作区").get_by_role("button", name="设置", exact=True).count() == 1
-    browser.close()
-```
-
-`test_restore(page)`、`test_bind(page)` 和 `test_browser_tools(playwright, directory)` 在第一个 `browser.close()` 之前调用。文件最后一行是 `print("project navigation ui ok")`。
 
 项目内新对话不新增绕过函数。按钮调用现有 `requestProjectThread`，再用 `requestProject("thread.project.set")`。`matchingProjectReply` 拒绝错的 `project_id`。父组件只在 promise resolve 时 `onBindResult(ok)` 并把线程放进当前项目；reject 时不放。本地回执和父组件已有的 `bindNotice` 同时留在页面上。Playwright 用 `locator.wait_for` 等这两次往返，不用单次 `Promise.resolve()`。
 
-```python
-def test_bind(page):
-    page.get_by_role("button", name="项目内新对话", exact=True).click()
-    page.wait_for_function("window.sent.some(m => m.type==='thread.create')")
-    created = page.evaluate("() => window.sent.find(m => m.type==='thread.create')")
-    page.evaluate("(msg) => window.emitRuntime({type:'thread.created', id: msg.id, thread:{id: msg.id, alias:'新项目对话', project_id:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}})", created)
-    page.wait_for_function("window.sent.some(m => m.type==='thread.project.set')")
-    ok = page.evaluate("() => window.sent.find(m => m.type==='thread.project.set')")
-    page.evaluate("(msg) => window.emitRuntime({type:'project.changed', id: msg.id, operation_id: msg.operation_id, revision: msg.expected_revision + 1, thread_id: msg.thread_id, project_id: msg.project_id, thread:{id: msg.thread_id, project_id: msg.project_id}})", ok)
-    page.locator(f"[data-project-threads] [data-thread-id='{ok['thread_id']}']").wait_for()
-    page.get_by_text("新对话已归入这个项目").wait_for()
-    page.get_by_role("button", name="项目内新对话", exact=True).click()
-    page.wait_for_function("window.sent.filter(m => m.type==='thread.project.set').length >= 2")
-    bad = page.evaluate("() => window.sent.filter(m => m.type==='thread.project.set').at(-1)")
-    created2 = page.evaluate("() => window.sent.filter(m => m.type==='thread.create').at(-1)")
-    page.evaluate("(msg) => window.emitRuntime({type:'thread.created', id: msg.id, thread:{id: msg.id, alias:'新项目对话', project_id:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}})", created2)
-    page.evaluate("(msg) => window.emitRuntime({type:'project.changed', id: msg.id, operation_id: msg.operation_id, revision: msg.expected_revision + 1, thread_id: msg.thread_id, project_id: 'other-project', thread:{id: msg.thread_id, project_id:'other-project'}})", bad)
-    page.get_by_text("新对话已创建在项目外；归入尚未确认").wait_for()
-    body = page.locator("body").inner_text()
-    assert "新对话已归入这个项目" in body
-    assert page.locator(f"[data-project-threads] [data-thread-id='{bad['thread_id']}']").count() == 0
-    assert page.locator(f"[data-project-threads] [data-thread-id='{ok['thread_id']}']").count() == 1
-```
 
-`test_restore(page)` 和 `test_bind(page)` 写在同一个文件里，并在第一个 `browser.close()` 之前调用。文件最后一行才是 `print("project navigation ui ok")`。成功页的线程行来自生产父组件处理匹配回执，不来自测试脚本插入的 React 节点。失败页同时还能看见上一次留下的「新对话已归入这个项目」。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -666,7 +733,7 @@ export function commitStartupNavigation(input: {
 }): { ignored: true; reason: "stale-generation" } | { ignored: false; layer: "session" | "projects"; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null; remembered: string | null } {
   if (input.commitGeneration !== input.currentGeneration) return { ignored: true, reason: "stale-generation" }
   const usable = (id: string | null) => !!id && input.threads.some(thread => thread.id === id && !thread.trashed_at)
-  if (!input.listArrived && input.rememberedThreadId && input.connection !== "connected") {
+  if (!input.listArrived && input.rememberedThreadId) {
     return { ignored: false, layer: "session", activeThreadId: input.rememberedThreadId, selectThread: false, homeCopy: null, remembered: input.rememberedThreadId }
   }
   if (usable(input.rememberedThreadId) && input.rememberedThreadId) {
@@ -677,9 +744,66 @@ export function commitStartupNavigation(input: {
   }
   return { ignored: false, layer: "projects", activeThreadId: null, selectThread: false, homeCopy: projectCopy.restoreNone, remembered: null }
 }
+
+export function decideActiveThreadList(input: {
+  activeThreadId: string | null
+  rememberedThreadId: string | null
+  incoming: Array<{ id: string; trashed_at?: string | null }>
+  listScope: "active" | "trash" | "all"
+}): { createBlank: false; selectIncomingFirst: false; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null } {
+  if (input.listScope !== "active") {
+    return { createBlank: false, selectIncomingFirst: false, activeThreadId: input.activeThreadId, selectThread: false, homeCopy: null }
+  }
+  const usable = input.incoming.filter(thread => !thread.trashed_at)
+  if (input.activeThreadId && usable.some(thread => thread.id === input.activeThreadId)) {
+    return { createBlank: false, selectIncomingFirst: false, activeThreadId: input.activeThreadId, selectThread: false, homeCopy: null }
+  }
+  if (input.rememberedThreadId && usable.some(thread => thread.id === input.rememberedThreadId)) {
+    return { createBlank: false, selectIncomingFirst: false, activeThreadId: input.rememberedThreadId, selectThread: input.rememberedThreadId, homeCopy: null }
+  }
+  if (input.rememberedThreadId) {
+    return { createBlank: false, selectIncomingFirst: false, activeThreadId: null, selectThread: false, homeCopy: projectCopy.restoreInvalid }
+  }
+  return { createBlank: false, selectIncomingFirst: false, activeThreadId: null, selectThread: false, homeCopy: projectCopy.restoreNone }
+}
 ```
 
-`useNavigationStartup` 在连接或活跃列表代际变化时增加 ref，然后 `chrome.storage.local.get`。callback 调用上面的函数。`ignored` 时直接 return。否则 `dispatch({ type: "COMMIT_NAVIGATION", decision })`。只有 `selectThread` 是字符串时才 `thread.select`。`useWebSocket.ts` 删除第 1454–1496 行的创建和 `incoming[0]`，不读 storage。
+`chrome-extension/src/sidepanel/navigation/navigation-mode.ts`
+
+```ts
+export const RESIDENT_MIN_WIDTH = 960
+export type NavigationSurface = "sidepanel" | "popout" | "workspace"
+export function navigationMode(input: { surface: NavigationSurface; innerWidth: number }): "layered" | "resident" {
+  return input.innerWidth >= RESIDENT_MIN_WIDTH ? "resident" : "layered"
+}
+```
+
+`useWebSocket.ts` 第 1454–1496 行整段换成对 `decideActiveThreadList` 的调用。函数本身不读 storage。hook 不写 `thread.create`，也不读取 `incoming[0]`。
+
+```ts
+const decision = decideActiveThreadList({
+  activeThreadId: activeThreadRef.current,
+  rememberedThreadId: navigationRememberedRef.current,
+  incoming,
+  listScope: "active",
+})
+creatingBlankThreadRef.current = false
+if (typeof decision.selectThread === "string") {
+  dispatch({ type: "SET_ACTIVE_THREAD", threadId: decision.selectThread })
+  chrome.runtime.sendMessage({ type: "thread.select", threadId: decision.selectThread })
+} else if (decision.activeThreadId === null) {
+  dispatch({
+    type: "COMMIT_NAVIGATION",
+    decision: { ignored: false, layer: "projects", activeThreadId: null, selectThread: false, homeCopy: decision.homeCopy, remembered: null },
+  })
+}
+```
+
+现有 `SET_ACTIVE_THREAD` 的 `threadId` 类型是 `string`，不能传 `null`。首页清空只走 `COMMIT_NAVIGATION`。
+
+`navigationRememberedRef` 只镜像 `COMMIT_NAVIGATION` 已经写下的 remembered，不是第二次 `chrome.storage.local.get`。合成 WebSocket fixture 不能代替这个 node 测试。
+
+`useNavigationStartup` 仍是唯一读取 `cmspark.navigation.lastThreadId` 的函数。它每次读取先 `bumpListGeneration`，callback 调用 `commitStartupNavigation`。`ignored` 时不 dispatch、不 `thread.select`。否则 `COMMIT_NAVIGATION`。只有 `selectThread` 是字符串时才 `thread.select`。首页决策的 `remembered` 为 null 时才把 storage 写成 null。
 
 `SessionContextBar` 渲染为：
 
@@ -745,15 +869,7 @@ test("tool groups keep the existing primary order", () => {
 })
 ```
 
-上面的 `test_restore` 已经点击常驻导航里的「设置」并等待 `dialog[name=设置]`，并断言 chat 的「当前任务」前三项。`test_browser_tools(playwright, directory)` 用 `launch(..., level="browser")` 断言前两项是「浏览器标签页」「技能」，且「设置」在 `navigation[name=工作区]` 而不是「当前任务」里。不要再写一份只存在于说明里的点击。
-
-样式断言：
-
-```python
-css = page.locator("style").all_inner_texts()
-assert all("28dvh" not in item and "cm-navigation-disclosure" not in item for item in css)
-assert page.locator(".cm-navigation-disclosure").count() == 0
-```
+`test_tools` 在点「工具」之后才读「当前任务」。chat 前三项是「技能」「知识」「历史」。它再点导航里的「设置」并等待 `dialog[name=设置]`。`test_browser_tools` 先点「工具」，前两项是「浏览器标签页」「技能」，「设置」仍在 `navigation[name=工作区]`。样式断言已经在 `test_tools` 里。
 
 - [ ] **Step 2: Run test to verify it fails**
 
