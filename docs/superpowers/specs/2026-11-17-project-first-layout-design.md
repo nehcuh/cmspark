@@ -106,7 +106,9 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 | 断连且没有目录记录 | 「工作目录暂时无法刷新」 | 「未绑定工作目录」 |
 | 断连时的执行行 | 「执行状态：离线」 | 「执行状态：空闲」 |
 
-过期响应：每次刷新和每次重连增加代际。响应只在代际等于当前代际，且 `revision` 不小于已显示快照时才替换。更旧代际或更旧 revision 保持原快照，也不把列表改成失败或空。
+过期响应：每次刷新和每次重连增加代际。调用方拿请求记下的代际和当前 ref 做严格相等，不相等就不调用 `applyProjectListResult`。该函数只比较 `revision`：更旧 revision 保留当前快照，相等或更新的 revision 才替换。代际不等的高 revision 也不得换掉已显示的项目按钮。
+
+`connecting` 不是断连。正在连接时保留已打开会话，不写「离线」，也不写「没有会话」或「还没有项目」。只有 `disconnected` 才用离线文案。
 
 搜索按名称的 `toLocaleLowerCase()` 包含匹配，和现有管理搜索同一规则。清空搜索后回到当前归档视图的完整集合。默认视图只含 `archived_at === null` 的项目。`查看归档` 只显示已归档项目。`返回未归档` 回到默认视图。归档项目不混进默认列表。
 
@@ -136,7 +138,7 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 
 1. `requestProjectThread` 走现有 `thread.create`。
 2. 只有创建回执里的线程 id 到了，才发 `thread.project.set`，`project_id` 是用户当时打开的那个项目。
-3. `matchingProjectReply` 接受这条 set 回执之后，才显示「新对话已归入这个项目」，并把该对话放进项目详情。
+3. `matchingProjectReply` 接受这条 set 回执之后，父组件的 `onBindResult` 才把该对话放进项目详情，并保留这条成功文案。组件本地回执和父组件的 `bindNotice` 同时显示，后一次不擦掉前一次。
 4. 创建成功但 set 失败、超时或代际已经变了：保留项目外的对话，显示「新对话已创建在项目外；归入尚未确认」。不自动重试 set，不把它画进项目。
 5. 创建本身失败：不造对话，显示「项目没有保存」不适用；用创建路径已有的「新对话尚未确认创建，请刷新核实。」不显示归入成功。
 
@@ -152,10 +154,10 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 - `thread.list` 的 `incoming[0]` 不是上次有效对话。
 - `list_scope` 为 `trash` 或 `all` 时，保持现有行为：不自动创建，不改 active id。
 
-冷启动决定：
+冷启动决定由唯一函数 `commitStartupNavigation` 做出。只有 `useNavigationStartup` 读取 `cmspark.navigation.lastThreadId`。`WorkspaceFrame` 和 `useWebSocket` 都不直接读这个键。`useWebSocket` 只负责把活跃 `thread.list` 写进 store，并停掉现在的自动 `thread.create` 和 `incoming[0]`。每次读取先增加代际。回调里的代际不等于当前 ref 时，不改 `activeThreadId`，不发送 `thread.select`，也不改已经显示的恢复文案。项目首页的提交结果是 `activeThreadId: null` 和 `selectThread: false`。
 
-- 记住的 id 仍在非回收站线程中：打开该会话。断连也一样，并标离线。
-- 没有记住的 id：项目首页，说明「没有可恢复的上次对话」。不自动 `thread.create`。
+- 记住的 id 仍在非回收站线程中：打开该会话。断连也一样，并标离线。`connecting` 也留在该会话，但不标离线。
+- 没有记住的 id，包括升级后已有历史对话：项目首页，说明「没有可恢复的上次对话」。不自动 `thread.create`。
 - 记住的 id 无效，包括活跃列表已经到达但为空：项目首页，说明「上次对话已不在，已回到项目首页」。不改选另一个会话。
 
 这是对 [useWebSocket.ts 第 1454–1496 行](https://github.com/nehcuh/cmspark/blob/4b1f4891db39d945c31b2b226bfa7eb58db0337d/chrome-extension/src/sidepanel/hooks/useWebSocket.ts#L1454) 的行为变更。空列表不再自动造空白对话。没有线程时，现有输入占位可以继续要求先创建或选择；创建从「新对话」或项目内新对话进入。
@@ -166,7 +168,7 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 
 工具 id 仍是 [ContextPanelHost.tsx 第 63–73 行](https://github.com/nehcuh/cmspark/blob/4b1f4891db39d945c31b2b226bfa7eb58db0337d/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx#L63) 的九个：`tabs`、`history`、`skills`、`knowledge`、`packs`、`meeting`、`board`、`mcp`、`apps`。分组函数必须让每个 id 恰好出现一次。
 
-分组来自现有 [mode-controller.ts 的 `contextBarTabsForLevel` 与 `contextBarOverflowTabsForLevel`](https://github.com/nehcuh/cmspark/blob/4b1f4891db39d945c31b2b226bfa7eb58db0337d/chrome-extension/src/sidepanel/mode/mode-controller.ts#L104)。当前档的主集合标题是「当前任务」，其余标题是「其他工具」。`history` 今天在导航里被滤掉，本设计把它放回工具层。不新增工具 id，不加入 shell 开关。
+分组来自现有 [mode-controller.ts 的 `contextBarTabsForLevel` 与 `contextBarOverflowTabsForLevel`](https://github.com/nehcuh/cmspark/blob/4b1f4891db39d945c31b2b226bfa7eb58db0337d/chrome-extension/src/sidepanel/mode/mode-controller.ts#L104)，并保持这两个函数的现有顺序。chat 的「当前任务」DOM 顺序是技能、知识、历史。browser 是浏览器标签页、技能。不按 `CONTEXT_PANEL_TABS` 的登记顺序重排。设置按钮在导航层或常驻导航里，不放进工具列表。`history` 今天在导航里被滤掉，本设计把它放回「当前任务」或「其他工具」中它已有的位置。不新增工具 id，不加入 shell 开关。
 
 设置仍是导航里的单独一项，打开现有 `SET_SETTINGS_OPEN`。不重排设置页，以免碰到 [#853](https://github.com/nehcuh/cmspark/issues/853) 的 shell 入口。全局连接状态保持 [StatusRail.tsx](https://github.com/nehcuh/cmspark/blob/4b1f4891db39d945c31b2b226bfa7eb58db0337d/chrome-extension/src/sidepanel/components/StatusRail.tsx#L274) 现有的点或短标签。项目列表上的离线句子只写在列表区域。
 
@@ -185,7 +187,7 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 
 ## 11. 验收矩阵
 
-实施必须用真实组件点击、键盘和焦点。`renderToStaticMarkup` 或源码字符串包含某句中文，不算这些行通过。纯函数可以单独测决定；决定还要在组件测试里走到按钮和文案。
+实施的键盘、焦点和 `details` 走 `uv run --no-project --with playwright python chrome-extension/scripts/test-project-navigation-ui.py`（先 `nvm use 22`）。它使用本机 Chrome 和 `page.keyboard.press`，与 [docs/TESTING.md](../../TESTING.md) 里已有的工作区脚本同一路径，不把 Playwright 写进 `package.json`。`node:test` 只覆盖纯函数。不使用自造 DOM 替身。
 
 | 情境 | 预期 | 节点 |
 | --- | --- | --- |
@@ -195,7 +197,9 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 | 断连有缓存 / 无快照 | 离线原文，且不是「还没有项目」或「没有会话」 | 1 |
 | 迟到代际和更旧 revision | 不覆盖更新快照 | 1 |
 | 点项目行 | 不发送 `thread.project.set`，不改筛选 | 1 锁定不误发；2 进入详情 |
-| 窄层返回、宽导航常驻 | 320/400/759 layered，960/1200 resident；无 28dvh 弹层 | 2 |
+| 窄层返回、宽导航常驻 | 320/400/759 layered，960/1200 resident。Playwright 断言页面没有 `.cm-navigation-disclosure`，样式表没有 `28dvh` | 2 |
+| 升级后有历史、没有 lastThreadId | 项目首页，原文「没有可恢复的上次对话」 | 2 |
+| 正在连接 | 保留会话；不写「离线」或「没有会话」 | 2 |
 | 恢复有效、无效、无记录、断连保留会话 | 第 8 节；不选第一项，不自动创建 | 2 |
 | 执行中或断连改归属 | 按钮禁用，浏览仍可点 | 2 |
 | 项目内新对话成功和失败 | 第 7 节的两句，失败不进项目列表 | 2 |
@@ -206,7 +210,7 @@ enterprise 档始终提供 shell，命令授权仍独立。本设计不改这条
 
 四条 pull_request workflow 和十个检查是：
 
-- CI：`build`、`smoke (ubuntu-latest)`、`smoke (macos-latest)`、`smoke (windows-latest)`、`smoke (windows-native)`、`activity-linux-x11`、`acp-history-restart`
+- CI：`build`、`smoke (ubuntu-latest)`、`smoke (macos-latest)`、`smoke (windows-latest)`、`smoke (windows-native)`、`activity (Linux X11 native)`、`acp-history-restart`
 - ARM acceptance：`Affected CPU controls (Linux ARM64)`
 - Linux integration ARM：`Linux integration controls (ARM64)`
 - Session save recovery：`Windows session persistence`
