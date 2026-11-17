@@ -476,12 +476,12 @@ export class DomNode extends EventTarget {
     for (let index = chain.length - 1; index >= 0; index -= 1) {
       const node = chain[index]
       event.currentTarget = node
-      for (const listener of node.listeners[type] ?? []) if (listener.capture) listener.fn(event)
+      for (const listener of node.listeners[type] ?? []) if (listener.capture) listener.fn(event as unknown as Event)
       if (event.stopped) return event
     }
     for (const node of chain) {
       event.currentTarget = node
-      for (const listener of node.listeners[type] ?? []) if (!listener.capture) listener.fn(event)
+      for (const listener of node.listeners[type] ?? []) if (!listener.capture) listener.fn(event as unknown as Event)
       if (event.stopped) return event
     }
     if (type === "keydown" && this.tagName === "BUTTON" && (event.key === "Enter" || event.key === " ") && !event.defaultPrevented) this.emit("click")
@@ -856,7 +856,50 @@ git commit -m "feat: show registered projects as buttons"
 
 - [ ] **Step 1: Write the failing test**
 
-`chrome-extension/src/sidepanel/navigation/startup-destination.ts`、`navigation-mode.ts`、`project-thread-bind.ts` 先导出同名函数并 `throw new Error("not implemented")`。`SidePanelLayers` 与 `SessionContextBar` 先 `return <div />`。
+`startup-destination.ts`、`navigation-mode.ts`、`project-thread-bind.ts` 导出测试要调用的函数，函数体是 `throw new Error("not implemented")`。`SessionContextBar` 先 `return <div />`。`SidePanelLayers.tsx` 导出下面的类型，函数接受它并 `return <div />`。
+
+```tsx
+import type { Project } from "../utils/project-request"
+
+export interface SidePanelLayersProps {
+  mode: "layered" | "resident"
+  layer: "nav" | "projects" | "project" | "recent" | "session" | "tools" | "settings"
+  projectId: string | null
+  projects: Project[]
+  threads: Array<{ id: string; alias: string; project_id?: string | null; trashed_at?: string | null; workspace_root?: string | null }>
+  activeThreadId: string | null
+  connection: "connected" | "connecting" | "disconnected"
+  busy: boolean
+  pending: number
+  metadataUnavailable: boolean
+  homeCopy: string | null
+  query: string
+  archiveView: boolean
+  phase: "loading" | "refreshing" | "ready" | "list-error" | "offline"
+  fetchedAt: string | null
+  hasSnapshot: boolean
+  recentFilter: string
+  bindNotice: string | null
+  toolLevel: "chat" | "browser" | "computer"
+  onLayer: (layer: SidePanelLayersProps["layer"]) => void
+  onOpenProject: (id: string) => void
+  onOpenThread: (id: string) => void
+  onAssign: (projectId: string | null) => void
+  onCreateInProject: (projectId: string) => void
+  onRecentFilter: (filter: string) => void
+  onQuery: (value: string) => void
+  onClearQuery: () => void
+  onToggleArchive: () => void
+  onOpenTool: (id: string) => void
+  onOpenSettings: () => void
+  create?: () => Promise<{ id: string }>
+  setProject?: (threadId: string) => Promise<{ thread: { id: string; project_id: string | null } }>
+}
+
+export function SidePanelLayers(_props: SidePanelLayersProps) {
+  return <div />
+}
+```
 
 `chrome-extension/tests/startup-destination.test.ts`
 
@@ -1143,23 +1186,35 @@ chrome.storage.local.get("cmspark.navigation.lastThreadId", stored => {
 `chrome-extension/tests/project-navigation-interaction.test.ts` 第一行 import `./support/interaction-dom`，再 import `createElement`、`createRoot`、`act`、`projectCopy`、`SidePanelLayers`、`SessionContextBar`。`mount` 如下，默认有项目 Alpha、线程「笔记」，以及空回调。
 
 ```ts
+import type { SidePanelLayersProps } from "../src/sidepanel/components/SidePanelLayers"
 const alpha = { id: "11111111-1111-4111-8111-111111111111", name: "Alpha", created_at: "t", updated_at: "t", archived_at: null }
 const thread = { id: "thread-1", alias: "笔记", project_id: alpha.id, trashed_at: null, workspace_root: "/work/alpha" }
-async function mount(over: Record<string, unknown> = {}) {
-  const props = {
+function layerProps(over: Partial<SidePanelLayersProps> = {}): SidePanelLayersProps {
+  const props: SidePanelLayersProps = {
     mode: "layered", layer: "nav", projectId: null, projects: [alpha], threads: [thread], activeThreadId: thread.id,
     connection: "connected", busy: false, pending: 0, metadataUnavailable: false, homeCopy: null,
     query: "", archiveView: false, phase: "ready", fetchedAt: "t", hasSnapshot: true, recentFilter: "*", bindNotice: null,
     onLayer: () => undefined, onOpenProject: () => undefined, onOpenThread: () => undefined, onAssign: () => undefined,
     onCreateInProject: () => undefined, onRecentFilter: () => undefined, onQuery: () => undefined, onClearQuery: () => undefined,
     onToggleArchive: () => undefined, onOpenTool: () => undefined, onOpenSettings: () => undefined, toolLevel: "chat",
-    ...over,
   }
+  return Object.assign(props, over)
+}
+async function mount(over: Partial<SidePanelLayersProps> = {}) {
+  const props = layerProps(over)
   const container = document.createElement("div")
   document.body.appendChild(container)
   const root = createRoot(container)
   await act(async () => { root.render(createElement(SidePanelLayers, props)) })
-  return { container, root, async rerender(next: Record<string, unknown>) { await act(async () => { root.render(createElement(SidePanelLayers, { ...props, ...next })) }) } }
+  return {
+    container,
+    root,
+    async rerender(next: Partial<SidePanelLayersProps>) {
+      const merged = layerProps(over)
+      Object.assign(merged, next)
+      await act(async () => { root.render(createElement(SidePanelLayers, merged)) })
+    },
+  }
 }
 ```
 
