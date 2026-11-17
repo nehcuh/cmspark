@@ -637,7 +637,7 @@ git commit -m "feat: show registered projects as buttons in Chrome"
 - Create: `chrome-extension/src/sidepanel/navigation/startup-destination.ts`
 - Create: `chrome-extension/src/sidepanel/navigation/navigation-mode.ts`
 - Create: `chrome-extension/src/sidepanel/navigation/useNavigationStartup.ts`
-- Modify: `chrome-extension/src/sidepanel/store/agentStore.tsx`（只加 `COMMIT_NAVIGATION`）
+- Modify: `chrome-extension/src/sidepanel/store/agentStore.tsx`（`COMMIT_NAVIGATION`，并且 `SET_THREADS` 在 id 序列变化时增加 `threadListEpoch`。以已评审的 effect 依赖为准，不删 epoch）
 - Modify: `chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx`
 - Modify: `chrome-extension/src/sidepanel/components/SessionContextBar.tsx`
 - Modify: `chrome-extension/src/sidepanel/hooks/useWebSocket.ts`（第 1454–1496 行）
