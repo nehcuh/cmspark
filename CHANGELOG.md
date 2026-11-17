@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-## [1.1.0] — 2026-11-17（发布准备）
+## [1.1.0] — 2026-11-17（正式发布）
 
 - enterprise 档始终提供 shell，场景不再有生效的独立 shell 电源。已保存的布尔 `shell.enabled: false` 会迁到已提供；非布尔非法值不会被改成已授权。命令执行授权、L2、确认短语、token、信任和 netsec 电源保持独立，不因提供 shell 而打开或自动批准（#853，[#854](https://github.com/nehcuh/cmspark/pull/854)）。
 - 设置里的即时保存只在权威快照到达后确认。连接断开时，主保存和即时保存各自变为未知。编程面板的本机终端勾选走同一条即时保存（[#852](https://github.com/nehcuh/cmspark/pull/852)；[#806](https://github.com/nehcuh/cmspark/issues/806) 已于 2026-11-17T01:29:14Z 完成并关闭）。
