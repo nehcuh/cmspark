@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 源码开发版本 **1.1.0（尚未正式发布）** · 入口 README：[仓库根 README.md](../README.md)
+> 源码开发版本 **1.2.0（尚未正式发布）** · 入口 README：[仓库根 README.md](../README.md)
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -109,7 +109,7 @@
 
 ## 后续工作（Active backlog）
 
-本表只做导航。Issue 是否仍开放以 GitHub 为准；本索引不把未经该票自己验收的旧票标成完成。产品版本以包清单 **1.1.0**（尚未正式发布）与 [release-status.md](release-status.md) 为准。
+本表只做导航。Issue 是否仍开放以 GitHub 为准；本索引不把未经该票自己验收的旧票标成完成。产品版本以包清单 **1.2.0**（尚未正式发布）与 [release-status.md](release-status.md) 为准。
 
 | 文档 | 说明 |
 |------|------|

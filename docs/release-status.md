@@ -1,14 +1,19 @@
 # 版本与交付状态
 
-> 源码开发版本 **1.1.0（尚未正式发布）**。当前已发布的正式安装包仍是 [v1.0.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.0.1)。
+> 源码开发版本 **1.2.0（尚未正式发布）**。当前已发布的正式安装包是 [v1.1.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.1.0)。
 
-## 1.1.0 发布准备
+## 1.2.0 发布准备
 
-- 准备基线是 main `f598f4a58b266431bcc962164c73c0dbf005e032`。该提交 10 项检查均已通过：[CI](https://github.com/nehcuh/cmspark/actions/runs/43993977410)、[ARM acceptance](https://github.com/nehcuh/cmspark/actions/runs/43993977201)、[Linux integration ARM](https://github.com/nehcuh/cmspark/actions/runs/43993977400)、[Session save recovery](https://github.com/nehcuh/cmspark/actions/runs/43993977259)。本段在打 tag 前只记录准备状态。
-- enterprise 档提供 shell，独立 shell 电源不再生效。遗留布尔 `shell.enabled: false` 迁到已提供；非布尔非法值不会被改成已授权。命令执行授权、L2、确认短语、token、信任和 netsec 保持独立（#853，[PR #854](https://github.com/nehcuh/cmspark/pull/854)）。即时设置保存等到权威快照；编程面板本机终端勾选走同一回执（[PR #852](https://github.com/nehcuh/cmspark/pull/852)，[#806](https://github.com/nehcuh/cmspark/issues/806) 已于 2026-11-17T01:29:14Z 完成并关闭）。
-- 能力档区任意 `modules.list` 会按 `capability_profile` 直接改显示档位，list 没有 revision 或 generation。迟到 list 可能把新档显示成旧档。独立审查确认这只影响展示，不影响 L2、三旗、netsec 或 shell 执行门，不阻塞 1.1.0。#853 保持开放。这里不把界面状态写成已经一致。
-- 本版不新增 Linux PTY 或 Whisper 验收。既有本机 Whisper 交付保持。正式发布仍提供既有的 macOS／Windows／Linux x64 与 ARM64 安装包和独立 Chrome 扩展 ZIP，共 19 项资产；不省略历史标准资产。tag 与安装器完成之后才核对三个校验清单、名称、大小和 GitHub digest，并核 macOS ARM64 DMG 包内 CLI 返回 `cmspark-agent v1.1.0`。
-- 正式 tag、GitHub Release 与安装器补传尚未执行。
+- 准备基线是 main `e6654b056a0fdb5a23549b545dca72be68106806`（[#858](https://github.com/nehcuh/cmspark/pull/858) 已合并）。本段在打 tag 前只记录准备状态。main 上该 SHA 的 push CI 终态以 GitHub 四条 workflow 为准；本准备不把尚未结束的检查写成已通过。
+- 侧栏改为项目优先（[#857](https://github.com/nehcuh/cmspark/issues/857)）。冷启动恢复上次仍然有效的对话；没有可恢复对话时进入项目首页。已注册、未归档的项目各占一行，空项目也占一行。最近对话列出全部未归档会话，没有筛选控件。进入某个项目可以看到该项目的会话。「项目外」是会话归属状态（见面包屑和项目面板），不是最近对话的筛选项；可用「移出项目」把当前会话移到项目外。查看项目只浏览，不改会话归属、工作区根或授权。顶栏、输入、现有工具和设置留在会话层之外。窄栏一次只显示一层。空列表不自动创建或选中会话。
+- 本版不新增 Linux PTY 或 Whisper 验收，不扩默认 outbound profile，不放宽 macOS 工作区取消的 45 秒时限。#476 取消路径贴近该预算（约 520ms 余量），发版后单独跟进。
+- 正式发布仍提供既有的 macOS／Windows／Linux x64 与 ARM64 安装包和独立 Chrome 扩展 ZIP，共 19 项资产。tag 与安装器完成之后才核对校验清单、名称、大小和 GitHub digest。
+- 正式 tag、GitHub Release 与安装器上传尚未执行。
+
+## 1.1.0
+
+- 标签 `v1.1.0` 的 peeled commit 是 `4b1f4891db39d945c31b2b226bfa7eb58db0337d`。[v1.1.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.1.0) 已发布。行为说明见 [CHANGELOG](../CHANGELOG.md) 的 1.1.0：enterprise shell、即时保存，以及 #853 迟到 `modules.list` 只影响展示。
+- 该版 19 项资产的完整回执不在这条 main 上。本准备不并入未合并的文档回执，也不把 DMG 包内 CLI 或签名写成已在本提交重新核验。
 
 ## 1.0.1 正式发行回执
 
