@@ -461,7 +461,7 @@ export class DomNode extends EventTarget {
   }
   removeEventListener(type: string, fn: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions) {
     const capture = options === true || (typeof options === "object" && !!options.capture)
-    this.listeners[type] = (this.listeners[type] ?? []).filter(item => item.fn !== fn || item.capture !== capture)
+    this.listeners[type] = (this.listeners[type] ?? []).filter(item => item.fn !== (fn as EventListener) || item.capture !== capture)
   }
   emit(type: string, extra: { key?: string } = {}): DomEvent {
     const event: DomEvent = {
