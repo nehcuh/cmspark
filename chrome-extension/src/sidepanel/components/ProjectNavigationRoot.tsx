@@ -10,6 +10,7 @@ import { CONTEXT_PANEL_TABS, useContextPanelHost } from "./ContextPanelHost"
 import type { CapabilityLevel } from "../types"
 import { ProjectPanel } from "./ProjectPanel"
 import { SessionContextBar } from "./SessionContextBar"
+import { createBlankThread } from "./ThreadList"
 
 export function ProjectNavigationRoot({ surface, level, children, top, bottom, overlays }: {
   surface: NavigationSurface
@@ -119,8 +120,16 @@ export function ProjectNavigationRoot({ surface, level, children, top, bottom, o
   const labelFor = (id: string) => id === "board" ? "Agent 执行记录" : CONTEXT_PANEL_TABS.find(tab => tab.id === id)?.label || id
   const nav = <nav className="cm-navigation" aria-label="工作区">
     <div className="cm-nav-brand"><strong>CMspark</strong></div>
+    <button type="button" className="cm-nav-item" onClick={() => { createBlankThread(dispatch); dispatch({ type: "NAVIGATE", layer: "session", projectId: null }) }}>新对话</button>
     <button type="button" className="cm-nav-item" onClick={() => dispatch({ type: "NAVIGATE", layer: "projects", projectId: null })}>{projectCopy.projects}</button>
+    <p className="cm-nav-section">资料与工具</p>
+    {groups.map(group => <div role="group" aria-label={group.title} key={group.title}>
+      <p>{group.title}</p>
+      {group.ids.map(id => <button type="button" className="cm-nav-item" key={id} onClick={() => { dispatch({ type: "NAVIGATE", layer: "tools", projectId: null }); void openPanelForce(id as typeof CONTEXT_PANEL_TABS[number]["id"]) }}>{labelFor(id)}</button>)}
+    </div>)}
+    <label>查找对话<input aria-label="筛选最近对话" placeholder="查找对话…" /></label>
     <button type="button" className="cm-nav-item" onClick={() => dispatch({ type: "NAVIGATE", layer: "recent", projectId: null })}>{projectCopy.recent}</button>
+    <button type="button" className="cm-nav-manage" disabled={state.pendingSecurityConfirmations.length > 0} onClick={() => window.dispatchEvent(new Event("cmspark:open-thread-manager"))}>管理对话</button>
     <button type="button" className="cm-nav-item" onClick={() => dispatch({ type: "NAVIGATE", layer: "tools", projectId: null })}>{projectCopy.tools}</button>
     <button type="button" className="cm-nav-item cm-nav-settings" onClick={() => { closePanel(); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>{projectCopy.settings}</button>
   </nav>
