@@ -51,12 +51,26 @@ function expandIpv6(host: string): number[] | null {
 
 /** ::ffff:0:0/96 only. NAT64 64:ff9b::/96 is left untouched. */
 function mappedIpv4(host: string): string | null {
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(host)
+  if (dotted && ipv4ToInt(dotted[1]!) != null) return dotted[1]!
   const groups = expandIpv6(host)
   if (!groups || groups.length !== 8) return null
   if (groups.slice(0, 5).some((n) => n !== 0) || groups[5] !== 0xffff) return null
   const hi = groups[6]!
   const lo = groups[7]!
   return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
+}
+
+export function isLiteralAddress(address: string): boolean {
+  const host = address.trim().replace(/^\[|\]$/g, "")
+  if (ipv4ToInt(host) != null) return true
+  return host.includes(":")
+}
+
+/** Same blocked ranges as saved literals, including IPv4-mapped IPv6. */
+export function isBlockedResolvedAddress(address: string): boolean {
+  const host = address.trim().replace(/^\[|\]$/g, "")
+  return isBlockedLiteral(host)
 }
 
 function isBlockedLiteral(hostname: string): boolean {
