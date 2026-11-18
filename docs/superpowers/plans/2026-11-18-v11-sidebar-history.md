@@ -27,42 +27,58 @@ GitHub: #865
 ---
 
 
-同一份夹具驱动所有界面测试。生产组件是 `App`，里面已经包含 `StatusRail`、`WorkspaceFrame` 和设置。不允许再写一套平行按钮。
+同一份真实 `App` 夹具驱动所有界面测试。`package.json` 没有直接依赖 `esbuild` 或 `playwright`。打包用已经随 Plasmo 安装的 `chrome-extension/node_modules/esbuild`。浏览器用系统 Chrome：`playwright.chromium.launch(channel="chrome")`，不另装 Playwright 浏览器。字体文件必须加 loader，否则打包 KaTeX 的 `.woff` 会失败。`chrome.runtime.connect` 必须有桩，否则 `useWebSocket` 抛错，页面只剩「重试」，后面的定位都会超时。
 
-夹具文件 `chrome-extension/scripts/sidebar-review-fixture.tsx` 必须：
+`launch` 和 `ready` 的完整实现：
 
-- 用 esbuild 打成临时目录里的 `index.html`，由 Python 起本地静态服务。`/sidepanel.html`、`/tabs/workspace.html`、`/popout.html?surface=popout` 都指向这一个包。`WorkspaceFrame` 自己读 `location.pathname` 和 `surface` 查询，测试不另传门槛。
-- 渲染 `AgentStoreProvider` 和真实 `App`。
-- `window.sent` 记录每次 `chrome.runtime.sendMessage` 的参数。
-- `window.companionStore` 是外部转写的持久快照，字段与 `VoiceExternalState` 一致，另有只存在于这个快照里的 `externalKey`。React state 的 `voiceModel.external` 只有 `keyConfigured`，没有密钥字符串。
-- `window.fixtureState` 和 `window.dispatchUI` 指向同一个 store。
+```python
+def build(directory):
+    subprocess.run([
+        "node", "scripts/render-sidebar-review-fixture.cjs", directory
+    ], cwd=root, check=True)
 
-测试文件 `chrome-extension/scripts/test-sidebar-review-ui.py` 必须有 `launch`、`ready` 和 `main`。`main` 把下面每个 `test_*` 都执行一遍，打印 `ran=` 和 `failed=`，`ran` 必须等于函数个数且 `failed == 0`，否则 `sys.exit(1)`。`finally` 关闭浏览器并删临时目录。一个都没跑不能成功。
+def launch(playwright, path, width, height):
+    directory = tempfile.TemporaryDirectory()
+    build(directory.name)
+    server = subprocess.Popen(["python3", "scripts/serve-sidebar-review.py", directory.name])
+    browser = playwright.chromium.launch(channel="chrome", headless=True, args=["--no-sandbox"])
+    page = browser.new_page(viewport={"width": width, "height": height})
+    page.set_default_timeout(8000)
+    page.goto(f"http://127.0.0.1:8766{path}")
+    page.wait_for_function("() => window.fixtureState && window.dispatchUI && !document.body.innerText.includes('界面渲染错误')")
+    return browser, page, directory, server
+
+def ready(page):
+    page.wait_for_function("() => window.fixtureState.connectionState !== undefined")
+```
+
+`render-sidebar-review-fixture.cjs` 调用上面的 esbuild，loader 为 `.css=css`、`.woff2=dataurl`、`.woff=dataurl`、`.ttf=dataurl`。入口渲染 `AgentStoreProvider` 和 `App`。`sendMessage` 把参数推进 `window.sent`。若 `type === "config.set"`，只把 `config` 补丁写进 `window.companionStore.config`，不动 `externalKey`。`chrome.runtime.connect` 返回带空 `onMessage` 和 `onDisconnect` 的端口。
+
+`main` 使用文件底部的显式 `TESTS` 列表，不用「至少 12 个」这种从第一天就写死的数字。打印用 `repr`，避免空的 `AssertionError` 让整批中断。
 
 ```python
 def main():
-    tests = [obj for name, obj in globals().items() if name.startswith("test_") and callable(obj)]
-    assert len(tests) >= 12
     failed = 0
     with sync_playwright() as playwright:
-        for test in tests:
-            browser = page = directory = None
+        for test in TESTS:
+            browser = page = directory = server = None
             try:
-                browser, page, directory = launch(playwright)
+                browser, page, directory, server = launch(playwright, *ROUTES[test.__name__])
                 ready(page)
                 test(page)
             except Exception as exc:
                 failed += 1
-                print("FAIL", test.__name__, exc)
+                print("FAIL", test.__name__, repr(exc)[:400])
             finally:
                 if browser: browser.close()
+                if server: server.terminate()
                 if directory: directory.cleanup()
-    print(f"ran={len(tests)} failed={failed}")
-    if failed or len(tests) < 12:
+    print(f"ran={len(TESTS)} failed={failed}")
+    if failed or len(TESTS) != len(EXPECTED):
         sys.exit(1)
 ```
 
-命令：`cd chrome-extension && nvm use 22 && uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py`
+Task 1 的 `TESTS` 只有 `test_section_order`，`EXPECTED` 也只有它，所以当时 `ran=1`。每增加一个测试函数，就同时把它的名字放进 `TESTS` 和 `EXPECTED`。最后一任务的名单见 Task 11，那里才要求全部跑完。命令：`cd chrome-extension && nvm use 22 && uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py`
 
 ### Task 1: 真实 App 里的侧栏构成
 
@@ -92,7 +108,7 @@ def test_section_order(page):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Expected: 进程退出码非 0，`ran=1 failed=1`。失败是找不到「资料与工具」。当前侧栏是四个文字按钮。不是 `NameError`。
+Expected: 退出码 1，`ran=1 failed=1`。失败是找不到「资料与工具」。当前侧栏是四个文字按钮。不是 `NameError`。
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -115,10 +131,11 @@ git commit -m "test: require the v1.1 sidebar sections in the real app"
 
 **Files:**
 - Modify: `chrome-extension/src/sidepanel/navigation/navigation-mode.ts`
-- Modify: `chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx`（第 44 行和第 84 行的 `matchMedia`）
-- Modify: `chrome-extension/src/sidepanel/components/ProjectNavigationRoot.tsx`（已把 `surface` 传进 `navigationMode`，确认它不再另读 `RESIDENT_MIN_WIDTH`）
+- Modify: `chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx` 第 44 行和第 84 行的 `matchMedia(RESIDENT_MIN_WIDTH)`，以及 `full === true` 的根节点
+- Modify: `chrome-extension/src/sidepanel/components/ProjectNavigationRoot.tsx`
 - Modify: `chrome-extension/tests/startup-destination.test.ts`
-- Test: `chrome-extension/tests/startup-destination.test.ts`
+- Modify: `chrome-extension/scripts/test-sidebar-review-ui.py`
+- Test: 上面两个测试文件都要跑
 
 **Interfaces:**
 - Consumes: 已有的 `navigationMode({ surface, innerWidth })`。
@@ -151,20 +168,47 @@ test("resident width depends on the surface", () => {
 
 Run: `cd chrome-extension && npx tsc -p tsconfig.test.json --pretty false && node --test .test-dist/tests/startup-destination.test.js`
 
-Expected: FAIL 在 `sidepanel 760` 和 `workspace 760`。现码返回 `layered`。`popout 959` 现码已经是 `layered`，这条用来防止以后把 popout 也改成 760。失败不是找不到函数。
+Expected: FAIL 在 `sidepanel 760` 和 `workspace 760`。现码返回 `layered`。`popout 959` 现码已经是 `layered`。这只证明纯函数。`WorkspaceFrame` 在 `full === true` 时不渲染 `ProjectNavigationRoot`，页面上没有 `data-navigation-mode`。所以同一任务还要跑下面这些页面函数，并先加一个不改门槛的标记。
+
+先把 `data-navigation-mode` 写到 `full === true` 的 `.cm-workspace-full` 上，值仍来自现在的 `navigationMode`（全是 960）。这一步的页面测试是：`/tabs/workspace.html` 在 960 为 `resident`，在 959 为 `layered`。标记不存在时这条失败。标记加上之后它会通过，并且工作区在 760 仍是 `layered`。然后再把断言改成下面的新门槛，这时 760 才是行为红灯。
+
+```python
+def test_widths(page):
+    pass
+
+def test_sidepanel_759(page):
+    assert page.locator("[data-navigation-mode]").get_attribute("data-navigation-mode") == "layered"
+
+def test_sidepanel_760(page):
+    assert page.locator("[data-navigation-mode]").get_attribute("data-navigation-mode") == "resident"
+
+def test_workspace_759(page):
+    assert page.locator(".cm-workspace-full").get_attribute("data-navigation-mode") == "layered"
+
+def test_workspace_760(page):
+    assert page.locator(".cm-workspace-full").get_attribute("data-navigation-mode") == "resident"
+
+def test_popout_959(page):
+    assert page.locator("[data-navigation-mode]").get_attribute("data-navigation-mode") == "layered"
+
+def test_popout_960(page):
+    assert page.locator("[data-navigation-mode]").get_attribute("data-navigation-mode") == "resident"
+```
+
+`ROUTES` 把这些函数分别开到 `/sidepanel.html` 759 或 760、`/tabs/workspace.html` 759 或 760、`/popout.html?surface=popout` 959 或 960。通过命令是节点测试和 `uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py` 一起跑。只跑节点测试不算通过。
 
 - [ ] **Step 3: Write minimal implementation**
 
-`navigationMode` 内部按 surface 选择 760 或 960。`WorkspaceFrame` 的两处 `matchMedia` 使用同一选择。`ProjectNavigationRoot` 继续把真实 `surface` 和 `innerWidth` 传进去。
+`navigationMode` 内部按 surface 选择 760 或 960。`WorkspaceFrame` 第 44 行和第 84 行的 `matchMedia` 使用同一选择，不再写死 `RESIDENT_MIN_WIDTH`。`full === true` 的根节点使用这个结果。`ProjectNavigationRoot` 继续传入真实 `surface`。
 
 - [ ] **Step 4: Run test to verify it passes**
 
-同一条命令。Expected: PASS。
+两条命令都 PASS。`popout` 在 959 仍是 `layered`。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add chrome-extension/src/sidepanel/navigation/navigation-mode.ts chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx chrome-extension/src/sidepanel/components/ProjectNavigationRoot.tsx chrome-extension/tests/startup-destination.test.ts
+git add chrome-extension/src/sidepanel/navigation/navigation-mode.ts chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx chrome-extension/src/sidepanel/components/ProjectNavigationRoot.tsx chrome-extension/tests/startup-destination.test.ts chrome-extension/scripts/test-sidebar-review-ui.py
 git commit -m "test: choose the resident width from the surface"
 ```
 
@@ -230,11 +274,18 @@ git commit -m "test: keep unsent text on the active thread"
 
 ```python
 def test_no_move_fieldset(page):
-    page.evaluate("() => window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:'weekend'})")
-    text = page.locator("body").inner_text()
-    assert "更改当前会话归属" not in text
-    assert "执行状态：" not in text
+    page.evaluate("""() => {
+      window.dispatchUI({type:'SET_CONNECTION', state:'connected'})
+      window.dispatchUI({type:'SET_THREADS', threads:[{id:'weekend', alias:'示例·周末清单', created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}]})
+      window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:'weekend'})
+      window.dispatchUI({type:'NAVIGATE', layer:'session', projectId:null})
+    }""")
+    assert page.evaluate("window.fixtureState.navigationLayer") == "session"
+    assert page.get_by_text("更改当前会话归属").count() == 0
+    assert page.get_by_text("执行状态：").count() == 0
 ```
+
+必须先进入 `session` 层。停在项目首页时，这两句不在可见文本里，测试会误绿。进入会话层后，现码里「更改当前会话归属」的 `count()` 是 1。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -307,23 +358,25 @@ git commit -m "test: keep project admin actions reachable"
 
 ```python
 def test_first_sentence_creates_one_thread(page):
+    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connected'})")
     page.evaluate("() => window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:null})")
     box = page.get_by_role("textbox", name="消息内容")
     assert box.is_enabled()
     box.fill("第一句")
-    page.get_by_role("button", name="发送").click()
-    page.get_by_role("button", name="发送").click()
+    send = page.get_by_role("button", name="发送", exact=True)
+    send.click()
+    send.click()
     assert page.evaluate("window.sent.filter(m => m.type==='thread.create').length") == 1
     assert box.input_value() == "第一句"
     page.get_by_role("button", name="开始第一则对话").click()
     assert page.evaluate("window.sent.filter(m => m.type==='thread.create').length") == 1
 ```
 
-第二条点击发生在第一条尚未得到 `thread.created` 时，所以仍是一条。按钮和发送共用同一次未完成的创建。
+`canSend` 要求已连接并且已有 `activeThreadId`。没有连接时按钮标题是「请先创建线程」，输入框禁用。测试必须先 `SET_CONNECTION` 为 `connected`。第一条会红的行为断言是 `box.is_enabled()`，现码为假，占位仍是「请先创建或选择一个线程」。不要去点一个还不存在的「发送」来制造超时。实现之后，发送和「开始第一则对话」在 `thread.created` 到来前一共只留下一条 `thread.create`，原文仍在输入框。
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Expected: FAIL。现码禁用输入框，没有「开始第一则对话」，发送不会发出 `thread.create`。
+Expected: 退出码非 0。`assert box.is_enabled()` 失败。
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -384,12 +437,19 @@ Playwright 在实现之后加，不在红灯阶段要求新 prop：
 
 ```python
 def test_retry_requests_project_list(page):
+    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connected'})")
     page.get_by_text("项目", exact=True).click()
+    page.wait_for_function("window.sent.some(m => m.type==='project.list')")
+    msg = page.evaluate("() => window.sent.find(m => m.type==='project.list')")
+    page.evaluate("(m) => window.emitRuntime({type:'project.error', id:m.id, error:'list failed'})", msg)
+    assert page.get_by_role("button", name="重试").count() == 1
     before = page.evaluate("window.sent.filter(m => m.type==='project.list').length")
     page.get_by_role("button", name="重试").click()
     after = page.evaluate("window.sent.filter(m => m.type==='project.list').length")
     assert after == before + 1
 ```
+
+必须先 `SET_CONNECTION` 为 `connected`。断开时 `ProjectPanel` 的 phase 是 `offline`，不是 `list-error`。打开项目会发 `project.list`，测试再回 `project.error`，这才进入无快照失败态。`count()` 不等待，现码是 0，所以红灯不是超时。实现后点击必须使 `project.list` 增加 1。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -520,17 +580,30 @@ def test_configured_external_asr_survives_model_save(page):
         external:{style:'deepseek', baseUrl:'https://example.invalid/v1', normalizedUrl:'https://example.invalid/v1', model:'', keyConfigured:true, maxDurationMs:null, maxBytes:1, requestTimeoutMs:1, limitNote:'deepseek-docs'}
       }})
     }""", secret)
-    page.get_by_role("button", name="设置").click()
+    page.get_by_role("button", name="设置", exact=True).click()
     assert page.get_by_text("模型名称").count() >= 1
     assert page.get_by_text("外部转写已配置").count() == 1
     assert secret not in page.locator("body").inner_text()
     values = page.locator("input").evaluate_all("els => els.map(el => el.value)")
     assert secret not in values
-    page.get_by_role("button", name="保存", exact=True).first.click()
+    page.get_by_role("button", name="保存并关闭", exact=True).click()
+    sent = page.evaluate("() => window.sent.filter(m => m.type==='config.set')")
+    assert secret not in JSON.stringify(sent)
     assert page.evaluate("window.companionStore.externalKey") == secret
 ```
 
-未配置的路径另测：不设置 `sttEngine: "external"` 时，主路径看不到「视觉模型（看图描述）」；点「其他能力」后看得到。
+`get_by_role("button", name="设置")` 会同时命中侧栏「设置」和「更多工具与设置」，必须 `exact=True`。保存按钮的文字是「保存并关闭」。`sendMessage` 收到 `config.set` 时只合并 `config` 补丁，不改 `externalKey`。若补丁里出现密钥，上面的 `JSON.stringify` 断言失败。
+
+```python
+def test_unconfigured_models_open_from_other(page):
+    page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connected'})")
+    page.get_by_role("button", name="设置", exact=True).click()
+    assert page.get_by_text("视觉模型（看图描述）").count() == 0
+    page.get_by_role("button", name="其他能力").click()
+    assert page.get_by_text("视觉模型（看图描述）").count() == 1
+```
+
+这个函数从 Task 10 起就在 `TESTS` 里。第一条会红的断言是视觉模型区块现在就能看见，所以 `count()` 不是 0。不要把找不到「其他能力」的超时当作红灯。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -590,7 +663,19 @@ assert style["outlineStyle"] == "solid"
 assert style["outlineColor"] == "rgb(79, 70, 229)"
 ```
 
-另写 `test_close_returns_to_the_nav_button`，点关闭后断言同一个可访问名。759、760、959、960 各有断言 `data-navigation-mode`，截图在断言之后。
+`TESTS` 在这一任务必须正好包含这些名字，每个都先操作、再断言、再截图：`test_sidepanel_759`、`test_sidepanel_760`、`test_workspace_759`、`test_workspace_760`、`test_popout_959`、`test_popout_960`、`test_escape_returns_to_nav`、`test_close_returns_to_nav`、`test_hover_row`、`test_selected_row_has_no_outline`、`test_keyboard_focus_outline`、`test_long_name_title`、`test_empty_start`、`test_list_error_retry`、`test_extract_progress`。`ran` 等于这份名单的长度。少一个就退出码非 0，不能申请 final gate。
+
+```python
+def test_close_returns_to_nav(page):
+    page.set_viewport_size({"width": 420, "height": 860})
+    page.get_by_role("button", name="打开工作区导航").click()
+    assert page.get_by_role("button", name="关闭导航").count() == 1
+    page.get_by_role("button", name="关闭导航").click()
+    assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "打开工作区导航"
+    page.screenshot(path="/tmp/sidebar-review/420-close.png")
+```
+
+现码没有「关闭导航」，所以 `count()` 先得到 0。这是立即失败，不是点击超时。
 
 - [ ] **Step 2: Run test to verify it fails**
 
