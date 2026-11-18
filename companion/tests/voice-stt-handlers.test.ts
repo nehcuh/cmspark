@@ -15,12 +15,16 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 
 import { validateWsMessage } from "../src/server"
-import { setVoiceFields } from "../src/config"
+import { getConfig, setVoiceFields } from "../src/config"
+import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
+import { createMeeting, deleteMeeting } from "../src/meeting/meeting-store"
+import { createExternalAsrSession } from "../src/voice/external-asr-session"
 import {
   handleVoiceSttMessage,
   isChromeExtensionOrigin,
   isVoiceSttOriginAllowed,
   _resetVoiceSttHandlersForTests,
+  _setExternalAsrSessionForTests,
 } from "../src/voice/stt-handlers"
 import {
   SttSessionService,
@@ -521,6 +525,146 @@ test("empty transcription maps to empty_result", async () => {
   )
   assert.equal(end.type, "voice.stt.error")
   assert.equal(end.code, "empty_result")
+})
+
+test("external start, chunk, and end do not use the local session path", async () => {
+  const previous = getConfig().voice?.sttEngine
+  const external = {
+    style: "deepseek" as const,
+    baseUrl: "",
+    model: "whisper-1",
+    apiKey: "secret",
+    maxDurationMs: 120000,
+    maxBytes: 8388608,
+    requestTimeoutMs: 180000,
+  }
+  setVoiceFields({ sttEngine: "external", external })
+  let calls = 0
+  let posted = 0
+  const bound = createExternalAsrSession({
+    now: () => 0,
+    fetchImpl: async (_url: string, init: { body: FormData }) => {
+      calls += 1
+      posted = (init.body.get("file") as Blob).size
+      return { status: 200, json: async () => ({ text: "外" }) }
+    },
+    config: () => ({ sttEngine: "external", external }),
+  })
+  _setExternalAsrSessionForTests(bound)
+  try {
+    const refused = await handleVoiceSttMessage(
+      {
+        type: "voice.stt.start",
+        v: 1,
+        sessionId: "ext-blocked",
+        engine: "external",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+        privacy_ack_external_v1: true,
+      },
+      extCtx("p-ext"),
+    )
+    assert.notEqual(refused.code, "engine_not_local")
+    const start = await handleVoiceSttMessage(
+      {
+        type: "voice.stt.start",
+        v: 1,
+        sessionId: "ext-1",
+        engine: "external",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+        privacy_ack_external_v1: true,
+      },
+      extCtx("p-ext"),
+    )
+    assert.equal(start.type, "voice.stt.partial")
+    const pcm = Buffer.alloc(256 * 1024)
+    const chunk = await handleVoiceSttMessage(
+      {
+        type: "voice.stt.chunk",
+        v: 1,
+        sessionId: "ext-1",
+        seq: 0,
+        data: pcm.toString("base64"),
+      },
+      extCtx("p-ext"),
+    )
+    assert.equal(chunk, undefined)
+    const end = await handleVoiceSttMessage(
+      { type: "voice.stt.end", v: 1, sessionId: "ext-1", totalSeq: 1 },
+      extCtx("p-ext"),
+    )
+    assert.equal(end.type, "voice.stt.result")
+    assert.equal(end.text, "外")
+    assert.equal(calls, 1)
+    assert.equal(posted, 44 + pcm.length)
+    const partial = await handleVoiceSttMessage(
+      { type: "voice.stt.partial_request", v: 1, sessionId: "ext-1" },
+      extCtx("p-ext"),
+    )
+    assert.notEqual(partial?.code, "session_bytes")
+    assert.equal(calls, 1)
+  } finally {
+    _setExternalAsrSessionForTests(null)
+    setVoiceFields({ sttEngine: previous === "local" || previous === "system" || previous === "external" ? previous : "browser" })
+  }
+})
+
+test("saved browser engine does not accept an external start", async () => {
+  setVoiceFields({ sttEngine: "browser" })
+  const refused = await handleVoiceSttMessage(
+    {
+      type: "voice.stt.start",
+      v: 1,
+      sessionId: "ext-no",
+      engine: "external",
+      format: "wav",
+      sampleRate: 16000,
+      channels: 1,
+      privacy_ack_external_v1: true,
+    },
+    extCtx("p-ext"),
+  )
+  assert.equal(refused.code, "external_unconfigured")
+})
+
+test("meeting start with external engine does not open PCM capture", async () => {
+  setVoiceFields({
+    sttEngine: "external",
+    external: {
+      style: "deepseek",
+      baseUrl: "",
+      model: "whisper-1",
+      apiKey: "secret",
+      maxDurationMs: 120000,
+      maxBytes: 8388608,
+      requestTimeoutMs: 180000,
+    },
+  })
+  const meeting = createMeeting({ title: "external refusal" })
+  try {
+    const started = await handleMeetingMessage(
+      {
+        type: "meeting.start",
+        v: 1,
+        id: meeting.id,
+        queue_contract: 1,
+        capture_id: "00000000-0000-4000-8000-000000000860",
+        expected_capture_epoch: 0,
+        privacy_ack_v1: true,
+        privacy_ack_v2: true,
+        audio_retained: false,
+      },
+      { origin: EXT_ORIGIN, surface: "panel", peerId: "p-ext" },
+    )
+    assert.equal(started.type, "meeting.error")
+    assert.equal(started.code, "meeting_external_unsupported")
+  } finally {
+    deleteMeeting(meeting.id)
+    setVoiceFields({ sttEngine: "browser" })
+  }
 })
 
 // cleanup singleton between files if needed

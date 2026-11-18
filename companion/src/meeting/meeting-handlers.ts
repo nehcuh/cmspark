@@ -11,6 +11,7 @@ import { isCaptureId, isCaptureEpoch, meetingPcmCapsSnapshot, MEETING_PCM } from
 import type { MeetingPcmCapture } from "../voice/meeting-pcm-capture"
 import { resolveWinSapiHelper } from "../voice/win-sapi"
 import { logger } from "../logger"
+import { meetingExternalRefusal } from "../voice/external-asr-meeting"
 import { isChromeExtensionOrigin, isVoiceSttOriginAllowed, sttResult } from "../voice/stt-handlers"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import type { LlmExtractConfig } from "../llm/llm-extract"
@@ -206,6 +207,8 @@ export async function handleMeetingMessage(
       }
       if ((existing.capture_epoch ?? 0) !== msg.expected_capture_epoch) return err("stale_capture", "capture epoch changed")
       const voice = getConfig().voice
+      const externalRefusal = meetingExternalRefusal(voice?.sttEngine)
+      if (externalRefusal) return err(externalRefusal.code, "会议转写仍只使用本机或系统识别。外部转写只用于聊天输入，不会发送会议音频。")
       if (voice?.sttEngine !== "local" && voice?.sttEngine !== "system") return err("engine_not_local", "trusted STT engine required")
       if (voice.sttEngine === "system" && (process.platform !== "win32" || !resolveWinSapiHelper().ok)) return err("system_unavailable", "system STT is unavailable")
       const ready = service.checkMeetingModelReady({ sessionId: msg.capture_id, modelId: voice.localModelId ?? "medium",
