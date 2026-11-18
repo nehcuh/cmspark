@@ -29,6 +29,7 @@ export const workspaceCSS = `
 .cm-nav-conversations{display:flex;flex-direction:column;flex:1;min-height:132px;gap:6px}.cm-nav-conversations[data-collapsed="true"]{flex:none;min-height:36px}
 .cm-nav-collapse{display:flex;align-items:center;gap:4px;padding:0;border:0;min-height:36px;background:transparent;color:inherit;font:inherit;cursor:pointer}.cm-nav-collapse[aria-expanded="false"] svg{transform:rotate(-90deg)}
 .cm-nav-conversation-body{display:flex;flex-direction:column;flex:1;min-height:0}.cm-nav-conversation-body[hidden]{display:none}
+.cm-nav-search-label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:${tokens.textSecondary}}
 .cm-nav-search{box-sizing:border-box;width:100%;border:1px solid ${tokens.border};border-radius:${tokens.radiusMd}px;padding:9px 10px;font:inherit;font-size:12px;background:${tokens.bgElevated};color:${tokens.text}}
 .cm-nav-threads{flex:1;min-height:80px;overflow-y:auto;margin-top:4px}
 .cm-nav-thread{min-height:38px;color:${tokens.textSecondary}}

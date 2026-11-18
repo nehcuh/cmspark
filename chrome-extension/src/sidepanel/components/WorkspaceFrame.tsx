@@ -11,7 +11,6 @@ import { CompanionMark, IconChevronDown, IconNewChat, IconSettings } from "../ui
 import { CONTEXT_PANEL_TABS, useContextPanelHost } from "./ContextPanelHost"
 import { createBlankThread } from "./ThreadList"
 import { ProjectPanel } from "./ProjectPanel"
-import { ProjectNavigationRoot } from "./ProjectNavigationRoot"
 import { useNavigationStartup } from "../navigation/useNavigationStartup"
 import { RESIDENT_MIN_WIDTH, type NavigationSurface } from "../navigation/navigation-mode"
 import { toolGroups } from "../navigation/tool-groups"
@@ -129,7 +128,15 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   const navProps = { full, destination: visibleView, onView: navigate }
   if (!full) return <>
     <style>{personalWorkspaceCSS}</style>
-    <ProjectNavigationRoot surface={surface} level={level} top={top} bottom={bottom} overlays={overlays}>{children}</ProjectNavigationRoot>
+    <div className="cm-workspace" data-navigation-surface={surface}>
+      <WorkspaceNavigation {...navProps} level={level} onNavigate={() => {}} />
+      <main className="cm-workspace-main cm-shell-column">
+        {top}
+        <div className="cm-shell-layers"><div className="cm-chat-mount">{children}</div></div>
+        <div className="cm-shell-bottom">{bottom}</div>
+        {overlays}
+      </main>
+    </div>
   </>
   return <div className="cm-workspace cm-workspace-full">
     <style>{personalWorkspaceCSS}</style>
@@ -187,11 +194,14 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, l
     {full && <nav className="cm-workspace-destinations" aria-label="主要功能">{WORKSPACE_DESTINATIONS.map(item => <button type="button" className="cm-nav-item" key={item.id} aria-current={destination === item.id ? "page" : undefined} onClick={() => { onView(item.id); onNavigate() }}>{item.label}</button>)}</nav>}
     <button type="button" className="cm-nav-new" onClick={() => { onView("chat"); createBlankThread(dispatch); onNavigate() }}><IconNewChat size={17} />新对话</button>
     <ProjectPanel filter={projectFilter} onFilter={setProjectFilter} />
-    {!onClose && resources}
+    <p className="cm-nav-section">资料与工具</p>
+    {resources}
+    <label className="cm-nav-search-label">查找对话
+      <input className="cm-nav-search" aria-label="筛选最近对话" placeholder="查找对话…" value={query} onChange={e => setQuery(e.target.value)} />
+    </label>
     <section className="cm-nav-conversations" data-collapsed={!conversationsOpen} aria-label="最近对话">
     <div className="cm-nav-section"><button type="button" className="cm-nav-collapse" aria-expanded={conversationsOpen} aria-controls={conversationsId} onClick={() => setConversationsOpen(value => !value)}><IconChevronDown size={14} /><span>最近对话</span></button><button type="button" className="cm-nav-manage" disabled={state.pendingSecurityConfirmations.length > 0} onClick={() => { onView("chat"); onNavigate(); window.dispatchEvent(new Event("cmspark:open-thread-manager")) }}>管理对话</button></div>
     <div id={conversationsId} className="cm-nav-conversation-body" hidden={!conversationsOpen}>
-    <input className="cm-nav-search" aria-label="筛选最近对话" placeholder="查找对话…" value={query} onChange={e => setQuery(e.target.value)} />
     <div className="cm-nav-threads">
       {recent.map(thread => <button type="button" className="cm-nav-thread" key={thread.id} aria-current={thread.id === state.activeThreadId ? "page" : undefined}
         title={isFleetWorkerThread(thread) ? workerBelongTitle(thread, state.threads.find(p => p.id === thread.parent_thread_id)) : displayThreadTitle(thread)} onClick={() => {
@@ -201,7 +211,6 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, l
     </div>
     </div>
     </section>
-    {onClose && resources}
     <button type="button" className="cm-nav-item cm-nav-settings" onClick={() => { onView("chat"); closePanel(); dispatch({ type: "SET_SETTINGS_OPEN", open: true }); onNavigate() }}><IconSettings size={16} />设置</button>
   </nav>
 }
