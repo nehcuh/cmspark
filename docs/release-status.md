@@ -1,12 +1,18 @@
 # 版本与交付状态
 
-> 源码开发版本 **1.2.1（尚未正式发布）**。当前已发布的正式安装包是 [v1.2.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.2.0)。
+> 源码开发版本 **1.3.0（尚未正式发布）**。当前已发布的正式安装包是 [v1.2.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.2.1)。
 
-## 1.2.1 发布准备
+## 1.3.0 发布准备
 
-- 准备基线是 main `1f2d05bfc59081e36a9509337364082444d87f1c`（[#862](https://github.com/nehcuh/cmspark/pull/862) 已合并）。本段在打 tag 前只记录准备状态。
-- 能力档卡片只修正本组件自己的 `modules.list` 关联。更早的 list 不能盖过已落定档位，等待中的 list 不改显示。空闲且没有 id 的 list 仍会刷新，并且没有年代保证。#853 保持开放。外部聊天转写不在本版。
-- 不改变 enterprise 档恒提供 shell，不改变命令授权。正式 tag、GitHub Release 与安装器上传尚未执行。正式发布仍按既有 19 项资产；tag 之后才核对校验清单、名称、大小和 GitHub digest。
+- 准备基线是 main `08fe57feacd6ca634eb2f8369dada10420ce0d44`（[#861](https://github.com/nehcuh/cmspark/pull/861) 已合并，feature head `6d69c5771da4412c8b4e58321718872614618a6e`）。本段在打 tag 前只记录准备状态。
+- 聊天外部转写已在该合并里实现，范围以已审的[用户指南 §2.8](meeting-and-dictation-user-guide.md) 为准：只发送聊天麦克风这一段；会议不走这条地址。该 head 的四条 workflow 均 success：[CI 44238627364](https://github.com/nehcuh/cmspark/actions/runs/44238627364)、[Session save recovery 44238627291](https://github.com/nehcuh/cmspark/actions/runs/44238627291)、[ARM acceptance 44238627294](https://github.com/nehcuh/cmspark/actions/runs/44238627294)、[Linux integration ARM 44238627250](https://github.com/nehcuh/cmspark/actions/runs/44238627250)。本准备没有重跑它们。
+- 没有对真实 DeepSeek 或 OpenAI 转写服务做准确率测量或实服务验收。#860 保持开放。本机 Whisper 的速度和准确率优化仍是以后的计划。#853 保持开放。正式 tag、GitHub Release 与 1.3.0 安装器上传尚未执行。
+
+## 1.2.1
+
+- annotated tag `v1.2.1` 对象 `9a85685ee51eeb3057360d516c5b05744b299450`，peeled commit `cc39bd3eaf8b8baa6d778105083a3d08dd2d893e`。[v1.2.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.2.1) 已于 2026-11-18T04:49:07Z 发布，不是 draft，也不是 prerelease。
+- 公开资产 19 项。先上传的 6 项摘要没有被后补资产覆盖：`SHA256SUMS` 为 `b566b89ee08ea75475388cac889e8b2d346ddf65b018d71f41fe96851d4c9cbf`，`SHA256SUMS.txt` 为 `7383fc893043c528f163285b6d9e5875eafbe47cc18fff4ce5953898cd7d59fb`。后补 12 项与 [SHA256SUMS-INSTALLERS.txt](https://github.com/nehcuh/cmspark/releases/download/v1.2.1/SHA256SUMS-INSTALLERS.txt)（1170 字节，`444f39e114bdd88d2784f76fcaaadd23d55f8c9e6b740d5557942aa7d906f193`）逐行一致，并与 GitHub digest 一致。没有在这条记录里把 DMG 挂载或 Windows 安装器 smoke 写成已完成。
+- 行为仍是能力档 list 显示修复。外部聊天转写不在本版。#853 保持开放。不改变 enterprise 档恒提供 shell，不改变命令授权。
 
 ## 1.2.0
 

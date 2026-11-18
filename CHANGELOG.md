@@ -4,7 +4,14 @@
 
 ## [Unreleased]
 
-## [1.2.1] — 2026-11-18（发布准备）
+## [1.3.0] — 2026-11-18（发布准备）
+
+- 聊天可以另选外部转写（[#861](https://github.com/nehcuh/cmspark/pull/861)，[#860](https://github.com/nehcuh/cmspark/issues/860)）。DeepSeek 官方转写与 OpenAI 兼容转写只把聊天麦克风这一段打成一份 WAV，发送一次。会议录音、导入音频和说话人分离仍走本机或系统识别；会议选成外部转写时拒绝，不上传会议音频。实现已合并到 `08fe57feacd6ca634eb2f8369dada10420ce0d44`（feature head `6d69c5771da4412c8b4e58321718872614618a6e`）。该 head 的 [CI](https://github.com/nehcuh/cmspark/actions/runs/44238627364)、[会话持久化](https://github.com/nehcuh/cmspark/actions/runs/44238627291)、[ARM](https://github.com/nehcuh/cmspark/actions/runs/44238627294) 与 [Linux ARM 集成](https://github.com/nehcuh/cmspark/actions/runs/44238627250) 均为 success。本准备没有重跑这些检查。
+- 保存设置不连接转写地址，也没有测试连接。密钥与聊天钥匙分开保存。侧栏只显示密钥是否已保存。本机听写的 45 秒上限不套到外部转写。
+- 没有对真实 DeepSeek 或 OpenAI 转写服务做准确率测量或实服务验收。#860 保持开放。本机 Whisper 的速度和准确率优化仍是以后的计划，不在本版。
+- #853 保持开放。本版不改写 1.2.1 已发布的能力档 list 说明。
+
+## [1.2.1] — 2026-11-18（正式发布）
 
 - 能力档设置里，本组件发出的 `modules.list` 带请求 id。更早的那次 list 不能在切换等待、落定、失败、断线或 15 秒超时之后改写显示档。带当前切换 id 的 `modules.updated` / `modules.profile.result` 仍是权威回执（[#862](https://github.com/nehcuh/cmspark/pull/862)，[#853](https://github.com/nehcuh/cmspark/issues/853)）。
 - 空闲且没有 id 的 `modules.list` 仍会刷新。这类广播没有年代；它晚于一次成功切换到达时，仍可能画出它携带的档位。本条不关闭 #853，也不表示外部聊天转写已经可用。
