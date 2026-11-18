@@ -35,6 +35,14 @@ GitHub: #865
 `launch` 和 `ready` 的完整实现：
 
 ```python
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+root = Path(__file__).resolve().parents[1]
+
 def build(directory):
     subprocess.run([
         "node", "scripts/render-sidebar-review-fixture.cjs", directory
@@ -78,23 +86,34 @@ def shot(page, name):
 def main():
     failed = 0
     with sync_playwright() as playwright:
-        for test in TESTS:
+        for name in TESTS:
+            test = globals()[name]
             browser = page = directory = server = None
             try:
-                browser, page, directory, server = launch(playwright, *ROUTES[test.__name__])
+                browser, page, directory, server = launch(playwright, *ROUTES[name])
                 ready(page)
                 test(page)
             except Exception as exc:
                 failed += 1
-                print("FAIL", test.__name__, repr(exc)[:400])
+                print("FAIL", name, repr(exc)[:400])
+            else:
+                print("PASS", name)
             finally:
                 if browser: browser.close()
-                if server: server.terminate()
+                if server:
+                    server.terminate()
+                    try:
+                        server.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        server.kill()
+                        server.wait(timeout=5)
                 if directory: directory.cleanup()
     print(f"ran={len(TESTS)} failed={failed}")
     if failed or len(TESTS) != len(EXPECTED):
         sys.exit(1)
 ```
+
+`TESTS` 和 `EXPECTED` 都是函数名字字符串。`main` 用 `globals()[name]` 取出函数，用 `ROUTES[name]` 取出路径和视口。Task 1 若只放入 `["test_section_order"]`，和最终 29 项走的是这同一个 `main`。不要把名单里的字符串当成函数去读 `__name__`。
 
 Task 1 的 `TESTS` 只有 `test_section_order`，`EXPECTED` 也只有它，所以当时 `ran=1`。每增加一个测试函数，就同时把它的名字放进 `TESTS` 和 `EXPECTED`。最后一任务的名单见 Task 11，那里才要求全部跑完。命令：`cd chrome-extension && nvm use 22 && uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py`
 
@@ -761,13 +780,13 @@ def test_narrow_collapsed(page):
     disclosure = page.locator(".cm-navigation-disclosure")
     assert disclosure.count() == 1
     assert page.locator(".cm-navigation-disclosure:visible").count() == 0
-    assert page.get_by_text("资料与工具").count() == 0
+    assert page.locator(":text-is('资料与工具'):visible").count() == 0
     shot(page, "420-collapsed")
 
 def test_narrow_open_height(page):
     page.set_viewport_size({"width": 420, "height": 860})
     page.get_by_role("button", name="打开工作区导航").click()
-    assert page.get_by_text("资料与工具").count() == 1
+    assert page.locator(":text-is('资料与工具'):visible").count() == 1
     box = page.locator(".cm-navigation-disclosure").bounding_box()
     assert box["height"] <= 860 * 0.28
     shot(page, "420-open")
@@ -917,9 +936,12 @@ ROUTES = {
 }
 TESTS = list(ROUTES)
 EXPECTED = list(ROUTES)
+
+if __name__ == "__main__":
+    main()
 ```
 
-`TESTS` 就是 `ROUTES` 的键，没有只写在名单里、文件里却没有 `def` 的名字。`ran` 必须等于 `len(TESTS)`。少一个、多一个，或截图出现在断言之前，都不能申请 final gate。悬停、选中、键盘焦点和长名称走 `/tabs/workspace.html`，因为规格表把这四行标在 960 工作区。管理对话、历史、知识和提取进度走 `/sidepanel.html` 的 `nav.cm-navigation`。
+`TESTS` 就是 `ROUTES` 的键，每一项都是字符串。`main` 用 `globals()[name]` 调用同名函数。没有只写在名单里、文件里却没有 `def` 的名字。收起态用 `:visible`，不用 `get_by_text().count()`：后者会把藏在 DOM 里的「资料与工具」也数进去，折叠实现之后仍会失败。`ran` 必须等于 `len(TESTS)`。少一个、多一个，或截图出现在断言之前，都不能申请 final gate。悬停、选中、键盘焦点和长名称走 `/tabs/workspace.html`，因为规格表把这四行标在 960 工作区。管理对话、历史、知识和提取进度走 `/sidepanel.html` 的 `nav.cm-navigation`。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1071,7 +1093,7 @@ PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); p
 
 未测：真实 Companion 进程、临时目录落盘、隔离模型密钥、已安装扩展的重开、Mac 字体、Windows 原生宿主、永久删除、清空回收站、知识图谱「重新整理」、工具「允许」后的真实执行。
 
-从计划里抽出的 29 个 `test_*` 已在真实 `App` 包上跑过，记录在 `/tmp/rehearse/selfcheck-report.json`。AST：没有重复定义，`ROUTES` 里的每个名字都有函数，截图名和规格表一致，测试函数里没有单独的 `SET_CONNECTION`，也没有把侧栏「管理对话」锁成 0。只改 store、不改 `__connection`，等过 3 秒后 store 回到 `disconnected`。`set_connection` 跨过这轮轮询后仍是 `connected`。
+最终脚本由计划里的 Python 代码块按顺序拼成，并用文件底部的 `main` 跑完。`TESTS` 是 29 个字符串，`main` 用 `globals()[name]` 调用。退出码 1：`ran=29 failed=19`。没有 `AttributeError` 或 `NameError`。日志在评审附件 `sidebar-rehearsal/main.log`。只改 store、不改 `__connection` 时，3 秒后 store 会回到 `disconnected`；`test_connection_survives_poll` 在这次 `main` 里通过。隐藏但仍在 DOM 里的「资料与工具」用 `:visible` 数为 0，这在隔离页面上是绿的，见附件 `visible-predicate.log`。
 
 现存锁，这次是绿的：`test_sidepanel_759`、`test_popout_959`、`test_popout_960`、`test_connection_survives_poll`、`test_disconnect_disables_the_composer`、`test_project_admin`、`test_escape_returns_to_nav`、`test_selected_row_has_no_outline`、`test_keyboard_focus_outline`、`test_long_name_title`。
 
@@ -1118,5 +1140,5 @@ cd .. && npm --prefix chrome-extension test && npm --prefix companion test
 - 场景矩阵的按钮和消息名能在当前源码或规格里找到。规格新增的三句不写成已经存在。
 - 改连接只走 `set_connection`。`config.set` 先要求 `len(sent) >= 1`。
 - 侧栏「管理对话」的目标是 `count() == 1` 并能点开。当前数量为 0 只解释今天为什么红，不是一条永远为 0 的锁。
-- 每张规格截图都有函数体，断言在 `shot` 之前。`TESTS` 的每个名字都有 `def`。
+- 每张规格截图都有函数体，断言在 `shot` 之前。`TESTS` 的每个名字都是字符串，`main` 用 `globals()[name]` 调用。收起态按可见性断言。
 - 节点 0 的最终门每一行都是未测。当前行为的演练写在「节点 0 核对」。文档提交不是 final gate。

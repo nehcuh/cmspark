@@ -100,7 +100,7 @@ uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py
 
 | 视口 | 状态 | 断言 |
 | --- | --- | --- |
-| 420×860，`sidepanel` | 默认收起 | 看不到「资料与工具」；可访问名「打开工作区导航」在顶栏 |
+| 420×860，`sidepanel` | 默认收起 | 可见区域看不到「资料与工具」（藏在 DOM 里不算出现）；可访问名「打开工作区导航」在顶栏 |
 | 420×860 | 点「打开工作区导航」 | 导航层高度不超过视口的 28% |
 | 759×860，`sidepanel` | 仍是窄栏 | `data-navigation-mode` 为 `layered` |
 | 760×860，`sidepanel` | 刚到宽栏 | `data-navigation-mode` 为 `resident`，侧栏宽 220 |
