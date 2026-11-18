@@ -30,6 +30,8 @@ GitHub: #865
 
 同一份真实 `App` 夹具驱动所有界面测试。`package.json` 没有直接依赖 `esbuild` 或 `playwright`。打包用已经随 Plasmo 安装的 `chrome-extension/node_modules/esbuild`。浏览器用系统 Chrome：`playwright.chromium.launch(channel="chrome")`，不另装 Playwright 浏览器。字体文件必须加 loader，否则打包 KaTeX 的 `.woff` 会失败。`chrome.runtime.connect` 必须有桩，否则 `useWebSocket` 抛错，页面只剩「重试」，后面的定位都会超时。
 
+`App` 自己会再挂一个 `AgentStoreProvider`。夹具若在外面再包一层，`window.dispatchUI` 改的是外层，输入框仍停在内层。2026-11-18 的演练里，外层已经是 `activeThreadId=weekend` 且 `connected`，内层输入框仍是 `disabled`，占位仍是「请先创建或选择一个线程」。`dispatchUI` 必须来自 `App` 内部那个 provider。`getStatus` 的回调要返回 `{ connectionState: window.__connection }`。轮询约每 3 秒覆盖一次 store；测试在改连接时同时改 `window.__connection`，否则输入框会被刷回断开。`sendMessage` 把消息推进 `window.sent`，并用 `window.emitRuntime` 通知 `chrome.runtime.onMessage` 的监听者。`project.list` 不自动回答。
+
 `launch` 和 `ready` 的完整实现：
 
 ```python
@@ -53,7 +55,7 @@ def ready(page):
     page.wait_for_function("() => window.fixtureState.connectionState !== undefined")
 ```
 
-`render-sidebar-review-fixture.cjs` 调用上面的 esbuild，loader 为 `.css=css`、`.woff2=dataurl`、`.woff=dataurl`、`.ttf=dataurl`。入口渲染 `AgentStoreProvider` 和 `App`。`sendMessage` 把参数推进 `window.sent`。若 `type === "config.set"`，只把 `config` 补丁写进 `window.companionStore.config`，不动 `externalKey`。`chrome.runtime.connect` 返回带空 `onMessage` 和 `onDisconnect` 的端口。
+`render-sidebar-review-fixture.cjs` 调用上面的 esbuild，loader 为 `.css=css`、`.woff2=dataurl`、`.woff=dataurl`、`.ttf=dataurl`。入口只渲染 `App`。在 `AgentStoreProvider` 内部把当前 `state` 和 `dispatch` 赋给 `window.fixtureState` 与 `window.dispatchUI`。`sendMessage` 把参数推进 `window.sent`。`getStatus` 回 `{ connectionState: window.__connection || "disconnected" }`。其它消息回 `{ ok: true }`。若 `type === "config.set"`，只把 `config` 补丁写进 `window.companionStore.config`，不动 `externalKey`。`window.emitRuntime` 调用每个 `onMessage` 监听者。`chrome.runtime.connect` 返回带空 `onMessage` 和 `onDisconnect` 的端口。`main` 用 `repr(exc)` 打印失败。空的 `AssertionError` 没有第一行，不能用 `str(exc).splitlines()[0]`。
 
 `main` 使用文件底部的显式 `TESTS` 列表，不用「至少 12 个」这种从第一天就写死的数字。打印用 `repr`，避免空的 `AssertionError` 让整批中断。
 
@@ -169,14 +171,13 @@ test("resident width depends on the surface", () => {
 
 Run: `cd chrome-extension && npx tsc -p tsconfig.test.json --pretty false && node --test .test-dist/tests/startup-destination.test.js`
 
-Expected: FAIL 在 `sidepanel 760` 和 `workspace 760`。现码返回 `layered`。`popout 959` 现码已经是 `layered`。这只证明纯函数。`WorkspaceFrame` 在 `full === true` 时不渲染 `ProjectNavigationRoot`，页面上没有 `data-navigation-mode`。所以同一任务还要跑下面这些页面函数，并先加一个不改门槛的标记。
+Expected: FAIL 在 `sidepanel 760` 和 `workspace 760`。现码返回 `layered`。`popout 959` 现码已经是 `layered`。这只证明纯函数。
 
-先把 `data-navigation-mode` 写到 `full === true` 的 `.cm-workspace-full` 上，值仍来自现在的 `navigationMode`（全是 960）。这一步的页面测试是：`/tabs/workspace.html` 在 960 为 `resident`，在 959 为 `layered`。标记不存在时这条失败。标记加上之后它会通过，并且工作区在 760 仍是 `layered`。然后再把断言改成下面的新门槛，这时 760 才是行为红灯。
+页面实测：`/sidepanel.html` 在 759 的 `data-navigation-mode` 是 `layered`，在 960 是 `resident`。`/popout.html?surface=popout` 在 959 是 `layered`，在 960 是 `resident`。`/tabs/workspace.html` 有 `.cm-workspace-full`，759 和 960 上都没有 `data-navigation-mode`，`get_attribute` 得到 `None`。定位器存在，所以失败是 `None != "layered"`，不是超时。
+
+先把 `data-navigation-mode` 写到 `.cm-workspace-full` 上，值仍来自现在的 `navigationMode`（960）。标记不存在时，下面两个工作区断言失败，实际值是 `None`。标记加上之后，960 会通过，760 仍是 `layered`。再改门槛，760 才变成 `resident`。
 
 ```python
-def test_widths(page):
-    pass
-
 def test_sidepanel_759(page):
     assert page.locator("[data-navigation-mode]").get_attribute("data-navigation-mode") == "layered"
 
@@ -184,9 +185,11 @@ def test_sidepanel_760(page):
     assert page.locator("[data-navigation-mode]").get_attribute("data-navigation-mode") == "resident"
 
 def test_workspace_759(page):
+    assert page.locator(".cm-workspace-full").count() == 1
     assert page.locator(".cm-workspace-full").get_attribute("data-navigation-mode") == "layered"
 
 def test_workspace_760(page):
+    assert page.locator(".cm-workspace-full").count() == 1
     assert page.locator(".cm-workspace-full").get_attribute("data-navigation-mode") == "resident"
 
 def test_popout_959(page):
@@ -228,15 +231,33 @@ git commit -m "test: choose the resident width from the surface"
 - [ ] **Step 1: Write the failing test**
 
 ```python
-def test_draft_follows_active_thread(page):
+def seed_connected(page):
     page.evaluate("""() => {
+      window.__connection = 'connected'
+      window.dispatchUI({type:'SET_CONNECTION', state:'connected'})
       window.dispatchUI({type:'SET_THREADS', threads:[
-        {id:'weekend', alias:'示例·周末清单', created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]},
-        {id:'shop', alias:'示例·采购', created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}
+        {id:'weekend', alias:'示例·周末清单', created_at:'2026-11-18T00:00:00.000Z', updated_at:'2026-11-18T00:00:00.000Z', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[], message_count:1},
+        {id:'shop', alias:'示例·采购', created_at:'2026-11-18T00:00:00.000Z', updated_at:'2026-11-18T00:00:00.000Z', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[], message_count:1}
       ]})
       window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:'weekend'})
+      window.dispatchUI({type:'NAVIGATE', layer:'session', projectId:null})
     }""")
+
+def test_disconnect_disables_the_composer(page):
+    seed_connected(page)
     box = page.get_by_role("textbox", name="消息内容")
+    assert box.is_enabled()
+    page.evaluate("""() => {
+      window.__connection = 'disconnected'
+      window.dispatchUI({type:'SET_CONNECTION', state:'disconnected'})
+    }""")
+    assert box.is_disabled()
+    assert box.get_attribute("placeholder") == "等待 companion 连接..."
+
+def test_draft_follows_active_thread(page):
+    seed_connected(page)
+    box = page.get_by_role("textbox", name="消息内容")
+    assert box.is_enabled()
     box.fill("记得买水果")
     page.evaluate("() => window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:'shop'})")
     assert box.input_value() == ""
@@ -244,9 +265,11 @@ def test_draft_follows_active_thread(page):
     assert box.input_value() == "记得买水果"
 ```
 
+没有活动对话时，占位先是「请先创建或选择一个线程」，输入框禁用。断连但活动对话还在时，占位是「等待 companion 连接...」，输入框同样禁用。`test_disconnect_disables_the_composer` 对现码通过，它是锁，不是本任务的红灯。红灯是 `test_draft_follows_active_thread`。填字前必须先 `assert box.is_enabled()`。禁用时去 `fill` 会超时，那个超时不算草稿串了。
+
 - [ ] **Step 2: Run test to verify it fails**
 
-Expected: 退出码非 0。切到 `shop` 后输入框仍是「记得买水果」。
+Expected: `test_disconnect_disables_the_composer` 通过。`test_draft_follows_active_thread` 退出码非 0。切到 `shop` 后输入框仍是「记得买水果」。
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -276,17 +299,18 @@ git commit -m "test: keep unsent text on the active thread"
 ```python
 def test_no_move_fieldset(page):
     page.evaluate("""() => {
+      window.__connection = 'connected'
       window.dispatchUI({type:'SET_CONNECTION', state:'connected'})
-      window.dispatchUI({type:'SET_THREADS', threads:[{id:'weekend', alias:'示例·周末清单', created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}]})
+      window.dispatchUI({type:'SET_THREADS', threads:[{id:'weekend', alias:'示例·周末清单', created_at:'2026-11-18T00:00:00.000Z', updated_at:'2026-11-18T00:00:00.000Z', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[], message_count:1}]})
       window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:'weekend'})
       window.dispatchUI({type:'NAVIGATE', layer:'session', projectId:null})
     }""")
     assert page.evaluate("window.fixtureState.navigationLayer") == "session"
-    assert page.get_by_text("更改当前会话归属").count() == 0
-    assert page.get_by_text("执行状态：").count() == 0
+    assert page.locator("fieldset:visible", has_text="更改当前会话归属").count() == 0
+    assert page.locator("header[aria-label='会话位置']:visible").get_by_text("执行状态：").count() == 0
 ```
 
-必须先进入 `session` 层。停在项目首页时，这两句不在可见文本里，测试会误绿。进入会话层后，现码里「更改当前会话归属」的 `count()` 是 1。
+会话层不用 `hidden` 卸掉，只是藏起来。`get_by_text` 会数到隐藏节点，停在项目首页也会得到 1，不能拿那个数当红灯，也不能拿它当通过。必须先进入 `session`，再用 `:visible`。现码进入会话层后，可见的「更改当前会话归属」是 1，可见的「执行状态：」也是 1。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -319,14 +343,27 @@ git commit -m "test: drop the resident move fieldset"
 
 ```python
 def test_project_admin(page):
-    page.get_by_text("项目", exact=True).click()
-    for label in ("创建项目", "改名", "归档项目"):
-        assert page.get_by_role("button", name=label).count() == 1
+    page.evaluate("() => { window.__connection = 'connected'; window.dispatchUI({type:'SET_CONNECTION', state:'connected'}) }")
+    page.locator("details.cm-projects > summary").click()
+    page.wait_for_function("window.sent.some(m => m.type==='project.list')")
+    msg = page.evaluate("() => window.sent.find(m => m.type==='project.list')")
+    page.evaluate("""(m) => window.emitRuntime({
+      type:'project.state', id:m.id, revision:1,
+      projects:[{id:'11111111-1111-4111-8111-111111111111', name:'验收项目', created_at:'2026-11-18T00:00:00.000Z', updated_at:'2026-11-18T00:00:00.000Z', archived_at:null}]
+    })""", msg)
+    page.locator("summary", has_text="新建项目").click()
+    assert page.get_by_role("button", name="创建项目").count() == 1
+    page.get_by_role("button", name="验收项目").click()
+    page.locator("summary", has_text="管理项目").click()
+    assert page.get_by_role("button", name="改名").count() == 1
+    assert page.get_by_role("button", name="归档项目").count() == 1
 ```
+
+导航里的「项目」和 `<summary>项目</summary>` 是两个节点。`get_by_text("项目", exact=True).click()` 会因 strict mode 直接抛错，那不是按钮缺失。打开的是 `details.cm-projects`。项目 id 必须通过 `project-request.ts` 的 UUID 校验。未选中项目时，「改名」和「归档项目」不渲染，`count()` 是 0；这不表示管理区被删了。选中「验收项目」后这两颗按钮才出现。
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Expected: 按钮不在时 FAIL。按钮已在时 PASS，报告写明没有红灯。不得删按钮来制造红灯。
+Expected: 三颗按钮都能数到时 PASS，报告写明没有红灯。少一颗时，失败是 `count()` 为 0。不得删按钮来制造红灯。
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -485,17 +522,32 @@ git commit -m "test: retry a failed project list"
 
 夹具先放入一条没有 `digest` 的对话，再打开真实 `ThreadList`。
 
+侧栏路径现码没有名为「管理对话」的按钮，`count()` 是 0。去点它会超时，那个超时不是提取行为。对话管理的现有入口是可访问名「对话管理（历史对话）」。先放入一条 `message_count` 大于 0 且没有要点的对话，`AI 提取标签` 才可点。
+
 ```python
+def test_sidepanel_has_no_manage_button(page):
+    assert page.get_by_role("button", name="管理对话", exact=True).count() == 0
+
 def test_cancel_extract_sends_nothing(page):
-    page.get_by_role("button", name="管理对话").click()
-    page.get_by_role("button", name="AI 提取标签").click()
-    page.get_by_role("button", name="取消").click()
+    page.evaluate("""() => {
+      window.__connection = 'connected'
+      window.dispatchUI({type:'SET_CONNECTION', state:'connected'})
+      window.dispatchUI({type:'SET_THREADS', threads:[{id:'weekend', alias:'示例·周末清单', created_at:'2026-11-18T00:00:00.000Z', updated_at:'2026-11-18T00:00:00.000Z', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[], message_count:1}]})
+      window.dispatchUI({type:'SET_ACTIVE_THREAD', threadId:'weekend'})
+    }""")
+    page.get_by_role("button", name="对话管理（历史对话）").click()
+    extract = page.get_by_role("button", name="AI 提取标签", exact=True)
+    assert extract.is_enabled()
+    extract.click()
+    cancel = page.get_by_role("button", name="取消")
+    assert cancel.count() == 1
+    cancel.click()
     assert page.evaluate("window.sent.filter(m => m.type==='thread.extract_digest').length") == 0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Expected: FAIL。现码没有「取消」，点击后 `window.sent` 里已有 `thread.extract_digest`。
+Expected: `test_sidepanel_has_no_manage_button` 现码通过，实现把按钮放进侧栏后仍要通过。`test_cancel_extract_sends_nothing` 现码失败在 `cancel.count() == 1`，实际是 0。此时 `thread.extract_digest` 已经是 1。不要把 `count()` 换成一次会等待的点击。
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -519,26 +571,34 @@ git commit -m "test: cancel extraction before thread.extract_digest"
 **Files:**
 - Modify: `chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx`
 - Modify: `chrome-extension/scripts/test-sidebar-review-ui.py`
-- Create: `chrome-extension/tests/history-entry-scopes.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
+这条走 `/tabs/workspace.html`。侧栏路径没有「管理对话」，点它会超时。工作区里这颗按钮现码就有。
+
 ```python
 def test_thread_graph_is_not_knowledge_graph(page):
-    page.get_by_role("button", name="管理对话").click()
-    page.get_by_role("button", name="关系图谱").click()
+    assert page.get_by_role("button", name="管理对话", exact=True).count() == 1
+    page.get_by_role("button", name="管理对话", exact=True).click()
+    assert page.get_by_role("button", name="关系图谱", exact=True).count() == 1
+    page.get_by_role("button", name="关系图谱", exact=True).click()
     kinds = page.evaluate("window.sent.map(m => m.type)")
     assert "thread_graph.open" in kinds
     assert "knowledge_graph.open" not in kinds
+
+def test_history_panel_is_not_the_thread_manager(page):
+    page.get_by_role("button", name="历史", exact=True).click()
+    assert page.get_by_text("暂无操作历史").count() == 1
+    assert page.get_by_text("AI 提取标签").count() == 0
+    page.get_by_role("button", name="知识", exact=True).click()
+    assert page.get_by_role("button", name="分布图谱").count() == 1
 ```
 
-`history-entry-scopes.test.ts` 用 `renderToStaticMarkup` 渲染现有 `HistoryPanel`。若它未导出，在 `ContextPanelHost.tsx` 给它加 `export`，这是行为中立的，先用一条测试确认空列表文本是「暂无操作历史」且不含「AI 提取标签」。导出本身不改变渲染。
+`ROUTES` 把这两个函数开到 `/tabs/workspace.html`，视口 960×860。2026-11-18 实测：点「关系图谱」后 `window.sent` 含 `thread_graph.open`，不含 `knowledge_graph.open`；点「历史」出现「暂无操作历史」，没有「AI 提取标签」；点「知识」后「分布图谱」的 `count()` 是 1。这两条现码通过，是锁。不要另写一个导入未导出 `HistoryPanel` 的节点测试，缺导出会在编译期失败，不是行为红灯。
 
 - [ ] **Step 2: Run test to verify it fails**
 
-两条命令分别跑 Playwright 和 `node --test .test-dist/tests/history-entry-scopes.test.js`。
-
-Expected: Playwright 在「关系图谱」不可点或消息不对时 FAIL。节点测试在文本不对时 FAIL。
+Expected: 这两条现码 PASS。若有人把「历史」接成对话管理，或让关系图谱发出 `knowledge_graph.open`，才是 FAIL。没有红灯时报告写明。
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -551,7 +611,7 @@ Expected: Playwright 在「关系图谱」不可点或消息不对时 FAIL。节
 - [ ] **Step 5: Commit**
 
 ```bash
-git add chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx chrome-extension/src/sidepanel/components/ContextPanelHost.tsx chrome-extension/scripts/test-sidebar-review-ui.py chrome-extension/tests/history-entry-scopes.test.ts
+git add chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx chrome-extension/scripts/test-sidebar-review-ui.py
 git commit -m "test: keep history and the two graphs apart"
 ```
 
@@ -604,7 +664,7 @@ def test_unconfigured_models_open_from_other(page):
     assert page.get_by_text("视觉模型（看图描述）").count() == 1
 ```
 
-这个函数从 Task 10 起就在 `TESTS` 里。第一条会红的断言是视觉模型区块现在就能看见，所以 `count()` 不是 0。不要把找不到「其他能力」的超时当作红灯。
+这个函数从 Task 10 起就在 `TESTS` 里。未配对时设置打开在连接页，模型页带 `hidden`。`get_by_text` 仍数得到「视觉模型（看图描述）」，`body.innerText` 数不到。断言用 `count()`，不用 `inner_text`。第一条会红的断言是 `count()` 不是 0。不要把找不到「其他能力」的超时当作红灯。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -645,7 +705,7 @@ git commit -m "test: keep configured external transcription hidden from the main
 每个视口一个函数。焦点示例：
 
 ```python
-def test_escape_returns_to_the_nav_button(page):
+def test_escape_returns_to_nav(page):
     page.set_viewport_size({"width": 420, "height": 860})
     nav = page.get_by_role("button", name="打开工作区导航")
     nav.click()
@@ -664,19 +724,20 @@ assert style["outlineStyle"] == "solid"
 assert style["outlineColor"] == "rgb(79, 70, 229)"
 ```
 
-`TESTS` 在这一任务必须正好包含这些名字，每个都先操作、再断言、再截图：`test_sidepanel_759`、`test_sidepanel_760`、`test_workspace_759`、`test_workspace_760`、`test_popout_959`、`test_popout_960`、`test_escape_returns_to_nav`、`test_close_returns_to_nav`、`test_hover_row`、`test_selected_row_has_no_outline`、`test_keyboard_focus_outline`、`test_long_name_title`、`test_empty_start`、`test_list_error_retry`、`test_extract_progress`。`ran` 等于这份名单的长度。少一个就退出码非 0，不能申请 final gate。
+`TESTS` 必须包含前面每一任务加进去的函数，再加这些截图函数：`test_sidepanel_759`、`test_sidepanel_760`、`test_workspace_759`、`test_workspace_760`、`test_popout_959`、`test_popout_960`、`test_escape_returns_to_nav`、`test_close_returns_to_nav`、`test_hover_row`、`test_selected_row_has_no_outline`、`test_keyboard_focus_outline`、`test_long_name_title`、`test_empty_start`、`test_list_error_retry`、`test_extract_progress`。`EXPECTED` 与 `TESTS` 逐名相同。`ran` 等于这份长度。少一个就退出码非 0。不能只留下截图函数。
 
 ```python
 def test_close_returns_to_nav(page):
     page.set_viewport_size({"width": 420, "height": 860})
     page.get_by_role("button", name="打开工作区导航").click()
-    assert page.get_by_role("button", name="关闭导航").count() == 1
-    page.get_by_role("button", name="关闭导航").click()
+    close = page.get_by_role("button", name="关闭导航")
+    assert close.count() == 1
+    close.click()
     assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "打开工作区导航"
     page.screenshot(path="/tmp/sidebar-review/420-close.png")
 ```
 
-现码没有「关闭导航」，所以 `count()` 先得到 0。这是立即失败，不是点击超时。
+`WorkspaceNavigation` 只有收到 `onClose` 才渲染「关闭导航」。现码的工作区和侧栏都没传。`count()` 是 0，断言在点击之前失败。不要先点击一颗不存在的按钮。
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -691,7 +752,7 @@ Expected: 退出码非 0。失败在可访问名、`data-navigation-mode` 或轮
 ```bash
 cd chrome-extension && nvm use 22
 uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py
-npx tsc -p tsconfig.test.json --pretty false && node --test .test-dist/tests/startup-destination.test.js .test-dist/tests/project-list-retry.test.js .test-dist/tests/history-entry-scopes.test.js
+npx tsc -p tsconfig.test.json --pretty false && node --test .test-dist/tests/startup-destination.test.js .test-dist/tests/project-list-retry.test.js
 cd .. && npm --prefix chrome-extension test && npm --prefix companion test
 ```
 
@@ -789,7 +850,7 @@ PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); p
 
 | 层 | 步骤 | 预期 | 节点 0 |
 | --- | --- | --- | --- |
-| 夹具 | 420 宽点「打开工作区导航」，Tab 进导航，按 Esc。再打开并点「关闭导航」。分别量 759、760、959、960 | Esc 和关闭后，`document.activeElement` 的可访问名是「打开工作区导航」。sidepanel 与 workspace 在 759 为 layered、760 为 resident，栏宽 220。popout 在 959 为 layered、960 为 resident。键盘焦点的轮廓是 `solid` / `rgb(79, 70, 229)` | 未测。截图断言仍以 Task 11 的函数名单为准 |
+| 夹具 | 420 宽点「打开工作区导航」，Tab 进导航，按 Esc。再打开并点「关闭导航」。分别量 759、760、959、960 | Esc 和关闭后，`document.activeElement` 的可访问名是「打开工作区导航」。sidepanel 与 workspace 在 759 为 layered、760 为 resident，栏宽 220。popout 在 959 为 layered、960 为 resident。键盘焦点的轮廓是 `solid` / `rgb(79, 70, 229)` | 当前行为已测，最终门未测。sidepanel 759 为 layered，960 为 resident。popout 959 为 layered，960 为 resident。workspace 759 和 960 都没有 `data-navigation-mode`。「关闭导航」现码 `count()` 为 0 |
 | Companion | 纯界面 | 不适用，写未测并注明没有服务端行为 | 未测 |
 | 外部或本机 | 在 Mac 上看苹方或 SF，并在已安装扩展里重复 Tab | 本环境字体是 fallback。没有 Mac 安装就未测 | 未测。没有 Mac |
 
@@ -797,17 +858,36 @@ PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); p
 
 | 层 | 步骤 | 预期 | 节点 0 |
 | --- | --- | --- | --- |
-| 夹具 | 把连接设为 `disconnected`。点「重新连接」。把项目阶段设为 `list-error` 且没有快照，点「重试」。断连时点「保存并关闭」 | 横幅标题是「Companion 未连接」。点击发出 `ws.forceReconnect`。重试后多一条 `project.list`，没有「还没有项目」。保存出现「尚未连接到 Companion，这次设置没有发送」 | 未测 |
+| 夹具 | 活动对话还在时把连接设为 `disconnected`，同时写 `window.__connection`。点「重新连接」。项目列表回 `project.error` 且没有快照，点「重试」。断连时点「保存并关闭」 | 输入框禁用，占位是「等待 companion 连接...」。横幅标题是「Companion 未连接」。点击发出 `ws.forceReconnect`。重试后多一条 `project.list`，没有「还没有项目」。保存出现「尚未连接到 Companion，这次设置没有发送」 | 断连占位已测，最终门未测。没有活动对话时占位仍是「请先创建或选择一个线程」，不能拿它证明断连 |
 | Companion | 停掉临时进程，再以同一 `CMSPARK_DATA_DIR` 启动。客户端重连后发 `thread.list` | 只动 `$PORT` 上的临时进程。重连后列表仍是临时线程。23401 无新连接。live mtime 不变 | 未测 |
 | 外部或本机 | 「查看日志」走原生宿主打开目录 | 没有原生宿主时，夹具只断言提示「请手动打开日志目录：~/.cmspark-agent/logs/」。Mac / Windows 原生打开写未测 | 未测。没有 Mac / Windows 原生宿主 |
 
 ### 节点 0 核对
 
-核对基线是写入本节之前的 `f0b5b09652d8aedf0e301a8318ed9fe489418f6d`。只读了源码，没有启动 Companion，没有读取或修改 live 配置，没有发外部请求。
+对照源码的基线是 `f0b5b09652d8aedf0e301a8318ed9fe489418f6d`。界面演练用的是当时打好的真实 `App` 包，后来把探针接到 `App` 内部的 provider 上再跑了一遍。没有启动 Companion，没有读取或修改 `~/.cmspark-agent`，没有发外部请求。证据文件：
 
-源码里已经有的名字：`打开工作区导航`、`关闭导航`、`保存并关闭`、`服务地址（Base URL）`、`模型名称`、`API Key`、`视觉模型（看图描述）`、`外部转写`、`外部转写已启用`、`Companion 未连接`、`重新连接`、`尚未连接到 Companion，这次设置没有发送`、`创建项目`、`新项目名称`、`管理对话`、`对话管理`、`搜索线程`、`时间`、`标签`、`手动分组`、`AI 分组`、`AI 提取标签`、`关系图谱`、`会话关系图`、`回收站`、`移入回收站`、`分布图谱`、`重新整理`、`允许`、`拒绝`、`暂无操作历史`。消息名：`thread.create`、`chat.send`、后台的 `chat.create`、`project.create`、`thread.extract_digest`、`thread.batch_delete`、`thread.restore`、`thread_graph.open`、`thread_graph.open_thread`、`knowledge_graph.open`、`security.confirmation.response`、`ws.forceReconnect`、`cmspark.navigation.lastThreadId`。
+| 文件 | 内容 |
+| --- | --- |
+| `/tmp/rehearse/nav-results.txt` | `navigationMode` 在 sidepanel 760 实际是 `layered` |
+| `/tmp/rehearse/retry-results.txt` | `ProjectListView` 失败态 HTML 没有「重试」，只有「项目列表没有取回」 |
+| `/tmp/rehearse/probe-evidence.txt` | 外层 store 与输入框脱节；设置里能看到「保存并关闭」；工作区没有 `data-navigation-mode` |
+| `/tmp/rehearse/probe-evidence-2.txt` | 内层 store：已连接且有对话时可写；断连占位是「等待 companion 连接...」；提取一点就发出 `thread.extract_digest` |
+| `/tmp/rehearse/probe-evidence-3.txt` | 工作区「关系图谱」发出 `thread_graph.open`；「历史」是「暂无操作历史」；「知识」里有「分布图谱」 |
 
-还没有的规格文案：`开始第一则对话`、`外部转写已配置`、`其他能力`。所以 S1 和 S5 即使对着当前界面跑，也不能标通过。
+已测到的当前行为：
+
+- 外层 `dispatchUI` 不能驱动输入框。内层在 `connected` 且 `activeThreadId` 为 `weekend` 时，输入框启用，占位是「描述任务，或粘贴截图…」。
+- 同一条对话改为 `disconnected` 后，输入框禁用，占位是「等待 companion 连接...」。
+- 没有活动对话时，占位是「请先创建或选择一个线程」，即使同时也断开。
+- `/tabs/workspace.html` 的 `.cm-workspace-full` 存在，`data-navigation-mode` 为 `None`。sidepanel 759 为 `layered`，960 为 `resident`。popout 959 为 `layered`，960 为 `resident`。
+- 侧栏没有「管理对话」。工作区有，点「关系图谱」后 `thread_graph.open` 为 1 条，`knowledge_graph.open` 为 0。
+- 「对话管理（历史对话）」打开后，「AI 提取标签」可点，一点就有 1 条 `thread.extract_digest`，「取消」的 `count()` 是 0。
+- 设置按钮必须 `exact=True`。打开后有「保存并关闭」。「视觉模型（看图描述）」在 `textContent` 里，不在 `innerText` 里。「外部转写已配置」不在。
+- 「历史」出现「暂无操作历史」，没有「AI 提取标签」。「知识」里「分布图谱」的 `count()` 是 1。
+
+还没有的规格文案：`开始第一则对话`、`外部转写已配置`、`其他能力`。S1 到 S8 的最终门都还是未测。上面这些只说明当前代码会在哪一条断言失败。
+
+未测：真实 Companion 进程、临时目录落盘、隔离模型密钥、已安装扩展的重开、Mac 字体、Windows 原生宿主、永久删除、清空回收站、知识图谱「重新整理」、工具「允许」后的真实执行。
 
 ### 同一 head 的其余门禁
 
@@ -817,7 +897,7 @@ PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); p
 cd chrome-extension && nvm use 22
 uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py
 npx tsc -p tsconfig.test.json --pretty false
-node --test .test-dist/tests/startup-destination.test.js .test-dist/tests/project-list-retry.test.js .test-dist/tests/history-entry-scopes.test.js
+node --test .test-dist/tests/startup-destination.test.js .test-dist/tests/project-list-retry.test.js
 cd .. && npm --prefix chrome-extension test && npm --prefix companion test
 ```
 
@@ -848,4 +928,5 @@ cd .. && npm --prefix chrome-extension test && npm --prefix companion test
 - 重试的节点测试不传尚不存在的 prop。点击后的 `project.list` 条数是第二条断言。
 - 焦点断言使用「打开工作区导航」和 `focus({ focusVisible: true })`。
 - 场景矩阵的按钮和消息名能在当前源码或规格里找到。规格新增的三句不写成已经存在。
-- 节点 0 的每一行都是未测。文档提交不是 final gate。
+- 会超时的点击改成了先看 `count()`。外层 store、隐藏文本和未选中项目都不算行为红灯。
+- 节点 0 的最终门每一行都是未测。当前行为的演练写在「节点 0 核对」。文档提交不是 final gate。
