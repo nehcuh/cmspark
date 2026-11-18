@@ -32,6 +32,11 @@ export type ExternalTranscribeCode =
   | "external_empty"
   | "external_unreachable"
   | "external_rejected"
+  | "external_unauthorized"
+  | "external_endpoint"
+  | "external_too_large"
+  | "external_rate_limited"
+  | "external_unavailable"
 
 export type ExternalTranscribeResult =
   | { ok: true; text: string }
@@ -88,6 +93,16 @@ function linkDeadline(parent: AbortSignal, timeoutMs: number) {
   }
 }
 
+function statusCode(status: number): ExternalTranscribeCode {
+  if (status === 408 || status === 504) return "external_timeout"
+  if (status === 401 || status === 403) return "external_unauthorized"
+  if (status === 404) return "external_endpoint"
+  if (status === 413) return "external_too_large"
+  if (status === 429) return "external_rate_limited"
+  if (status === 500 || status === 502 || status === 503) return "external_unavailable"
+  return "external_rejected"
+}
+
 function failureCode(parent: AbortSignal, timedOut: boolean): ExternalTranscribeResult {
   if (parent.aborted) return { ok: false, code: "aborted" }
   if (timedOut) return { ok: false, code: "external_timeout" }
@@ -138,7 +153,7 @@ export async function transcribeExternal(req: ExternalTranscribeRequest): Promis
       return { ok: false, code: "external_redirect" }
     }
     if (typeof res.status === "number" && (res.status < 200 || res.status >= 300)) {
-      return { ok: false, code: "external_rejected" }
+      return { ok: false, code: statusCode(res.status) }
     }
     if (typeof res.json !== "function") return { ok: false, code: "external_bad_response" }
     let body: unknown

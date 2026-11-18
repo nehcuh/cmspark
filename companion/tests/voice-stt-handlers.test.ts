@@ -552,20 +552,6 @@ test("external start, chunk, and end do not use the local session path", async (
   })
   _setExternalAsrSessionForTests(bound)
   try {
-    const refused = await handleVoiceSttMessage(
-      {
-        type: "voice.stt.start",
-        v: 1,
-        sessionId: "ext-blocked",
-        engine: "external",
-        format: "wav",
-        sampleRate: 16000,
-        channels: 1,
-        privacy_ack_external_v1: true,
-      },
-      extCtx("p-ext"),
-    )
-    assert.notEqual(refused.code, "engine_not_local")
     const start = await handleVoiceSttMessage(
       {
         type: "voice.stt.start",
@@ -580,6 +566,7 @@ test("external start, chunk, and end do not use the local session path", async (
       extCtx("p-ext"),
     )
     assert.equal(start.type, "voice.stt.partial")
+    assert.notEqual(start.code, "engine_not_local")
     const pcm = Buffer.alloc(256 * 1024)
     const chunk = await handleVoiceSttMessage(
       {
@@ -592,6 +579,21 @@ test("external start, chunk, and end do not use the local session path", async (
       extCtx("p-ext"),
     )
     assert.equal(chunk, undefined)
+    const busy = await handleVoiceSttMessage(
+      {
+        type: "voice.stt.start",
+        v: 1,
+        sessionId: "ext-2",
+        engine: "external",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+        privacy_ack_external_v1: true,
+      },
+      extCtx("p-ext"),
+    )
+    assert.equal(busy.type, "voice.stt.error")
+    assert.equal(busy.code, "session_busy")
     const end = await handleVoiceSttMessage(
       { type: "voice.stt.end", v: 1, sessionId: "ext-1", totalSeq: 1 },
       extCtx("p-ext"),
@@ -609,6 +611,127 @@ test("external start, chunk, and end do not use the local session path", async (
   } finally {
     _setExternalAsrSessionForTests(null)
     setVoiceFields({ sttEngine: previous === "local" || previous === "system" || previous === "external" ? previous : "browser" })
+  }
+})
+
+test("openai handler sends the saved model and the start lang primary tag", async () => {
+  const external = {
+    style: "openai" as const,
+    baseUrl: "https://asr.example.test/v1",
+    model: "gpt-transcribe",
+    apiKey: "secret",
+    maxDurationMs: null,
+    maxBytes: 25_000_000,
+    requestTimeoutMs: 180000,
+  }
+  setVoiceFields({ sttEngine: "external", external })
+  let model: FormDataEntryValue | null = null
+  let language: FormDataEntryValue | null = null
+  const bound = createExternalAsrSession({
+    now: () => 0,
+    fetchImpl: async (_url: string, init: { body: FormData }) => {
+      model = init.body.get("model")
+      language = init.body.get("language")
+      return { status: 200, json: async () => ({ text: "やあ" }) }
+    },
+    config: () => ({ sttEngine: "external", external }),
+  })
+  _setExternalAsrSessionForTests(bound)
+  try {
+    const start = await handleVoiceSttMessage(
+      {
+        type: "voice.stt.start",
+        v: 1,
+        sessionId: "ja-1",
+        engine: "external",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+        privacy_ack_external_v1: true,
+        lang: "ja-JP",
+        modelId: "whisper-1",
+      },
+      extCtx("p-ja"),
+    )
+    assert.equal(start.type, "voice.stt.partial")
+    await handleVoiceSttMessage(
+      {
+        type: "voice.stt.chunk",
+        v: 1,
+        sessionId: "ja-1",
+        seq: 0,
+        data: Buffer.from([1, 2]).toString("base64"),
+      },
+      extCtx("p-ja"),
+    )
+    const end = await handleVoiceSttMessage(
+      { type: "voice.stt.end", v: 1, sessionId: "ja-1", totalSeq: 1 },
+      extCtx("p-ja"),
+    )
+    assert.equal(end.type, "voice.stt.result")
+    assert.equal(model, "gpt-transcribe")
+    assert.equal(language, "ja")
+  } finally {
+    _setExternalAsrSessionForTests(null)
+    setVoiceFields({ sttEngine: "browser" })
+  }
+})
+
+test("blank saved openai model fails before fetch and is not replaced", async () => {
+  const external = {
+    style: "openai" as const,
+    baseUrl: "https://asr.example.test/v1",
+    model: "   ",
+    apiKey: "secret",
+    maxDurationMs: null,
+    maxBytes: 25_000_000,
+    requestTimeoutMs: 180000,
+  }
+  setVoiceFields({ sttEngine: "external", external })
+  let calls = 0
+  const bound = createExternalAsrSession({
+    now: () => 0,
+    fetchImpl: async () => {
+      calls += 1
+      return { status: 200, json: async () => ({ text: "x" }) }
+    },
+    config: () => ({ sttEngine: "external", external }),
+  })
+  _setExternalAsrSessionForTests(bound)
+  try {
+    await handleVoiceSttMessage(
+      {
+        type: "voice.stt.start",
+        v: 1,
+        sessionId: "blank-model",
+        engine: "external",
+        format: "wav",
+        sampleRate: 16000,
+        channels: 1,
+        privacy_ack_external_v1: true,
+        lang: "",
+      },
+      extCtx("p-blank"),
+    )
+    await handleVoiceSttMessage(
+      {
+        type: "voice.stt.chunk",
+        v: 1,
+        sessionId: "blank-model",
+        seq: 0,
+        data: Buffer.from([1, 2]).toString("base64"),
+      },
+      extCtx("p-blank"),
+    )
+    const end = await handleVoiceSttMessage(
+      { type: "voice.stt.end", v: 1, sessionId: "blank-model", totalSeq: 1 },
+      extCtx("p-blank"),
+    )
+    assert.equal(end.code, "external_unconfigured")
+    assert.equal(calls, 0)
+  } finally {
+    _setExternalAsrSessionForTests(null)
+    setVoiceFields({ sttEngine: "browser" })
   }
 })
 

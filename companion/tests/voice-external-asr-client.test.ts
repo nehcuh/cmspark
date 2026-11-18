@@ -239,6 +239,36 @@ test("dns failure sends nothing, and loopback or private answers may proceed", a
   assert.equal(fetches, 3)
 })
 
+test("http statuses use the spec codes once and do not retry", async () => {
+  const cases: Array<[number, string]> = [
+    [400, "external_rejected"],
+    [401, "external_unauthorized"],
+    [403, "external_unauthorized"],
+    [404, "external_endpoint"],
+    [408, "external_timeout"],
+    [413, "external_too_large"],
+    [429, "external_rate_limited"],
+    [500, "external_unavailable"],
+    [502, "external_unavailable"],
+    [503, "external_unavailable"],
+    [504, "external_timeout"],
+  ]
+  for (const [status, code] of cases) {
+    let calls = 0
+    const got = await transcribeExternal({
+      style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
+      wav, timeoutMs: 180000, signal: new AbortController().signal, lookup: publicLookup,
+      fetchImpl: async () => {
+        calls += 1
+        return { status, json: async () => ({ text: "no" }) }
+      },
+    })
+    assert.equal(calls, 1, `status ${status}`)
+    assert.equal(got.ok, false)
+    assert.equal(!got.ok && got.code, code)
+  }
+})
+
 test("deadline timer aborts a hung post and does not keep the late body", async () => {
   let timer: NodeJS.Timeout | undefined
   const withinOneSecond = <T,>(work: Promise<T>) => new Promise<T>((resolve, reject) => {

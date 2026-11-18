@@ -1,7 +1,7 @@
 // Chat external ASR session. PCM frames stay at or below 256 KiB and are
 // assembled in a temp file. This module does not call stt-session-core.appendChunk.
 
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from "node:fs"
+import { closeSync, ftruncateSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { externalStopDecision } from "./external-asr-budget"
@@ -21,6 +21,7 @@ export interface ExternalAsrSessionDeps {
   now: () => number
   fetchImpl?: (url: string, init: ExternalFetchInit) => Promise<ExternalFetchResponse>
   lookup?: (hostname: string) => Promise<ExternalLookupAnswer[]>
+  readFile?: (path: string) => Buffer
   config: () => { sttEngine: string; external: VoiceExternalConfig }
 }
 
@@ -32,8 +33,16 @@ interface ActiveExternal {
   pcmBytes: number
   lastChunkAt: number
   aborted: boolean
+  stopped: boolean
   posting: boolean
   controller: AbortController | null
+  lang?: string
+}
+
+function primaryLanguage(lang: string | undefined): string | null {
+  if (typeof lang !== "string") return null
+  const primary = lang.trim().toLowerCase().split("-")[0] ?? ""
+  return /^[a-z]{2}$/.test(primary) ? primary : null
 }
 
 function wavBytes(pcm: Uint8Array): Uint8Array {
@@ -78,16 +87,14 @@ export function createExternalAsrSession(deps: ExternalAsrSessionDeps) {
     owns(sessionId: string) {
       return active?.id === sessionId
     },
-    start(input: { sessionId: string; privacyAckExternalV1: boolean }) {
+    start(input: { sessionId: string; privacyAckExternalV1: boolean; lang?: string }) {
       const cfg = deps.config()
       if (input.privacyAckExternalV1 !== true || cfg.sttEngine !== "external" || cfg.external.apiKey === "") {
         return { ok: false as const, code: "external_unconfigured" }
       }
-      if (active) {
-        cleanup(active)
-        active = null
-      }
-      const dir = mkdtempSync(join(tmpdir(), "cmspark-external-asr-"))
+      if (active) return { ok: false as const, code: "session_busy" }
+      const safe = input.sessionId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "s"
+      const dir = mkdtempSync(join(tmpdir(), `cmspark-external-asr-${safe}-`))
       const pcmPath = join(dir, "audio.pcm")
       active = {
         id: input.sessionId,
@@ -97,8 +104,10 @@ export function createExternalAsrSession(deps: ExternalAsrSessionDeps) {
         pcmBytes: 0,
         lastChunkAt: deps.now(),
         aborted: false,
+        stopped: false,
         posting: false,
         controller: null,
+        lang: input.lang,
       }
       return { ok: true as const }
     },
@@ -109,14 +118,33 @@ export function createExternalAsrSession(deps: ExternalAsrSessionDeps) {
       if (input.pcm.byteLength > CHUNK_MAX) {
         return { ok: false as const, code: "payload_too_large" }
       }
-      const bytes = Buffer.from(input.pcm.buffer, input.pcm.byteOffset, input.pcm.byteLength)
-      let offset = 0
-      while (offset < bytes.length) {
-        offset += writeSync(active.fd, bytes, offset, bytes.length - offset)
+      if (active.stopped) return { ok: true as const, stopped: true }
+      const budget = deps.config().external
+      const decision = externalStopDecision({
+        committedWavBytes: 44 + active.pcmBytes,
+        candidatePcmBytes: input.pcm.byteLength,
+        maxDurationMs: budget.maxDurationMs,
+        maxBytes: budget.maxBytes,
+      })
+      const keepPcm = Math.max(0, decision.keepBytes - 44)
+      if (keepPcm < active.pcmBytes) {
+        ftruncateSync(active.fd, keepPcm)
+        active.pcmBytes = keepPcm
+        active.stopped = true
+        return { ok: true as const, stopped: true }
       }
-      active.pcmBytes += bytes.length
-      active.lastChunkAt = deps.now()
-      return { ok: true as const }
+      const accept = keepPcm - active.pcmBytes
+      if (accept > 0) {
+        const bytes = Buffer.from(input.pcm.buffer, input.pcm.byteOffset, accept)
+        let offset = 0
+        while (offset < bytes.length) {
+          offset += writeSync(active.fd, bytes, offset, bytes.length - offset)
+        }
+        active.pcmBytes += accept
+        active.lastChunkAt = deps.now()
+      }
+      if (decision.reason !== "none") active.stopped = true
+      return { ok: true as const, ...(active.stopped ? { stopped: true as const } : {}) }
     },
     abort(sessionId: string) {
       if (!active || active.id !== sessionId) return { sent: false }
@@ -148,15 +176,26 @@ export function createExternalAsrSession(deps: ExternalAsrSessionDeps) {
         cleanup(state)
         return { ok: false as const, sent: false, code: "external_unconfigured" }
       }
-      const pcm = readFileSync(state.pcmPath)
+      if (cfg.external.style === "openai" && cfg.external.model.trim() === "") {
+        if (active?.id === sessionId) active = null
+        cleanup(state)
+        return { ok: false as const, sent: false, code: "external_unconfigured" }
+      }
+      const size = statSync(state.pcmPath).size
       const decision = externalStopDecision({
         committedWavBytes: 44,
-        candidatePcmBytes: pcm.length,
+        candidatePcmBytes: size,
         maxDurationMs: cfg.external.maxDurationMs,
         maxBytes: cfg.external.maxBytes,
       })
-      const keepPcm = Math.max(0, decision.keepBytes - 44)
-      const wav = wavBytes(pcm.subarray(0, keepPcm))
+      if (decision.keepBytes < 44 + size) {
+        if (active?.id === sessionId) active = null
+        cleanup(state)
+        return { ok: false as const, sent: false, code: "external_too_large" }
+      }
+      const pcm = (deps.readFile ?? readFileSync)(state.pcmPath)
+      const wav = wavBytes(pcm)
+      const language = primaryLanguage(state.lang)
       const controller = new AbortController()
       state.controller = controller
       state.posting = true
@@ -166,7 +205,9 @@ export function createExternalAsrSession(deps: ExternalAsrSessionDeps) {
           url: canon.url,
           apiKey: cfg.external.apiKey,
           wav,
-          ...(cfg.external.style === "openai" ? { model: cfg.external.model, language: "zh" } : {}),
+          ...(cfg.external.style === "openai"
+            ? { model: cfg.external.model.trim(), ...(language ? { language } : {}) }
+            : {}),
           timeoutMs: cfg.external.requestTimeoutMs,
           signal: controller.signal,
           fetchImpl: deps.fetchImpl,

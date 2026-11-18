@@ -270,7 +270,11 @@ export async function handleVoiceSttMessage(
             family: "voice.stt",
           })
         }
-        const started = externalSession().start({ sessionId, privacyAckExternalV1: true })
+        const started = externalSession().start({
+          sessionId,
+          privacyAckExternalV1: true,
+          lang: typeof rest.lang === "string" ? rest.lang : undefined,
+        })
         if (!started.ok) {
           return sttError(sessionId, started.code, "external STT is not ready", { family: "voice.stt" })
         }
