@@ -60,7 +60,7 @@ GitHub: #853
 - Modify: `chrome-extension/src/sidepanel/components/CapabilityProfileSection.tsx`
 - Test: `chrome-extension/tests/shell-provision-receipt.test.ts`
 
-- [ ] 按上面五条规则改显示关联。不改 Companion。
-- [ ] 重跑 `node --test .test-dist/tests/shell-provision-receipt.test.js`。新增断言变绿，原有用例仍绿。
+- [x] 按上面五条规则改显示关联。不改 Companion。
+- [x] 重跑 `node --test .test-dist/tests/shell-provision-receipt.test.js`。新增断言变绿，原有用例仍绿。
 
 节点 0 只提交 Task 1。Task 2 等独立对抗 gate 通过后再做。

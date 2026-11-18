@@ -35,7 +35,17 @@ export function CapabilityProfileSection() {
   const [busy, setBusy] = useState(false)
   const pendingProfile = useRef<{ id: string; to: CapabilityProfile } | null>(null)
   const retiredIds = useRef<Set<string>>(new Set())
+  const currentListId = useRef<string | null>(null)
   const timer = useRef<number | null>(null)
+
+  const retireListIds = () => {
+    currentListId.current = null
+  }
+  const issueList = () => {
+    const id = nextProfileSwitchId()
+    currentListId.current = id
+    chrome.runtime.sendMessage({ type: "modules.list", id })
+  }
 
   const shellEnabled = modules.shell?.enabled === true
   const netsecEnabled = modules.netsec?.enabled === true
@@ -60,7 +70,8 @@ export function CapabilityProfileSection() {
     clearTimer()
     setBusy(false)
     flash(message)
-    if (refresh) chrome.runtime.sendMessage({ type: "modules.list" })
+    retireListIds()
+    if (refresh) issueList()
   }
 
   const finishCurrent = (id: string) => {
@@ -69,21 +80,27 @@ export function CapabilityProfileSection() {
     pendingProfile.current = null
     clearTimer()
     setBusy(false)
+    retireListIds()
     return true
   }
 
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: "modules.list" })
+    issueList()
     const handler = (msg: any) => {
       if (msg?.type === "thread.mutation.connection" && msg.state !== "connected" && pendingProfile.current) {
         releaseAttempt(PROFILE_SWITCH_UNKNOWN, true)
         return
       }
       if (msg?.type === "modules.list") {
-        if (msg.modules) setModules(msg.modules)
-        if (typeof msg.capability_profile === "string") {
-          setProfile(msg.capability_profile === "enterprise" ? "enterprise" : "community")
+        const keyed = typeof msg.id === "string" && msg.id.length > 0
+        const usable = !pendingProfile.current && (!keyed || msg.id === currentListId.current)
+        if (usable) {
+          if (msg.modules) setModules(msg.modules)
+          if (typeof msg.capability_profile === "string") {
+            setProfile(msg.capability_profile === "enterprise" ? "enterprise" : "community")
+          }
         }
+        return
       }
       if (msg?.type === "modules.updated" && msg.capability_profile !== "community" && msg.capability_profile !== "enterprise") {
         if (msg.modules) setModules(msg.modules)
@@ -116,10 +133,12 @@ export function CapabilityProfileSection() {
       if (timer.current != null) clearTimeout(timer.current)
       if (pendingProfile.current) retiredIds.current.add(pendingProfile.current.id)
       pendingProfile.current = null
+      retireListIds()
     }
   }, [])
 
-  // idle: only modules.list moves the shown profile. pending: only this id may settle.
+  // Idle no-id lists still refresh. A keyed list applies only while it is the current id.
+  // Pending switches ignore every list. Starting, settling, failing, disconnecting, timing out, or unmounting retires older list ids.
   // success, failure, unknown, and unmount retire that id; a second click cannot start another attempt.
   const requestSwitch = (to: CapabilityProfile) => {
     if (pendingProfile.current) return
@@ -130,6 +149,7 @@ export function CapabilityProfileSection() {
     const frame = resolveProfileSwitchSend({ confirmed, from: profile, to })
     if (!frame || pendingProfile.current) return
     const id = nextProfileSwitchId()
+    retireListIds()
     pendingProfile.current = { id, to }
     setBusy(true)
     const acceptTransport = (response?: { ok?: boolean; error?: string }) => {
