@@ -120,6 +120,11 @@ test("rejects userinfo, query, fragment, public http, and link-local", () => {
     "https://api.deepseek.com/v1/tools/asr#a",
     "http://example.test/v1",
     "http://169.254.169.254/v1/tools/asr",
+    "https://169.254.169.254/v1/tools/asr",
+    "https://[fe80::1]/v1/tools/asr",
+    "https://0.0.0.0/v1/tools/asr",
+    "https://[::]/v1/tools/asr",
+    "https://224.0.0.1/v1/tools/asr",
     "file:///tmp/a",
   ]
   for (const raw of bad) assert.equal(canonicalExternalUrl("deepseek", raw).ok, false)
@@ -140,7 +145,7 @@ Run: `npm --prefix companion exec -- tsc -p tsconfig.test.json && node scripts/r
 
 - [ ] **Step 3: Write minimal implementation**
 
-`canonicalExternalUrl` 只做字符串与 `URL` 解析，不调用 `fetch`、不调用 `dns`。`https` 的解析地址检查留在 Task 4 的发送前，因为保存必须零网络。链路本地字面 IP 在这一步就拒绝。`http` 只允许 `localhost`、`127.0.0.0/8`、`::1`、RFC1918 与 `fc00::/7`。deepseek 路径规则与 openai 追加规则按 spec 第 5.2 节，禁止生成 `/v1/v1`。
+`canonicalExternalUrl` 只做字符串与 `URL` 解析，不调用 `fetch`、不调用 `dns`。保存必须零网络。字面地址属于 `169.254.0.0/16`、`fe80::/10`、`0.0.0.0/8`、未指定或组播时，`http` 和 `https` 都在这一步拒绝。`https://127.0.0.1` 与 `https://10.0.0.0/8` 这类回环和 RFC1918 字面地址仍可规范化。主机名的 DNS 留在 Task 4，不在保存时解析。`http` 只允许 `localhost`、`127.0.0.0/8`、`::1`、RFC1918 与 `fc00::/7`。deepseek 路径规则与 openai 追加规则按 spec 第 5.2 节，禁止生成 `/v1/v1`。
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -481,7 +486,7 @@ git commit -m "feat: store external ASR settings apart from the chat key"
 **Interfaces:**
 
 - Consumes: `ExternalAsrStyle`。
-- Produces: `transcribeExternal(req)`。`req` 的字段是 `style: "deepseek" | "openai"`、`url: string`、`apiKey: string`、`wav: Uint8Array`、`model?: string`、`language?: string`、`timeoutMs: number`、`signal: AbortSignal`、`fetchImpl`。`fetchImpl` 的第二个参数含 `method: "POST"`、`redirect: "error"`、`headers`、`body: FormData`、`signal`。
+- Produces: `transcribeExternal(req)`。`req` 的字段是 `style: "deepseek" | "openai"`、`url: string`、`apiKey: string`、`wav: Uint8Array`、`model?: string`、`language?: string`、`timeoutMs: number`、`signal: AbortSignal`、`fetchImpl`、`lookup`。`lookup` 是 `(hostname: string) => Promise<Array<{ address: string; family: 4 | 6 }>>`。`fetchImpl` 的第二个参数含 `method: "POST"`、`redirect: "error"`、`headers`、`body: FormData`、`signal`。
 
 - [ ] **Step 1: Write the failing test**
 
@@ -491,6 +496,7 @@ import test from "node:test"
 import { transcribeExternal } from "../src/voice/external-asr-client"
 
 const wav = Uint8Array.of(1, 2, 3, 4)
+const publicLookup = async () => [{ address: "1.1.1.1", family: 4 as const }]
 
 function formOf(body: FormData) {
   return {
@@ -511,7 +517,7 @@ test("deepseek sends only file and openai sends model, file, language, json", as
   }
   const deep = await transcribeExternal({
     style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
-    wav, timeoutMs: 180000, signal: new AbortController().signal, fetchImpl,
+    wav, timeoutMs: 180000, signal: new AbortController().signal, lookup: publicLookup, fetchImpl,
   })
   assert.equal(deep.ok && deep.text, "你好")
   assert.equal(seen[0].redirect, "error")
@@ -520,7 +526,7 @@ test("deepseek sends only file and openai sends model, file, language, json", as
   assert.equal(seen[0].fields.language, null)
   const open = await transcribeExternal({
     style: "openai", url: "https://api.openai.com/v1/audio/transcriptions", apiKey: "secret",
-    wav, model: "whisper-1", language: "zh", timeoutMs: 180000, signal: new AbortController().signal, fetchImpl,
+    wav, model: "whisper-1", language: "zh", timeoutMs: 180000, signal: new AbortController().signal, lookup: publicLookup, fetchImpl,
   })
   assert.equal(open.ok, true)
   assert.equal(seen[1].fields.model, "whisper-1")
@@ -539,7 +545,7 @@ test("redirect is not followed", async () => {
   }
   const got = await transcribeExternal({
     style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
-    wav, timeoutMs: 180000, signal: new AbortController().signal, fetchImpl,
+    wav, timeoutMs: 180000, signal: new AbortController().signal, lookup: publicLookup, fetchImpl,
   })
   assert.equal(calls, 1)
   assert.equal(got.ok, false)
@@ -556,14 +562,14 @@ test("abort before fetch sends nothing, and a late body is ignored", async () =>
   }
   const skipped = await transcribeExternal({
     style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
-    wav, timeoutMs: 180000, signal: early.signal, fetchImpl,
+    wav, timeoutMs: 180000, signal: early.signal, lookup: publicLookup, fetchImpl,
   })
   assert.equal(calls, 0)
   assert.equal(!skipped.ok && skipped.code, "aborted")
   const live = new AbortController()
   const pending = transcribeExternal({
     style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
-    wav, timeoutMs: 180000, signal: live.signal,
+    wav, timeoutMs: 180000, signal: live.signal, lookup: publicLookup,
     fetchImpl: (_url, init) => new Promise((resolve) => {
       calls += 1
       init.signal.addEventListener("abort", () => resolve({ status: 200, json: async () => ({ text: "late" }) }))
@@ -577,16 +583,71 @@ test("abort before fetch sends nothing, and a late body is ignored", async () =>
 test("non-json and empty text are not transcripts", async () => {
   const bad = await transcribeExternal({
     style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
-    wav, timeoutMs: 180000, signal: new AbortController().signal,
+    wav, timeoutMs: 180000, signal: new AbortController().signal, lookup: publicLookup,
     fetchImpl: async () => ({ status: 200, json: async () => { throw new Error("html") } }),
   })
   assert.equal(!bad.ok && bad.code, "external_bad_response")
   const empty = await transcribeExternal({
     style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
-    wav, timeoutMs: 180000, signal: new AbortController().signal,
+    wav, timeoutMs: 180000, signal: new AbortController().signal, lookup: publicLookup,
     fetchImpl: async () => ({ status: 200, json: async () => ({ text: "" }) }),
   })
   assert.equal(!empty.ok && empty.code, "external_empty")
+})
+
+test("lookup addresses in the blocked ranges send nothing", async () => {
+  const blocked = [
+    [{ address: "169.254.169.254", family: 4 }],
+    [{ address: "fe80::abcd", family: 6 }],
+    [{ address: "0.0.0.0", family: 4 }],
+    [{ address: "::", family: 6 }],
+    [{ address: "224.0.0.1", family: 4 }],
+    [{ address: "1.1.1.1", family: 4 }, { address: "169.254.169.254", family: 4 }],
+    [{ address: "2001:db8::1", family: 6 }, { address: "fe80::1", family: 6 }],
+  ]
+  for (const answers of blocked) {
+    let fetches = 0
+    let lookups = 0
+    const got = await transcribeExternal({
+      style: "openai", url: "https://asr.example.test/v1/audio/transcriptions", apiKey: "secret",
+      wav, timeoutMs: 180000, signal: new AbortController().signal,
+      lookup: async () => { lookups += 1; return answers },
+      fetchImpl: async () => { fetches += 1; return { status: 200, json: async () => ({ text: "x" }) } },
+    })
+    assert.equal(lookups, 1)
+    assert.equal(fetches, 0)
+    assert.equal(!got.ok && got.code, "external_unreachable")
+  }
+})
+
+test("dns failure sends nothing, and loopback or private answers may proceed", async () => {
+  let fetches = 0
+  const fail = await transcribeExternal({
+    style: "openai", url: "https://asr.example.test/v1/audio/transcriptions", apiKey: "secret",
+    wav, timeoutMs: 180000, signal: new AbortController().signal,
+    lookup: async () => { throw new Error("dns") },
+    fetchImpl: async () => { fetches += 1; return { status: 200, json: async () => ({ text: "x" }) } },
+  })
+  assert.equal(fetches, 0)
+  assert.equal(!fail.ok && fail.code, "external_unreachable")
+  const empty = await transcribeExternal({
+    style: "openai", url: "https://asr.example.test/v1/audio/transcriptions", apiKey: "secret",
+    wav, timeoutMs: 180000, signal: new AbortController().signal,
+    lookup: async () => [],
+    fetchImpl: async () => { fetches += 1; return { status: 200, json: async () => ({ text: "x" }) } },
+  })
+  assert.equal(fetches, 0)
+  assert.equal(!empty.ok && empty.code, "external_unreachable")
+  for (const address of ["127.0.0.1", "192.168.1.9", "10.1.2.3"]) {
+    const got = await transcribeExternal({
+      style: "openai", url: "https://asr.example.test/v1/audio/transcriptions", apiKey: "secret",
+      wav, timeoutMs: 180000, signal: new AbortController().signal,
+      lookup: async () => [{ address, family: 4 }],
+      fetchImpl: async () => { fetches += 1; return { status: 200, json: async () => ({ text: "ok" }) } },
+    })
+    assert.equal(got.ok && got.text, "ok")
+  }
+  assert.equal(fetches, 3)
 })
 ```
 
@@ -598,7 +659,7 @@ Expected: FAIL，函数不存在。
 
 - [ ] **Step 3: Write minimal implementation**
 
-`fetchImpl` 默认是全局 `fetch`，但测试必须注入。`redirect: "error"`。超时用 `AbortSignal.any` 组合调用方信号与 `AbortSignal.timeout(timeoutMs)`。解析 JSON 前若信号已 abort，直接返回 `aborted`。不要读取 `config.llm`。
+`fetchImpl` 与 `lookup` 都必须能注入。未注入的 `lookup` 用一次 `dns.lookup(hostname, { all: true })`，测试不得依赖真实 DNS。主机名在调用 `fetchImpl` 之前先 `lookup` 一次。结果为空、抛错，或任一 `address` 属于 `169.254.0.0/16`、`fe80::/10`、`0.0.0.0/8`、未指定或组播，就返回 `external_unreachable`，并且 `fetchImpl` 次数为 0。回环和 RFC1918 的结果允许继续这一次 POST。字面 IP 不再解析。不要把查到的地址写进连接选项，也不要在注释或错误文案里说这次检查消除了 DNS 重绑定。`redirect: "error"`。超时用 `AbortSignal.any` 组合调用方信号与 `AbortSignal.timeout(timeoutMs)`。调用 `lookup` 之前若 `signal` 已经 abort，直接返回 `aborted`，不再解析、也不调用 `fetchImpl`。响应到达后若信号已 abort，丢弃正文并返回 `aborted`。不要读取 `config.llm`。
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -949,6 +1010,7 @@ git commit -m "docs: describe external chat transcription limits"
 | Task 3 空密钥 `set_engine` | 写成 external |
 | Task 4 abort 后再到的 text | 插入迟到文字 |
 | Task 4 3xx | 第二次带 Bearer 的请求 |
+| Task 4 解析结果含受限地址、空结果或抛错 | `fetchImpl` 仍被调用 |
 | Task 5 `end` 前 abort | `fetch` 次数不为 0 |
 | Task 5 15 秒无块 | 把残段发出去 |
 | Task 5 3840044 字节 | 被 2500000 或 45 秒拒绝 |
@@ -970,5 +1032,6 @@ Task 1–7 不实施这一节，也不在用户机器上测量。它与 spec 第
 - 计划中的类型名在各任务间一致：`canonicalExternalUrl`、`validateExternalBudget`、`externalStopDecision({ committedWavBytes, candidatePcmBytes, maxDurationMs, maxBytes })`、`reduceExternalConfig`、`externalStateView`、`transcribeExternal`、`createExternalAsrSession`、`meetingExternalRefusal`、`ExternalLimitNote`。
 - 会议测试文件固定为 `companion/tests/voice-external-asr-meeting.test.ts`，与 Task 5 的命令一致。
 - 第 12 节与本计划文末的本地优化都不在 Task 1–7。
+- Task 4 的 `lookup` 只决定发不发这一次 POST。它不把套接字绑到解析地址，文档不把这次检查写成 DNS 重绑定已消除。
 - 没有待定步骤。节点 0 不实现上表。
 - 32 MiB 只出现为可见的保存上限，不出现为静默截断或服务商能力。
