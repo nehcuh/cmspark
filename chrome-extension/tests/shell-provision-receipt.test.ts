@@ -222,6 +222,7 @@ function mountSurfaces() {
     runtimeFailure(message: string) { runtimeError = { message }; transport = () => undefined },
     acceptSend() { runtimeError = undefined; transport = () => ({ ok: true }); holdTransport = false },
     profileSends() { return sent.filter(message => message?.type === "modules.set_profile") },
+    listSends() { return sent.filter(message => message?.type === "modules.list") },
     hold() { holdTransport = true },
     replayCallback(response?: any) { lastCallback?.(response) },
     doubleClick() {
@@ -414,6 +415,149 @@ test("enterprise netsec receipts keep shell provided and do not settle a profile
   } finally {
     router.cleanup()
   }
+})
+
+function listReceipt(request: { type?: string; id?: unknown }, profile: "enterprise" | "community") {
+  assert.equal(request?.type, "modules.list")
+  const receipt: Record<string, unknown> = {
+    type: "modules.list",
+    capability_profile: profile,
+    modules: profile === "enterprise" ? { shell: { available: true, enabled: true } } : {},
+    shell_provision: profile === "enterprise" ? "provided" : "community",
+  }
+  // lifecycle echoes `id: msg?.id`. JSON drops a missing id, so the delivered
+  // receipt carries an id only when this component actually sent one.
+  if (typeof request.id === "string") receipt.id = request.id
+  return receipt
+}
+
+function profileLabel(ui: ReturnType<typeof mountSurfaces>) {
+  const text = ui.profile()
+  if (text.includes("当前：enterprise")) return "enterprise"
+  if (text.includes("当前：community")) return "community"
+  throw new Error("profile label missing")
+}
+
+test("#853 replaying the list this component actually sent cannot cover a settled profile", () => {
+  const ui = mountSurfaces()
+  const mountList = ui.listSends().at(-1)
+  assert.ok(mountList, "mount must send modules.list")
+  ui.deliver(listReceipt(mountList, "community"))
+  const pending = ui.confirmSwitch()
+  ui.deliver({
+    type: "modules.updated",
+    id: pending.id,
+    capability_profile: "enterprise",
+    shell_provision: "provided",
+    modules: { shell: { available: true, enabled: true } },
+    modules_disabled: [],
+  })
+  assert.equal(profileLabel(ui), "enterprise")
+  ui.deliver(listReceipt(mountList, "community"))
+  assert.equal(profileLabel(ui), "enterprise", "the echoed mount list must not restore community after the matching receipt")
+})
+
+test("#853 no list settles a pending switch; the matching profile result still does", () => {
+  const ui = mountSurfaces()
+  const mountList = ui.listSends().at(-1)
+  assert.ok(mountList)
+  ui.deliver(listReceipt(mountList, "community"))
+  const pending = ui.confirmSwitch()
+  ui.deliver(listReceipt(mountList, "enterprise"))
+  assert.equal(ui.switchButton().props.disabled, true)
+  assert.equal(profileLabel(ui), "community", "the component's own in-flight list must not paint the target profile before its receipt")
+  ui.deliver({
+    type: "modules.profile.result",
+    id: pending.id,
+    capability_profile: "enterprise",
+    shell_provision: "provided",
+    modules: { shell: { available: true, enabled: true } },
+    modules_disabled: [],
+  })
+  assert.equal(profileLabel(ui), "enterprise")
+})
+
+test("#853 disconnect issues a newer list and retires the earlier one", () => {
+  const disconnected = mountSurfaces()
+  const first = disconnected.listSends().at(-1)
+  assert.ok(first)
+  disconnected.deliver(listReceipt(first, "community"))
+  const pending = disconnected.confirmSwitch()
+  const before = disconnected.listSends().length
+  disconnected.deliver({ type: "thread.mutation.connection", state: "disconnected" })
+  const afterDisconnect = disconnected.listSends()
+  assert.equal(afterDisconnect.length, before + 1, "disconnect must ask for a fresh modules.list")
+  const refresh = afterDisconnect.at(-1)
+  assert.ok(refresh)
+  assert.ok(refresh !== first)
+  disconnected.deliver(listReceipt(refresh, "enterprise"))
+  assert.equal(profileLabel(disconnected), "enterprise")
+  disconnected.deliver(listReceipt(first, "community"))
+  assert.equal(profileLabel(disconnected), "enterprise", "the list sent before disconnect must not replace the post-disconnect list")
+  disconnected.deliver({
+    type: "modules.updated",
+    id: pending.id,
+    capability_profile: "community",
+    shell_provision: "community",
+    modules: {},
+  })
+  assert.equal(profileLabel(disconnected), "enterprise")
+})
+
+test("#853 the 15s timeout issues a newer list and retires the earlier one", () => {
+  const timed = mountSurfaces()
+  const timedFirst = timed.listSends().at(-1)
+  assert.ok(timedFirst)
+  timed.deliver(listReceipt(timedFirst, "community"))
+  const timedSwitch = timed.confirmSwitch()
+  const timedBefore = timed.listSends().length
+  assert.equal(timed.expireSwitch(), true)
+  const timedAfter = timed.listSends()
+  assert.equal(timedAfter.length, timedBefore + 1, "the 15s unknown timeout must ask for a fresh modules.list")
+  const timedRefresh = timedAfter.at(-1)
+  assert.ok(timedRefresh)
+  timed.deliver(listReceipt(timedRefresh, "enterprise"))
+  assert.equal(profileLabel(timed), "enterprise")
+  timed.deliver(listReceipt(timedFirst, "community"))
+  assert.equal(profileLabel(timed), "enterprise", "the list sent before the timeout must not replace the timeout refresh")
+  timed.deliver({
+    type: "modules.profile.result",
+    id: timedSwitch.id,
+    capability_profile: "community",
+    shell_provision: "community",
+    modules: {},
+  })
+  assert.equal(profileLabel(timed), "enterprise")
+})
+
+test("#853 a failed switch sends no new list and a retired switch id cannot move the profile", () => {
+  const ui = mountSurfaces()
+  const mountList = ui.listSends().at(-1)
+  assert.ok(mountList)
+  ui.deliver(listReceipt(mountList, "community"))
+  const pending = ui.confirmSwitch()
+  const lists = ui.listSends().length
+  ui.deliver({ type: "error", id: pending.id, error: "PROFILE_STATE_INVALID" })
+  assert.equal(ui.listSends().length, lists, "failure must not send another modules.list")
+  assert.equal(profileLabel(ui), "community")
+  ui.deliver({
+    type: "modules.updated",
+    id: pending.id,
+    capability_profile: "enterprise",
+    shell_provision: "provided",
+    modules: { shell: { available: true, enabled: true } },
+  })
+  assert.equal(profileLabel(ui), "community")
+  ui.deliver(listReceipt(mountList, "enterprise"))
+  assert.equal(profileLabel(ui), "community", "the list sent before the failed switch must not paint enterprise")
+})
+
+test("#853 an idle modules.list with no id still paints a legitimate refresh", () => {
+  const ui = mountSurfaces()
+  ui.deliver({ type: "modules.list", capability_profile: "community", modules: {}, shell_provision: "community" })
+  assert.equal(profileLabel(ui), "community")
+  ui.deliver({ type: "modules.list", capability_profile: "enterprise", modules: { shell: { available: true, enabled: true } }, shell_provision: "provided" })
+  assert.equal(profileLabel(ui), "enterprise")
 })
 
 test("profile switch state machine settles only the current attempt", () => {
