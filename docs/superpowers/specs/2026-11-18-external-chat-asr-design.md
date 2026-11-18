@@ -243,7 +243,7 @@ POST 开始之后取消：对同一个 `AbortSignal` 调用 abort。忽略之后
 | `external_timeout` | 客户端 `requestTimeoutMs` 到点，或 HTTP 408 / 504。不自动重试 |
 | `external_unavailable` | HTTP 500、502、503 |
 | `external_redirect` | 3xx |
-| `external_unreachable` | 主机名解析失败、没有地址、任一结果被第 5.3 节拒绝，或连接失败。此时还没有 POST |
+| `external_unreachable` | 两类要分开。解析失败、没有地址，或任一结果被第 5.3 节拒绝：还没有调用 `fetch`。连接失败：`fetch` 已经调用，请求是否到达对方不能从失败本身断定，不能写成「没有 POST」 |
 | `external_bad_response` | 响应不是带字符串 `text` 的 JSON 对象 |
 | `external_empty` | `text` 为空字符串 |
 | `aborted` | 用户取消、断线、关闭或切换引擎。是否已发送音频由第 6.2 节的两句文案区分 |
@@ -327,7 +327,7 @@ Companion 不信任扩展已经展示过文字，所以 `start` 和 `set_engine`
 
 ## 12. 后续本地识别优化（非本 PR）
 
-这一节只记录以后可以单独开的计划。当前不授权改本地识别代码，也不授权在用户机器上跑 benchmark。
+这一节只记录以后可以单独开的计划。当前不授权改本地识别代码，也不授权在用户机器上跑 benchmark。它的完成若形成可交付里程碑，也要等独立评审、全量 CI 和合并之后再由主对话发布；文档或半成品不单独发版。#860 在外部转写实现被验收前保持打开。
 
 已知代码事实，不是原因结论：本机转写调用 `whisper-cli` 时带 `-ng`，线程被压在 2 到 6（`companion/src/voice/whisper-runner.ts` 54–86 行）。`modelPrewarm` 默认关闭（`companion/src/config.ts` 第 213 行）。所谓流式是隔一段时间把已有音频再解一遍（`session-caps.ts` 18–20 行）。这些事实不能说明用户这台机器慢或准的原因。
 

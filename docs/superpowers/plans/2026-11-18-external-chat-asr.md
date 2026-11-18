@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - 基线 `55f82f93434b4d1dc6edf69412b16cbbdf923434`。实现 PR 写 `Refs #860`，不关闭该票，直到行为合并。
-- 本轮不改 `package.json` 版本、不打 tag、不发 Release、不改 CHANGELOG 的版本标题。
+- 文档节点和未合并的中间节点不改 `package.json` 版本、不打 tag、不发 Release、不改 CHANGELOG 的版本标题。功能完整、独立评审与全量 CI 通过并合并之后，由主对话按标准流程准备发布。执行者不自行 merge、tag 或 release。
 - 只做聊天输入。`browser` / `local` / `system` 的 45 秒、10 秒块间隔、90 秒推理、2_500_000 字节和侧栏 95 秒等待保持原样。
 - 外部不读取 `STT_MAX_RECORD_MS`、`STT_MAX_SESSION_BYTES`、`STT_INFER_MAX_MS`、`LOCAL_STT_PENDING_TIMEOUT_MS` 来截断或拒绝。
 - DeepSeek：`maxDurationMs` 最高 120000，`maxBytes` 最高 8388608。出厂即这两个数。
@@ -552,32 +552,91 @@ test("redirect is not followed", async () => {
   assert.equal(!got.ok && got.code, "external_redirect")
 })
 
-test("abort before fetch sends nothing, and a late body is ignored", async () => {
+test("abort before the call does not fetch", async () => {
   let calls = 0
   const early = new AbortController()
   early.abort()
-  const fetchImpl = async () => {
-    calls += 1
-    return { status: 200, json: async () => ({ text: "late" }) }
-  }
   const skipped = await transcribeExternal({
     style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
-    wav, timeoutMs: 180000, signal: early.signal, lookup: publicLookup, fetchImpl,
+    wav, timeoutMs: 180000, signal: early.signal, lookup: publicLookup,
+    fetchImpl: async () => {
+      calls += 1
+      return { status: 200, json: async () => ({ text: "late" }) }
+    },
   })
   assert.equal(calls, 0)
   assert.equal(!skipped.ok && skipped.code, "aborted")
+})
+
+test("abort while lookup is pending does not fetch", async () => {
+  let fetches = 0
   const live = new AbortController()
-  const pending = transcribeExternal({
-    style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
-    wav, timeoutMs: 180000, signal: live.signal, lookup: publicLookup,
-    fetchImpl: (_url, init) => new Promise((resolve) => {
-      calls += 1
-      init.signal.addEventListener("abort", () => resolve({ status: 200, json: async () => ({ text: "late" }) }))
-    }),
+  let releaseLookup: (rows: Array<{ address: string; family: 4 }>) => void = () => {}
+  let markLookup: () => void = () => {}
+  const lookupStarted = new Promise<void>((resolve) => { markLookup = resolve })
+  let timer: NodeJS.Timeout | undefined
+  const withinOneSecond = <T,>(work: Promise<T>) => new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("abort test hung")), 1000)
+    work.then(resolve, reject)
   })
-  live.abort()
-  const late = await pending
-  assert.equal(!late.ok && late.code, "aborted")
+  try {
+    const pending = transcribeExternal({
+      style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
+      wav, timeoutMs: 180000, signal: live.signal,
+      lookup: () => {
+        markLookup()
+        return new Promise((resolve) => { releaseLookup = resolve })
+      },
+      fetchImpl: async () => {
+        fetches += 1
+        return { status: 200, json: async () => ({ text: "late" }) }
+      },
+    })
+    await withinOneSecond(lookupStarted)
+    live.abort()
+    releaseLookup([{ address: "1.1.1.1", family: 4 }])
+    const got = await withinOneSecond(pending)
+    assert.equal(fetches, 0)
+    assert.equal(!got.ok && got.code, "aborted")
+    assert.equal("text" in got, false)
+  } finally {
+    clearTimeout(timer)
+  }
+})
+
+test("abort after fetch registers its listener drops late text", async () => {
+  let fetches = 0
+  const live = new AbortController()
+  let markStarted: () => void = () => {}
+  const started = new Promise<void>((resolve) => { markStarted = resolve })
+  let timer: NodeJS.Timeout | undefined
+  const withinOneSecond = <T,>(work: Promise<T>) => new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("abort test hung")), 1000)
+    work.then(resolve, reject)
+  })
+  try {
+    const pending = transcribeExternal({
+      style: "deepseek", url: "https://api.deepseek.com/v1/tools/asr", apiKey: "secret",
+      wav, timeoutMs: 180000, signal: live.signal, lookup: publicLookup,
+      fetchImpl: (_url, init) => new Promise((resolve) => {
+        fetches += 1
+        const onAbort = () => {
+          init.signal.removeEventListener("abort", onAbort)
+          resolve({ status: 200, json: async () => ({ text: "late" }) })
+        }
+        init.signal.addEventListener("abort", onAbort)
+        markStarted()
+      }),
+    })
+    await withinOneSecond(started)
+    assert.equal(fetches, 1)
+    live.abort()
+    const got = await withinOneSecond(pending)
+    assert.equal(!got.ok && got.code, "aborted")
+    assert.equal("text" in got, false)
+  } finally {
+    clearTimeout(timer)
+  }
 })
 
 test("non-json and empty text are not transcripts", async () => {
@@ -659,7 +718,7 @@ Expected: FAIL，函数不存在。
 
 - [ ] **Step 3: Write minimal implementation**
 
-`fetchImpl` 与 `lookup` 都必须能注入。未注入的 `lookup` 用一次 `dns.lookup(hostname, { all: true })`，测试不得依赖真实 DNS。主机名在调用 `fetchImpl` 之前先 `lookup` 一次。结果为空、抛错，或任一 `address` 属于 `169.254.0.0/16`、`fe80::/10`、`0.0.0.0/8`、未指定或组播，就返回 `external_unreachable`，并且 `fetchImpl` 次数为 0。回环和 RFC1918 的结果允许继续这一次 POST。字面 IP 不再解析。不要把查到的地址写进连接选项，也不要在注释或错误文案里说这次检查消除了 DNS 重绑定。`redirect: "error"`。超时用 `AbortSignal.any` 组合调用方信号与 `AbortSignal.timeout(timeoutMs)`。调用 `lookup` 之前若 `signal` 已经 abort，直接返回 `aborted`，不再解析、也不调用 `fetchImpl`。响应到达后若信号已 abort，丢弃正文并返回 `aborted`。不要读取 `config.llm`。
+`fetchImpl` 与 `lookup` 都必须能注入。未注入的 `lookup` 用一次 `dns.lookup(hostname, { all: true })`，测试不得依赖真实 DNS。主机名在调用 `fetchImpl` 之前先 `lookup` 一次。结果为空、抛错，或任一 `address` 属于 `169.254.0.0/16`、`fe80::/10`、`0.0.0.0/8`、未指定或组播，就返回 `external_unreachable`，并且 `fetchImpl` 次数为 0。回环和 RFC1918 的结果允许继续这一次 POST。字面 IP 不再解析。不要把查到的地址写进连接选项，也不要在注释或错误文案里说这次检查消除了 DNS 重绑定。`redirect: "error"`。超时用 `AbortSignal.any` 组合调用方信号与 `AbortSignal.timeout(timeoutMs)`。调用 `lookup` 之前若 `signal.aborted`，返回 `aborted`，不调用 `fetchImpl`。`await lookup` 返回后必须再读一次 `signal.aborted`；为真则返回 `aborted`，`fetchImpl` 次数为 0。只有这次复查仍未取消，才调用 `fetchImpl`。`fetchImpl` 同步段注册 abort listener 之后再发生的 abort，即使随后 resolve `{ text: "late" }`，结果也必须是 `aborted`，并且成功结果里没有 `text`。`finally` 停掉这次 `AbortSignal.timeout`，并移除本次 listener；函数已经返回之后，迟到的 resolve 不能改成成功。不要读取 `config.llm`。
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -998,7 +1057,7 @@ git commit -m "docs: describe external chat transcription limits"
 
 - [ ] **Step 4: 节点 3 门禁**
 
-推送后看该 SHA 的四条 workflow、十项检查。未全绿不请求合并。不因为无关失败重跑。不打 tag，不发 Release。合并由主对话执行。
+推送后看该 SHA 的四条 workflow、十项检查。未全绿不请求合并。不因为无关失败重跑。合并由主对话执行。节点 0、1、2 和未合并的实现都不发版。外部聊天转写在独立评审与这十项检查通过并合并之后，主对话再按标准流程准备版本和发布。执行者仍不自行 merge、tag 或 release。#860 保持打开，直到该实现被验收；有证据的其它已完成票可以关闭，不能用文档节点代替验收。
 
 ## 安全与取消矩阵
 
