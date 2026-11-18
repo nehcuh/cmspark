@@ -39,7 +39,7 @@ import {
   resolveSystemEngineSelection,
   shouldEscalateBrowserToSystem,
 } from "../voice/stt-engine-chain"
-import { externalCancelCopy, externalCapCopy, externalRecordCap, externalShouldRefine } from "../voice/external-asr-ui"
+import { externalCancelCopy, externalRecordCap, externalShouldRefine, externalStopNotice } from "../voice/external-asr-ui"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 
 function newSessionId(): string {
@@ -737,6 +737,11 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             return
           }
         }
+      } else if (eng === "external") {
+        if (!o.companionConnected) {
+          dispatchEv({ type: "ENGINE_ERROR", code: "companion_disconnected" })
+          return
+        }
       } else {
         const privacyOk = extra?.privacyAck === true || o.privacyAck
         if (!privacyOk) {
@@ -903,7 +908,12 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
           if (engineRef.current === "external") {
             dispatchEv({
               type: "SOFT_CAP_HINT",
-              message: externalCapCopy(externalCap.reason),
+              message: externalStopNotice({
+                committedWavBytes: 44,
+                candidatePcmBytes: Math.floor((maxMs * 16_000) / 1000) * 2,
+                maxDurationMs: o.externalMaxDurationMs ?? null,
+                maxBytes: typeof o.externalMaxBytes === "number" ? o.externalMaxBytes : 8_388_608,
+              }),
             })
             stopEngine("stop")
           } else if (engineRef.current === "local" || engineRef.current === "system") {

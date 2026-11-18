@@ -2033,13 +2033,15 @@ export function SettingsSlideout() {
                             placeholder="留空使用该接口的默认地址"
                           />
                         </label>
-                        <label style={{ display: "grid", gap: 4 }}>
-                          模型
-                          <input
-                            value={externalModelDraft ?? externalView?.model ?? "whisper-1"}
-                            onChange={(e) => setExternalModelDraft(e.target.value)}
-                          />
-                        </label>
+                        {(externalStyleDraft ?? externalView?.style ?? "deepseek") === "openai" ? (
+                          <label style={{ display: "grid", gap: 4 }}>
+                            模型
+                            <input
+                              value={externalModelDraft ?? externalView?.model ?? "whisper-1"}
+                              onChange={(e) => setExternalModelDraft(e.target.value)}
+                            />
+                          </label>
+                        ) : null}
                         <label style={{ display: "grid", gap: 4 }}>
                           密钥
                           <input
@@ -2064,7 +2066,9 @@ export function SettingsSlideout() {
                               type: "voice.external.set",
                               style,
                               baseUrl: externalBaseDraft ?? externalView?.baseUrl ?? "",
-                              model: externalModelDraft ?? externalView?.model ?? "whisper-1",
+                              ...(style === "openai"
+                                ? { model: externalModelDraft ?? externalView?.model ?? "whisper-1" }
+                                : {}),
                               ...(externalKeyDraft ? { apiKey: externalKeyDraft } : {}),
                             }, { onOk: () => setExternalKeyDraft("") })
                           }}

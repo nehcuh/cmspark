@@ -1,5 +1,5 @@
 export type ExternalLimitNote = "deepseek-docs" | "openai-file-cap" | "unprobed-local-default"
-export type ExternalCapReason = "duration" | "bytes"
+export type ExternalCapReason = "duration" | "bytes" | "both"
 
 const LIMIT_COPY: Record<ExternalLimitNote, string> = {
   "deepseek-docs": "DeepSeek 官方上限是 120 秒和 8 MiB。到点后转写已录的这一段。",
@@ -28,9 +28,43 @@ export function externalCancelCopy(sent: boolean): string {
 }
 
 export function externalCapCopy(reason: ExternalCapReason): string {
-  return reason === "bytes"
-    ? "已到文件大小上限。正在转写已录的这一段。"
-    : "已到录音时长上限。正在转写已录的这一段。"
+  const lines: string[] = []
+  if (reason === "duration" || reason === "both") lines.push("已到录音时长上限。")
+  if (reason === "bytes" || reason === "both") lines.push("已到文件大小上限。")
+  lines.push("正在转写已录的这一段。")
+  return lines.join("")
+}
+
+function pcmCapForDuration(ms: number): number {
+  return Math.floor((ms * 16_000) / 1000) * 2
+}
+
+function pcmCapForBytes(maxBytes: number): number {
+  const room = Math.max(0, maxBytes - 44)
+  return room - (room % 2)
+}
+
+/** Visible stop copy for one candidate chunk. Reaching a cap counts; both lines show together. */
+export function externalStopNotice(args: {
+  committedWavBytes: number
+  candidatePcmBytes: number
+  maxDurationMs: number | null
+  maxBytes: number
+}): string {
+  const committed = Math.max(0, args.committedWavBytes - 44)
+  const aligned = committed - (committed % 2)
+  const candidate = Math.max(0, args.candidatePcmBytes - (args.candidatePcmBytes % 2))
+  const next = aligned + candidate
+  const durationPcm = args.maxDurationMs == null ? null : pcmCapForDuration(args.maxDurationMs)
+  const bytePcm = pcmCapForBytes(args.maxBytes)
+  const hit = (cap: number | null) => cap != null && candidate > 0 && next >= cap
+  const duration = hit(durationPcm)
+  const bytes = hit(bytePcm)
+  if (duration && bytes) return externalCapCopy("both")
+  if (duration) return externalCapCopy("duration")
+  if (bytes) return externalCapCopy("bytes")
+  if (durationPcm != null && (bytePcm <= 0 || durationPcm <= bytePcm)) return externalCapCopy("duration")
+  return externalCapCopy("bytes")
 }
 
 export function externalLanguageTag(lang: string): string {
