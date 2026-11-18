@@ -45,6 +45,17 @@ export function redactConfigForWire(config: any): any {
     }
   }
 
+  if (config.voice && typeof config.voice === "object") {
+    const voice = { ...config.voice }
+    if (voice.external && typeof voice.external === "object") {
+      voice.external = {
+        ...voice.external,
+        apiKey: voice.external.apiKey ? "***" : "",
+      }
+    }
+    redacted.voice = voice
+  }
+
   if (config.mcp && typeof config.mcp === "object") {
     const serversIn = config.mcp.servers
     if (serversIn && typeof serversIn === "object") {

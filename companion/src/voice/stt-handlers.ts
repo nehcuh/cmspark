@@ -7,6 +7,8 @@
 //   - Never log audio base64 or full transcript
 
 import { DATA_DIR, getConfig } from "../config"
+import { defaultVoiceExternal } from "./external-asr-config"
+import { createExternalAsrSession } from "./external-asr-session"
 import { logger } from "../logger"
 import {
   getSttSessionService,
@@ -135,8 +137,35 @@ function resolveService(deps: VoiceSttHandlerDeps): SttSessionService {
 }
 
 /** Test seam: reset singleton (delegates to session-service). */
+type ExternalAsrSession = ReturnType<typeof createExternalAsrSession>
+
+let externalSessionSingleton: ExternalAsrSession | null = null
+
+function externalConfig() {
+  const voice = getConfig().voice
+  return {
+    sttEngine: voice?.sttEngine ?? "browser",
+    external: voice?.external ?? defaultVoiceExternal(),
+  }
+}
+
+function externalSession(): ExternalAsrSession {
+  if (!externalSessionSingleton) {
+    externalSessionSingleton = createExternalAsrSession({
+      now: () => Date.now(),
+      config: externalConfig,
+    })
+  }
+  return externalSessionSingleton
+}
+
+export function _setExternalAsrSessionForTests(session: ExternalAsrSession | null): void {
+  externalSessionSingleton = session
+}
+
 export function _resetVoiceSttHandlersForTests(): void {
   resetSttSessionServiceForTests()
+  externalSessionSingleton = null
 }
 
 /** Build a service for tests (or production init with custom deps). */
@@ -225,6 +254,33 @@ export async function handleVoiceSttMessage(
 
       if (typeof sessionId !== "string" || !sessionId) {
         return sttError(undefined, "invalid_session_id", "sessionId required")
+      }
+
+      if (rest.engine === "external") {
+        const saved = getConfig().voice?.sttEngine
+        if (saved !== "external") {
+          logger.warn("voice.stt.start.refused", { reason: "external_unconfigured", sttEngine: saved })
+          return sttError(sessionId, "external_unconfigured", "external STT requires voice.sttEngine=external", {
+            family: "voice.stt",
+          })
+        }
+        if (rest.privacy_ack_external_v1 !== true) {
+          logger.warn("voice.stt.start.refused", { reason: "need_privacy_ack_external" })
+          return sttError(sessionId, "need_privacy_ack", "privacy_ack_external_v1 required before external STT", {
+            family: "voice.stt",
+          })
+        }
+        const started = externalSession().start({
+          sessionId,
+          privacyAckExternalV1: true,
+          lang: typeof rest.lang === "string" ? rest.lang : undefined,
+        })
+        if (!started.ok) {
+          return sttError(sessionId, started.code, "external STT is not ready", { family: "voice.stt" })
+        }
+        const partial = sttPartial(sessionId, "receiving")
+        ctx.send?.(partial)
+        return partial
       }
 
       // #259: engine:"system" = per-session Windows SAPI fallback. Win32 +
@@ -347,6 +403,14 @@ export async function handleVoiceSttMessage(
         return sttError(sessionId, "payload_too_large", "invalid base64 data")
       }
 
+      if (externalSession().owns(sessionId)) {
+        const accepted = externalSession().chunk({ sessionId, seq: seq as number, pcm: buf })
+        if (!accepted.ok) {
+          return sttError(sessionId, accepted.code, "external chunk rejected")
+        }
+        return undefined
+      }
+
       const r = service.chunk(sessionId, seq as number, buf, peerId)
       if (!r.ok) {
         logger.info("voice.stt.chunk.rejected", {
@@ -365,6 +429,10 @@ export async function handleVoiceSttMessage(
       // M2: progressive hypothesis re-decode (not decoder token stream)
       if (typeof sessionId !== "string" || !sessionId) {
         return sttError(undefined, "invalid_session_id", "sessionId required")
+      }
+      if (externalSession().owns(sessionId)) {
+        externalSession().partialRequest(sessionId)
+        return sttPartial(sessionId, "hypothesis", "")
       }
       const r = await service.partial(sessionId, peerId)
       if (!r.ok) {
@@ -398,6 +466,17 @@ export async function handleVoiceSttMessage(
     case "voice.stt.end": {
       if (typeof sessionId !== "string" || !sessionId) {
         return sttError(undefined, "invalid_session_id", "sessionId required")
+      }
+      if (externalSession().owns(sessionId)) {
+        const ended = await externalSession().end(sessionId)
+        if (!ended.ok) {
+          return sttError(sessionId, ended.code, ended.code === "aborted" ? "session aborted" : "external transcription failed")
+        }
+        if (!ended.text.trim()) {
+          return sttError(sessionId, "empty_result", "empty transcription")
+        }
+        logger.info("voice.stt.end.ok", { sessionId, textLen: ended.text.length, engine: "external" })
+        return sttResult(sessionId, ended.text, undefined, undefined)
       }
       const totalSeq = rest.totalSeq
       if (!Number.isInteger(totalSeq) || (totalSeq as number) < 0) {
@@ -437,6 +516,10 @@ export async function handleVoiceSttMessage(
     case "voice.stt.abort": {
       if (typeof sessionId !== "string" || !sessionId) {
         return sttError(undefined, "invalid_session_id", "sessionId required")
+      }
+      if (externalSession().owns(sessionId)) {
+        externalSession().abort(sessionId)
+        return sttError(sessionId, "aborted", "session aborted")
       }
       const r = service.abort(sessionId, peerId)
       if (!r.ok) {

@@ -651,8 +651,14 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.source !== "settings") {
         return { valid: false, error: 'voice.model.set_engine requires source:"settings" (settings-page only)' }
       }
-      if (m.engine !== "browser" && m.engine !== "local" && m.engine !== "system") {
-        return { valid: false, error: 'voice.model.set_engine requires engine:"browser"|"local"|"system"' }
+      if (m.engine !== "browser" && m.engine !== "local" && m.engine !== "system" && m.engine !== "external") {
+        return { valid: false, error: 'voice.model.set_engine requires engine:"browser"|"local"|"system"|"external"' }
+      }
+      return { valid: true }
+    },
+    "voice.external.set": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.external.set requires source:"settings" (settings-page only)' }
       }
       return { valid: true }
     },
@@ -713,10 +719,14 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       // #259: engine, when present, must be "system" (per-session SAPI
       // fallback); "system" makes modelId optional (no whisper model involved).
-      if (m.engine !== undefined && m.engine !== "system") {
-        return { valid: false, error: 'voice.stt.start engine must be "system" when present' }
+      if (m.engine !== undefined && m.engine !== "system" && m.engine !== "external") {
+        return { valid: false, error: 'voice.stt.start engine must be "system" or "external" when present' }
       }
-      if (m.engine === "system") {
+      if (m.engine === "external") {
+        if (m.privacy_ack_external_v1 !== true) {
+          return { valid: false, error: "voice.stt.start requires privacy_ack_external_v1:true" }
+        }
+      } else if (m.engine === "system") {
         if (m.modelId !== undefined && (typeof m.modelId !== "string" || m.modelId.length > 64)) {
           return { valid: false, error: "voice.stt.start modelId must be a short string for system sessions" }
         }
@@ -736,12 +746,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
         return { valid: false, error: "voice.stt.start lang must be a string when present" }
       }
       if (m.maxMs !== undefined) {
-        if (typeof m.maxMs !== "number" || !Number.isFinite(m.maxMs) || m.maxMs <= 0 || m.maxMs > STT_MAX_RECORD_MS) {
-          return { valid: false, error: `voice.stt.start maxMs must be 1..${STT_MAX_RECORD_MS}` }
+        const cap = m.engine === "external" ? Number.POSITIVE_INFINITY : STT_MAX_RECORD_MS
+        if (typeof m.maxMs !== "number" || !Number.isFinite(m.maxMs) || m.maxMs <= 0 || m.maxMs > cap) {
+          return { valid: false, error: `voice.stt.start maxMs must be 1..${m.engine === "external" ? "saved external budget" : STT_MAX_RECORD_MS}` }
         }
       }
-      // P1: privacy_ack_v2 required on the wire (handler also enforces)
-      if (m.privacy_ack_v2 !== true) {
+      // Local and system keep privacy_ack_v2. External uses privacy_ack_external_v1 above.
+      if (m.engine !== "external" && m.privacy_ack_v2 !== true) {
         return { valid: false, error: "voice.stt.start requires privacy_ack_v2:true" }
       }
       return { valid: true }

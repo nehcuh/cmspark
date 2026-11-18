@@ -17,6 +17,7 @@ import { endpointsMatch, isPlaceholderVisionKey, resolveInheritedVisionApiKey } 
 import { effectiveReasoningEffort, isReasoningEffort } from "./llm/reasoning-effort"
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
 import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-provision"
+import { defaultVoiceExternal, type VoiceExternalConfig } from "./voice/external-asr-config"
 
 export const configEvents = new EventEmitter()
 export const CONFIG_CHANGE_EVENT = "config.change"
@@ -178,7 +179,9 @@ export interface VoiceConfig {
    * Default browser. Companion SoT (ADR-023 L1). #259: "system" = Windows
    * SAPI fallback (win32 only; non-win32 configs fail-close to browser at load).
    */
-  sttEngine: "browser" | "local" | "system"
+  sttEngine: "browser" | "local" | "system" | "external"
+  /** Chat-only external transcription. Absent on old files until load fills it. */
+  external?: VoiceExternalConfig
   /** Active model when engine=local; may be set only if ready (handlers enforce). */
   localModelId: "small" | "medium" | "large-v3-turbo"
   /** Whisper family disk budget MB (default 4096; scoped to whisper root only). */
@@ -1073,12 +1076,16 @@ export function getConfig(): CompanionConfig {
     } else if (
       voice.sttEngine !== "browser" &&
       voice.sttEngine !== "local" &&
-      voice.sttEngine !== "system"
+      voice.sttEngine !== "system" &&
+      voice.sttEngine !== "external"
     ) {
       console.warn(
-        `[cmspark-agent] voice.sttEngine 非法（须为 "browser"|"local"|"system"）——回退 browser (config tampering?)`,
+        `[cmspark-agent] voice.sttEngine 非法（须为 "browser"|"local"|"system"|"external"）——回退 browser (config tampering?)`,
       )
       voice.sttEngine = "browser"
+    }
+    if (!voice.external || typeof voice.external !== "object") {
+      voice.external = defaultVoiceExternal()
     }
     if (
       voice.localModelId !== "small" &&

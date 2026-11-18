@@ -43,6 +43,10 @@ test("pref / engine / connection gates", () => {
     resolveLocalFallbackActive({ ...base, configuredEngine: "browser" as const }),
     false,
   )
+  assert.equal(
+    resolveLocalFallbackActive({ ...base, configuredEngine: "external" as const }),
+    false,
+  )
   // companion disconnected → existing fail-closed path, no fallback
   assert.equal(resolveLocalFallbackActive({ ...base, companionConnected: false }), false)
   assert.equal(resolveLocalFallbackActive({ ...base, companionConnected: undefined }), false)

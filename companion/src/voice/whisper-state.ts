@@ -4,6 +4,7 @@
 import * as path from "node:path"
 
 import { getConfig, DATA_DIR } from "../config"
+import { defaultVoiceExternal, externalStateView } from "./external-asr-config"
 import {
   allWhisperSearchRoots,
   resolveWhisperArch,
@@ -41,7 +42,7 @@ export type VoiceModelBinaryStatus =
 
 export interface VoiceModelStatePayload {
   type: "voice.model.state"
-  sttEngine: "browser" | "local" | "system"
+  sttEngine: "browser" | "local" | "system" | "external"
   localModelId: WhisperModelId
   recommendedModelId: WhisperModelId
   models: Record<
@@ -69,6 +70,7 @@ export interface VoiceModelStatePayload {
   postprocessMap: Array<[string, string]>
   modelPrewarm: boolean
   prewarmStatus: "idle" | "ok" | "fail"
+  external: ReturnType<typeof externalStateView>
 }
 
 /** Companion package root candidates (src layout / test-dist / bundle). */
@@ -229,7 +231,13 @@ export async function buildVoiceModelState(
       ? "local"
       : cfg.sttEngine === "system"
         ? "system"
-        : "browser"
+        : cfg.sttEngine === "external"
+          ? "external"
+          : "browser"
+  const external = externalStateView({
+    sttEngine,
+    external: cfg.external ?? defaultVoiceExternal(),
+  })
 
   return {
     type: "voice.model.state",
@@ -253,6 +261,7 @@ export async function buildVoiceModelState(
     modelPrewarm: cfg.modelPrewarm === true,
     // Runtime status from an actual whisper load — never equate disk-ready with ok.
     prewarmStatus: cfg.modelPrewarm === true ? getWhisperPrewarmStatus() : "idle",
+    external,
   }
 }
 

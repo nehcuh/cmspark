@@ -14,7 +14,7 @@ import {
   type LocalSttAdapterDeps,
 } from "./local-stt-adapter"
 
-export type SttEngineKind = "browser" | "local" | "system"
+export type SttEngineKind = "browser" | "local" | "system" | "external"
 
 export type CreateSttAdapterDeps = {
   handlers: SpeechAdapterHandlers
@@ -49,6 +49,13 @@ export function createSttAdapter(
     return createLocalSttAdapter(deps.handlers, {
       ...deps.local,
       engineKind: "system",
+    })
+  }
+  if (kind === "external") {
+    if (!deps.local?.send || !deps.local?.onMessage) return null
+    return createLocalSttAdapter(deps.handlers, {
+      ...deps.local,
+      engineKind: "external",
     })
   }
   return null

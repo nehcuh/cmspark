@@ -99,6 +99,13 @@ import {
   progressPercent,
   type WhisperSettingsModelId,
 } from "../voice/whisper-settings-copy"
+import {
+  externalCancelCopy,
+  externalKeySaveCopy,
+  externalLimitCopy,
+  externalPrivacyCopy,
+  externalRefineCopy,
+} from "../voice/external-asr-ui"
 import { detectSpeechRecognition } from "../voice/detect"
 import {
   VISION_COPY,
@@ -176,7 +183,12 @@ export function SettingsSlideout() {
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
   // Path B M0: engine radio is UI draft until ready model + explicit "启用本机转写".
-  const [engineDraft, setEngineDraft] = useState<"browser" | "local" | "system">("browser")
+  const [engineDraft, setEngineDraft] = useState<"browser" | "local" | "system" | "external">("browser")
+  const [externalPrivacyAck, setExternalPrivacyAck] = useState(false)
+  const [externalKeyDraft, setExternalKeyDraft] = useState("")
+  const [externalBaseDraft, setExternalBaseDraft] = useState<string | null>(null)
+  const [externalStyleDraft, setExternalStyleDraft] = useState<"deepseek" | "openai" | null>(null)
+  const [externalModelDraft, setExternalModelDraft] = useState<string | null>(null)
   const [otherWhisperOpen, setOtherWhisperOpen] = useState(false)
   /** Local-only: modelId user clicked download on, until companion state/progress arrives. */
   const [voicePendingDownload, setVoicePendingDownload] = useState<string | null>(null)
@@ -276,11 +288,11 @@ export function SettingsSlideout() {
   // - companion local→browser (delete active / set_engine) → reset draft browser
   // - selecting local radio alone never writes set_engine (draft until enable)
   // - do not clobber local draft while companion still reports browser
-  const prevVoiceEngineRef = useRef<"browser" | "local" | "system" | null>(null)
+  const prevVoiceEngineRef = useRef<"browser" | "local" | "system" | "external" | null>(null)
   useEffect(() => {
     const eng = state.voiceModel?.sttEngine
     if (!eng) return
-    if (eng === "local" || eng === "system") {
+    if (eng === "local" || eng === "system" || eng === "external") {
       setEngineDraft(eng)
     } else if (
       (prevVoiceEngineRef.current === "local" || prevVoiceEngineRef.current === "system") &&
@@ -1704,6 +1716,8 @@ export function SettingsSlideout() {
               const progress = state.voiceModelProgress
               const committedLocal = voiceModel?.sttEngine === "local"
               const committedSystem = voiceModel?.sttEngine === "system"
+              const committedExternal = voiceModel?.sttEngine === "external"
+              const externalView = voiceModel?.external
               const showLocalPanel = engineDraft === "local"
               // #259: system option only exists on win32 with the probe mirror.
               const systemStateMirror = state.voiceSystemState
@@ -1967,6 +1981,117 @@ export function SettingsSlideout() {
                         <span style={{ color: tokens.textMuted, fontSize: 12 }}> — {ENGINE_BROWSER_HINT}</span>
                       </span>
                     </label>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        cursor: "pointer",
+                        fontSize: 13,
+                        marginBottom: 6,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="voice-stt-engine"
+                        checked={engineDraft === "external"}
+                        onChange={() => setEngineDraft("external")}
+                        style={{ marginTop: 2 }}
+                      />
+                      <span>
+                        <span style={{ fontWeight: 500 }}>外部转写</span>
+                        <span style={{ color: tokens.textMuted, fontSize: 12 }}> — 聊天语音发到你填写的地址，不用于会议</span>
+                      </span>
+                    </label>
+                    {engineDraft === "external" ? (
+                      <div style={{ margin: "8px 0 10px", fontSize: 12, color: tokens.textMuted, display: "grid", gap: 8 }}>
+                        <div>{externalLimitCopy(externalView?.limitNote ?? "deepseek-docs")}</div>
+                        <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <input
+                            type="checkbox"
+                            checked={externalPrivacyAck}
+                            onChange={(e) => setExternalPrivacyAck(e.target.checked)}
+                            style={{ marginTop: 2 }}
+                          />
+                          <span>{externalPrivacyCopy()}</span>
+                        </label>
+                        <label style={{ display: "grid", gap: 4 }}>
+                          接口
+                          <select
+                            value={externalStyleDraft ?? externalView?.style ?? "deepseek"}
+                            onChange={(e) => setExternalStyleDraft(e.target.value === "openai" ? "openai" : "deepseek")}
+                          >
+                            <option value="deepseek">DeepSeek 官方转写</option>
+                            <option value="openai">OpenAI 兼容转写</option>
+                          </select>
+                        </label>
+                        <label style={{ display: "grid", gap: 4 }}>
+                          地址
+                          <input
+                            value={externalBaseDraft ?? externalView?.baseUrl ?? ""}
+                            onChange={(e) => setExternalBaseDraft(e.target.value)}
+                            placeholder="留空使用该接口的默认地址"
+                          />
+                        </label>
+                        {(externalStyleDraft ?? externalView?.style ?? "deepseek") === "openai" ? (
+                          <label style={{ display: "grid", gap: 4 }}>
+                            模型
+                            <input
+                              value={externalModelDraft ?? externalView?.model ?? "whisper-1"}
+                              onChange={(e) => setExternalModelDraft(e.target.value)}
+                            />
+                          </label>
+                        ) : null}
+                        <label style={{ display: "grid", gap: 4 }}>
+                          密钥
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            value={externalKeyDraft}
+                            onChange={(e) => setExternalKeyDraft(e.target.value)}
+                            placeholder={externalView?.keyConfigured ? "已保存，留空表示不改" : "只在这台电脑的 Companion 配置里保存"}
+                          />
+                        </label>
+                        <div>{externalView?.keyConfigured ? "密钥已配置，侧栏不显示原文。" : "尚未保存密钥。"}</div>
+                        <div>{externalKeySaveCopy()}</div>
+                        <div>{externalRefineCopy()}</div>
+                        <div>{externalCancelCopy(false)} {externalCancelCopy(true)}</div>
+                        <button
+                          type="button"
+                          style={styles.secondaryBtn}
+                          onClick={() => {
+                            const style = externalStyleDraft ?? externalView?.style ?? "deepseek"
+                            clearVoiceErr()
+                            sendVoice({
+                              type: "voice.external.set",
+                              style,
+                              baseUrl: externalBaseDraft ?? externalView?.baseUrl ?? "",
+                              ...(style === "openai"
+                                ? { model: externalModelDraft ?? externalView?.model ?? "whisper-1" }
+                                : {}),
+                              ...(externalKeyDraft ? { apiKey: externalKeyDraft } : {}),
+                            }, { onOk: () => setExternalKeyDraft("") })
+                          }}
+                        >
+                          保存外部转写
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.secondaryBtn}
+                          disabled={!externalPrivacyAck}
+                          onClick={() => {
+                            clearVoiceErr()
+                            sendVoice({
+                              type: "voice.model.set_engine",
+                              engine: "external",
+                              privacy_ack_external_v1: true,
+                            })
+                          }}
+                        >
+                          {committedExternal ? "外部转写已启用" : "启用外部转写"}
+                        </button>
+                      </div>
+                    ) : null}
                     <label
                       style={{
                         display: "flex",

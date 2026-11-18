@@ -164,3 +164,47 @@ test("local adapter: missing sessionId on start → session_busy error", () => {
   assert.ok(events.includes("end"))
   adapter.destroy()
 })
+
+test("external adapter start omits the local 45s maxMs and privacy_ack_v2", async () => {
+  const sent: Array<Record<string, unknown>> = []
+  const adapter = createLocalSttAdapter(
+    {
+      onStart: () => {},
+      onResult: () => {},
+      onError: () => {},
+      onEnd: () => {},
+    },
+    {
+      send: (msg) => sent.push(msg),
+      onMessage: () => () => {},
+      engineKind: "external",
+      pendingTimeoutMs: 190_000,
+      startCapture: async () => ({
+        stop: async () => {
+          const wav = new Uint8Array(48)
+          wav[0] = 0x52
+          wav[1] = 0x49
+          wav[2] = 0x46
+          wav[3] = 0x46
+          return wav
+        },
+        abort: () => {},
+      }),
+    },
+  )
+  adapter.start({ sessionId: "ext-ui", lang: "zh-CN", hardCapMs: 120_000 })
+  await new Promise((r) => setTimeout(r, 20))
+  adapter.stop()
+  await new Promise((r) => setTimeout(r, 20))
+  const start = sent.find((m) => m.type === "voice.stt.start")
+  assert.ok(start)
+  assert.equal(start!.engine, "external")
+  assert.equal(start!.privacy_ack_external_v1, true)
+  assert.equal("maxMs" in start!, false)
+  assert.equal("privacy_ack_v2" in start!, false)
+  assert.equal("modelId" in start!, false)
+  const chunk = sent.find((m) => m.type === "voice.stt.chunk")
+  assert.equal(typeof chunk?.data, "string")
+  assert.equal(atob(String(chunk?.data)).length, 4)
+  adapter.destroy()
+})

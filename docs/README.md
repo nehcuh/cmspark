@@ -29,7 +29,7 @@
 | [code-review-workflow.md](code-review-workflow.md) | **Composition · 开发切片** | 网页 diff 独立审阅、可选终端报告回传、需求任务测试与材料核对；真实试点待验收 |
 | [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Autonomy**（Worker≈L1） | spawn_worker、tab 锁、Mission Board、上限 |
 | [notebooklm-user-guide.md](notebooklm-user-guide.md) | **产品特性**（非组合原语） | NotebookLM 导入器、权限、结果 |
-| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | **产品特性** L0 输入 / Pack | 听写+（含按住热键、HF 镜像、当次会话回退）· 会议 Mtg0–3（说话人「自动」档） |
+| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | **产品特性** L0 输入 / Pack | 听写+（含按住热键、HF 镜像、当次会话回退）· 会议 Mtg0–3（说话人「自动」档）· 聊天外部转写见该指南 §2.8 |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | — | 常见故障速查 |
 
 ### 导出 / 图表（产品特性 · ADR 即用户向说明）

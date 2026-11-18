@@ -54,7 +54,7 @@ export function useComposerVoice({
   const [voicePrivacyKind, setVoicePrivacyKind] = useState<VoicePrivacyKind>("v1")
   /** Fail-closed lastKnown engine when companion state not yet mirrored. */
   const [lastKnownVoiceEngine, setLastKnownVoiceEngine] = useState<
-    "browser" | "local" | "system" | null
+    "browser" | "local" | "system" | "external" | null
   >(null)
   /** Post-CTA residual note after「改用浏览器听写」(Task 7). */
   const [engineSwitchNote, setEngineSwitchNote] = useState<string | null>(null)
@@ -65,7 +65,8 @@ export function useComposerVoice({
         if (
           result.lastKnownVoiceEngine === "local" ||
           result.lastKnownVoiceEngine === "browser" ||
-          result.lastKnownVoiceEngine === "system"
+          result.lastKnownVoiceEngine === "system" ||
+          result.lastKnownVoiceEngine === "external"
         ) {
           setLastKnownVoiceEngine(result.lastKnownVoiceEngine)
         }
@@ -78,7 +79,7 @@ export function useComposerVoice({
   // Keep lastKnown in sync when live voice.model.state arrives
   useEffect(() => {
     const eng = state.voiceModel?.sttEngine
-    if (eng === "local" || eng === "browser" || eng === "system") {
+    if (eng === "local" || eng === "browser" || eng === "system" || eng === "external") {
       setLastKnownVoiceEngine(eng)
     }
   }, [state.voiceModel?.sttEngine])
@@ -86,14 +87,17 @@ export function useComposerVoice({
   // Path B mic matrix (plan Task 6): engine from live state or lastKnown.
   // #259: "system" passes through; useVoiceInput fail-closes it to browser
   // off-win32 / when the helper probe is not green.
-  const sttEngine: "browser" | "local" | "system" =
+  const sttEngine: "browser" | "local" | "system" | "external" =
     state.voiceModel?.sttEngine === "local" ||
     (state.voiceModel == null && lastKnownVoiceEngine === "local")
       ? "local"
       : state.voiceModel?.sttEngine === "system" ||
           (state.voiceModel == null && lastKnownVoiceEngine === "system")
         ? "system"
-        : "browser"
+        : state.voiceModel?.sttEngine === "external" ||
+            (state.voiceModel == null && lastKnownVoiceEngine === "external")
+          ? "external"
+          : "browser"
   const activeModelId =
     state.voiceModel?.localModelId || "medium"
   const localModelReady =
@@ -186,6 +190,9 @@ export function useComposerVoice({
       setVoicePrivacyOpen(true)
     },
     asrRefinerEnabled: state.asrRefinerEnabled === true,
+    externalMaxDurationMs: state.voiceModel?.external?.maxDurationMs,
+    externalMaxBytes: state.voiceModel?.external?.maxBytes,
+    externalRequestTimeoutMs: state.voiceModel?.external?.requestTimeoutMs,
     getCurrentDraft: () => textRef.current,
   })
 
