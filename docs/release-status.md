@@ -1,14 +1,17 @@
 # 版本与交付状态
 
-> 源码开发版本 **1.2.0（尚未正式发布）**。当前已发布的正式安装包是 [v1.1.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.1.0)。
+> 源码开发版本 **1.2.1（尚未正式发布）**。当前已发布的正式安装包是 [v1.2.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.2.0)。
 
-## 1.2.0 发布准备
+## 1.2.1 发布准备
 
-- 准备基线是 main `e6654b056a0fdb5a23549b545dca72be68106806`（[#858](https://github.com/nehcuh/cmspark/pull/858) 已合并）。本段在打 tag 前只记录准备状态。main 上该 SHA 的 push CI 终态以 GitHub 四条 workflow 为准；本准备不把尚未结束的检查写成已通过。
-- 侧栏改为项目优先（[#857](https://github.com/nehcuh/cmspark/issues/857)）。冷启动恢复上次仍然有效的对话；没有可恢复对话时进入项目首页。已注册、未归档的项目各占一行，空项目也占一行。最近对话列出全部未归档会话，没有筛选控件。进入某个项目可以看到该项目的会话。「项目外」是会话归属状态（见面包屑和项目面板），不是最近对话的筛选项；可用「移出项目」把当前会话移到项目外。查看项目只浏览，不改会话归属、工作区根或授权。顶栏、输入、现有工具和设置留在会话层之外。窄栏一次只显示一层。空列表不自动创建或选中会话。
-- 本版不新增 Linux PTY 或 Whisper 验收，不扩默认 outbound profile，不放宽 macOS 工作区取消的 45 秒时限。#476 取消路径贴近该预算（约 520ms 余量），发版后单独跟进。
-- 正式发布仍提供既有的 macOS／Windows／Linux x64 与 ARM64 安装包和独立 Chrome 扩展 ZIP，共 19 项资产。tag 与安装器完成之后才核对校验清单、名称、大小和 GitHub digest。
-- 正式 tag、GitHub Release 与安装器上传尚未执行。
+- 准备基线是 main `1f2d05bfc59081e36a9509337364082444d87f1c`（[#862](https://github.com/nehcuh/cmspark/pull/862) 已合并）。本段在打 tag 前只记录准备状态。
+- 能力档卡片只修正本组件自己的 `modules.list` 关联。更早的 list 不能盖过已落定档位，等待中的 list 不改显示。空闲且没有 id 的 list 仍会刷新，并且没有年代保证。#853 保持开放。外部聊天转写不在本版。
+- 不改变 enterprise 档恒提供 shell，不改变命令授权。正式 tag、GitHub Release 与安装器上传尚未执行。正式发布仍按既有 19 项资产；tag 之后才核对校验清单、名称、大小和 GitHub digest。
+
+## 1.2.0
+
+- annotated tag `v1.2.0` 对象 `77e601c796bc8e33e923504fbb60eccc242dee40`，peeled commit `55f82f93434b4d1dc6edf69412b16cbbdf923434`。[v1.2.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.2.0) 已发布，不是 draft，也不是 prerelease。本准备核到公开资产数量为 19。没有在本提交重算每一份 digest，也没有把 DMG 挂载或 Windows 安装器 smoke 写成已完成。
+- 行为说明见 [CHANGELOG](../CHANGELOG.md) 的 1.2.0。最近对话仍没有「全部 / 项目 / 项目外」筛选。
 
 ## 1.1.0
 
