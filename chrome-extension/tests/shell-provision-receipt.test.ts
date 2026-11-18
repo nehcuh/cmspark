@@ -416,6 +416,55 @@ test("enterprise netsec receipts keep shell provided and do not settle a profile
   }
 })
 
+test("#853 a late modules.list cannot cover a profile settled by the matching receipt", () => {
+  const ui = mountSurfaces()
+  ui.deliver({ type: "modules.list", capability_profile: "community", modules: {}, shell_provision: "community" })
+  const pending = ui.confirmSwitch()
+  assert.equal(pending.profile, "enterprise")
+  ui.deliver({
+    type: "modules.updated",
+    id: pending.id,
+    capability_profile: "enterprise",
+    shell_provision: "provided",
+    modules: { shell: { available: true, enabled: true } },
+    modules_disabled: [],
+  })
+  assert.match(ui.profile(), /当前：enterprise/)
+  ui.deliver({
+    type: "modules.list",
+    id: "list-issued-before-switch",
+    capability_profile: "community",
+    modules: {},
+    shell_provision: "community",
+  })
+  assert.match(ui.profile(), /当前：enterprise/, "a list issued before the settled switch must not restore the old profile")
+  assert.equal(ui.profile().includes("当前：community"), false)
+})
+
+test("#853 a modules.list during a pending switch cannot settle the target profile", () => {
+  const ui = mountSurfaces()
+  ui.deliver({ type: "modules.list", capability_profile: "community", modules: {}, shell_provision: "community" })
+  const pending = ui.confirmSwitch()
+  ui.deliver({
+    type: "modules.list",
+    id: "list-raced-with-switch",
+    capability_profile: "enterprise",
+    modules: { shell: { available: true, enabled: true } },
+    shell_provision: "provided",
+  })
+  assert.equal(ui.switchButton().props.disabled, true)
+  assert.match(ui.profile(), /当前：community/, "only the matching modules.updated or modules.profile.result may settle the pending id")
+  ui.deliver({
+    type: "modules.profile.result",
+    id: pending.id,
+    capability_profile: "enterprise",
+    shell_provision: "provided",
+    modules: { shell: { available: true, enabled: true } },
+    modules_disabled: [],
+  })
+  assert.match(ui.profile(), /当前：enterprise/)
+})
+
 test("profile switch state machine settles only the current attempt", () => {
   const receipt = (profile: "enterprise" | "community", id?: string) => ({
     type: "modules.updated",
