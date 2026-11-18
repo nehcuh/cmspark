@@ -32,11 +32,21 @@ Base: `08fe57feacd6ca634eb2f8369dada10420ce0d44`（`origin/main`，Merge pull re
 
 ### 2.1 侧栏
 
-窄栏指视口宽度小于 760px。宽屏指大于等于 760px。
+`navigation-mode.ts` 现在用同一个 `RESIDENT_MIN_WIDTH = 960`，`navigationMode` 不看 `surface`。`startup-destination.test.ts` 第 70–75 行把 `sidepanel`、`popout`、`workspace` 都锁在这个值上。v1.1 的 `WorkspaceFrame` 用的是另一条规则：`matchMedia("(min-width: 760px)")`，而且当时没有按 surface 分叉。
+
+本规格不把三个 surface 一起改成 760。已审阅的完整侧栏只覆盖侧栏和宽工作区：
+
+| surface | 小于门槛 | 达到门槛 | 理由 |
+| --- | --- | --- | --- |
+| `sidepanel` | layered | `>= 760` resident | 日常侧栏约 400px，必须走 28dvh 折叠。拖到 v1.1 的 760 才出 220px 栏。 |
+| `workspace` | layered | `>= 760` resident | 用户要的宽工作区完整侧栏，对齐 v1.1 的 760，而不是现在的 960。 |
+| `popout` | layered | `>= 960` resident | 审阅稿没有改弹出对话框。现有测试对这个 surface 的 960 继续有效。 |
+
+`navigationMode` 必须按 surface 取门槛。实现时要改 `startup-destination.test.ts` 的断言，并同时跑该旧测试和新测试。只跑新测试不算通过。
 
 窄栏默认不显示侧栏。若存在上次仍有效的对话，打开后进入该对话。顶栏只有「导航」、当前对话名、「弹出」。点「导航」后，第 1 节的完整侧栏出现在聊天上方，高度不超过视口的 28dvh，超出部分在该层内滚动。顶栏不出现「项目 / 最近 / 工具 / 设置」四个并排入口。点一则对话或按 Esc，该层收起。打开时焦点进入导航一次。Esc 或关闭把焦点还回「导航」。点对话后焦点进入该对话输入框一次。
 
-宽屏默认显示 220px 侧栏，内容与窄栏展开的是同一套，不是另一套四个文字按钮。侧栏可以收起。收起和展开不移动焦点。宽度保持不小于 760px 时，记住这次收起。重新打开插件后，窄栏仍从收起开始。缩到 760px 以下不自动再展开。
+这里的宽屏只指 `sidepanel` 或 `workspace` 达到 760。`popout` 仍要到 960 才 resident。这两档的侧栏内容与窄栏展开的是同一套，不是四个文字按钮。侧栏可以收起。收起和展开不移动焦点。宽度保持在该 surface 的 resident 门槛以上时，记住这次收起。重新打开插件后，窄栏仍从收起开始。缩到门槛以下不自动再展开。
 
 选中行只用 `#e9e9e6` 和字重 500。悬停用 `#eeeeec`。靛蓝 2px 轮廓、外偏 3px 只出现在 `:focus-visible`。禁用行不透明度 0.65，且不可点。长名称单行省略，可读名称仍是全文。
 
@@ -48,9 +58,9 @@ Base: `08fe57feacd6ca634eb2f8369dada10420ce0d44`（`origin/main`，Merge pull re
 
 项目筛选不改变工作目录，也不改变权限。新建、改名、归档仍可从项目节进入，不能只留一个没有去处的「新建与归档」。选中项目后，最近对话只显示该项目的对话。切到另一则对话不把未发送文字带过去。返回原对话时，那则的未发送文字还在。
 
-没有可恢复对话时，给出「开始第一则对话」，输入框可以写。点按钮或发送第一句都创建对话。这不是禁用输入框。
+没有可恢复对话时，现码把输入框设为 `disabled`，占位是「请先创建或选择一个线程」，发送不会创建对话（`App.tsx` 的 `needsThread`）。本规格要求补上「开始第一则对话」：按钮可点，输入框可写，点按钮或发送第一句都创建对话。这是新行为，单独验收，不能算进恢复上次对话那一项。
 
-项目列表取回失败或离线时，显示无法取回和重试。已在本地的最近对话仍可点。不显示「还没有项目」来代表失败。
+`ProjectListView` 在 `phase === "list-error"` 时只显示 `projectCopy.listFailed`，组件 props 没有重试回调。本规格要求失败且没有快照时出现「重试」，点击调用新的 `onRetry`。已有快照时仍显示旧列表和失败句，不显示「还没有项目」。离线且没有快照仍用 `projectCopy.offlineEmpty`。
 
 ### 2.3 对话管理
 
@@ -76,4 +86,30 @@ Base: `08fe57feacd6ca634eb2f8369dada10420ce0d44`（`origin/main`，Merge pull re
 
 ## 4. 验收
 
-每个实现节点停在独立评审，不能用本文件或旧提交的绿色代替新 head。最终节点在同一 head 上跑扩展与 companion 的约定全量测试，以及仓库要求的四条 workflow、十个 CI 检查，再进入独立 final gate。视觉验收使用真实组件，在小于 760px 和大于等于 760px 两档，覆盖默认、悬停、选中、键盘焦点、长名称、空、失败、进行中。入口验收覆盖第 2.3 节的每个名称。键盘验收覆盖导航打开、Esc、关闭后的焦点。
+每个实现节点停在独立评审。本规格和节点 0 的文档 PR 不是实现通过，也不是合并通过。最终节点在同一 head 上跑扩展与 companion 全量测试，以及仓库四条 workflow、十个 CI 检查，再进入独立 final gate。旧 head 的绿色不算。
+
+视觉门是 `chrome-extension/scripts/test-sidebar-review-ui.py`。命令：
+
+```bash
+cd chrome-extension && nvm use 22
+uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py
+```
+
+它用本机 Chrome 打开真实 `WorkspaceFrame` 夹具，不是手画页。必须断言并保存这些截图，缺任一张或任一条断言失败，就不能申请 final gate：
+
+| 视口 | 状态 | 断言 |
+| --- | --- | --- |
+| 420×860，`sidepanel` | 默认收起 | 看不到「资料与工具」；顶栏有「导航」 |
+| 420×860 | 点「导航」 | 导航层高度不超过视口的 28% |
+| 420×860 | 键盘焦点在导航内，按 Esc | `document.activeElement` 的名字是「导航」 |
+| 420×860 | 点关闭 | 焦点同样回到「导航」 |
+| 960×860，`workspace` | 默认 | 侧栏宽 220，含「新对话」和「设置」 |
+| 960×860 | 悬停「示例·采购」 | 背景为 `rgb(238, 238, 236)` |
+| 960×860 | 选中「示例·周末清单」 | 背景为 `rgb(233, 233, 230)`，`outline-style` 为 `none` |
+| 960×860 | 键盘焦点在选中行 | `outline-style` 为 `solid`，颜色为 `rgb(79, 70, 229)` |
+| 960×860 | 长名称 | 行内出现省略，完整名称在 `title` |
+| 960×860 | 无对话 | 有「开始第一则对话」，输入框未禁用 |
+| 960×860 | 项目列表失败 | 有「重试」，没有「还没有项目」 |
+| 960×860 | 提取进行中 | 文本匹配 `提取要点 1/20` |
+
+截图文件名与上表一一对应，写到该次运行的临时目录。报告写明字体是运行机器的 fallback，不是 Mac 验收。`popout` 不在这张视觉表里，它的 960 门槛由 `startup-destination.test.ts` 锁住。
