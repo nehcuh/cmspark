@@ -69,7 +69,7 @@ Base: `08fe57feacd6ca634eb2f8369dada10420ce0d44`（`origin/main`，Merge pull re
 
 页面包含：时间、标签、手动分组、AI 分组、选择、搜索、「AI 提取标签」、「整理助手」、「关系图谱」、「回收站」，以及行内「AI 标签」「分类」「删除」。「⋯」保留「AI 生成标题」和「未命名→首条起名」，不把它们放到顶栏。
 
-在 `beginExtractBatch` 之前增加确认。文案写明：最多 20 条还没有要点的对话，写入要点和标签，不删除，不改手动分组。取消不调用 `beginExtractBatch`，也不发送提取消息。确认后才沿用现有批次。本规格不新增中断进行中批次的按钮，也不回滚已经写入的要点。进行中的进度句保持「提取要点 {done}/{total}」。没有写回时，按钮可再次点。测试用的标签和进度不是真实模型输出。
+在 `beginExtractBatch` 之前增加确认。文案写明：最多 20 条还没有要点的对话，写入要点和标签，不删除，不改手动分组。确认按钮的可见文字是「开始提取」，旁边是「取消」。取消不调用 `beginExtractBatch`，也不发送提取消息。点「开始提取」后才沿用现有批次。本规格不新增中断进行中批次的按钮，也不回滚已经写入的要点。进行中的进度句保持「提取要点 {done}/{total}」。没有写回时，按钮可再次点。测试用的标签和进度不是真实模型输出。
 
 整理助手保持规则扫描和已有确认。关系图谱保持新标签页和「打开会话」不关图。分布图谱仍从知识面板进入，不从对话管理进入，不把知识节点画成聊天。
 
@@ -120,7 +120,7 @@ uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py
 
 「导航」只是按钮里的可见文字。`StatusRail.tsx` 第 223 行的可访问名是 `aria-label="打开工作区导航"`。断言用可访问名，不用可见文字冒充。`locator.focus()` 不算键盘焦点。Esc 和关闭各测一次。每张截图必须在对应断言成功之后保存。只检查文件存在不算通过。
 
-截图文件名与上表一一对应，写到该次运行的临时目录。报告写明字体是运行机器的 fallback，不是 Mac 验收。`popout` 不在这张视觉表里，它的 960 门槛由 `startup-destination.test.ts` 锁住。
+截图文件名与上表一一对应，写到该次运行的临时目录：`420-collapsed`、`420-open`、`sidepanel-759`、`sidepanel-760`、`workspace-759`、`workspace-760`、`popout-959`、`popout-960`、`420-esc`、`420-close`、`hover-row`、`selected-row`、`keyboard-focus`、`long-name`、`empty-start`、`list-error-retry`、`extract-progress`。报告写明字体是运行机器的 fallback，不是 Mac 验收。popout 的 959 和 960 就在上表。`startup-destination.test.ts` 同时锁住 popout 的 960 门槛。
 
 ## 5. 场景演示
 
