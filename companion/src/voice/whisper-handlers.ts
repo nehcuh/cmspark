@@ -20,6 +20,7 @@
 
 import { logger } from "../logger"
 import { getConfig, setVoiceFields } from "../config"
+import { defaultVoiceExternal, reduceExternalConfig } from "./external-asr-config"
 import {
   isWhisperModelId,
   RECOMMENDED_WHISPER_MODEL,
@@ -145,6 +146,7 @@ const SETTINGS_SOURCE_TYPES = new Set([
   "voice.model.diarize_delete",
   "voice.model.set_active",
   "voice.model.set_engine",
+  "voice.external.set",
   "voice.model.set_prefs",
   "voice.binary.download",
   "voice.binary.cancel",
@@ -805,10 +807,30 @@ export async function handleVoiceModelMessage(
 
     case "voice.model.set_engine": {
       const engine = rest.engine
-      if (engine !== "browser" && engine !== "local" && engine !== "system") {
-        return modelError('voice.model.set_engine requires engine:"browser"|"local"|"system"', {
+      if (engine !== "browser" && engine !== "local" && engine !== "system" && engine !== "external") {
+        return modelError('voice.model.set_engine requires engine:"browser"|"local"|"system"|"external"', {
           code: "INVALID_ENGINE",
         })
+      }
+
+      if (engine === "external") {
+        const voice = getConfig().voice
+        const reduced = reduceExternalConfig({
+          sttEngine: voice?.sttEngine === "local" || voice?.sttEngine === "system" || voice?.sttEngine === "external"
+            ? voice.sttEngine
+            : "browser",
+          external: voice?.external ?? defaultVoiceExternal(),
+        }, { type: "set-engine", engine: "external", privacyAckExternalV1: rest.privacy_ack_external_v1 === true })
+        if (!reduced.ok) {
+          return modelError("外部转写需要独立密钥、合法地址，以及 privacy_ack_external_v1。", {
+            code: "EXTERNAL_NOT_READY",
+          })
+        }
+        setVoiceFields({ sttEngine: "external", external: reduced.external })
+        logger.info("voice.model.set_engine", { engine: "external" })
+        const state = await statePayload(deps)
+        ctx.broadcast?.(state)
+        return state
       }
 
       // #259: system engine — win32 + helper verified + privacy ack; ZERO
@@ -1069,6 +1091,32 @@ export async function handleVoiceModelMessage(
         ok: true,
         status: "cancelling",
       }
+    }
+
+    case "voice.external.set": {
+      const voice = getConfig().voice
+      const reduced = reduceExternalConfig({
+        sttEngine: voice?.sttEngine === "local" || voice?.sttEngine === "system" || voice?.sttEngine === "external"
+          ? voice.sttEngine
+          : "browser",
+        external: voice?.external ?? defaultVoiceExternal(),
+      }, {
+        type: "set",
+        ...(rest.style === "deepseek" || rest.style === "openai" ? { style: rest.style } : {}),
+        ...(typeof rest.baseUrl === "string" ? { baseUrl: rest.baseUrl } : {}),
+        ...(typeof rest.model === "string" ? { model: rest.model } : {}),
+        ...(typeof rest.apiKey === "string" ? { apiKey: rest.apiKey } : {}),
+        ...(rest.maxDurationMs === null || typeof rest.maxDurationMs === "number" ? { maxDurationMs: rest.maxDurationMs } : {}),
+        ...(typeof rest.maxBytes === "number" ? { maxBytes: rest.maxBytes } : {}),
+        ...(typeof rest.requestTimeoutMs === "number" ? { requestTimeoutMs: rest.requestTimeoutMs } : {}),
+      })
+      if (!reduced.ok) {
+        return modelError("外部转写配置没有保存。", { code: "EXTERNAL_CONFIG_REJECTED" })
+      }
+      setVoiceFields({ external: reduced.external })
+      const state = await statePayload(deps)
+      ctx.broadcast?.(state)
+      return state
     }
 
     default:
