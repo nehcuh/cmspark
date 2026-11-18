@@ -56,7 +56,7 @@ Companion **从不**调用 `chrome.sidePanel.open`；打不开侧栏时 toast **
 | **L0 · 主体** | 自然语言 · 多线程 · 历史 | Side Panel ChatShell（空态「要对这页做什么」/「弹出对话框」）；线程隔离；SQLite 操作史 | 本页 [使用指南](#使用指南) |
 | **个人工作中心** | 来源待办、督办与语义设置 | 0.8.0 已发布；采集和模型默认关闭，macOS / Windows / Linux X11 前台窗口；Wayland 主动导入。通用原生调用链已验收，五款聊天软件的具体版本与权限组合未逐一现场认证，范围见指南 | [personal-workspace](docs/personal-workspace.md) |
 | **L0 产品特性** | Obsidian 导出 · Mermaid · NotebookLM | 导出/渲染/导入（**非**组合原语） | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
-| **L0 输入** | 听写+ · 本机 STT · 会议记录 | classic/连续/按住热键；Whisper 渐进假设；场景「会议」工作台 | [meeting-and-dictation-user-guide](docs/meeting-and-dictation-user-guide.md) · [ADR-023](docs/adr/023-voice-local-stt-path-b.md) · [ADR-024](docs/adr/024-dictation-plus-asr-refiner-meeting.md) |
+| **L0 输入** | 听写+ · 本机 STT · 会议记录 | classic/连续/按住热键；Whisper 渐进假设；场景「会议」工作台；聊天外部转写见指南 §2.8 | [meeting-and-dictation-user-guide](docs/meeting-and-dictation-user-guide.md) · [ADR-023](docs/adr/023-voice-local-stt-path-b.md) · [ADR-024](docs/adr/024-dictation-plus-asr-refiner-meeting.md) |
 | **L1 · 浅层** | 浏览器 CDP 操控 | 标签页、页面读写、点击/填表、截图、导航等 | 本页 [浏览器操作示例](#浏览器操作示例) |
 | **L1** | Cookie 信任域 | `trusted_domains` 门控 cookie；SSO 场景基础 | [Cookie 信任域](#cookie-信任域) · [ADR-005](docs/adr/005-cookie-trust-domain-security.md) |
 | **组合面** | Skills · Knowledge | Markdown+YAML Skills；知识默认 TF-IDF top-k 注入 System Prompt | [Skills](#技能系统skills) · [Knowledge](#知识库knowledge) |
