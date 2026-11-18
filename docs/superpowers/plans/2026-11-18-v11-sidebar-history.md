@@ -20,9 +20,10 @@ GitHub: #865
 - 选中 `#e9e9e6`、字重 500、无描边。悬停 `#eeeeec`。`:focus-visible` 为 `2px solid #4f46e5`，`outline-offset: 3px`。
 - 不删除配置、密钥、开关、模型数据或历史。不改 `companion/src/voice/external-asr-*.ts` 的请求行为。
 - 提取确认取消时不调用 `beginExtractBatch`。不新增中断进行中批次或回滚已写要点的行为。
-- 不合并 #864，不改 #856，不改版本，不打 tag。
+- 不合并 #864，不改 #856，不改版本，不打 tag。场景矩阵不恢复发布，也不包含 Linux 专项或本地 ASR。
 - 每个节点在自己的提交上停住，等独立评审。旧 head 的绿色不算本节点。
-- 没有 Mac 字体或安装测试就在节点报告里写未测。
+- 没有 Mac 字体或安装测试就在节点报告里写未测。没有隔离的真实模型密钥时，外部服务行写未测。
+- 最终门包含规格第 5 节的场景矩阵。节点 0 只把步骤和预期写进计划，不启动 Companion，不改 `~/.cmspark-agent`。
 
 ---
 
@@ -694,7 +695,7 @@ npx tsc -p tsconfig.test.json --pretty false && node --test .test-dist/tests/sta
 cd .. && npm --prefix chrome-extension test && npm --prefix companion test
 ```
 
-然后跑仓库四条 workflow。十个 CI 检查和上面的 Playwright 都绿，才能申请 final gate。任一失败就停。截图文件存在但断言没跑，`ran` 对不上，也算失败。
+然后跑下面的场景矩阵，再跑仓库四条 workflow。十个 CI 检查、Playwright 和场景报告都在同一 head 上成立，才能申请 final gate。任一失败就停。截图文件存在但断言没跑，`ran` 对不上，也算失败。场景行标成通过但没有实际输出和证据路径，也算失败。
 
 - [ ] **Step 5: Commit**
 
@@ -704,6 +705,123 @@ git commit -m "test: assert each sidebar screenshot before saving it"
 ```
 
 停。等独立 final gate。写计划的人不能把这一步标成已通过。
+
+## 最终验收：场景演示矩阵
+
+这一节属于 Task 11 的同一 head。规格第 5 节是行为合同，这里是可执行步骤。节点 0 的每一行结果都是未测。实现时把报告写到 `/tmp/sidebar-scenarios/<40位 sha>/report.md`，截图和录屏放在同一目录。不要改写本节的「节点 0」行来充当通过。
+
+报告每行包含：场景、层、步骤、预期、实际、截图或录屏、环境、commit、证据路径、结果。结果只写通过、失败或未测。失败先修，独立评审后换新 head 重跑整张表。夹具结果不能填进 Companion 行。临时目录里连不上模型，不能填进外部服务行。
+
+### 隔离
+
+```bash
+LIVE="${HOME}/.cmspark-agent/config.json"
+BEFORE=$(stat -c %Y "$LIVE" 2>/dev/null || echo missing)
+DIR=$(mktemp -d /tmp/cmspark-scenario.XXXXXX)
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+```
+
+把 `config.json` 写进 `$DIR`，`port` 用 `$PORT`，`llm.base_url` 用 `http://127.0.0.1:9/v1`，`llm.api_key` 用 `fixture-not-a-real-key`，`llm.model_name` 用 `fixture-model`。然后 `CMSPARK_DATA_DIR="$DIR" node companion/dist/index.js`。结束后再 `stat` 一次 `$LIVE`，mtime 必须等于 `$BEFORE`。进程监听的必须是 `$PORT`，不是 23401。删掉 `$DIR`。不向 23401 上已有的进程发消息。
+
+夹具层继续用 Task 1 的 `launch` / `ready`。面板发出的是 `chrome.runtime.sendMessage` 的类型，例如 `chat.send`、`thread.create`。Companion 层看到的是后台翻译后的类型，例如 `chat.create`。两层的证据分开写。
+
+### 三层
+
+| 层 | 证据 | 不能写成 |
+| --- | --- | --- |
+| 真实组件夹具 | Playwright、`window.sent`、断言之后的截图 | Companion 已落盘，或模型已回复 |
+| 真实 Companion | 临时目录里的线程文件、`thread.list`、配置 mtime、监听端口 | 外部供应商已接受请求 |
+| 真实外部服务或本机环境 | 隔离密钥的供应商响应、已安装扩展的重开、Mac 或 Windows | 本环境没有这些前置，默认未测 |
+
+### 明确不做
+
+不点「永久删除」和「清空回收站」。不点知识图谱的「重新整理」。不勾选「本线程内自动批准同类」。不打开「自动批准所有危险操作」。不发送 `evaluate` 或 `navigate` 到真实页面。不发邮件、外部聊天或外部 MCP 写入。不优化 Linux 专项或本地 ASR。不改版本，不打 tag。
+
+### S1 首次配置、新建发送、重开恢复
+
+| 层 | 步骤 | 预期 | 节点 0 |
+| --- | --- | --- | --- |
+| 夹具 | 已连接，线程列表为空。输入「验收隔离句」。点「开始第一则对话」，再点一次发送 | `window.sent` 里只有一条 `thread.create`。没注入 `thread.created` 前，原文仍在输入框。注入创建结果后，把 `cmspark.navigation.lastThreadId` 设成该 id 并重载，活动对话就是它 | 未测。实现尚未开始 |
+| Companion | 对临时进程发送 `config.set` 只改主模型字段，再 `thread.create`，写入用户原文的 `chat.create`，停进程，用同一 `CMSPARK_DATA_DIR` 再启动，发 `thread.list` | 临时 `config.json` 有新的模型名，假密钥仍在。线程文件含「验收隔离句」。重启后列表仍有该 id。出站只可能打到 `127.0.0.1:9`，并且失败。live mtime 不变 | 未测。节点 0 不启动进程 |
+| 外部或本机 | 用隔离密钥让同一句拿到供应商正文；把扩展装进独立 Chrome 配置，关上侧栏再打开 | 只有真实响应正文和安装后的重开录像可以标通过 | 未测。没有隔离密钥，也没有装进 Chrome 用户配置的扩展 |
+
+### S2 项目创建、选择、切换和草稿
+
+| 层 | 步骤 | 预期 | 节点 0 |
+| --- | --- | --- | --- |
+| 夹具 | 在项目节输入名称并点「创建项目」。选中该项目。在对话 A 输入未发送文字，切到 B，再切回 A | 发出 `project.create`。最近对话只显示该项目的。B 的输入框是空的，A 的原文还在。改名和归档按钮仍在 | 未测 |
+| Companion | 用临时进程执行 `project.create`、`project.rename`、`project.archive`，再 `project.list` | 临时目录里的项目记录跟上这三次操作。live 目录不变。草稿隔离不在这一层重复声称通过 | 未测 |
+| 外部或本机 | 无外部服务 | 不适用，报告写未测并注明没有外部依赖 | 未测 |
+
+### S3 历史搜索、分组、提取取消、提取结果、回收站
+
+| 层 | 步骤 | 预期 | 节点 0 |
+| --- | --- | --- | --- |
+| 夹具 | 点「管理对话」。在可访问名「搜索线程」里输入标题片段。依次点时间、标签、手动分组、AI 分组。点「AI 提取标签」，在确认里点「取消」。另一次确认后，注入进度。对夹具对话点删除，先点取消，再确认移入回收站，然后恢复 | 对话框名是「对话管理」。搜索只留下匹配行。取消后 `window.sent` 没有 `thread.extract_digest`。进度文本匹配 `提取要点 1/20`。取消删除不发送 `thread.batch_delete`。确认后的消息是 `thread.batch_delete` 且 `mode` 为 `trash`。恢复发送 `thread.restore`。不出现「永久删除」的点击 | 未测。夹具标签不算模型结果 |
+| Companion | 临时进程只跑取消路径和一条夹具对话的 trash 再 restore | 消息日志没有 `thread.extract_digest`。临时线程先进入回收站再回到列表。不对 live 历史发 `thread.batch_delete`。不发 `mode: "hard"`，不点「清空回收站」 | 未测 |
+| 外部或本机 | 真实「AI 提取标签」要等模型写回要点 | 没有隔离密钥就保持未测。夹具进度不能挪到这一行 | 未测。没有隔离密钥 |
+
+### S4 会话关系图和分布图谱
+
+| 层 | 步骤 | 预期 | 节点 0 |
+| --- | --- | --- | --- |
+| 夹具 | 点「关系图谱」。在图页点「打开会话」。从知识面板点「分布图谱」。再点工具格「历史」 | `thread_graph.open` 的载荷是对话，不是知识文档。`thread_graph.open_thread` 之后图页仍在。`knowledge_graph.open` 不从对话管理进入。历史面板空文案是「暂无操作历史」 | 未测 |
+| Companion | 临时进程提供这两张图的现有读取。不点「重新整理」 | 图数据只含临时目录里的对话或知识文档。没有模型整理请求 | 未测 |
+| 外部或本机 | 「重新整理」会调用模型 | 不点击。没有密钥就写未测 | 未测 |
+
+### S5 设置减法、主模型和已配置外部语音
+
+| 层 | 步骤 | 预期 | 节点 0 |
+| --- | --- | --- | --- |
+| 夹具 | 打开设置。看主路径。打开「其他能力」。给内存状态设 `voiceModel.external.keyConfigured === true`，打开语音页。点「保存并关闭」 | 主路径有「服务地址（Base URL）」「模型名称」「API Key」，没有「视觉模型（看图描述）」。其他能力里能看见视觉模型。语音页有「外部转写已配置」。`config.set` 不含 `externalKey`，内存里的 `externalKey` 仍是原值 | 未测。源码里现有的句子是「外部转写已启用」，「外部转写已配置」和「其他能力」还没有 |
+| Companion | 临时 `config.json` 预先写入外部转写密钥。只保存主模型字段 | 磁盘上的外部密钥字节不变。live `config.json` 的 mtime 不变。不发起转写 HTTP | 未测 |
+| 外部或本机 | 真实外部转写一次，或 Mac / Windows 系统语音 | 没有密钥和对应系统就未测。不把本地 ASR 优化加进本计划 | 未测。没有隔离密钥，也没有 Mac / Windows |
+
+### S6 工具确认的允许和拒绝
+
+| 层 | 步骤 | 预期 | 节点 0 |
+| --- | --- | --- | --- |
+| 夹具 | 注入 `security.confirmation.request`，`tool_name` 为 `evaluate`。点「拒绝」。再注入一条，按 Esc | 两次都发出 `security.confirmation.response`，批准为假。`window.sent` 没有执行该工具的消息。不勾选自动批准同类 | 未测 |
+| Companion | 临时进程发出同一条确认。只走拒绝 | 队列清空，临时日志没有这次 `evaluate` 的执行。不连接用户浏览器 | 未测 |
+| 外部或本机 | 点「允许」只有在该工具不出网、不写 live 目录时才执行 | `evaluate` 和 `navigate` 不满足这条，允许路径写未测。不打开确认台批准真实页面 | 未测。允许路径没有无副作用的常用工具可跑 |
+
+### S7 窄屏、宽屏和键盘
+
+| 层 | 步骤 | 预期 | 节点 0 |
+| --- | --- | --- | --- |
+| 夹具 | 420 宽点「打开工作区导航」，Tab 进导航，按 Esc。再打开并点「关闭导航」。分别量 759、760、959、960 | Esc 和关闭后，`document.activeElement` 的可访问名是「打开工作区导航」。sidepanel 与 workspace 在 759 为 layered、760 为 resident，栏宽 220。popout 在 959 为 layered、960 为 resident。键盘焦点的轮廓是 `solid` / `rgb(79, 70, 229)` | 未测。截图断言仍以 Task 11 的函数名单为准 |
+| Companion | 纯界面 | 不适用，写未测并注明没有服务端行为 | 未测 |
+| 外部或本机 | 在 Mac 上看苹方或 SF，并在已安装扩展里重复 Tab | 本环境字体是 fallback。没有 Mac 安装就未测 | 未测。没有 Mac |
+
+### S8 断连和失败重试
+
+| 层 | 步骤 | 预期 | 节点 0 |
+| --- | --- | --- | --- |
+| 夹具 | 把连接设为 `disconnected`。点「重新连接」。把项目阶段设为 `list-error` 且没有快照，点「重试」。断连时点「保存并关闭」 | 横幅标题是「Companion 未连接」。点击发出 `ws.forceReconnect`。重试后多一条 `project.list`，没有「还没有项目」。保存出现「尚未连接到 Companion，这次设置没有发送」 | 未测 |
+| Companion | 停掉临时进程，再以同一 `CMSPARK_DATA_DIR` 启动。客户端重连后发 `thread.list` | 只动 `$PORT` 上的临时进程。重连后列表仍是临时线程。23401 无新连接。live mtime 不变 | 未测 |
+| 外部或本机 | 「查看日志」走原生宿主打开目录 | 没有原生宿主时，夹具只断言提示「请手动打开日志目录：~/.cmspark-agent/logs/」。Mac / Windows 原生打开写未测 | 未测。没有 Mac / Windows 原生宿主 |
+
+### 节点 0 核对
+
+核对基线是写入本节之前的 `f0b5b09652d8aedf0e301a8318ed9fe489418f6d`。只读了源码，没有启动 Companion，没有读取或修改 live 配置，没有发外部请求。
+
+源码里已经有的名字：`打开工作区导航`、`关闭导航`、`保存并关闭`、`服务地址（Base URL）`、`模型名称`、`API Key`、`视觉模型（看图描述）`、`外部转写`、`外部转写已启用`、`Companion 未连接`、`重新连接`、`尚未连接到 Companion，这次设置没有发送`、`创建项目`、`新项目名称`、`管理对话`、`对话管理`、`搜索线程`、`时间`、`标签`、`手动分组`、`AI 分组`、`AI 提取标签`、`关系图谱`、`会话关系图`、`回收站`、`移入回收站`、`分布图谱`、`重新整理`、`允许`、`拒绝`、`暂无操作历史`。消息名：`thread.create`、`chat.send`、后台的 `chat.create`、`project.create`、`thread.extract_digest`、`thread.batch_delete`、`thread.restore`、`thread_graph.open`、`thread_graph.open_thread`、`knowledge_graph.open`、`security.confirmation.response`、`ws.forceReconnect`、`cmspark.navigation.lastThreadId`。
+
+还没有的规格文案：`开始第一则对话`、`外部转写已配置`、`其他能力`。所以 S1 和 S5 即使对着当前界面跑，也不能标通过。
+
+### 同一 head 的其余门禁
+
+场景报告之外，仍要跑：
+
+```bash
+cd chrome-extension && nvm use 22
+uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py
+npx tsc -p tsconfig.test.json --pretty false
+node --test .test-dist/tests/startup-destination.test.js .test-dist/tests/project-list-retry.test.js .test-dist/tests/history-entry-scopes.test.js
+cd .. && npm --prefix chrome-extension test && npm --prefix companion test
+```
+
+四条 pull_request workflow：CI、ARM acceptance、Linux integration ARM、Session save recovery。十个检查：`build`、`smoke (ubuntu-latest)`、`smoke (macos-latest)`、`smoke (windows-latest)`、`smoke (windows-native)`、`activity (Linux X11 native)`、`acp-history-restart`、`Affected CPU controls (Linux ARM64)`、`Linux integration controls (ARM64)`、`Windows session persistence`。不手动触发 Release 或 Build installers。
 
 ## 覆盖矩阵
 
@@ -720,7 +838,8 @@ git commit -m "test: assert each sidebar screenshot before saving it"
 | 两张图谱和操作历史 | Task 9 |
 | 已配置外部转写和密钥不回显 | Task 10 |
 | 截图、759/760/959/960、Esc 和关闭 | Task 11 |
-| 四条 workflow、十个 CI、final gate | Task 11 |
+| 八个使用场景、三层证据、隔离临时目录 | 最终验收矩阵 |
+| 四条 workflow、十个 CI、final gate | Task 11 与最终验收矩阵 |
 
 ## 自审
 
@@ -728,4 +847,5 @@ git commit -m "test: assert each sidebar screenshot before saving it"
 - 门槛测试只调用已有的 `navigationMode`。红灯是 760 仍为 layered。
 - 重试的节点测试不传尚不存在的 prop。点击后的 `project.list` 条数是第二条断言。
 - 焦点断言使用「打开工作区导航」和 `focus({ focusVisible: true })`。
-- 节点 0 的文档提交不是 final gate。
+- 场景矩阵的按钮和消息名能在当前源码或规格里找到。规格新增的三句不写成已经存在。
+- 节点 0 的每一行都是未测。文档提交不是 final gate。

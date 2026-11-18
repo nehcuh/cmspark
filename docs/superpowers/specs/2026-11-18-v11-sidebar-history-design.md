@@ -82,11 +82,11 @@ Base: `08fe57feacd6ca634eb2f8369dada10420ce0d44`（`origin/main`，Merge pull re
 
 ## 3. 非目标
 
-不合并、不修改、不发布 #864。不改 #856。不改版本，不打 tag。不新增右侧结果栏、不新增外部模型、不把 `ws_secret` 当作授权。不在本规格里优化 Linux 专项或本地 ASR。没有 Mac 字体和安装测试就不写已通过。
+不合并、不修改、不发布 #864。不改 #856。不改版本，不打 tag。不新增右侧结果栏、不新增外部模型、不把 `ws_secret` 当作授权。不在本规格里优化 Linux 专项或本地 ASR。没有 Mac 字体和安装测试就不写已通过。场景矩阵是同一实现 head 的验收，不是恢复发布。
 
 ## 4. 验收
 
-每个实现节点停在独立评审。本规格和节点 0 的文档 PR 不是实现通过，也不是合并通过。最终节点在同一 head 上跑扩展与 companion 全量测试，以及仓库四条 workflow、十个 CI 检查，再进入独立 final gate。旧 head 的绿色不算。
+每个实现节点停在独立评审。本规格和节点 0 的文档 PR 不是实现通过，也不是合并通过。最终节点在同一 head 上跑扩展与 companion 全量测试，以及仓库四条 workflow、十个 CI 检查，并交出第 5 节的场景报告，再进入独立 final gate。旧 head 的绿色不算。节点 0 不执行这些场景，不能把文档里的「未测」改成通过。
 
 视觉门是 `chrome-extension/scripts/test-sidebar-review-ui.py`。命令：
 
@@ -120,3 +120,32 @@ uv run --no-project --with playwright python scripts/test-sidebar-review-ui.py
 「导航」只是按钮里的可见文字。`StatusRail.tsx` 第 223 行的可访问名是 `aria-label="打开工作区导航"`。断言用可访问名，不用可见文字冒充。`locator.focus()` 不算键盘焦点。Esc 和关闭各测一次。每张截图必须在对应断言成功之后保存。只检查文件存在不算通过。
 
 截图文件名与上表一一对应，写到该次运行的临时目录。报告写明字体是运行机器的 fallback，不是 Mac 验收。`popout` 不在这张视觉表里，它的 960 门槛由 `startup-destination.test.ts` 锁住。
+
+## 5. 场景演示
+
+最终门的场景报告写在 `/tmp/sidebar-scenarios/<40位 sha>/report.md`，截图和录屏放在同一目录。每一行都要有场景、层、步骤、预期、实际、截图或录屏、环境、commit、证据路径、结果。结果只取通过、失败、未测。失败先改，独立评审后再用新 head 重跑整张矩阵。
+
+三层不能互相冒充：
+
+| 层 | 跑什么 | 通过说明什么 |
+| --- | --- | --- |
+| 真实组件夹具 | 现有 Playwright 打开真实 `App`。`sendMessage` 进 `window.sent`，配置进内存里的 `companionStore` | 只说明界面和将要发出的消息 |
+| 真实 Companion | `CMSPARK_DATA_DIR` 指向空临时目录，端口写在该目录的 `config.json`，不占用 23401，不读不写 `~/.cmspark-agent` | 只说明临时目录里的持久化和协议 |
+| 真实外部服务或本机环境 | 隔离密钥、已装入 Chrome 的扩展、Mac 或 Windows | 只有该环境自己的证据可以标通过 |
+
+夹具注入的标签、进度和模型正文都标成夹具，不算 Companion，也不算外部服务。临时目录里的 `base_url` 用 `http://127.0.0.1:9/v1`，密钥用假值。用户原文能落进临时线程即可。连不上这个地址是预期，不能改去连真实供应商。本环境没有隔离的真实模型密钥，也没有装进 Chrome 用户配置的扩展，没有 Mac 或 Windows 安装。这些行保持未测，并写上缺的前置。
+
+数据只来自这次临时目录或夹具内存。开始前记录 `~/.cmspark-agent/config.json` 的 mtime，结束后必须相同。不点「永久删除」「清空回收站」「重新整理」。不勾选「本线程内自动批准同类」，不打开自动批准危险操作。不发送会出网的页面脚本、导航、邮件、聊天或外部 MCP 写入。回收站只对临时目录里刚创建的对话做「移入回收站」和「恢复」。
+
+场景和通过时要看到的结果：
+
+1. 首次配置、新建、重开。已连接且没有活动对话时，输入框可写。点「开始第一则对话」或发送，只产生一条 `thread.create`。没收到 `thread.created` 时原文还在，再点不产生第二条。夹具重开时读取 `cmspark.navigation.lastThreadId`，列表里有这条对话就进入它。Companion 重启后，`thread.list` 仍返回临时目录里的这条。装进 Chrome 后再真正关上侧栏重开，这一行在本环境未测。
+2. 项目。侧栏里「新项目名称」和「创建项目」发出 `project.create`。选中项目后，最近对话只剩该项目的。A 的未发送文字不出现在 B，回到 A 还在。改名和归档仍可到达。
+3. 对话管理。入口是「管理对话」，对话框名是「对话管理」。搜索框可访问名是「搜索线程」。视图是时间、标签、手动分组、AI 分组。点「AI 提取标签」后先确认；点「取消」不发送 `thread.extract_digest`。确认后的进度句是「提取要点 {done}/{total}」。夹具可以显示一条假标签，但真实要点写入要等外部模型，本环境未测。对夹具对话点删除，先出现「将 N 个会话移入回收站？」。取消不发送 `thread.batch_delete`。确认后的模式是 `trash`。回收站里点恢复，发送 `thread.restore`。不执行永久删除。
+4. 两张图。「关系图谱」或「会话关系图」发送 `thread_graph.open`。图页「打开会话」发送 `thread_graph.open_thread`，图页不关。知识面板的「分布图谱」发送 `knowledge_graph.open`，对象是知识文档。点「历史」仍打开操作历史，空文案是「暂无操作历史」。不点「重新整理」。
+5. 设置减法。主路径有「服务地址（Base URL）」「模型名称」「API Key」，保存按钮是「保存并关闭」。主路径看不到「视觉模型（看图描述）」，从「其他能力」能打开。已配置外部转写时，语音页有「外部转写已配置」，保存别的设置不改 `externalKey`。真实转写请求未测。
+6. 确认。注入一条 `evaluate` 的 `security.confirmation.request`。点「拒绝」或按 Esc，发出 `security.confirmation.response` 且未批准，没有执行消息。点「允许」只在工具不会出网、也不会写 live 目录时才测；否则这一行未测。不打开确认台去批准真实页面。
+7. 窄宽和键盘。420 宽从「打开工作区导航」展开，Esc 和「关闭导航」把焦点还回该按钮。759 仍是 layered，760 起 sidepanel 和 workspace 为 resident，栏宽 220。popout 在 959 仍是 layered，960 为 resident。键盘焦点用真实 Tab 或 `focus({ focusVisible: true })`。Mac 字体未测。
+8. 断连和重试。`disconnected` 时横幅标题是「Companion 未连接」，「重新连接」发送 `ws.forceReconnect`。项目列表失败且没有快照时有「重试」，点击多一条 `project.list`。断连时点「保存并关闭」，出现「尚未连接到 Companion，这次设置没有发送」。Companion 层只停掉临时进程再拉起，不碰 23401 上已有的进程。
+
+四条 pull_request workflow 仍是 CI、ARM acceptance、Linux integration ARM、Session save recovery。十个检查仍是 `build`、四条 smoke、`activity (Linux X11 native)`、`acp-history-restart`、`Affected CPU controls (Linux ARM64)`、`Linux integration controls (ARM64)`、`Windows session persistence`。Release 和 Build installers 不手动触发。场景矩阵不替代这十个检查。
