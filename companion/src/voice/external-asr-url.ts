@@ -29,8 +29,39 @@ function isIpv4LoopbackOrPrivate(host: string): boolean {
   return false
 }
 
+function expandIpv6(host: string): number[] | null {
+  const lower = host.toLowerCase()
+  if (!lower.includes(":")) return null
+  const halves = lower.split("::")
+  if (halves.length > 2) return null
+  const parseSide = (side: string): number[] | null => {
+    if (side === "") return []
+    const groups = side.split(":")
+    const nums = groups.map((group) => /^[0-9a-f]{1,4}$/.test(group) ? Number.parseInt(group, 16) : NaN)
+    return nums.some((n) => Number.isNaN(n)) ? null : nums
+  }
+  const left = parseSide(halves[0] ?? "")
+  const right = halves.length === 2 ? parseSide(halves[1] ?? "") : []
+  if (!left || !right) return null
+  if (halves.length === 1) return left.length === 8 ? left : null
+  const missing = 8 - left.length - right.length
+  if (missing < 0) return null
+  return [...left, ...Array(missing).fill(0), ...right]
+}
+
+/** ::ffff:0:0/96 only. NAT64 64:ff9b::/96 is left untouched. */
+function mappedIpv4(host: string): string | null {
+  const groups = expandIpv6(host)
+  if (!groups || groups.length !== 8) return null
+  if (groups.slice(0, 5).some((n) => n !== 0) || groups[5] !== 0xffff) return null
+  const hi = groups[6]!
+  const lo = groups[7]!
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
+}
+
 function isBlockedLiteral(hostname: string): boolean {
-  const v4 = ipv4ToInt(hostname)
+  const mapped = mappedIpv4(hostname)
+  const v4 = ipv4ToInt(mapped ?? hostname)
   if (v4 != null) {
     const a = v4 >>> 24
     const b = (v4 >>> 16) & 0xff

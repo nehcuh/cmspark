@@ -47,6 +47,17 @@ test("rejects userinfo, query, fragment, public http, and link-local", () => {
   for (const raw of bad) assert.equal(canonicalExternalUrl("deepseek", raw).ok, false)
 })
 
+test("IPv4-mapped IPv6 literals use the embedded IPv4 ranges", () => {
+  const rejected = [
+    "https://[::ffff:169.254.169.254]/v1/tools/asr",
+    "https://[::ffff:a9fe:a9fe]/v1/tools/asr",
+    "https://[::ffff:0:0]/v1/tools/asr",
+    "https://[::ffff:e000:1]/v1/tools/asr",
+  ]
+  for (const raw of rejected) assert.equal(canonicalExternalUrl("deepseek", raw).ok, false)
+  assert.equal(canonicalExternalUrl("openai", "https://[::ffff:7f00:1]/v1").ok, true)
+})
+
 test("allows loopback and RFC1918 literals over http", () => {
   for (const raw of ["http://127.0.0.1:9000", "http://192.168.1.9:8080", "http://localhost:9"]) {
     assert.equal(canonicalExternalUrl("openai", raw).ok, true)
