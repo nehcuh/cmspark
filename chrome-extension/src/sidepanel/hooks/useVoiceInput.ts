@@ -39,6 +39,7 @@ import {
   resolveSystemEngineSelection,
   shouldEscalateBrowserToSystem,
 } from "../voice/stt-engine-chain"
+import { externalCancelCopy, externalCapCopy, externalRecordCap, externalShouldRefine } from "../voice/external-asr-ui"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 
 function newSessionId(): string {
@@ -172,6 +173,10 @@ export type UseVoiceInputOpts = {  /** Composer text at listen start (snapshot).
     helper: { ok: boolean; reason?: string; message?: string; pinned?: boolean }
     systemSpeech: { available: boolean; reason?: string }
   } | null
+  /** External chat ASR budget from voice.model.state. Absent values use the saved factory, not the 45s local cap. */
+  externalMaxDurationMs?: number | null
+  externalMaxBytes?: number
+  externalRequestTimeoutMs?: number
 }
 
 export function useVoiceInput(opts: UseVoiceInputOpts) {
@@ -180,7 +185,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       ? "local"
       : opts.sttEngine === "system"
         ? "system"
-        : "browser"
+        : opts.sttEngine === "external"
+          ? "external"
+          : "browser"
   /**
    * Gated per-session fallback: engine=local, model confirmed missing (mirrors
    * the localGateError model_missing branch — companion connected, state mirror
@@ -213,15 +220,17 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   const systemFallbackRef = useRef(false)
   const systemSelection = resolveSystemEngineSelection({
     platform: chainPlatformRef.current,
-    configured: configuredEngine,
+    configured: configuredEngine === "local" || configuredEngine === "system" ? configuredEngine : "browser",
     systemAvailable,
   })
   /** Effective engine for adapter/session; configured engine otherwise. */
-  const engine: SttEngineKind = systemFallbackRef.current
-    ? "system"
-    : localFallbackActive
-      ? "browser"
-      : systemSelection.engine
+  const engine: SttEngineKind = configuredEngine === "external"
+    ? "external"
+    : systemFallbackRef.current
+      ? "system"
+      : localFallbackActive
+        ? "browser"
+        : systemSelection.engine
   /** Configured system but probe/off-win32 degraded → browser (honest banner). */
   const systemConfigDegraded =
     configuredEngine === "system" &&
@@ -351,7 +360,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         queueMicrotask(() => {
           o.onDraft(merged, { postprocessed: pp })
           const wantRefine =
-            o.asrRefinerEnabled === true &&
+            externalShouldRefine(o.asrRefinerEnabled === true, merged) &&
             o.privacyAckV3 === true &&
             o.companionConnected === true
           if (!wantRefine) return
@@ -490,6 +499,13 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
           ...(postprocessed === true ? { postprocessed: true } : {}),
         }),
       onError: (code: string) => {
+        if (adapterEngine === "external" && (code === "aborted" || code === "external_cancel_sent")) {
+          dispatchEv({
+            type: "SOFT_CAP_HINT",
+            message: externalCancelCopy(code === "external_cancel_sent"),
+            code: "external_cancel",
+          })
+        }
         if (
           adapterEngine === "browser" &&
           !systemFallbackRef.current &&
@@ -541,6 +557,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
               onMessage: subscribeRuntime,
               // system sessions carry no whisper model on the wire (#259)
               ...(adapterEngine === "local" ? { modelId } : {}),
+              ...(adapterEngine === "external"
+                ? { pendingTimeoutMs: (optsRef.current.externalRequestTimeoutMs ?? 180_000) + 10_000 }
+                : {}),
             },
     })
 
@@ -775,7 +794,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             return
           }
         }
-        if (eng === "system" && !o.companionConnected) {
+        if ((eng === "system" || eng === "external") && !o.companionConnected) {
           dispatchEv({ type: "ENGINE_ERROR", code: "companion_disconnected" })
           return
         }
@@ -784,6 +803,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             dispatchEv({ type: "ENGINE_ERROR", code: "binary_missing" })
           } else if (eng === "system") {
             dispatchEv({ type: "ENGINE_ERROR", code: "system_unavailable" })
+          } else if (eng === "external") {
+            dispatchEv({ type: "ENGINE_ERROR", code: "external_unconfigured" })
           }
           return
         }
@@ -791,7 +812,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         const sid = newSessionId()
         const base = o.getBaseText()
         const modeNow = modeRef.current
-        const maxMs = maxListenMsForSession(modeNow, eng)
+        const externalCap = externalRecordCap(o.externalMaxDurationMs, o.externalMaxBytes)
+        const maxMs = eng === "external"
+          ? externalCap.ms
+          : maxListenMsForSession(modeNow, eng)
         maxListenMsRef.current = maxMs
         dispatchEv({ type: "USER_TOGGLE_START", sessionId: sid, baseText: base })
         if (fallbackRef.current) {
@@ -841,6 +865,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
               hardCapMs: maxMs,
               streamPartial: false,
             })
+          } else if (eng === "external") {
+            adapterRef.current.start({
+              lang: VOICE_DEFAULT_LANG,
+              sessionId: sid,
+              mode: "classic",
+              hardCapMs: maxMs,
+              streamPartial: false,
+            })
           } else {
             adapterRef.current.start({
               lang: VOICE_DEFAULT_LANG,
@@ -868,7 +900,13 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         timerRef.current = setTimeout(() => {
           const cont = modeRef.current === "continuous"
           clearTimer()
-          if (engineRef.current === "local" || engineRef.current === "system") {
+          if (engineRef.current === "external") {
+            dispatchEv({
+              type: "SOFT_CAP_HINT",
+              message: externalCapCopy(externalCap.reason),
+            })
+            stopEngine("stop")
+          } else if (engineRef.current === "local" || engineRef.current === "system") {
             // Stop capture → segment finalize (do not TIMEOUT→stopping).
             stopEngine("stop")
           } else {

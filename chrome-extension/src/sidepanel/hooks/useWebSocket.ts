@@ -10,7 +10,7 @@ import { overlayStandbyFromError, useAgentStore, type AgentAction } from "../sto
 import { decideActiveThreadList } from "../navigation/startup-destination"
 import { normalizeDocumentWarning, parseDocumentNotices } from "../utils/document-warning"
 import { codingControlAction } from "../utils/coding-control-message"
-import type { ComputerTaskEventView, LLMConfig, Message, MessageAttachment } from "../types"
+import type { ComputerTaskEventView, LLMConfig, Message, MessageAttachment, VoiceExternalState } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 import { isBrowserTool } from "../mode/mode-controller"
@@ -1868,10 +1868,30 @@ export function useWebSocket() {
               ? "local"
               : msg.sttEngine === "system"
                 ? "system"
-                : "browser"
+                : msg.sttEngine === "external"
+                  ? "external"
+                  : "browser"
+          const externalRaw = msg.external && typeof msg.external === "object" ? msg.external as Record<string, unknown> : null
+          const externalLimitNote: VoiceExternalState["limitNote"] =
+            externalRaw?.limitNote === "openai-file-cap" || externalRaw?.limitNote === "unprobed-local-default"
+              ? externalRaw.limitNote
+              : "deepseek-docs"
+          const external: VoiceExternalState | undefined = externalRaw
+            ? {
+                style: externalRaw.style === "openai" ? "openai" : "deepseek",
+                baseUrl: typeof externalRaw.baseUrl === "string" ? externalRaw.baseUrl : "",
+                normalizedUrl: typeof externalRaw.normalizedUrl === "string" ? externalRaw.normalizedUrl : "",
+                model: typeof externalRaw.model === "string" ? externalRaw.model : "",
+                keyConfigured: externalRaw.keyConfigured === true,
+                maxDurationMs: typeof externalRaw.maxDurationMs === "number" ? externalRaw.maxDurationMs : null,
+                maxBytes: typeof externalRaw.maxBytes === "number" ? externalRaw.maxBytes : 0,
+                requestTimeoutMs: typeof externalRaw.requestTimeoutMs === "number" ? externalRaw.requestTimeoutMs : 180000,
+                limitNote: externalLimitNote,
+              }
+            : undefined
           const localModelId = typeof msg.localModelId === "string" ? msg.localModelId : "medium"
           const modelState = {
-            sttEngine: sttEngine as "browser" | "local" | "system",
+            sttEngine: sttEngine as "browser" | "local" | "system" | "external",
             localModelId,
             recommendedModelId:
               typeof msg.recommendedModelId === "string" ? msg.recommendedModelId : "medium",
@@ -1890,6 +1910,7 @@ export function useWebSocket() {
             ...(typeof msg.modelDownloadEndpoint === "string"
               ? { modelDownloadEndpoint: msg.modelDownloadEndpoint }
               : {}),
+            ...(external ? { external } : {}),
           }
           dispatch({ type: "SET_VOICE_MODEL_STATE", modelState })
           if ("lastDownloadError" in msg) {

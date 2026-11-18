@@ -52,7 +52,7 @@ export type LocalSttAdapterDeps = {
    */
   modelId?: string
   /** #259: "system" stamps voice.stt.start engine:"system" (per-session SAPI). */
-  engineKind?: "local" | "system"
+  engineKind?: "local" | "system" | "external"
   startCapture?: (opts?: StartCaptureOpts) => Promise<CaptureHandle>
   startPcmStreamCapture?: (opts: PcmStreamCaptureOpts) => Promise<PcmStreamHandle>
   /**
@@ -428,7 +428,10 @@ export function createLocalSttAdapter(
       sessionId = sid
       armPendingTimer(sid)
 
-      const chunks = splitIntoChunks(wav, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
+      const payload = deps.engineKind === "external" && wav.byteLength >= 44 && wav[0] === 0x52 && wav[1] === 0x49 && wav[2] === 0x46 && wav[3] === 0x46
+        ? wav.subarray(44)
+        : wav
+      const chunks = splitIntoChunks(payload, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
       for (let seq = 0; seq < chunks.length; seq++) {
         if (dead || aborted || sessionId !== sid) {
           finishPending({ ok: false, code: "aborted" })
@@ -458,6 +461,20 @@ export function createLocalSttAdapter(
   }
 
   const sendStart = (sid: string, maxMs: number) => {
+    if (deps.engineKind === "external") {
+      deps.send({
+        type: "voice.stt.start",
+        v: 1,
+        sessionId: sid,
+        engine: "external",
+        format: "wav",
+        sampleRate: LOCAL_STT_SAMPLE_RATE,
+        channels: LOCAL_STT_CHANNELS,
+        lang: lang.startsWith("zh") ? "zh" : lang,
+        privacy_ack_external_v1: true,
+      })
+      return
+    }
     deps.send({
       type: "voice.stt.start",
       v: 1,
@@ -524,7 +541,10 @@ export function createLocalSttAdapter(
 
   const runClassic = async (sid: string) => {
     try {
-      const handle = await beginCapture({ maxMs: LOCAL_STT_MAX_RECORD_MS, onLevel: handlers.onLevel })
+      const handle = await beginCapture({
+        maxMs: deps.engineKind === "external" ? hardCapMs : LOCAL_STT_MAX_RECORD_MS,
+        onLevel: handlers.onLevel,
+      })
       if (dead || aborted || sessionId !== sid) {
         handle.abort()
         return
@@ -564,7 +584,7 @@ export function createLocalSttAdapter(
         if (remaining < 200) break
 
         // F1: honor near-realtime segmentCapMs (not always 45s)
-        const windowMs = Math.min(segmentCapMs, LOCAL_STT_MAX_RECORD_MS, remaining)
+        const windowMs = Math.min(segmentCapMs, deps.engineKind === "external" ? hardCapMs : LOCAL_STT_MAX_RECORD_MS, remaining)
         segmentIndex += 1
         const segSid = `${parentSessionId}-s${segmentIndex}`
         sessionId = segSid
@@ -829,7 +849,7 @@ export function createLocalSttAdapter(
         // Allow short test segments (<800ms wall hardCap with tiny segmentCapMs)
         if (remaining < Math.min(50, segmentCapMs)) break
 
-        const segmentMs = Math.min(segmentCapMs, LOCAL_STT_MAX_RECORD_MS, remaining)
+        const segmentMs = Math.min(segmentCapMs, deps.engineKind === "external" ? hardCapMs : LOCAL_STT_MAX_RECORD_MS, remaining)
         segmentIndex += 1
         const segSid = `${parentSessionId}-s${segmentIndex}`
         sessionId = segSid
@@ -1001,6 +1021,10 @@ export function createLocalSttAdapter(
           streamPartial = false
           segmentCapMs = LOCAL_STT_MAX_RECORD_MS
         }
+        if (deps.engineKind === "external") {
+          streamPartial = false
+          segmentCapMs = hardCapMs
+        }
       }
 
       if (!sid) {
@@ -1158,6 +1182,7 @@ export function createLocalSttAdapter(
         }
         pcmStream = null
       }
+      const externalSent = deps.engineKind === "external" && (phase === "uploading" || phase === "waiting")
       if (sid) {
         try {
           deps.send({ type: "voice.stt.abort", v: 1, sessionId: sid })
@@ -1166,7 +1191,7 @@ export function createLocalSttAdapter(
         }
       }
       finishPending({ ok: false, code: "aborted" })
-      handlers.onError("aborted")
+      handlers.onError(externalSent ? "external_cancel_sent" : "aborted")
       handlers.onEnd()
       reset()
     },

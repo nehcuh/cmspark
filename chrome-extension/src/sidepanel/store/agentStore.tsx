@@ -2419,9 +2419,12 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         Object.values(action.modelState.models).some((m) => m.status === "downloading") ||
         action.modelState.diarizeModel?.status === "downloading"
       const binaryReady = action.modelState.binary?.status === "ready"
+      const external = action.modelState.external
+        ? (({ apiKey: _apiKey, ...view }) => view)(action.modelState.external as VoiceModelState["external"] & { apiKey?: string })
+        : undefined
       return {
         ...state,
-        voiceModel: action.modelState,
+        voiceModel: external ? { ...action.modelState, external } : action.modelState,
         voiceModelProgress: anyDownloading ? state.voiceModelProgress : null,
         voiceBinaryProgress: binaryReady ? null : state.voiceBinaryProgress,
       }

@@ -930,8 +930,20 @@ export interface ComputerModelLicenseDoor {
 export type VoiceModelStatus = "ready" | "absent" | "incomplete" | "downloading"
 
 /** voice.model.state 下行负载(扩展纯只读镜像,无乐观更新)。 */
+export interface VoiceExternalState {
+  style: "deepseek" | "openai"
+  baseUrl: string
+  normalizedUrl: string
+  model: string
+  keyConfigured: boolean
+  maxDurationMs: number | null
+  maxBytes: number
+  requestTimeoutMs: number
+  limitNote: "deepseek-docs" | "openai-file-cap" | "unprobed-local-default"
+}
+
 export interface VoiceModelState {
-  sttEngine: "browser" | "local" | "system"
+  sttEngine: "browser" | "local" | "system" | "external"
   localModelId: string
   recommendedModelId: string
   models: Record<string, { status: VoiceModelStatus; bytesOnDisk?: number; error?: string }>
@@ -953,6 +965,8 @@ export interface VoiceModelState {
   diarizeModel?: { modelId: string; status: VoiceModelStatus; bytesOnDisk?: number; error?: string }
   /** #260 diarize 模型根目录（与 whisper 共享磁盘预算，sum-of-subtrees）。 */
   diarizeRoot?: string
+  /** External chat ASR view. keyConfigured only; the API key never arrives here. */
+  external?: VoiceExternalState
 }
 
 /**
