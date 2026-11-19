@@ -212,7 +212,7 @@ helper 字节一改，`restorePickerWait('helper')` 的成功摘要 `56cb1183b0e
 - `desktop-workspace-xctest-705.test.ts` 第 57 行的 helper，在 `restoreObservation826` 之前。该循环去掉 CLOSE 之后的摘要仍是 `b0e30a4e3d7331dd1af008eee5ac96c673907544f4fda75a2e279ac816cba796`。
 - 同文件第 365 行的 helper peel，在 `restoreCloseObservation476('helper')` 之前。成功路径才要求 `56cb1183…`。
 - `desktop-close-observation-826.test.ts` 的 helper peel，在 `restoreObservation826('helper')` 之前。
-- `desktop-workspace-query-101.test.ts` 的 helper 循环，在 `restorePickerWait('helper')` 之前。`source+eol` 会让这一对出现两次，先在 exact-once 失败。
+- `desktop-workspace-query-101.test.ts` 的 helper 循环，在 `restorePickerWait('helper')` 之前。`source+eol` 是已经换成目标换行的源文再加一个换行，参数对仍是 1 次。exact-once 通过。随后 `restorePickerWait(..., {requireSuccessDigest:false})` 不检查 `PICKER_WAIT_HELPER_SUCCESS`。`restoreWorkspaceQuery101` 在 `QUERY101_COMPLETE_CURRENT_SOURCE` 上因整文件不再是 `56cb1183…` 失败。删掉这一对，或把这一对再拼一次，才在 exact-once 失败。
 - `desktop-native-observation-788.test.ts` 的 helper 格：还原和 `restorePickerWait` 之后，`restoreObservation788` 的摘要仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。
 - `scripts/tests/native-join-observation-788.test.cjs` 的 helper 格：还原和 `restorePickerWait` 之后，去掉 JOIN 的摘要仍是 `0397f3cbc6bde4fd9293cffa26515a7407bb3d9ce47264ddfa50af52d599e8d4`。
 
