@@ -214,13 +214,11 @@ CI run `44487668420`，macOS job `135435079906`，SHA `6067e9ee90e67609b4b418c39
 
 中止时 `childExited` 是 false，`childExitCode` 是 null。中止之后的计时点是 `[4,183,true,2]`，非零退出；`[7,183,true,3]` 和 `[8,183,true,3]` 是信号。不能把这次说成宿主退出码 0。`xcodeClosed` 是 false，`xcodeExit` 是 `NOT_CLOSED`。`D705_XCRESULT_DETAILS_CLOSED` 的 `reason` 是 `BUNDLE_UNAVAILABLE`，`tool826` 是空数组。结果工具没有留在等待里。后三例仍是 `ACQUIRE_REFUSED`：local-work 45000ms，archive 20000ms，terminal-only 45000ms。选择框用例 `RELEASE_REFUSED`。`uiRefusal` 是 null。
 
-## 13. 当前唯一下一步
+## 13. 已执行的放回参数（历史）
 
-把 `'-resultBundlePath',path.join(this.scene.root,'Result.xcresult')` 放回 `OwnedWorkspaceUI705.start` 的 `xcodebuild` 参数。窗口预等待和 `D476_WS_HOST_TICK` 诊断留着。`path.join(scene.root,'Result.xcresult')` 的读取、`BUNDLE_UNAVAILABLE`、stdout/stderr 捕获、45000 和 `DesktopHost.swift` 都不动。
+下面这一段已经在 `12f5876c6527fcdc045d6ea6ab3415ddd4f22f4c` 做过，不是当前要再做的事。它把 `'-resultBundlePath',path.join(this.scene.root,'Result.xcresult')` 放回 `OwnedWorkspaceUI705.start`，并删掉 `restoreResultBundle`。窗口预等待和 `D476_WS_HOST_TICK` 仍留着。`path.join(scene.root,'Result.xcresult')` 的读取、`BUNDLE_UNAVAILABLE`、stdout/stderr 捕获、45000 和 `DesktopHost.swift` 都没有改。
 
-同时删掉整份 `companion/scripts/tests/result-bundle-inverse.cjs`，以及全部 `restoreResultBundle` 调用：`previousInputReady705` 的 helper、`desktop-workspace-xctest-705.test.ts` 第 57 行和第 365 行、`desktop-close-observation-826.test.ts` 的 helper peel、`desktop-workspace-query-101.test.ts` 的 helper `open`、`desktop-native-observation-788.test.ts` 的 helper、`scripts/tests/native-join-observation-788.test.cjs` 的 helper。只为这次删除实验新增的 `RESULT_BUNDLE_ONCE` 用例也去掉。其余无关变体和历史锁不删。
-
-参数放回之后，helper 的第一道 hash 重新是 `restorePickerWait('helper')` 的成功摘要 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`，中间不再先剥这对参数。`source+eol` 仍走 `requireSuccessDigest:false`，然后在 `QUERY101_COMPLETE_CURRENT_SOURCE` 上因整文件不再是 `56cb1183…` 失败。`b0e30a4e3d7331dd1af008eee5ac96c673907544f4fda75a2e279ac816cba796`、`873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`、`0397f3cbc6bde4fd9293cffa26515a7407bb3d9ce47264ddfa50af52d599e8d4` 保持原位，不后移。
+那次提交已经删掉 `result-bundle-inverse.cjs` 和全部 `restoreResultBundle` 调用，包括 `previousInputReady705` 的 helper、705 第 57 行和第 365 行、826 的 helper peel、query101 的 helper `open`、788 的 helper、JOIN 的 helper，以及 `RESULT_BUNDLE_ONCE` 用例。helper 的第一道 hash 回到 `restorePickerWait('helper')` 的 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`。`source+eol` 仍是 `requireSuccessDigest:false`，然后在 `QUERY101_COMPLETE_CURRENT_SOURCE` 失败。`b0e30a4e…`、`873b5ced…`、`0397f3cb…` 没有后移。这些都不是当前步骤。
 
 ## 14. 放回参数后的最早未闭合点
 
@@ -232,9 +230,21 @@ CI run `44492046690`，macOS job `135449866902`，SHA `12f5876c6527fcdc045d6ea6a
 
 ## 15. 当前唯一下一步
 
-不增加 45000。不改 `DesktopHost.swift`。不把查询挪线程。不删取消成功条件。窗口预等待和现有 tick 计数留着。
+不增加 45000。不改 `DesktopHost.swift`。不把查询挪线程。不删 `cancelReturned == 1`、子进程退出码 0、计时 18–20、`xcodeClosed` 为 true、租约交还和后三例。窗口预等待和现有 tick 计数留着。
 
-在现有 tick 定时器因为 `pickerCurrent` 不为真、面板 `settled`、对象消失或满 40 次而 `invalidate` 之前，先发一笔有上限的 `system.ping`，id 固定为 `D476_WS_HOST_TICK_STOP`，并在 45 秒中止时已经打印的 `D476_WORKSPACE_NATIVE_PHASE` 里记下停因：`absent`、`not-current`、`settled` 或 `cap`。这一笔写在阻塞期间的宿主 runloop 上，不是事后补记。没有这笔记下而 tick 停在 2，才支持回调没有再进来。记下 `not-current` 或 `settled` 而 stage 仍是 15 detail 1、`uiRefusal` 仍是 null，则 runloop 还在，面板已经离开当前选择。两种都不是 `cancelReturned == 1`，也不称为整票修复。
+同一次宿主定时器回调里，在 `invalidate` 之前最多发一次 `system.ping`。id 只是 `D476_WS_HOST_TICK_STOP`。`reason` 只允许 `not-current`、`settled`、`cap`。`cap` 只在已经数到 40 次时使用。`not-current` 先于 `settled`。没有 `workspaceSelection` 时不能记成 `settled`。`guard` 里的宿主对象消失时发不出去；中止时没有这笔记下，保持未知，不叫做 `absent`，也不叫做回调没有再进来。停因不是辅助功能查询卡住的原因，也不是取消成功。
+
+`hostTickStop` 写在 `D476_WORKSPACE_NATIVE_PHASE` 里 `hostTicks` 旁边。不放进 `required`，不改 `receiptMask`。执行当前 phase 块的 vm scope 在已有的 `hostTicks`、`hostTickLast` 之外再带 `hostTickStop`。
+
+新句子只加进 `host-tick-inverse.cjs` 现有的那一组，不另做一层还原，也不新开入口。现有三句改成仍各恰好一次：
+
+- `pickerObserved=0,hostTicks=0,hostTickLast=null,hostTickStop=null,pickerReturned=0` 还原成 `pickerObserved=0,pickerReturned=0`。
+- `D476_WS_HOST_TICK` 计数分支整句仍删掉。同一组再加一句 `D476_WS_HOST_TICK_STOP` 分支，还原成空。
+- `cancelCurrent,hostTicks,hostTickLast,hostTickStop` 还原成 `cancelCurrent`。
+
+少一句先在 `HOST_TICK_ONCE` 失败，不套后面的成功摘要。这些句子仍由现在已经位于第一道旧 hash 之前的 `restoreHostTick` 剥掉。入口不增不减：join 去掉 JOIN 后仍是 `120cc92d2c0eb1209f1db8843ea054468cb2ddd7ac80a5ed530e196e50c65164`；788 的十文件循环和 801 测试之后仍是 `5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018`；705 第 57 行 native 去掉 CLOSE 后仍是 `0b78022a6efaa334ce97d5d1ccfb9c6d59857997ddefed3ad5f7a0e501fb78a4`；705 与 747 的 abort 仍是 `6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38ad90a398fe4639eed3c` 和 `7c5d8b54f03c68fa285d60d8fd029cd10dbbf5c0073e79d5944778435e3d1288`；782 仍是 `33b233999fcfcc764b4882749d7264aa534fc45938ff717dd23bcc51f4cdeaa6` 和 `f4b0ae09fd52e2ed4fa2d112ebc041e1a33e5323776ddc3e00291c1a4bea4675`；826 与 initial-input 的第一道仍是 `9e80020deed6f46ede58481ecbd2e631c796b0cc653995ad1f6bdbfa9d2cbabe`；808 配对还原后仍是 `04b5b5edcaf59cfe666f5e84de6a1a386ea4f48d493023e13ef75bd7a9c084f2`；`previousCensus705('native')` 仍是 `2f2a3d08eafb54b2eef26450e30b12000844479e759316eff3773ebad8364f2e`。旧 hash 不改、不后移。
+
+交叉核对过：`desktop-native-thread-metadata-476.test.ts` 的整文件还原入口就是上面这些 `restoreHostTick` 调用，没有另有一个整文件 hash 不经过它。`workspace-acceptance.swift` 不在这些整文件摘要里。`desktop-workspace-picker-readiness-705.test.ts` 的第二次面板调用序只在现有 `HOST_TICK_START` 后面增加一次停因；第一次面板仍停在 `D476_WS_PICKER_SELECTED`，不启动 tick。
 
 ## 7. 这一节点不做的事
 

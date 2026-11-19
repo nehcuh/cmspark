@@ -162,19 +162,19 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 `6067e9ee` 已经删过 `'-resultBundlePath',path.join(this.scene.root,'Result.xcresult')`，并加过 `restoreResultBundle`。run `44487668420` job `135435079906` 停在 stage 14 detail 0，没有测到 `7c5209b0` 的收尾窗口。对显式路径假设不支持也不否定。第 10 节宿主退出码 0 仍只属于 `7c5209b0`。这一段不再执行。
 
-## 当前唯一下一步
+## 已执行的放回参数
 
-把这对参数放回 `OwnedWorkspaceUI705.start`。窗口预等待和 `D476_WS_HOST_TICK` 留着。读取、`BUNDLE_UNAVAILABLE`、stdout/stderr、45000、`DesktopHost.swift` 都不动。
-
-删掉 `result-bundle-inverse.cjs` 和全部 `restoreResultBundle` 调用：`previousInputReady705` helper、705 第 57 行和第 365 行、826 helper peel、query101 helper `open`、788 helper、JOIN helper。只为删除实验新增的 `RESULT_BUNDLE_ONCE` 用例也去掉。其余变体和历史锁不删。
-
-放回之后 helper 第一道 hash 重新是 `restorePickerWait('helper')` 的 `56cb1183…`，不再先剥参数。`source+eol` 用 `requireSuccessDigest:false`，然后在 `QUERY101_COMPLETE_CURRENT_SOURCE` 失败。`b0e30a4e…`、`873b5ced…`、`0397f3cb…` 不后移。
+`12f5876c` 已经把这对参数放回 `OwnedWorkspaceUI705.start`，并删掉 `restoreResultBundle`。读取、`BUNDLE_UNAVAILABLE`、stdout/stderr、45000、`DesktopHost.swift` 都没改。helper 第一道 hash 重新是 `56cb1183…`。`source+eol` 用 `requireSuccessDigest:false`，然后在 `QUERY101_COMPLETE_CURRENT_SOURCE` 失败。`b0e30a4e…`、`873b5ced…`、`0397f3cb…` 没有后移。这一段不再执行。
 
 ## 放回之后的最早未闭合点
 
-`12f5876c` 的 run `44492046690` job `135449866902` 停在 stage 15 detail 1，`uiRefusal` 为 null，没有 18–20。`hostTicks` 是 2。`D705_XCRESULT_DETAILS_CLOSED` 是 `TOOL_FAILURE`，工具退出码 64，不是缺包，也不是仍在等待。中止时宿主没有退出。这不覆盖 `7c5209b0` 的退出码 0，也不覆盖 `6067e9ee` 的 stage 14。
+`12f5876c` 的 run `44492046690` job `135449866902` 停在 stage 15 detail 1，`uiRefusal` 为 null，没有 18–20。`hostTicks` 是 2。`D705_XCRESULT_DETAILS_CLOSED` 是 `TOOL_FAILURE`，`tool826` 是 `[[1,false,64,0,true,true,0,466,false]]`，工具以 64 结束且双 EOF，不是缺包，也不是仍在等待。中止时宿主没有退出；中止后是非零退出和信号，不是退出码 0。这不覆盖 `7c5209b0`，也不覆盖 `6067e9ee`。
 
-当前唯一下一步：tick 定时器在 `invalidate` 前发送一次 `D476_WS_HOST_TICK_STOP`，phase 记下 `absent`、`not-current`、`settled` 或 `cap`。不增加 45000，不改 `DesktopHost.swift`。没有停因且 tick 仍是 2，才支持回调没再进来。停因是 `not-current` 或 `settled` 而 stage 仍是 15 detail 1，则 runloop 还在。两种都不是取消成功。
+## 当前唯一下一步
+
+同一次宿主定时器回调在 `invalidate` 前最多发一次 `D476_WS_HOST_TICK_STOP`。`reason` 只为 `not-current`、`settled`、`cap`。`cap` 仅在已经 40 次时。`not-current` 先于 `settled`。没有 `workspaceSelection` 不记 `settled`。宿主对象消失时发不出；没收到保持未知，不叫 `absent`，也不叫回调没进来。停因不解释成查询卡住，也不是取消成功。`hostTickStop` 写在 phase 的 `hostTicks` 旁边，不进 `required` 或 `receiptMask`。phase 的 vm scope 补上 `hostTickStop`。
+
+新句子只扩 `host-tick-inverse.cjs` 现有三句，不新开还原层：声明加 `hostTickStop=null`，计数分支旁加一句 STOP 分支，phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop`。少一句先 `HOST_TICK_ONCE` 失败，不套成功摘要。现有 `restoreHostTick` 已经在这些入口的第一道旧 hash 之前：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 57 行 native 的 `0b78022a…`、705/747 abort 的 `6fadbe60…`/`7c5d8b54…`、782 的 `33b23399…`/`f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。没有另有整文件入口绕过它。旧 hash 不改不后移。readiness 第二次调用序只在现有 `HOST_TICK_START` 后加一次停因；第一次仍停在 `D476_WS_PICKER_SELECTED`。45000 和最终原生门不弱化。
 
 ## 安装包
 
