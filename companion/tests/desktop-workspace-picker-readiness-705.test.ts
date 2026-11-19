@@ -18,13 +18,13 @@ function panelBody(){
 }
 function fixture(options:{visible?:boolean;foreign?:boolean;cancel?:boolean;stale?:boolean}={}){
  const calls:string[]=[],h:any={generation:'owned-document',window:{},authenticated:true,requests:{'desktop.workspace.pick':{}},pickerCurrent:()=>!options.stale};const panel={isVisible:options.visible!==false,sheetParent:options.foreign?{}:h.window}
- h.workspaceSelection={panel,settled:false};const s:any={owner:h,documentGeneration:h.generation,selection:{owned:true},uiNonce:'a'.repeat(64),cancelPicker:!!options.cancel,panels:options.cancel?1:0,pickerTimer:{invalidate(){calls.push('RETIRE_TIMER')}},note:()=>{},emit:(_h:any,id:string)=>calls.push(id),fail:()=>calls.push('FAIL'),h};return{s,calls,panel}
+ h.workspaceSelection={panel,settled:false};const s:any={owner:h,documentGeneration:h.generation,selection:{owned:true},uiNonce:'a'.repeat(64),cancelPicker:!!options.cancel,panels:options.cancel?1:0,pickerTimer:{invalidate(){calls.push('RETIRE_TIMER')}},note:()=>{},emit:(_h:any,id:string)=>calls.push(id),startHostTick:()=>calls.push('HOST_TICK_START'),fail:()=>calls.push('FAIL'),h};return{s,calls,panel}
 }
 test('705 actual Mac retained panel publishes readiness without programmatic selection',()=>{const f=fixture(),run=panelBody();run(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER','D476_WS_PICKER_SELECTED']);assert.equal(f.s.panels,1);run(f.s);assert.equal(f.s.panels,1)})
 test('705 Mac readiness waits for genuine visibility without navigating',()=>{const f=fixture({visible:false}),run=panelBody();run(f.s);assert.equal(f.calls.length,0);f.panel.isVisible=true;run(f.s);assert.equal(f.calls.includes('D476_WS_PICKER_SELECTED'),true)})
 test('705 Mac unowned panel cannot publish readiness',()=>{const f=fixture({foreign:true});panelBody()(f.s);assert.equal(f.calls.includes('FAIL'),true);assert.equal(f.s.panels,0)})
 test('705 Mac retired tuple cannot publish readiness',()=>{const f=fixture({stale:true});panelBody()(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER']);assert.equal(f.s.panels,0)})
-test('705 Mac second panel only reports cancellation readiness without synthesizing cancel',()=>{const f=fixture({cancel:true});panelBody()(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER','D476_WS_PICKER_CANCELLED']);assert.equal(f.s.panels,2)})
+test('705 Mac second panel only reports cancellation readiness without synthesizing cancel',()=>{const f=fixture({cancel:true});panelBody()(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']);assert.equal(f.s.panels,2)})
 test('705 Mac empty correlator refuses without any UI event',()=>{const f=fixture();f.s.uiNonce='';panelBody()(f.s);assert.equal(f.calls.includes('FAIL'),true);assert.equal(f.s.panels,0)})
 
 test('705 actual workspace fixture generator keeps both normal providers byte exact for LF and CRLF',async()=>{

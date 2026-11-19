@@ -169,7 +169,7 @@ test('826 complete source inverse preserves raw LF/CRLF and refuses drift withou
   const { restoreObservation826 } = require(path.resolve('scripts/tests/observation-826-inverse.cjs'))
   for (const [kind, file] of [['helper', helper], ['native', nativeFile]]) for (const eol of ['\n', '\r\n']) {
     const raw = fs.readFileSync(file, 'utf8').replace(/\r?\n/g, eol)
-    const peel = (value: string, success: boolean) => kind === 'helper' ? require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restorePickerWait('helper', value, {requireSuccessDigest: success}) : value
+    const peel = (value: string, success: boolean) => kind === 'helper' ? require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restorePickerWait('helper', value, {requireSuccessDigest: success}) : kind === 'native' ? require(path.resolve('scripts/tests/host-tick-inverse.cjs')).restoreHostTick(value) : value
     const prior = restoreObservation826(kind, peel(raw, true))
     assert.equal(prior.includes('/*OBS826_'), false); assert.equal(prior.includes('\r\n'), eol === '\r\n')
     const mutants = [raw + eol, raw + raw, raw.replace('/*OBS826_BEGIN*/', ''), raw.replace('/*OBS826_BEGIN*/', '/*OBS825_BEGIN*/')]

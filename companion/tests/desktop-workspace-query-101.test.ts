@@ -15,17 +15,19 @@ function sheetQuery({windows = 1, sheets = 1, exists = true} = {}) {
   const end = ui.indexOf('\n  }\n  uiStage=2;', start);
   assert(start >= 0 && end > start);
   let body = ui.slice(ui.indexOf('{', start) + 1, end);
-  for (const [before, after] of [
-    ['matching(identifier:scene.nonce)', 'matching({identifier:scene.nonce})'],
-    ['element(boundBy:0)', 'element({boundBy:0})'],
-    ['element(boundBy:1)', 'element({boundBy:1})'],
-    ['waitForExistence(timeout:try remaining())', 'waitForExistence({timeout:remaining()})'],
-    ['waitForExistence(timeout:1)', 'waitForExistence({timeout:1})'],
-    ['guard windowOne else{throw OwnedUI705Error.refused}', "if(!windowOne){throw Error('REFUSED')}"],
-    ['guard !windowExtra else{throw OwnedUI705Error.refused}', "if(windowExtra){throw Error('REFUSED')}"],
-    ['guard exists else{throw OwnedUI705Error.refused}', "if(!exists){throw Error('REFUSED')}"],
-    ['guard !sheetExtra else{throw OwnedUI705Error.refused}', "if(sheetExtra){throw Error('REFUSED')}"],
-  ]) { const times = before.startsWith('element(boundBy:1)') || before.startsWith('waitForExistence') ? 3 : 2; assert.equal(body.split(before).length, times, before); body = body.replaceAll(before, after); }
+  for (const [before, after, times] of [
+    ['matching(identifier:scene.nonce)', 'matching({identifier:scene.nonce})', 2],
+    ['element(boundBy:0)', 'element({boundBy:0})', 2],
+    ['element(boundBy:1)', 'element({boundBy:1})', 3],
+    ['waitForExistence(timeout:windowTimeout)', 'waitForExistence({timeout:windowTimeout})', 2],
+    ['waitForExistence(timeout:try remaining())', 'waitForExistence({timeout:remaining()})', 2],
+    ['waitForExistence(timeout:1)', 'waitForExistence({timeout:1})', 3],
+    ['guard windowOne else{throw OwnedUI705Error.refused}', "if(!windowOne){throw Error('REFUSED')}", 2],
+    ['guard !windowExtra else{throw OwnedUI705Error.refused}', "if(windowExtra){throw Error('REFUSED')}", 2],
+    ['guard exists else{throw OwnedUI705Error.refused}', "if(!exists){throw Error('REFUSED')}", 2],
+    ['guard !sheetExtra else{throw OwnedUI705Error.refused}', "if(sheetExtra){throw Error('REFUSED')}", 2],
+  ] as [string, string, number][]) { assert.equal(body.split(before).length, times, before); body = body.replaceAll(before, after); }
+  assert.equal(body.split('try remaining()').length, 2); body = body.replaceAll('try remaining()', 'remaining()');
   body = body.replaceAll('let ', 'const ');
   assert.doesNotMatch(body, /\bguard\b|\btry\b|OwnedUI705Error/);
   assert.equal(ui.split('let w=windows.firstMatch').length, 2);
@@ -58,9 +60,9 @@ function sheetQuery({windows = 1, sheets = 1, exists = true} = {}) {
 test('actual owner query keeps uniqueness and existence guards before returning a sheet', () => {
   const current = sheetQuery();
   assert.equal(current.run().id, 'exists');
-  assert.deepEqual(current.calls, ['window-one', 'remaining', 'window-one-wait', 'window-extra', 'window-extra-wait', 'window-first', 'sheet-first', 'remaining', 'wait', 'sheet-extra', 'sheet-extra-wait', 'sheet-first']);
-  const none = sheetQuery({windows: 0}); assert.throws(none.run, /REFUSED/); assert.deepEqual(none.calls, ['window-one', 'remaining', 'window-one-wait']);
-  const extra = sheetQuery({windows: 2}); assert.throws(extra.run, /REFUSED/); assert.deepEqual(extra.calls, ['window-one', 'remaining', 'window-one-wait', 'window-extra', 'window-extra-wait']);
+  assert.deepEqual(current.calls, ['remaining', 'window-one', 'window-one-wait', 'window-extra', 'window-extra-wait', 'window-first', 'sheet-first', 'remaining', 'wait', 'sheet-extra', 'sheet-extra-wait', 'sheet-first']);
+  const none = sheetQuery({windows: 0}); assert.throws(none.run, /REFUSED/); assert.deepEqual(none.calls, ['remaining', 'window-one', 'window-one-wait']);
+  const extra = sheetQuery({windows: 2}); assert.throws(extra.run, /REFUSED/); assert.deepEqual(extra.calls, ['remaining', 'window-one', 'window-one-wait', 'window-extra', 'window-extra-wait']);
   const absent = sheetQuery({exists: false}); assert.throws(absent.run, /REFUSED/); assert.equal(absent.calls.includes('sheet-extra'), false);
   for (const sheets of [0, 2]) { const f = sheetQuery({sheets}); assert.throws(f.run, /REFUSED/); assert.equal(f.calls.filter(c => c === 'sheet-first').length, 1); }
 });
