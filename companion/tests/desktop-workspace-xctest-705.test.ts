@@ -54,7 +54,7 @@ test('476 observation inverse restores complete sealed source without changing o
  for(const [file,digest]of sources){
   // This is source-only lineage; test both checkout EOLs below, never normalize runtime evidence.
   let value=fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')
-  if(file===helper)value=require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restorePickerWait('helper',value)
+  if(file===helper)value=require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restorePickerWait('helper',require(path.resolve('scripts/tests/result-bundle-inverse.cjs')).restoreResultBundle(value))
   if(file.endsWith('desktop-native-thread-metadata-476.test.ts'))value=require(path.resolve('scripts/tests/host-tick-inverse.cjs')).restoreHostTick(value)
   if(file===helper||file.endsWith('desktop-native-thread-metadata-476.test.ts'))value=require(path.resolve('scripts/tests/observation-788-inverse.mjs')).restoreObservation826(file===helper?'helper':'native',value)
   const remove=(begin:string,end:string)=>{const count=value.split(begin).length-1;assert.ok(count>0);assert.equal(value.split(end).length-1,count);value=value.replace(new RegExp(begin.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[\\s\\S]*?'+end.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'),'')}
@@ -362,7 +362,7 @@ test('476 inverse rejects missing duplicate altered and appended observation sou
  const samples=[['protocol',path.join(files,'OwnedUIProtocol.swift'),'/*OBS476_BOUNDARY_BEGIN*/'],['observer',path.join(files,'OwnerObserver.swift'),'/*OBS476_BOUNDARY_BEGIN*/'],['helper',helper,'/*OBS476_CLOSE_BEGIN*/'],['native',path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'/*OBS476_CLOSE_BEGIN*/']] as const
  for(const [kind,file,marker]of samples)for(const eol of ['\n','\r\n']){
   const raw=fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n').replace(/\n/g,eol),first=raw.indexOf(marker);assert.ok(first>=0)
-  const peel=(value:string,success:boolean)=>kind==='helper'?require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restorePickerWait('helper',value,{requireSuccessDigest:success}):kind==='native'?require(path.resolve('scripts/tests/host-tick-inverse.cjs')).restoreHostTick(value):value
+  const peel=(value:string,success:boolean)=>kind==='helper'?require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restorePickerWait('helper',require(path.resolve('scripts/tests/result-bundle-inverse.cjs')).restoreResultBundle(value),{requireSuccessDigest:success}):kind==='native'?require(path.resolve('scripts/tests/host-tick-inverse.cjs')).restoreHostTick(value):value
   if(kind==='helper')assert.equal(raw.split(marker).length,5)
   if(kind==='protocol')assert.equal(raw.split(marker).length,3)
   if(kind==='observer')assert.equal(raw.split(marker).length,12)
@@ -390,6 +390,7 @@ function censusTerminalInverseParent747(raw:string){
 // the live UI sequence. Older authority digests below are not refreshed.
 // Source-only inverse of the owned input readiness barrier; never runtime evidence.
 function previousInputReady705(kind:'ui'|'protocol'|'helper'|'native',raw:string){
+ if(kind==='helper')raw=require(path.resolve('scripts/tests/result-bundle-inverse.cjs')).restoreResultBundle(raw)
  raw=require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restorePickerWait(kind,raw)
  if(kind==='native')raw=require(path.resolve('scripts/tests/host-tick-inverse.cjs')).restoreHostTick(raw)
  raw=restoreCloseObservation476(kind,raw)

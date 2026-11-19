@@ -70,9 +70,10 @@ test('whole-source lineage preserves all preceding deadline, identity and real a
   for (const eol of ['\n', '\r\n']) {
     for (const [kind, raw] of [['ui', ui], ['helper', helper]] as const) {
       const source = raw.replace(/\r?\n/g, eol);
-      const peeled = pickerWait.restorePickerWait(kind, source);
+      const open = (value: string) => kind === 'helper' ? require(path.resolve('scripts/tests/result-bundle-inverse.cjs')).restoreResultBundle(value) : value;
+      const peeled = pickerWait.restorePickerWait(kind, open(source));
       assert.notEqual(lineage.restoreWorkspaceQuery101(kind, peeled), peeled);
-      assert.throws(() => lineage.restoreWorkspaceQuery101(kind, pickerWait.restorePickerWait(kind, source + eol, {requireSuccessDigest: false})));
+      assert.throws(() => lineage.restoreWorkspaceQuery101(kind, pickerWait.restorePickerWait(kind, open(source + eol), {requireSuccessDigest: false})), (error: Error) => kind !== 'helper' || error.message.includes('QUERY101_COMPLETE_CURRENT_SOURCE'));
     }
     for (const [before, after] of [['guard windowOne else{throw OwnedUI705Error.refused}', 'guard true else{throw OwnedUI705Error.refused}'], ['guard !sheetExtra else{throw OwnedUI705Error.refused}', 'guard sheetExtra else{throw OwnedUI705Error.refused}']] as const) {
       assert.equal(ui.split(before).length, 2);
@@ -84,4 +85,15 @@ test('whole-source lineage preserves all preceding deadline, identity and real a
       assert.throws(() => lineage.restoreWorkspaceQuery101('ui', peeled));
     }
   }
+});
+test('result bundle spawn pair fails exact-once only when removed or repeated', () => {
+  const bundle = require(path.resolve('scripts/tests/result-bundle-inverse.cjs'));
+  const once = (error: Error) => error.message.includes('RESULT_BUNDLE_ONCE') && !error.message.includes('56cb1183') && !error.message.includes('PICKER_WAIT_HELPER_SUCCESS');
+  assert.doesNotThrow(() => bundle.restoreResultBundle(helper));
+  assert.throws(() => bundle.restoreResultBundle(helper.replace(bundle.CURRENT, 'OWNED_PANEL_REMOVED')), once);
+  assert.throws(() => bundle.restoreResultBundle(helper + helper), once);
+  const extra = helper.replace(/\r?\n/g, '\n') + '\n';
+  assert.doesNotThrow(() => bundle.restoreResultBundle(extra));
+  const peeled = pickerWait.restorePickerWait('helper', bundle.restoreResultBundle(extra), {requireSuccessDigest: false});
+  assert.throws(() => lineage.restoreWorkspaceQuery101('helper', peeled), (error: Error) => error.message.includes('QUERY101_COMPLETE_CURRENT_SOURCE'));
 });
