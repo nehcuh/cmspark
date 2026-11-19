@@ -41,7 +41,7 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 
 第 520 和 656 行读 Choose 的当前源文。第 519 行的片段止于 `uiStage=12`，所以新增的 `waitForExistence(timeout:1)` 必须写在 `guard chooseSeen else` 之后、`uiStage=12` 之前。这个片段里 `waitForExistence(` 恰好 2 次，`try remaining()` 恰好 1 次，`choose.firstMatch` 仍恰好 1 次。第 655 行的片段延续到 `uiStage=14`，同一句拒绝仍在 `isHittable` 之前。第 522 行的计数改成这两个数，不删 `choose.firstMatch` 的计数。`sheet()` 在 stage 7 之前，不计入这 5 次或这 2 次。
 
-`desktop-workspace-query-101.test.ts` 第 12–38 行投影的是当前 `sheet()`。今天要求 `guard count==1`、`guard sheets==1`，成功调用序是 `window-count`、`window-first`、`sheet-first`、`remaining`、`wait`、`sheet-count`、`sheet-first`。新投影改为：窗口下标 0 为 false 时，在下标 1 之前拒绝；窗口下标 1 为 true 时，在 `let w=windows.firstMatch` 和 sheet 等待之前拒绝；已有的 sheet `firstMatch.waitForExistence(timeout:try remaining())` 为 false 时，在下标 1 之前拒绝；sheet 下标 1 的 `timeout:1` 为 true 时拒绝，并且不执行 `return w.sheets.firstMatch`。`let w=windows.firstMatch`、`w.sheets.firstMatch.waitForExistence`、`return w.sheets.firstMatch` 各自仍恰好 1 次。第 47–49 行把两处 `==1` 改成 `>=1` 的变体，在新源文上是空替换。变体改成破坏窗口下标 0 的拒绝和下标 1 为 true 的拒绝，先断言旧句在当前源文里恰好 1 次，再断言还原失败。`guard inputHittable`、`guard r>0,r<=45` 和 `cancel.element.click()` 这三对变体保留。
+`desktop-workspace-query-101.test.ts` 第 12–38 行投影的是当前 `sheet()`。今天要求 `guard count==1`、`guard sheets==1`，成功调用序是 `window-count`、`window-first`、`sheet-first`、`remaining`、`wait`、`sheet-count`、`sheet-first`。新投影改为：窗口下标 0 为 false 时，在下标 1 之前拒绝；窗口下标 1 为 true 时，在 `let w=windows.firstMatch` 和 sheet 等待之前拒绝；已有的 sheet `firstMatch.waitForExistence(timeout:try remaining())` 为 false 时，在下标 1 之前拒绝；sheet 下标 1 的 `timeout:1` 为 true 时拒绝，并且不执行 `return w.sheets.firstMatch`。`let w=windows.firstMatch`、`w.sheets.firstMatch.waitForExistence`、`return w.sheets.firstMatch` 各自仍恰好 1 次。第 47–49 行把两处 `==1` 改成 `>=1` 的变体，在新源文上是空替换。窗口下标 0 的拒绝和下标 1 为 true 的拒绝各先证明当前源文里恰好 1 次，再改掉。这两句就是 ui 入口要精确替换的句子，所以入口的 exact-once 先失败，到不了 `2eca9be7…`。`guard inputHittable`、`guard r>0,r<=45` 和 `cancel.element.click()` 不动这些句子：入口 exact-once 可以通过，成功路径才要求输出摘要是 `2eca9be7…`，这三个变体不套这句，进入 query101 后停在 `QUERY101_COMPLETE_CURRENT_SOURCE`。不把摘要校验挪到 pair `split` 后面，也不放宽它。
 
 第 780 行今天用旧调用序列和新序列做全等。新语义成立之后不再维持这个全等。旧路径只证明还原后的 `count` 在输入一开始不存在时仍会拒绝；新路径用上面的 5 次等待和点击作为证据。
 
@@ -67,8 +67,8 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 
 入口按种类分流，都只做一次：
 
-- `ui`：把新的等待句子还原成今天的 `count` 文本，保留恰好一次 `let w=windows.firstMatch`、`w.sheets.firstMatch.waitForExistence` 和 `return w.sheets.firstMatch`。输出摘要必须是 `2eca9be7…`。没有这些新句子的文件原样返回。
-- `helper`：把新的 `RESULT705_SOURCES` 摘要精确一次换回 `2eca9be7…`。输出摘要必须是 `56cb1183…`。不对 helper 做 Swift 句子替换。
+- `ui`：把新的等待句子还原成今天的 `count` 文本，保留恰好一次 `let w=windows.firstMatch`、`w.sheets.firstMatch.waitForExistence` 和 `return w.sheets.firstMatch`。只有成功路径要求输出摘要是 `2eca9be7…`。没有这些新句子的文件原样返回。句子被变体改掉时，精确一次直接失败，不再检查这个摘要。
+- `helper`：把新的 `RESULT705_SOURCES` 摘要精确一次换回 `2eca9be7…`。只有成功路径要求输出摘要是 `56cb1183…`。不对 helper 做 Swift 句子替换。新摘要不是恰好一处时，精确一次直接失败，不再检查这个摘要。
 
 下表的每一行都在进入既有 restore 之前调用这个入口。query101 的 `2eca9be7…`、`1b4837f6…`、`56cb1183…`、`80b4d544…` 四处锁不改。
 
@@ -83,9 +83,20 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 
 第 358 行的本地函数只是转调模块。第 359–364 行直接读原始文件，成功路径第 363 行对 helper 调用 `restoreCloseObservation476('helper', raw)`，不经过 `previousInputReady705`。包装的第一句仍是 `restoreObservation826`，接着 `restoreWorkspaceQuery101('helper')`，所以生效摘要一改，未还原的 helper 会先撞上 `56cb1183…`。这一行的 helper 成功路径要先做 helper 入口还原，再调用 close476。同循环里的协议、观察者和 native 样本没有新摘要，不还原。
 
-第 364 行的四个变体仍要抛 `ERR_ASSERTION`。未改动的 helper 里 `/*OBS476_CLOSE_BEGIN*/` 有 4 处，`split` 长度是 5，对应配置里的 count 4，不是单标记的 2。变体先按这个基数证明字节变了：删掉第一处后剩 3 处，第一处被重复后变成 5 处，第一处 `OBS476` 改成 `OBS475` 后精确标记剩 3 处，多一段换行则标记仍是 4 处但全文不同。helper 先把新摘要换回 `2eca9be7…`，再进入 close476。close476 的第一跳是 `restoreObservation826`，它先做 `restoreWorkspaceQuery101('helper')` 的整文件 `56cb1183…` 校验，通过以后才数 OBS826 和 OBS476。这四个变体都改了字节，所以失败点就是 `QUERY101_COMPLETE_CURRENT_SOURCE`。不要求它们抵达后面的标记计数，也不放宽这个摘要。协议、观察者没有 query101 档案，它们的变体仍由各自的 OBS476 边界计数拒绝，基数分别是 2 和 11。`desktop-local-native-476.test.mjs` 第 326 行只对 native 测试调用 `restoreCloseObservation476('native')`，没有 helper 摘要，不加还原。
+第 364 行每个变体都要抛 `ERR_ASSERTION`。未改动的 helper 里 `/*OBS476_CLOSE_BEGIN*/` 有 4 处，`split` 长度是 5。这只证明变体改了哪一处，不是抛错点。helper 没有新摘要的重复时，入口可以先把摘要换回 `2eca9be7…`；输出必须等于 `56cb1183…` 只约束成功路径，不套到变体上。随后 close476 的第一跳仍先做 query101 的整文件校验。协议和观察者的源文没有 `OBS826_`，query101 没有它们的档案；`restoreObservation826` 原样返回之后，close476 在数边界之前先做 `exact current 476 observation source`。协议摘要是 `a96609272104b705e3d970a42c48ba15f3cf62ee84ad8d2f9d7c82326e5e80e6`，观察者摘要是 `b5be419dc5fce13f8555b3f76eea6b6b58a1b7fab234fca8af2020b5f1ece277`。基数 2 和 11 同样只证明标记被改过。native 第 364 行不还原；它含有 `OWNED_INPUT826_`，第一处整文件校验是 `9e80020deed6f46ede58481ecbd2e631c796b0cc653995ad1f6bdbfa9d2cbabe`。`desktop-local-native-476.test.mjs` 第 326 行只处理 native，不加还原。
 
-同一类顺序也用于另外两处，摘要本身不改、不后移。ui 句子还原之后，`desktop-workspace-query-101.test.ts` 的变体第一失败点是 `2eca9be7…`，不是后面的 pair `split`。第 171 行的 helper 变体第一失败点同样是 `56cb1183…`，不要求先抵达 OBS826 的 16 块计数。
+| 变体 | 字节 | 入口 exact-once | 最早失败 |
+| --- | --- | --- | --- |
+| helper 364：删第一处 close_begin、重复第一处、改成 `OBS475`、多一段换行 | 都变了；基数 4，`split` 5 | 新摘要仍是 1 处，通过。不要求输出是 `56cb1183…` | query101 的 `56cb1183…`。到不了 OBS826 的 16 块，也到不了 OBS476 的 4 处计数 |
+| 协议 364：同样四种 | 都变了；`BOUNDARY_BEGIN` 基数 2，`split` 3 | 无新摘要，不调用入口 | `exact current 476 observation source` 的 `a9660927…`。到不了边界计数 |
+| 观察者 364：同样四种 | 都变了；基数 11，`split` 12 | 无新摘要，不调用入口 | 同一断言的 `b5be419d…`。到不了边界计数 |
+| native 364：同样四种 | 都变了；`CLOSE_BEGIN` 基数 1，`split` 2 | 无新摘要，不调用入口 | `OWNED_INPUT826_CURRENT_SOURCE` 的 `9e80020d…`。到不了 OBS826 块计数和 OBS476 计数 |
+| 171：`raw+raw` | 新摘要变成 2 处 | 失败 | 入口精确一次。未进入 `restoreObservation826`，到不了 `56cb1183…` |
+| 171：多一段换行、删第一处 `OBS826_BEGIN`、改成 `OBS825_BEGIN` | 都变了，新摘要仍是 1 处 | 通过。不要求输出是 `56cb1183…` | query101 的 `56cb1183…`。到不了 16 块计数 |
+| query101：破坏窗口下标 0 的拒绝，或下标 1 为 true 的拒绝 | 句子从 1 处变成 0 处 | 失败 | 入口精确一次。到不了 `2eca9be7…`，也到不了 pair `split` |
+| query101：`inputHittable`、`r<=45`、`cancel.element.click()` | 都变了，逆变换句子仍在 | 通过。不要求输出是 `2eca9be7…` | `QUERY101_COMPLETE_CURRENT_SOURCE` 的 `2eca9be7…` |
+
+成功路径仍要求入口输出分别是 `2eca9be7…` 和 `56cb1183…`，随后的四个摘要锁都不改、不后移。
 
 还原之后，第 390 行 ui 的 `current`、`prior` 和哈希 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572` 保持不动。helper 随后仍把注释里的 `fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076` 换成 `0b193e10…`，整文件哈希保持 `1f8e2f2129378ec2ccc4510e6a4ab29a4445fa71208223ef04c4114b2bf0885d`。第 43 行在入口之后再跑 `restoreObservation788`，Swift 期望仍是 `fb446e0d…`，helper 期望仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。其余直接调用 `restoreObservation788` 的 C++、native 测试和终端夹具没有这两个标记，入口对它们原样返回。
 
@@ -113,7 +124,7 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 | 803 | 当前 stage 7 片段 | 禁止 `.count >=`、双击、定时器 | 保持 |
 | 807 | 当前 ui | 旧 `inputCount==1` 恰好一次，变体使逆操作失败 | 改成 `inputs` 下标 1 的拒绝句恰好一次；不动组合框回退 |
 | 390 helper 分支 | helper 源文 | `fb446e0d…` 换成 `0b193e10…` | 保持；先把新的 `RESULT705_SOURCES` 摘要还原成 `2eca9be7…` |
-| query101 第 12–49 行 | 当前 `sheet()` 与整文件 | `guard count==1`、`guard sheets==1` 和旧调用序；`==1` 改 `>=1` 使 query101 失败 | 窗口 0 在下标 1 前拒绝，sheet 下标 1 为 true 才拒绝；变体改这两句并确实改到源文 |
+| query101 第 12–49 行 | 当前 `sheet()` 与整文件 | `guard count==1`、`guard sheets==1` 和旧调用序；`==1` 改 `>=1` 使 query101 失败 | 窗口 0 在下标 1 前拒绝，sheet 下标 1 为 true 才拒绝。改这两句的变体停在入口精确一次；`inputHittable`、45 秒和 Cancel 点击的变体才停在 `2eca9be7…` |
 | 57、171、363、43、44 行的 restore | 原始 Swift 或 helper | 第一跳就做 `2eca9be7…` 或 `56cb1183…` 整文件校验 | 入口先还原，再进入这些第一跳；第 363 行只还原 helper 成功路径；不改那四个摘要 |
 | 788 测试 40–43 行 | 入口之后的 `restoreObservation788` | Swift `fb446e0d…`；helper `873b5ced…` | 期望摘要保持 |
 | 642 | helper 含当前 Swift 摘要 | 含 `2eca9be7…` | 含新摘要 |
