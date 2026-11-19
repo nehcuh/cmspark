@@ -39,7 +39,11 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 
 因此当前片段里 `waitForExistence(timeout:try remaining())` 恰好 2 次，`waitForExistence(timeout:1)` 恰好 3 次。两次字面量 1 秒先出现在组合框上，且这两句不含 `try remaining()`。第 800 和 801 行今天锁在当前片段上的 `comboCount==1 ? first.comboBoxes:first.textFields` 与 `guard inputCount==1 else` 改到逆操作之后的文本；当前片段不再要求这两句，也不要求组合框 `throw`。第 799 行只改顺序不够，第 798、800、801 行同一片段一起改。
 
-第 520 和 656 行读 Choose 的当前源文。第 519 行的片段止于 `uiStage=12`，所以新增的 `waitForExistence(timeout:1)` 必须写在 `guard chooseSeen else` 之后、`uiStage=12` 之前。这个片段里 `waitForExistence(` 恰好 2 次，`try remaining()` 恰好 1 次。第 655 行的片段延续到 `uiStage=14`，同一句拒绝仍在 `isHittable` 之前。第 522 行的计数改成这两个数，不删计数。`sheet()` 在 stage 7 之前，不计入这 5 次或这 2 次。
+第 520 和 656 行读 Choose 的当前源文。第 519 行的片段止于 `uiStage=12`，所以新增的 `waitForExistence(timeout:1)` 必须写在 `guard chooseSeen else` 之后、`uiStage=12` 之前。这个片段里 `waitForExistence(` 恰好 2 次，`try remaining()` 恰好 1 次，`choose.firstMatch` 仍恰好 1 次。第 655 行的片段延续到 `uiStage=14`，同一句拒绝仍在 `isHittable` 之前。第 522 行的计数改成这两个数，不删 `choose.firstMatch` 的计数。`sheet()` 在 stage 7 之前，不计入这 5 次或这 2 次。
+
+`desktop-workspace-query-101.test.ts` 第 12–38 行投影的是当前 `sheet()`。今天要求 `guard count==1`、`guard sheets==1`，成功调用序是 `window-count`、`window-first`、`sheet-first`、`remaining`、`wait`、`sheet-count`、`sheet-first`。新投影改为：窗口下标 0 为 false 时，在下标 1 之前拒绝；窗口下标 1 为 true 时，在 `let w=windows.firstMatch` 和 sheet 等待之前拒绝；已有的 sheet `firstMatch.waitForExistence(timeout:try remaining())` 为 false 时，在下标 1 之前拒绝；sheet 下标 1 的 `timeout:1` 为 true 时拒绝，并且不执行 `return w.sheets.firstMatch`。`let w=windows.firstMatch`、`w.sheets.firstMatch.waitForExistence`、`return w.sheets.firstMatch` 各自仍恰好 1 次。第 47–49 行把两处 `==1` 改成 `>=1` 的变体，在新源文上是空替换。变体改成破坏窗口下标 0 的拒绝和下标 1 为 true 的拒绝，先断言旧句在当前源文里恰好 1 次，再断言还原失败。`guard inputHittable`、`guard r>0,r<=45` 和 `cancel.element.click()` 这三对变体保留。
+
+第 780 行今天用旧调用序列和新序列做全等。新语义成立之后不再维持这个全等。旧路径只证明还原后的 `count` 在输入一开始不存在时仍会拒绝；新路径用上面的 5 次等待和点击作为证据。
 
 第 688–705 行只覆盖 Choose。下标 0 返回 false 时，在下标 1 等待和 `click` 之前拒绝。下标 1 返回 true 时，在 `click` 之前拒绝。`count` 桩不再被调用。
 
@@ -57,9 +61,26 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 
 第 683 行的 `guard chooseCount==1 else` 变体改成破坏 Choose 的「下标 1 为 true 就拒绝」。新逆操作找不到这句精确片段时抛 `ERR_ASSERTION`。第 807 行只改 `inputs` 的拒绝句，不改组合框回退句。窗口、sheet、Cancel 补当前源文有序片段和同样的拒绝变体。组合框不补「下标 1 为 true 却没拒绝就失败」这种变体。
 
-Swift 句子的逆操作只在 `kind==='ui'` 时做精确一次替换，写在 `previousInputReady705` 里现有 `ui`/`helper` 分支之前，并放在 `restoreObservation788` 之后。它把窗口、sheet、Choose、Cancel、`inputs` 和组合框回退还原成今天的 `count` 文本，其中包括 `let comboCount=first.comboBoxes.count` 和 `comboCount==1 ? first.comboBoxes:first.textFields`。还原之后，第 390 行 ui 的 `current`、`prior` 和哈希 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572` 保持不动。helper 源文没有这些 Swift 句子；对 helper 做同一组精确一次替换会失败。
+新的还原单独做成入口，每个原始文件只调用一次，并且发生在该文件第一次进入 `restoreCloseObservation476`、`restoreObservation826`、`restoreObservation788` 或 `restoreWorkspaceQuery101` 之前。不放进 `restoreObservation788` 里面，否则外层再调用一次就会重复精确替换。
 
-helper 分支保持今天的替换：`fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076` 换成 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572`，整文件哈希保持 `1f8e2f2129378ec2ccc4510e6a4ab29a4445fa71208223ef04c4114b2bf0885d`。`RESULT705_SOURCES` 里现在生效的 Swift 摘要是 `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`，只出现一次。实现把这一格改成新文件摘要之后，helper 逆操作先把新摘要精确一次还原成 `2eca9be7…`，再走上面的既有替换。`desktop-native-observation-788.test.ts` 第 40–41 行只调用 `restoreObservation788`，不调用 `previousInputReady705`；Swift 文件在观察层还原后还要走同一套 `kind==='ui'` 句子逆操作，期望摘要仍是 `fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076`。helper 在观察层还原后先还原 `2eca9be7…`，期望摘要仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。
+调用顺序今天是：`previousInputReady705` 先 `restoreCloseObservation476`，后者先 `restoreObservation826`，后者第一句就是 `restoreWorkspaceQuery101`。`restoreObservation788` 自己也会先调用 `restoreWorkspaceQuery101('ui')`，helper 再经 `restoreCloseObservation476('helper')` 进入 `restoreWorkspaceQuery101('helper')`。Swift 含有 `let w=windows.firstMatch` 时，query101 立刻用整文件摘要 `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8` 做 `QUERY101_COMPLETE_CURRENT_SOURCE`，然后把这个标记换成 `let w=windows.element`，摘要变成 `1b4837f6ce7945273d0a1ead0542712503191a422f36b8a743a9622aab89c37a`。helper 的标记就是 `2eca9be7…`，当前整文件摘要是 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`；标记被换成 `1b4837f6…` 之后，`OBS826_CURRENT_SOURCE` 才要求 `80b4d54471bb1007bb237c8236846b8bb84db86c88c96df4f163686cb215aa7e`。句子还原若放在 `restoreObservation788` 之后，这两次整文件校验已经失败，而且 `2eca9be7…` 已经不在 helper 里，精确一次找不到新摘要。
+
+入口按种类分流，都只做一次：
+
+- `ui`：把新的等待句子还原成今天的 `count` 文本，保留恰好一次 `let w=windows.firstMatch`、`w.sheets.firstMatch.waitForExistence` 和 `return w.sheets.firstMatch`。输出摘要必须是 `2eca9be7…`。没有这些新句子的文件原样返回。
+- `helper`：把新的 `RESULT705_SOURCES` 摘要精确一次换回 `2eca9be7…`。输出摘要必须是 `56cb1183…`。不对 helper 做 Swift 句子替换。
+
+下表的每一行都在进入既有 restore 之前调用这个入口。query101 的 `2eca9be7…`、`1b4837f6…`、`56cb1183…`、`80b4d544…` 四处锁不改。
+
+| 入口 | 文件 | 今天的第一跳 |
+| --- | --- | --- |
+| `previousInputReady705` | ui 与 helper | `restoreCloseObservation476` |
+| `desktop-native-observation-788.test.ts` 第 43 行 | 十个文件里的 Swift 与 helper | `restoreObservation788` |
+| `desktop-workspace-query-101.test.ts` 第 44 和 49 行 | Swift 与 helper | `restoreWorkspaceQuery101` |
+| `desktop-workspace-xctest-705.test.ts` 第 57 行 | helper | `restoreObservation826('helper')` |
+| `desktop-close-observation-826.test.ts` 第 171 行 | helper | `restoreObservation826('helper')` |
+
+还原之后，第 390 行 ui 的 `current`、`prior` 和哈希 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572` 保持不动。helper 随后仍把注释里的 `fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076` 换成 `0b193e10…`，整文件哈希保持 `1f8e2f2129378ec2ccc4510e6a4ab29a4445fa71208223ef04c4114b2bf0885d`。第 43 行在入口之后再跑 `restoreObservation788`，Swift 期望仍是 `fb446e0d…`，helper 期望仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。其余直接调用 `restoreObservation788` 的 C++、native 测试和终端夹具没有这两个标记，入口对它们原样返回。
 
 其后 ui 哈希保持 `1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68`、`6efad44df4a39d7b4aa33a2509dd01b17e97f8ed333252169c058aa5815f064e`、`182d2773a37134d289fec9c80a27107b5359c51d2cab1545bdfd62c3f6a2cee4`、`ab75e477a7f678cbc86191ca3997ea9d55fa8e6ba9cca6a408536af82afa7a79`。第 642 行改为 helper 含有新 Swift 文件的摘要。
 
@@ -71,21 +92,23 @@ helper 分支保持今天的替换：`fb446e0d2b32e5a55e05a03e369fa5635b98448513
 | 353 | 当前 Swift | `uiRefusal` 只写一次 | 不改 |
 | 441–448 | `previousChoose705` 之后 | `choose.count`，`waitForExistence(` 1 次 | 保持；句子逆操作先还原 |
 | 474–490 | 逆操作后的整文件 | `ab75e477…` 等 | 保持 |
-| 513–522 | 当前 stage 11–12 | `choose.count`，两种调用都 1 次 | `waitForExistence(` 2 次，`try remaining()` 1 次，新增 `timeout:1` |
+| 513–522 | 当前 stage 11–12 | `choose.count`，两种调用都 1 次 | `waitForExistence(` 2 次，`try remaining()` 1 次，`choose.firstMatch` 仍 1 次 |
 | 575、641 | 当前或还原后的普查函数 | `.count` 3 次，函数内无 `waitForExistence` | 保持，新等待不写进普查 |
 | 639–640 | `previousCriticalCensus705('ui')` | stage 11 的 `choose.count`，等待 1 次 | 保持 |
 | 646–660 | 当前 stage 11–14 | `guard chooseCount==1` 在 hittable 之前；逆操作哈希 `182d2773…` | 当前片段改成下标 1 的 true 拒绝仍在 hittable 之前；哈希保持 |
 | 676–705 | 当前 Choose 投影 | `count` 为 0 或 2 时点击前拒绝 | 下标 0 false 在下标 1 之前拒绝；下标 1 true 在点击前拒绝 |
 | 683、684 | 当前 ui 变体；helper 多一个换行 | ui 变体破坏旧 `chooseCount==1`；helper 哈希路径失败 | ui 变体改破坏 Choose 的下标 1 拒绝；helper 仍只靠多一个换行失败 |
 | 711–734 | 当前输入投影正文 | 恰好一次 `inputCount==1` 与两处 `min(…Count,2)` | 改写 `inputs` 拒绝句；不要求组合框 `count` |
-| 769–780 | 当前与 `previousInputReady705('ui')` | 成功路径 `wait` 1 次且早于 `comboCount` | 成功路径 `wait` 5 次；旧路径仍是还原后的 `count` |
+| 769–780 | 当前与还原后的 ui | 成功路径 `wait` 1 次，并和新旧序列全等 | 不再维持全等；新路径 `wait` 5 次后点击，旧路径只保留「输入一开始不存在就拒绝」 |
 | 783–786 | 当前输入投影 | `cancelOnWait` 与 `expireOnWait` 都要求 `hittable`，`wait` 1 次 | 两条都在候选等待和两次组合框等待之后、`hittable`/`click` 之前拒绝，`wait` 3 次 |
 | 791–795 | `previousInputReady705` 的 ui 与 helper | ui `0b193e10…`；helper `1f8e2f21…` | 两个哈希都保持；Swift 句子只还原 ui |
 | 797–801 | 当前 stage 7 到 Choose | `waitForExistence(` 1 次；当前片段含 `comboCount==1` 与 `inputCount==1` | 等待 5 次；字面量 `timeout:1` 3 次；`timeout:try remaining()` 2 次；那两句旧 `count` 只出现在逆操作后 |
 | 803 | 当前 stage 7 片段 | 禁止 `.count >=`、双击、定时器 | 保持 |
 | 807 | 当前 ui | 旧 `inputCount==1` 恰好一次，变体使逆操作失败 | 改成 `inputs` 下标 1 的拒绝句恰好一次；不动组合框回退 |
 | 390 helper 分支 | helper 源文 | `fb446e0d…` 换成 `0b193e10…` | 保持；先把新的 `RESULT705_SOURCES` 摘要还原成 `2eca9be7…` |
-| 788 测试 40–43 行 | `restoreObservation788` 的直接结果 | Swift `fb446e0d…`；helper `873b5ced…` | 先补上面对应逆操作，这两个期望摘要保持 |
+| query101 第 12–49 行 | 当前 `sheet()` 与整文件 | `guard count==1`、`guard sheets==1` 和旧调用序；`==1` 改 `>=1` 使 query101 失败 | 窗口 0 在下标 1 前拒绝，sheet 下标 1 为 true 才拒绝；变体改这两句并确实改到源文 |
+| 57、171、43、44 行的 restore | 原始 Swift 或 helper | 第一跳就做 `2eca9be7…` 或 `56cb1183…` 整文件校验 | 入口先还原，再进入这些第一跳；不改那四个摘要 |
+| 788 测试 40–43 行 | 入口之后的 `restoreObservation788` | Swift `fb446e0d…`；helper `873b5ced…` | 期望摘要保持 |
 | 642 | helper 含当前 Swift 摘要 | 含 `2eca9be7…` | 含新摘要 |
 | 新增 | `sheet()` 与 Cancel 的当前源文 | 今天没有有序片段 | 窗口与 Cancel：下标 0 用 `try remaining()`，下标 1 用 `timeout:1`；sheet 只把 `count` 换成下标 1 的 `timeout:1`。true 拒绝。不进入 stage 7 的 5 次计数 |
 

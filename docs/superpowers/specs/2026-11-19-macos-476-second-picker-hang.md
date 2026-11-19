@@ -100,7 +100,7 @@ let sheets=w.sheets.count
 
 第 797–801 行整段都是当前源文，起点 `uiStage=7`，终点 Choose 查询。第 798 行今天把 `waitForExistence(` 锁成恰好 1 次；新片段是 5 次：descendants 的 `timeout:try remaining()`，组合框两次 `timeout:1`，`inputs` 的 `timeout:try remaining()` 和 `timeout:1`。第 800 和 801 行锁住的 `comboCount==1 ?` 与 `guard inputCount==1 else` 只留在逆操作之后。第 786 行同时覆盖 `cancelOnWait` 和 `expireOnWait`，两条都改为候选等待返回后、`hittable` 之前拒绝。
 
-Swift 句子逆操作只在 `kind==='ui'` 执行。helper 没有这些句子，精确一次替换会失败。第 792 行 helper 哈希 `1f8e2f2129378ec2ccc4510e6a4ab29a4445fa71208223ef04c4114b2bf0885d` 保持；helper 只先把新的 `RESULT705_SOURCES` 摘要还原成今天的 `2eca9be7…`，再走既有的 `fb446e0d…` 替换。第 390 行 ui 的 `current` 不改。`desktop-native-observation-788.test.ts` 第 40 行不经过 `previousInputReady705`，所以同一套 ui 句子逆操作和 helper 摘要还原也要接在 `restoreObservation788` 后面，`fb446e0d…` 与 helper 的 `873b5ced…` 才保持。完整对照表在计划里。
+Swift 句子逆操作和 helper 的新摘要还原都在第一次 `restoreCloseObservation476`、`restoreObservation826`、`restoreObservation788` 或 `restoreWorkspaceQuery101` 之前完成，每个原始文件只做一次。不放进 `restoreObservation788`。`restoreWorkspaceQuery101` 今天对含 `let w=windows.firstMatch` 的 Swift 先校验整文件摘要 `2eca9be7…`，对含这个摘要的 helper 先校验 `56cb1183…`；还原放晚了会先失败，而且 helper 里的 `2eca9be7…` 会被换成 `1b4837f6…`，后面的 `80b4d544…` 对不上。这四个摘要保持不动。`desktop-workspace-query-101.test.ts` 的 `sheet()` 投影改为窗口下标 0 在下标 1 之前拒绝、sheet 下标 1 为 true 才拒绝；第 47 行的 `==1` 变体改到这两句，并保证替换真的改到源文。第 522 行的 `choose.firstMatch` 仍恰好 1 次。第 780 行不再用旧调用序列做全等。完整入口表在计划里。
 
 窗口 `count`、sheet `count`、Cancel `count` 在这个测试文件里没有单独的有序片段，只进整文件哈希。同一提交要给这三处补上和 Choose 一样的当前源文有序片段，以及「下标 1 为 true 仍继续则失败」的变体。不靠只更新哈希来保住它们的唯一性。
 
