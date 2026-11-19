@@ -120,7 +120,7 @@ sheet 已经有 `firstMatch.waitForExistence(timeout:try remaining())`，false �
 - stage 15 的 detail 仍是 0。新的等待也没有返回。用例保持失败，不跳过，不重跑。
 - detail 离开 0，但 `cancelReturned` 仍是 0。等待路径已走到拒绝或还没点到 Cancel。用例保持失败，把新的 stage 记入下一次说明。
 
-不放宽 45000，不跳过，不删 `cancelReturned == 1`。
+不放宽 45000，不跳过，不删 `cancelReturned == 1`。上一节对 detail 0 的读法只适用于当时那一版：detail 0 写在等待前面，后面没有另一笔同样可能被吞掉的写入。第 9 节的预等待标记不再用「detail 停在 0」证明 `remaining()` 没返回。
 
 ## 8. 原生证据否定了「换 API 就能返回」
 
@@ -136,12 +136,41 @@ stage 15 detail 0 写在 `sheet(15)` 进入后、下一次 `observeUIStage` 之�
 
 ## 9. 下一道诊断
 
-不增加 45000。不把查询挪到别的线程。不改 `DesktopHost.swift`，直到诊断把阻塞侧分开。下一道实现只加两笔阻塞前、跨进程能看见的记录：
+不增加 45000。不把查询挪到别的线程。不改 `DesktopHost.swift`。这一节通过独立门之前不实现。诊断读数不是取消成功，`cancelReturned` 仍必须是 1，后三例仍必须在同一作业通过。
 
-- `sheet()` 在 `remaining()` 返回之后、`waitForExistence` 之前写下 detail 1。停在 detail 0 表示还没进入等待；停在 detail 1 表示等待调用本身没有返回。
-- 验收夹具在发出第二次 `D476_WS_PICKER_CANCELLED` 之后，用主线程 `Timer` 继续发送有上限的 `system.ping`（每秒至多一次，最多 40 次），面板结束就停。node 测试已经在收 `system.ping`。等待期间仍能收到这些 ping，表示宿主主线程还在跑，阻塞在 XCTest 这一侧的辅助功能调用。ping 在第二次选择框出现后停止，表示宿主没有再执行这个定时器。
+### 9.1 预等待 detail
 
-这两笔都不是取消成功。`cancelReturned` 仍必须是 1，后三例仍必须在同一作业通过。
+`observeUIStage` 是 `try? scene.writeUIProgress(uiStage,uiDetail)`。写入失败会被吞掉，文件里可以留下上一笔成功的 detail 0。因此中止时进度文件仍是 stage 15 detail 0，不能断言 `remaining()` 没有返回。这一态保持未知。
+
+`windowOne` 为 false 时下一句也是 `uiDetail=windowOne ? 2:1`，同样写成 1，然后 `throw`，`catch` 再写 `uiRefusal`。所以单独看到 detail 1 不能区分「等待没返回」和「等待返回了 false」。
+
+只有这三件同时成立，detail 1 才支持「`waitForExistence` 没返回」：`uiProgress.stage` 仍是 15，`uiRefusal` 为 null，进度里没有 stage 16 或更后的 stage。这个读数仍不是成功。`remaining()` 自己在时限外会把内存里的 detail 设成 4 或 5 再抛出；那要看 `uiRefusal` 是否真写上，不能从进度文件的 detail 0 反推。
+
+实现时窗口查询改成先 `let windowTimeout=try remaining()`，返回后 `uiDetail=1;observeUIStage()`，再 `waitForExistence(timeout:windowTimeout)`。不在等待参数里再调用一次 `remaining()`。
+
+### 9.2 宿主 tick 的 id 和打印位置
+
+id 只有一个：`system.ping` 的 `id` 是 `D476_WS_HOST_TICK`。不使用没有 id 的 ping，也不使用 `D476_WS_DIAG_` 前缀。
+
+现在的消息分支只把 `D476_WS_PICKER_SELECTED`、`D476_WS_PICKER_CANCELLED`、`D476_WS_DIAG_`、`D476_WS_FAIL` 和 `required` 里的 id 记进状态。`D476_WS_HOST_TICK` 不在其中，所以不会出现在 45 秒中止时打印的 `D476_WORKSPACE_NATIVE_PHASE`。
+
+实现把计数记进这个已经会打印的对象：`hostTicks` 是 0 到 40 的次数，`hostTickLast` 是 null 或正好 `D476_WS_HOST_TICK`。两个字段写在 `cancelCurrent` 后面。不放进 `required`，不改 `receiptMask`。45 秒中止时现有的 stdout 行就是证据。不要求 40 次都到达；0 次也要能看见，并且不是成功。
+
+`panel()` 里 0.016 秒的定时器仍在面板刚可见、发出 ping 之前停掉。新定时器在 `panels` 变成 2 且 `D476_WS_PICKER_CANCELLED` 已经发出之后才启动，此时面板还未 `settled`。它不在观察窗开始时停。间隔 1 秒，最多 40 次。面板变为 `settled`、次数到 40，或验收 `fail` 时停止。第一次选择框的 `D476_WS_PICKER_SELECTED` 不启动它。
+
+### 9.3 源锁和调用序
+
+窗口那一句的精确文本改为：
+
+`uiStage=stage;uiDetail=0;observeUIStage();let windows=app.windows.matching(identifier:scene.nonce);let windowTimeout=try remaining();uiDetail=1;observeUIStage();let windowOne=windows.element(boundBy:0).waitForExistence(timeout:windowTimeout);uiDetail=windowOne ? 2:1;observeUIStage();guard windowOne else{throw OwnedUI705Error.refused};let windowExtra=windows.element(boundBy:1).waitForExistence(timeout:1);uiDetail=windowExtra ? 3:2;observeUIStage();guard !windowExtra else{throw OwnedUI705Error.refused};let w=windows.firstMatch`
+
+`picker-wait-inverse.cjs` 的第一对当前句换成上面这句，还原句仍是现在的 `windows.count` 句。`NEW_DIGEST` 从 `f0379ae7e39c248d64e088379e3b876897c86ff060c6adddb833d33fe2fa24cf` 改成新的 `WorkspacePickerUITests.swift` 摘要。`RESULT705_SOURCES` 里同一文件的那一格改成同一个摘要。成功的 ui 还原输出仍是 `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`。成功的 helper 还原输出仍是 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`。变体走 `requireSuccessDigest:false`，不套这两句成功摘要。不改更早的 query101、826、788 历史摘要。
+
+`sheet()` 的成功调用序从 `window-one`、`remaining`、`window-one-wait` 改成 `remaining`、`window-one`、`window-one-wait`，然后再接现有的 `window-extra`、`window-extra-wait`、`window-first`、`sheet-first`、`remaining`、`wait`、`sheet-extra`、`sheet-extra-wait`、`sheet-first`。窗口没有时停在 `remaining`、`window-one`、`window-one-wait`。多一个窗口时停在 extra 等待之后。`waitForExistence(timeout:try remaining())` 在 `sheet()` 里只剩 sheet 那一次；窗口等待是 `timeout:windowTimeout`，只有一次。字面量 `timeout:1` 仍是两次。
+
+phase 源文在 `restoreObservation788` 之前先剥掉 `hostTicks` 声明、tick 分支和 `cancelCurrent` 后的两个字段。`desktop-workspace-xctest-705.test.ts` 与 `desktop-terminal-first-failure-747.test.ts` 里的 abort inverse 都走这层。剥掉之后的整文件摘要仍是 `6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38ad90a398fe4639eed3c` 和 `7c5d8b54f03c68fa285d60d8fd029cd10dbbf5c0073e79d5944778435e3d1288`。不改这两句历史锁。变体少了这些句子就在精确一次处失败，不套成功摘要。
+
+`desktop-workspace-picker-readiness-705.test.ts` 的第二次面板调用序在 `D476_WS_PICKER_CANCELLED` 之后多一次 `HOST_TICK_START`。第一次面板仍只到 `D476_WS_PICKER_SELECTED`，不启动 tick。0.016 秒定时器仍在 emit 之前停。
 
 ## 7. 这一节点不做的事
 

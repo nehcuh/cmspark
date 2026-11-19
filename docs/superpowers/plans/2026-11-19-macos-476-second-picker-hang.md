@@ -148,14 +148,15 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 ## 原生证据之后的下一道诊断
 
-`f894bffb` 的 macOS job `135394832966` 已经否定「换成 `waitForExistence` 就会从 stage 15 返回」。`uiProgress` 仍是 `{stage:15,detail:0}`，取消计时没有 18–20，`cancelReturned` 是 0，子进程没有退出。`timeout` 没有把这次快照打断。
+`f894bffb` 的 macOS job `135394832966` 已经否定「换成 `waitForExistence` 就会从 stage 15 返回」。`timeout` 没有把这次快照打断。这一节替换上面「detail 停在 0 就是等待没返回」的读法。通过独立门之前不改 Swift，不改测试。
 
-下一道实现只加诊断，不改 45000，不改 `DesktopHost.swift`：
-
-1. `sheet()` 先调用 `remaining()`，返回后把 detail 写成 1，然后再调用 `waitForExistence`。
-2. `workspace-acceptance.swift` 在第二次 picker ping 之后，用主线程定时器发送 `D476_WS_HOST_TICK`，每秒至多一次，最多 40 次，面板结算后停止。
-3. 红灯仍是这条 macOS 用例。detail 停在 0：`remaining()` 没有返回。detail 停在 1 且宿主 tick 还在增加：等待调用没有返回，宿主主线程还在跑。detail 停在 1 且 tick 停在第二次 ping：宿主没有再跑这个定时器。三种都不是 `cancelReturned == 1`。
-4. 不把查询移到别的线程。不跳过用例。
+1. 窗口查询的精确句是：`let windowTimeout=try remaining();uiDetail=1;observeUIStage();let windowOne=windows.element(boundBy:0).waitForExistence(timeout:windowTimeout)`。detail 1 也是 `windowOne` 为 false 的写入。只有 stage 仍是 15、`uiRefusal` 为 null、且没有更后的 stage，detail 1 才支持等待没返回。`observeUIStage` 的 `try?` 会吞掉写失败，所以进度文件停在 detail 0 是未知，不能断言 `remaining()` 没返回。这两种读数都不是 `cancelReturned == 1`。
+2. `system.ping` 的 id 固定为 `D476_WS_HOST_TICK`。`panel()` 的 0.016 秒定时器仍在可见时、emit 之前停。`panels==2` 且 `D476_WS_PICKER_CANCELLED` 发出之后才 `startHostTick`。新定时器间隔 1 秒、最多 40 次，在未 `settled` 时继续；`settled`、满 40 次或 `fail` 时停。不要求 45 秒内到齐 40 次。
+3. 消息处理在 `SELECTED`/`CANCELLED` 之外计数，不把这个 id 放进 `required` 或 `D476_WS_DIAG_`。`D476_WORKSPACE_NATIVE_PHASE` 在 `cancelCurrent` 后增加 `hostTicks` 和 `hostTickLast`。45 秒中止时已经打印的那一行因此带上次数和最后 id。0 次也可见，并且不是成功。
+4. `picker-wait-inverse.cjs` 第一对当前句换成规格 9.3 的整句，从 `uiStage=stage` 到 `let w=windows.firstMatch`，其中包含 `let windowTimeout=try remaining();uiDetail=1;observeUIStage()` 和 `timeout:windowTimeout`。还原句仍是现在的 `windows.count` 句。`NEW_DIGEST` 与 `RESULT705_SOURCES` 的 Swift 格一起从 `f0379ae7e39c248d64e088379e3b876897c86ff060c6adddb833d33fe2fa24cf` 改成新文件摘要。成功输出仍是 ui `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`、helper `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`。变体不套成功摘要。不改更早的历史摘要。
+5. query101 的 `sheet()` 成功序改为 `remaining`、`window-one`、`window-one-wait`，再接原来的 extra、first、sheet `remaining` 和 `wait`。`timeout:try remaining()` 在 `sheet()` 里只剩 1 次；`timeout:windowTimeout` 是 1 次；`timeout:1` 仍是 2 次。没有窗口时的序是 `remaining`、`window-one`、`window-one-wait`。
+6. `hostTicks` 的声明、tick 分支和 phase 两个字段，在 `restoreObservation788` 之前从 `desktop-native-thread-metadata-476.test.ts` 剥掉。705 和 747 两处 abort inverse 都先剥。剥完后的摘要仍是 `6fadbe60…` 与 `7c5d8b54…`。不改这两句。变体不套成功摘要。readiness 的第二次调用序在 `D476_WS_PICKER_CANCELLED` 后增加 `HOST_TICK_START`；第一次仍停在 `D476_WS_PICKER_SELECTED`。
+7. 不改 `DesktopHost.swift`。不把 XCTest 查询移到别的线程。不把 45000 加大。不跳过用例。
 
 ## 安装包
 
