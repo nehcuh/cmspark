@@ -2,10 +2,11 @@
 'use strict'
 const assert = require('node:assert/strict')
 const pairs = [
-  ['pickerObserved=0,hostTicks=0,hostTickLast=null,hostTickStop:string|null=null,pickerReturned=0', 'pickerObserved=0,pickerReturned=0'],
+  ['pickerObserved=0,hostTicks=0,hostTickLast=null,hostTickStop:string|null=null,hostTickArmed=0,pickerReturned=0', 'pickerObserved=0,pickerReturned=0'],
   ["\n    if(f.id==='D476_WS_HOST_TICK'){if(hostTicks<40){hostTicks++;hostTickLast='D476_WS_HOST_TICK' as any}}", ''],
   ["\n    if(f.id==='D476_WS_HOST_TICK_STOP'){if(hostTickStop===null&&(f.reason==='not-current'||f.reason==='settled'||f.reason==='cap'))hostTickStop=f.reason as any}", ''],
-  ['cancelCurrent,hostTicks,hostTickLast,hostTickStop', 'cancelCurrent']
+  ["\n    if(f.id==='D476_WS_HOST_TICK_ARMED'){if(hostTickArmed===0)hostTickArmed=1}", ''],
+  ['cancelCurrent,hostTicks,hostTickLast,hostTickStop,hostTickArmed', 'cancelCurrent']
 ]
 function restoreHostTick(raw) {
   if (typeof raw !== 'string') throw new Error('HOST_TICK_SOURCE_REQUIRED')

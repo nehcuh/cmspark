@@ -29,7 +29,7 @@ function registeredHostTick(){
  const source=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/workspace-acceptance.swift'),'utf8').replace(/\r\n/g,'\n')
  const begin='Timer.scheduledTimer(withTimeInterval:1,repeats:true){[weak h] _ in\n'
  assert.equal(source.split(begin).length,2)
- const rest=source.slice(source.indexOf(begin)+begin.length),end='\n }}'
+ const rest=source.slice(source.indexOf(begin)+begin.length),end='\n }\n emit(h,"D476_WS_HOST_TICK_ARMED")'
  assert.equal(rest.split(end).length,2)
  let body=rest.slice(0,rest.indexOf(end))
  for(const [from,to,count]of[['guard let h=h else{stopHostTick();return}','if(h==null){stopHostTick();return}',2],['selection!','selection',3]]as const){assert.equal(body.split(from).length,count);body=body.split(from).join(to)}
@@ -44,6 +44,33 @@ test('705 host tick callback records one stop reason before invalidate',()=>{
  const stale=drive({workspaceSelection:{settled:true},pickerCurrent:()=>false},4);assert.deepEqual(stale.calls,['D476_WS_HOST_TICK_STOP:not-current','INVALIDATE'])
  const settled=drive({workspaceSelection:{settled:true},pickerCurrent:()=>true},5);assert.deepEqual(settled.calls,['D476_WS_HOST_TICK_STOP:settled','INVALIDATE']);assert.equal(settled.hostTickCount,5)
  const live=drive({workspaceSelection:{settled:false},pickerCurrent:()=>true},39);assert.deepEqual(live.calls,['D476_WS_HOST_TICK']);assert.equal(live.hostTickCount,40)
+})
+function registeredStartHostTick(){
+ const source=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/workspace-acceptance.swift'),'utf8').replace(/\r\n/g,'\n')
+ const begin='static func startHostTick(_ h:NativeDesktop){'
+ assert.equal(source.split(begin).length,2)
+ const rest=source.slice(source.indexOf(begin)+begin.length),end='\n static func emit'
+ assert.equal(rest.split(end).length,3)
+ let body=rest.slice(0,rest.indexOf(end))
+ const open=body.indexOf('{[weak h] _ in')
+ assert.ok(open>0)
+ let depth=0,close=open
+ for(;close<body.length;close++){if(body[close]==='{')depth++;else if(body[close]==='}'){depth--;if(depth===0){close++;break}}}
+ assert.equal(depth,0)
+ const after=body.slice(close)
+ assert.equal(after.split('emit(h,"D476_WS_HOST_TICK_ARMED")').length,2)
+ assert.equal(after.includes('D476_WS_HOST_TICK_STOP'),false)
+ assert.equal(after.includes('D476_WS_HOST_TICK"'),false)
+ let outer=body.slice(0,open).replace('Timer.scheduledTimer(withTimeInterval:1,repeats:true)','Timer.scheduledTimer()')+after
+ assert.equal(outer.split('guard hostTickTimer==nil else{return}').length,2)
+ outer=outer.replace('guard hostTickTimer==nil else{return}','if(hostTickTimer!=null)return').replace(/\}\s*$/,'')
+ assert.doesNotMatch(outer,/\bguard\b|\[weak h\]/)
+ return vm.runInNewContext('(function(s){with(s){'+outer+'}})',{},{timeout:1000}) as(s:any)=>void
+}
+test('705 host tick arms once after scheduling and does not replace an existing timer',()=>{
+ const run=registeredStartHostTick(),drive=(timer:any)=>{const calls:string[]=[],callbacks:Function[]=[],state:any={h:{},hostTickTimer:timer,Timer:{scheduledTimer(){callbacks.push(()=>calls.push('CALLBACK'));return{id:'scheduled'}}},emit(_h:any,id:string,reason?:string){calls.push(reason?id+':'+reason:id)}};run(state);return{calls,callbacks,timer:state.hostTickTimer}}
+ const fresh=drive(null);assert.deepEqual(fresh.calls,['D476_WS_HOST_TICK_ARMED']);assert.equal(fresh.callbacks.length,1);assert.equal(fresh.timer.id,'scheduled')
+ const kept=drive({id:'kept'});assert.deepEqual(kept.calls,[]);assert.equal(kept.callbacks.length,0);assert.equal(kept.timer.id,'kept')
 })
 test('705 Mac empty correlator refuses without any UI event',()=>{const f=fixture();f.s.uiNonce='';panelBody()(f.s);assert.equal(f.calls.includes('FAIL'),true);assert.equal(f.s.panels,0)})
 

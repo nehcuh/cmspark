@@ -15,7 +15,9 @@ private enum D476Acceptance {
    emit(h,"D476_WS_HOST_TICK_STOP",reason);stopHostTick();return
   }
   hostTickCount+=1;emit(h,"D476_WS_HOST_TICK")
- }}
+ }
+ emit(h,"D476_WS_HOST_TICK_ARMED")
+}
  static func emit(_ h:NativeDesktop,_ id:String){if let task=h.socket{h.transmit(["type":"system.ping","id":id],to:task)}}
  static func emit(_ h:NativeDesktop,_ id:String,_ reason:String){if let task=h.socket{h.transmit(["type":"system.ping","id":id,"reason":reason],to:task)}}
  static func document(_ h:NativeDesktop){guard owner == nil,let web=h.web,let generation=h.generation else{fail(h,1);return};owner=h;documentGeneration=generation;let code="const documentGeneration="+String(data:try! JSONSerialization.data(withJSONObject:generation,options:.fragmentsAllowed),encoding:.utf8)!+";"+D476_FORM_SOURCE;web.evaluateJavaScript(code){_,error in if error != nil{fail(h,2)}}}
