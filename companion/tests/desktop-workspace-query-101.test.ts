@@ -27,7 +27,6 @@ function sheetQuery({windows = 1, sheets = 1, exists = true, stage = 3} = {}) {
     ['guard !windowExtra else{throw OwnedUI705Error.refused}', "if(windowExtra){throw Error('REFUSED')}", 2],
     ['guard exists else{throw OwnedUI705Error.refused}', "if(!exists){throw Error('REFUSED')}", 2],
     ['guard !sheetExtra else{throw OwnedUI705Error.refused}', "if(sheetExtra){throw Error('REFUSED')}", 2],
-    ['if stage != 15 {', 'if(stage!=15){', 2],
   ] as [string, string, number][]) { assert.equal(body.split(before).length, times, before); body = body.replaceAll(before, after); }
   assert.equal(body.split('try remaining()').length, 2); body = body.replaceAll('try remaining()', 'remaining()');
   body = body.replaceAll('let ', 'const ');
@@ -59,28 +58,31 @@ function sheetQuery({windows = 1, sheets = 1, exists = true, stage = 3} = {}) {
   const scope = {stage, scene: {nonce: 'INERT'}, app: {windows: {matching({identifier}: {identifier: string}) { assert.equal(identifier, 'INERT'); return query; }}}, remaining() { calls.push('remaining'); return 2; }, observeUIStage() {}};
   return {calls, returned, run: () => vm.runInNewContext('(function(){let uiStage=0,uiDetail=0;' + body + ';return w.sheets.firstMatch;})()', scope)};
 }
-const SHEET15 = 'uiStage=stage+2;uiDetail=0;observeUIStage();if stage != 15 {let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused}};return w.sheets.firstMatch';
+const SHEET_BOTH = 'uiStage=stage+2;uiDetail=0;observeUIStage();let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused};return w.sheets.firstMatch';
 const UI_RESTORED = '2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8';
 const HELPER_RESTORED = '56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5';
 const PRIOR_UI_COMMENT = 'fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076';
-test('stage 15 keeps the detail 0 write and skips only the second sheet refusal', () => {
-  const skipped = sheetQuery({stage: 15, sheets: 2});
-  assert.equal(skipped.run().id, 'exists');
-  assert.deepEqual(skipped.calls, ['remaining', 'window-one', 'window-one-wait', 'window-extra', 'window-extra-wait', 'window-first', 'sheet-first', 'remaining', 'wait', 'sheet-first']);
-  const kept = sheetQuery({stage: 3, sheets: 2});
-  assert.throws(kept.run, /REFUSED/);
-  assert.equal(kept.calls.includes('sheet-extra-wait'), true);
+const CURRENT_UI = 'b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00';
+test('stage 15 still refuses a second sheet', () => {
+  const second = sheetQuery({stage: 15, sheets: 2});
+  assert.throws(second.run, /REFUSED/);
+  assert.deepEqual(second.calls, ['remaining', 'window-one', 'window-one-wait', 'window-extra', 'window-extra-wait', 'window-first', 'sheet-first', 'remaining', 'wait', 'sheet-extra', 'sheet-extra-wait']);
+  const first = sheetQuery({stage: 3, sheets: 2});
+  assert.throws(first.run, /REFUSED/);
+  assert.equal(first.calls.includes('sheet-extra-wait'), true);
 });
-test('sheet 15 sentence peels once before the old digests', () => {
-  assert.equal(ui.split(SHEET15).length, 2);
+test('sheet sentence peels once before the old digests', () => {
+  assert.equal(ui.split(SHEET_BOTH).length, 2);
+  assert.equal(ui.includes('if stage != 15'), false);
   assert.equal(ui.split('uiStage=18;uiDetail=0;observeUIStage();let cancelOne=').length, 2);
   assert.equal(ui.split('uiStage=19;uiDetail=0;observeUIStage();let cancelHittable=').length, 2);
   assert.equal(ui.split('uiStage=20;uiDetail=0;observeUIStage();_ = try remaining();cancel.element.click()').length, 2);
-  assert.throws(() => pickerWait.restorePickerWait('ui', ui.replace(SHEET15, '')), (error: Error) => error.message.includes('PICKER_WAIT_UI_ONCE') && !error.message.includes(UI_RESTORED));
+  assert.throws(() => pickerWait.restorePickerWait('ui', ui.replace(SHEET_BOTH, '')), (error: Error) => error.message.includes('PICKER_WAIT_UI_ONCE') && !error.message.includes(UI_RESTORED));
   assert.equal(createHash('sha256').update(pickerWait.restorePickerWait('ui', ui)).digest('hex'), UI_RESTORED);
   const quoted = helper.slice(helper.indexOf(`/*OBS788_VALUE:${PRIOR_UI_COMMENT}*/'`) + `/*OBS788_VALUE:${PRIOR_UI_COMMENT}*/'`.length, helper.indexOf(`/*OBS788_VALUE:${PRIOR_UI_COMMENT}*/'`) + `/*OBS788_VALUE:${PRIOR_UI_COMMENT}*/'`.length + 64);
-  assert.equal(quoted, pickerWait.NEW_DIGEST);
-  assert.equal(createHash('sha256').update(ui).digest('hex'), pickerWait.NEW_DIGEST);
+  assert.equal(quoted, CURRENT_UI);
+  assert.equal(pickerWait.NEW_DIGEST, CURRENT_UI);
+  assert.equal(createHash('sha256').update(ui).digest('hex'), CURRENT_UI);
   assert.equal(helper.split(PRIOR_UI_COMMENT).length, 2);
   assert.equal(createHash('sha256').update(pickerWait.restorePickerWait('helper', helper)).digest('hex'), HELPER_RESTORED);
   assert.throws(() => pickerWait.restorePickerWait('helper', helper.replace(pickerWait.NEW_DIGEST, pickerWait.NEW_DIGEST + pickerWait.NEW_DIGEST)), (error: Error) => error.message.includes('PICKER_WAIT_HELPER_DIGEST_ONCE'));
