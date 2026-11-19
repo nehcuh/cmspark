@@ -216,17 +216,23 @@ run `44519261215`。macOS job `135543346448` 最后读回是 stage 15 detail 1�
 
 windows-latest job `135543346278` 的 MCP 表单 not ok 24，20000ms。点 7 已返回且 code 0，没有点 8，也没有 `controller_callback`。`flags` 751 含 `ControllerApi`、`OuterDispatch`、`Armed`，不含 `ControllerEntry`。`callbackPresent` 是 0。`OuterDispatch` 只说明外层 `DispatchMessageW` 至少返回过一次。同 job 后面的 `DESKTOP_480_NATIVE` 有 `controller_callback`，那是下一条进程。windows-native 这次成功。`35526f9f` 的 ok 24 不能借用。同一隐藏窗口路径曾经进入过回调，所以这一步不改 `DesktopHost.cpp`，也不加 20000。
 
+## 已执行的回退
+
+`269b89c7` 已经恢复第二张 sheet 拒绝。这一段不再执行。回退子门只覆盖回退。
+
 ## 当前唯一下一步
 
-回退 `sheet(15)` 的跳过。Swift 整句恢复为：
+macOS 与 Windows 分开。
 
-`uiStage=stage+2;uiDetail=0;observeUIStage();let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused};return w.sheets.firstMatch`
+macOS：`acfd55ec` 的 15/1 写在 `remaining()` 已返回、第一扇窗口 `waitForExistence` 之前。`uiDeadline` 和节点 `timeout:45000` 同一起点，所以这次读回不能区分等待是否还在自己的时限里。返回 false 时 detail 仍是 1，写入又可失败，所以没有 detail 2 不证明未执行。宿主在 `panel.isVisible` 后已经发出第二次通知。`35526f9f` 的 `timeout:1` 在 45 秒内没有后续 detail，是反证。`b3ea545c` 阶段 20 返回时 UI 剩余 2328ms，只属于那个 SHA。
 
-第二对当前句恢复成这一整句。还原句仍是 `sheets.count` 句。`NEW_DIGEST` 与 `RESULT705_SOURCES` 的引号摘要同一步恢复为 `b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00`。ui 成功输出仍是 `2eca9be7…`，helper 成功输出仍是 `56cb1183…`。`fb446e0d…` 保持。query-101 去掉 stage 15 跳过断言和 `if` 投影。stage 3 调用序保持。
+只把 `const uiDeadline=Date.now()+45000` 改成 `Date.now()+44000`。节点 45000、窗口等待、第二张 sheet 拒绝、18–20 点击不动。构造器里大于 `now+45000` 的拒绝不动。`restoreSuccessTiming476` 见到 `const uiDeadline=` 时，`Date.now()+44000` 必须精确一次，先换成 `+45000`，再还原计时句。少一句先 `DEADLINE_MARGIN_ONCE`，不进入 `9e80020d` 或其他旧摘要。没有这行的文件跳过。旧 hash 不改不后移。
 
-先红后绿：当前源文让 `sheet(15)` 在第二张 sheet 存在时不拒绝，断言它拒绝会先失败。恢复源文和两处摘要后通过。45000、20000、`DesktopHost.swift`、`DesktopHost.cpp` 不改。18–20 取消点击不改。
+新 SHA 的 macOS 日志：45 秒时仍是 15/1、`uiRefusal` 为 null、xcode 未关，就把 `+44000` 恢复成 `+45000` 并停止。出现 detail 2、`uiRefusal`、45 秒前的 xcode 退出，或完整的取消返回 1、退出码 0、六条计时、双收尾、租约和后三例，才说明等待在节点中止前留下了可分开的结果。只有完整成功门算通过。若点击落在被削掉的那 1 秒，也恢复并停止。
 
-下一份 SHA 自己要有 macOS 取消返回 1、退出码 0、六条计时、双收尾、租约交还、后三例，以及 windows-latest 自己的点 8 或 `controller_callback`，再加十项 CI。回退不把 Windows 的回调补上。不重跑 `44519261215`。发布仍暂停。
+Windows：点 7 code 0，无点 8，无 `controller_callback`。`flags` 751 有 `OuterDispatch`，无 `ControllerEntry` 16 和 `ControllerLeave` 256。`35526f9f` 的 ok 24 和同 run 的下一条 `DESKTOP_480_NATIVE` 是反证。这一步不改 `DesktopHost.cpp`，不加探针，不加 20000。回退和这 1 秒都不能补回调。
+
+owned 两次清理和成功计时读取保持。不重跑旧 run。发布仍暂停。
 
 ## 安装包
 

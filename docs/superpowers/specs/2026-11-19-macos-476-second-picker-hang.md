@@ -392,7 +392,9 @@ macOS 选择框文件是 8 通过、0 失败、4 取消。四条 `not ok` 都是
 
 windows-latest 的 MCP 表单是 not ok 24，20000ms 超时。当时 `authenticated` 与 `windowRequested` 为 true，`postAuthRequestMask` 为 0，阶段只有 `ready_accepted` 和 `env_callback`。bootstrap 行是 `[5,1,0,0,0,2]`、`[6,1,0,8,0,2]`、`[6,1,2,8,0,1]`、`[7,1,0,8,0,2]`、`[7,1,1,11,0,2]`、`[5,1,1,11,0,2]`。点 5 是 `CreateCoreWebView2EnvironmentWithOptions`，点 6 是环境回调，点 7 是 `CreateCoreWebView2Controller`。点 7 的 edge 1、code 0 表示这次调用已经返回 0。没有点 8，阶段里也没有 `controller_callback`。`snapshot825` 在测试截止前 1500ms 的窗口里采到，`sampleOffsetMs` 是 2，`flags` 是 751。751 是 `EnvApi|EnvLeave|ControllerApi|WrapperLeave|OuterDispatch|Armed|EnvEntry|SendReturned`。其中没有 `ControllerEntry`（16）和 `ControllerLeave`（256）。`envHr` 与 `controllerHr` 都是 0，`callbackPresent` 是 0。`sendKind` 2、`sendSite` 5、`sendEdge` 1、`sendStage` 6 对得上最后一条点 5 的返回。`OuterDispatch` 只说明 `CreateCoreWebView2Controller` 返回之后，外层 `DispatchMessageW` 至少返回过一次。它不说明之后的 20 秒都在泵消息。超时当时的 bootstrap 行仍然没有点 8。后面的 `DESKTOP_480_NATIVE` 属于下一条 Windows 绑定测试，那条有 `controller_callback` 并且退出码 0。那不是这条 MCP 进程补上的回调。文件是 25 通过、0 失败、1 取消、12 跳过。`35526f9f` 的 ok 24 不能借给这个 SHA。同一条隐藏窗口路径曾经在 20 秒内进入过回调，所以这次日志还不够把 `ShowWindow` 写成产品改动。`DesktopHost.cpp` 这一步不改。20000 不加大。
 
-## 26. 当前唯一下一步
+## 26. 已执行的回退
+
+以下是 `269b89c7d844cc9ad5baef451ab9f0fe0d4561ea` 的实现，不是当前步骤。回退子门只覆盖这次回退。
 
 回退 `acfd55ec` 的 `sheet(15)` 跳过。第二张 sheet 的等待和 `guard !sheetExtra` 对 `sheet(15)` 与 `sheet(3)` 都恢复。18–20 的取消点击保持。45000、`DesktopHost.swift`、`DesktopHost.cpp` 和 20000 都不改。
 
@@ -406,6 +408,20 @@ windows-latest 的 MCP 表单是 not ok 24，20000ms 超时。当时 `authentica
 
 这一步不给 Windows 增加新的探针，也不把 MCP 的 20 秒失败记成下一轮可能会过。下一份 SHA 的 windows-latest 仍要自己出现点 8 或 `controller_callback`，macOS 仍要自己出现取消返回 1、退出码 0、六条计时、双收尾、租约交还和后三例。十项 CI 都看这个新 SHA。读到 stage 18 或更后，只说明当时的等待位于已发布进度之前。空 `events` 仍不能证明 18–20 没有执行。不重跑 `44519261215`。发布仍暂停。
 
+## 27. 当前唯一下一步
+
+两条假设分开。都不靠再跳过一次查询，也不靠下一轮碰巧通过。
+
+macOS 假设：`acfd55ec` 的 `{stage:15,detail:1}` 写在 `let windowTimeout=try remaining()` 已经返回之后、`windows.element(boundBy:0).waitForExistence(timeout:windowTimeout)` 之前。`remaining()` 的终点就是 `uiDeadline`。测试把 `uiDeadline` 设成 `Date.now()+45000`，节点时限也是 `timeout:45000`，两者从同一行附近起算。这次等待的合法终点和节点中止是同一时刻，所以这份日志不能区分「等待还在自己的时限里」和「等待没有按自己的时限返回」。另外，等待返回 false 时下一句仍是 `uiDetail=1`。因此只看到 15/1 也不能区分「还在等待里」和「等待已返回 false」。写入可以失败，所以没有 detail 2 也不证明等待没有返回 true。支持这句边界的是源码顺序和 `pickerObserved` 为 2：宿主在 `panel.isVisible` 之后已经发出第二次选择框通知，XCTest 才进入 `sheet(15)`。反证是 `35526f9f` 的 stage 17 detail 0 紧挨 `timeout:1`，那次 45 秒仍没有读回后续 detail，所以短时限并不是每次都会返回。`b3ea545c` 的阶段 20 返回时 UI 剩余是 2328ms，那次成功只属于那个 SHA。
+
+区分方法只改这一处：`desktop-native-thread-metadata-476.test.ts` 的 `const uiDeadline=Date.now()+45000` 改成 `Date.now()+44000`。节点 `timeout:45000` 不动。第一扇窗口等待、第二张 sheet 拒绝、18–20 点击都不动。`OwnedWorkspaceUI705` 里 `deadline>Date.now()+45000` 的拒绝也不动，44000 仍被它接受。`restoreSuccessTiming476` 在看到 `const uiDeadline=` 时，要求 `Date.now()+44000` 精确一次，先换成 `Date.now()+45000`，再做现有的计时句还原。少掉 `+44000` 时先在 `DEADLINE_MARGIN_ONCE` 失败，不进入 `9e80020d` 或其他旧摘要。没有 `const uiDeadline=` 的文件原样继续。`2eca9be7…`、`56cb1183…` 和更早的 hash 不改不后移。
+
+判读只看新 SHA 自己的 macOS 日志。在节点 45 秒时仍是 15/1、`uiRefusal` 为 null、xcode 未关闭：这次提前 1 秒没有让等待的返回被读到。把 `+44000` 恢复成 `+45000`，停止，不再改这个余量，也不加探针。读到 detail 2、`uiRefusal`、xcode 在 45 秒前退出，或取消返回 1 且退出码 0、六条计时、双收尾、租约交还、后三例通过：等待在节点中止前产生了可分开的结果。其中只有完整成功门才算这次验收通过。detail 2 或拒绝只说明等待返回被读到，不是根因，也不是产品修复。若成功门失败且阶段 20 的剩余时间显示点击落在被削掉的那 1 秒里，同样恢复 `+45000` 并停止。
+
+Windows 假设：控制器完成回调没有进入。支持：点 7 的 edge 1、code 0，没有点 8，阶段没有 `controller_callback`；`flags` 751 含 `ControllerApi`、`Armed`、`OuterDispatch`，不含 `ControllerEntry`（16）和 `ControllerLeave`（256）；`callbackPresent` 是 0。`OuterDispatch` 只表示 `CreateCoreWebView2Controller` 返回之后，外层 `DispatchMessageW` 至少返回过一次。`build_webview()` 在 `desktop.ready` 里调用，主窗口创建时没有 `WS_VISIBLE`，`show()` 在更后的 `desktop.window`。反证：`35526f9f` 的同一条 MCP 测试是 ok 24；`44519261215` 里下一条 `DESKTOP_480_NATIVE` 有 `controller_callback`。所以「必须先 ShowWindow」还没有被现有日志单独证实。这一步不改 `DesktopHost.cpp`，不加探针，不把 20000 加大。回退和这 1 秒余量都不能补上这个回调。Windows 的停止条件是：在有一条能把「回调没投递」和「线程不再泵消息」分开、并且不被 `35526f9f` 的成功同时满足的产品改动之前，不改宿主生命周期。
+
+owned 的两次清理和成功路径的计时读取保持。不重跑 `44519261215` 或 `44513461777`。发布仍暂停。
+
 ## 7. 这一节点不做的事
 
-第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地。当前步骤是第 26 节：把那次跳过退回跳过前的句子和 `b2884ab5…` 摘要，并去掉 query-101 里只为跳过增加的断言。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
+第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。当前步骤是第 27 节：只把选择框测试的 `uiDeadline` 从 `Date.now()+45000` 改成 `Date.now()+44000`，并在 `restoreSuccessTiming476` 里先把这一处还原成 `+45000`。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
