@@ -202,9 +202,23 @@ CI run `44481851252`，macOS job `135415734824`，SHA `7c5209b0470b1aecf0b151f11
 
 ## 11. 下一道最小纠正
 
-不增加 45000。不删 `cancelReturned == 1`、子进程退出码 0、stage 18–20，也不跳过后三例。不改 `DesktopHost.swift`。
+不增加 45000。不删 `cancelReturned == 1`、子进程退出码 0、stage 18–20，也不跳过后三例。不改 `DesktopHost.swift`。不改 DerivedData。`spawnOwned` 的 stdout/stderr 捕获保持原样。
 
-这一次只从 `OwnedWorkspaceUI705` 启动 `xcodebuild` 的参数里去掉 `-resultBundlePath`。结果包读取本来就会在包不存在时得到 `BUNDLE_UNAVAILABLE`，成功断言不读这个包。下一趟同一条 macOS 作业若 `xcodeClosed` 变为 true，且取消、退出码和后三例都通过，则超时来自结果包收尾。若 `xcodeClosed` 仍是 false，且宿主退出仍贴在 45 秒边界，则 runner 仍在等应用退出，下一道才看取消之后的宿主工作，不再改辅助功能查询。
+只从 `OwnedWorkspaceUI705.start` 传给 `xcodebuild` 的参数里去掉这一处：`'-resultBundlePath',path.join(this.scene.root,'Result.xcresult')`。`result705AfterActualClose` 里 `path.join(scene.root,'Result.xcresult')` 的读取留着。包不存在时现有路径已经返回 `BUNDLE_UNAVAILABLE`，不删这段读取。
+
+helper 字节一改，`restorePickerWait('helper')` 的成功摘要 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5` 就会先失败。所以每个入口都先把上述参数精确还原回现在这一句，再调用 `restorePickerWait`。少了这一对，或一对出现超过一次，在 `exact-once` 失败，不套 `56cb1183…`。旧 hash 不改、不后移。还原之后仍保持：
+
+- `previousInputReady705` 的 helper 分支。`previousCriticalCensus705`、`previousTitle705`、`previousCensus705` 都先进入这里，不另做一次还原。
+- `desktop-workspace-xctest-705.test.ts` 第 57 行的 helper，在 `restoreObservation826` 之前。该循环去掉 CLOSE 之后的摘要仍是 `b0e30a4e3d7331dd1af008eee5ac96c673907544f4fda75a2e279ac816cba796`。
+- 同文件第 365 行的 helper peel，在 `restoreCloseObservation476('helper')` 之前。成功路径才要求 `56cb1183…`。
+- `desktop-close-observation-826.test.ts` 的 helper peel，在 `restoreObservation826('helper')` 之前。
+- `desktop-workspace-query-101.test.ts` 的 helper 循环，在 `restorePickerWait('helper')` 之前。`source+eol` 会让这一对出现两次，先在 exact-once 失败。
+- `desktop-native-observation-788.test.ts` 的 helper 格：还原和 `restorePickerWait` 之后，`restoreObservation788` 的摘要仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。
+- `scripts/tests/native-join-observation-788.test.cjs` 的 helper 格：还原和 `restorePickerWait` 之后，去掉 JOIN 的摘要仍是 `0397f3cbc6bde4fd9293cffa26515a7407bb3d9ce47264ddfa50af52d599e8d4`。
+
+`macos-observer-close-795.test.cjs` 和 `desktop-native-boundary-observation-705.test.ts` 只取 helper 里的方法或结果解析函数，不哈希整文件，也不读这处启动参数。它们不是还原入口。
+
+下一趟同一条 macOS 作业，只有 `xcodeClosed` 为 true，并且 `cancelReturned` 为 1、子进程退出码为 0、计时 18/19/20 都在、后三例都通过，才支持「显式结果包路径影响收尾」。若 `xcodeClosed` 仍是 false，先看中止后的结果读取是 `BUNDLE_UNAVAILABLE` 还是仍停在工具上。宿主这次已经退出码 0，不把解释改回宿主。这一道本身不是整票修复。
 
 ## 7. 这一节点不做的事
 

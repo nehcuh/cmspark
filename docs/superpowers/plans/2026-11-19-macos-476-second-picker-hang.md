@@ -162,9 +162,11 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 run `44481851252` 的 macOS job `135415734824` 已经走到取消点击返回、`cancelReturned` 1、子进程退出码 0。失败是 45000ms 节点超时，`xcodeClosed` 为 false，后三例 `ACQUIRE_REFUSED`。stage 20 detail 0 有计时 20 `true`，不是未知的吞写。`hostTicks` 12 不能证明 `orderOut`。
 
-下一道实现只删 `workspace-xctest-owned-705.ts` 里 `xcodebuild` 参数的 `-resultBundlePath` 及其路径。不增加 45000，不改 `DesktopHost.swift`，不改取消成功条件。helper 源文因此变化，既有 helper 当前摘要要在第一道 hash 前按这一处参数精确剥回，旧 hash 不改不后移。变体少了这处参数就在精确一次失败，不套成功摘要。
+下一道实现只删 `OwnedWorkspaceUI705.start` 里 `'-resultBundlePath',path.join(this.scene.root,'Result.xcresult')`。`scene.root` 上 `Result.xcresult` 的读取、`BUNDLE_UNAVAILABLE`、DerivedData、stdout/stderr 捕获都不动。不增加 45000，不改 `DesktopHost.swift`，不改取消成功条件。
 
-下一趟 macOS 若 `xcodeClosed` 为 true 且后三例通过，结果包收尾就是超时原因。若仍是 false，就停在这一步，改看取消之后的宿主退出，不再改查询。
+这处参数在 `restorePickerWait('helper')` 要求成功摘要 `56cb1183…` 之前精确还原。少一对或重复都在 exact-once 失败，不套 `56cb1183…`。入口是：`previousInputReady705` 的 helper；705 第 57 行 helper（去掉 CLOSE 后仍是 `b0e30a4e…`）；705 第 365 行 helper peel；`desktop-close-observation-826.test.ts` 的 helper；`desktop-workspace-query-101.test.ts` 的 helper 循环；788 helper 格还原后仍是 `873b5ced…`；join helper 格还原后仍是 `0397f3cb…`。旧 hash 不改不后移。
+
+下一趟同作业只有 `xcodeClosed` 为 true 且 `cancelReturned` 1、退出码 0、计时 18–20、后三例都通过，才支持结果包路径影响收尾。`xcodeClosed` 仍是 false 时，先区分 `BUNDLE_UNAVAILABLE` 和仍在等工具，不改口到已经退出的宿主，也不称整票修复。
 
 ## 安装包
 
