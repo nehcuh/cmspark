@@ -158,6 +158,14 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 6. 同一组三句在每个整源入口的第一道 hash 之前剥掉：声明、`D476_WS_HOST_TICK` 分支、`cancelCurrent` 后的两个字段。少一句先 exact-once 失败，不套成功摘要，旧 hash 不改不后移。入口是规格 9.3 的清单：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 57 行 native 的 `0b78022a…`、705/747 abort 的 `6fadbe60…`/`7c5d8b54…`、782 的 `33b23399…`/`f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。705 的 abort inverse 先走 `close476`，剥在 `close476` 之前。`705 aborted workspace context preserves the same closed phase` 的 vm scope 带上 `hostTicks` 和 `hostTickLast`。readiness 的第二次调用序在 `D476_WS_PICKER_CANCELLED` 后增加 `HOST_TICK_START`；第一次仍停在 `D476_WS_PICKER_SELECTED`。
 7. 不改 `DesktopHost.swift`。不把 XCTest 查询移到别的线程。不把 45000 加大。不跳过用例。
 
+## 诊断运行之后的下一道
+
+run `44481851252` 的 macOS job `135415734824` 已经走到取消点击返回、`cancelReturned` 1、子进程退出码 0。失败是 45000ms 节点超时，`xcodeClosed` 为 false，后三例 `ACQUIRE_REFUSED`。stage 20 detail 0 有计时 20 `true`，不是未知的吞写。`hostTicks` 12 不能证明 `orderOut`。
+
+下一道实现只删 `workspace-xctest-owned-705.ts` 里 `xcodebuild` 参数的 `-resultBundlePath` 及其路径。不增加 45000，不改 `DesktopHost.swift`，不改取消成功条件。helper 源文因此变化，既有 helper 当前摘要要在第一道 hash 前按这一处参数精确剥回，旧 hash 不改不后移。变体少了这处参数就在精确一次失败，不套成功摘要。
+
+下一趟 macOS 若 `xcodeClosed` 为 true 且后三例通过，结果包收尾就是超时原因。若仍是 false，就停在这一步，改看取消之后的宿主退出，不再改查询。
+
 ## 安装包
 
 这一节点没有修复提交，所以没有候选包，没有架构、sha256、构建 run、签名或公证。不读取、不写用户的 `~/.cmspark-agent`。

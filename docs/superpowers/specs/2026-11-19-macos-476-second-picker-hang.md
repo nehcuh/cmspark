@@ -185,6 +185,27 @@ id 只有一个：`system.ping` 的 `id` 是 `D476_WS_HOST_TICK`。不使用没�
 
 `desktop-workspace-picker-readiness-705.test.ts` 的第二次面板调用序在 `D476_WS_PICKER_CANCELLED` 之后多一次 `HOST_TICK_START`。第一次面板仍只到 `D476_WS_PICKER_SELECTED`，不启动 tick。0.016 秒定时器仍在 emit 之前停。
 
+## 10. 诊断运行否定了「第二次查询不返回」
+
+CI run `44481851252`，macOS job `135415734824`，SHA `7c5209b0470b1aecf0b151f116371494b31b2132`。十项检查里只有 `smoke (macos-latest)` 失败。其余九项成功：`build`、`smoke (ubuntu-latest)`、`smoke (windows-latest)`、`smoke (windows-native)`、`activity (Linux X11 native)`、`acp-history-restart`、`Affected CPU controls (Linux ARM64)`、`Windows session persistence`、`Linux integration controls (ARM64)`。
+
+选择框用例仍是 `test timed out after 45000ms`。原始 phase 是：
+
+- `uiProgress` 为 `{stage:20,detail:0}`，`uiRefusal` 为 null。stage 18、19、20 都有进入和返回：`cancelTiming788.events` 含 `[18,false,29480,5814,0]`、`[18,true,31030,4264,0]`、`[19,false,33553,1741,1]`、`[19,true,33990,1304,1]`、`[20,false,33991,1302,1]`、`[20,true,34833,461,1]`。
+- `cancelReturned` 为 1，`pickOutcome` 为 4，`receiptMask` 为 1023，`childExited` 为 true，`childExitCode` 为 0。`firstFailedAssertion` 为 3，`failureSite` 为 9。
+- `hostTicks` 为 12，`hostTickLast` 为 `D476_WS_HOST_TICK`。次数没有到 40。定时器在 `pickerCurrent` 不为真或面板 `settled` 时会停，所以次数停不能证明 `orderOut` 或打开面板服务停住。12 次到达说明第二次面板处于当前选择期间，宿主 runloop 还在执行这个定时器。
+- stage 20 的 detail 0 是点击前那一笔。计时 20 的 `true` 说明 `click()` 已返回。这里的 detail 0 不是 `try?` 吞写造成的未知态。`uiRefusal` 为 null 与没有抛出一致。
+- `xcodeClosed` 为 false。`D476_WORKSPACE_COMPLETE_788` 是 `aborted:true`、`xcodeExit:"NOT_CLOSED"`。中止后的站点 7 和 8 是信号退出。`D705_XCRESULT_DETAILS_CLOSED` 是 `TOOL_FAILURE`。
+- 后三例都是 `ACQUIRE_REFUSED`：local-work 45000ms，archive 20000ms，terminal-only 45000ms。选择框用例的 `RELEASE_REFUSED` 使同一作业的租约没有交还。
+
+宿主在桶 179 退出码 0，离 45 秒节点超时只剩不到 250ms。`xcodebuild` 还要等应用退出并写完 `Result.xcresult`，这一段没有排进剩余时间。
+
+## 11. 下一道最小纠正
+
+不增加 45000。不删 `cancelReturned == 1`、子进程退出码 0、stage 18–20，也不跳过后三例。不改 `DesktopHost.swift`。
+
+这一次只从 `OwnedWorkspaceUI705` 启动 `xcodebuild` 的参数里去掉 `-resultBundlePath`。结果包读取本来就会在包不存在时得到 `BUNDLE_UNAVAILABLE`，成功断言不读这个包。下一趟同一条 macOS 作业若 `xcodeClosed` 变为 true，且取消、退出码和后三例都通过，则超时来自结果包收尾。若 `xcodeClosed` 仍是 false，且宿主退出仍贴在 45 秒边界，则 runner 仍在等应用退出，下一道才看取消之后的宿主工作，不再改辅助功能查询。
+
 ## 7. 这一节点不做的事
 
 不改测试源码，不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。那些要等有一个被上述 macOS 作业证明的修复提交。不开始侧栏 Task 2。发布仍暂停。
