@@ -78,7 +78,12 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 | `desktop-native-observation-788.test.ts` 第 43 行 | 十个文件里的 Swift 与 helper | `restoreObservation788` |
 | `desktop-workspace-query-101.test.ts` 第 44 和 49 行 | Swift 与 helper | `restoreWorkspaceQuery101` |
 | `desktop-workspace-xctest-705.test.ts` 第 57 行 | helper | `restoreObservation826('helper')` |
+| `desktop-workspace-xctest-705.test.ts` 第 363 行 | helper 成功路径 | 本地包装后的 `restoreCloseObservation476('helper', raw)` |
 | `desktop-close-observation-826.test.ts` 第 171 行 | helper | `restoreObservation826('helper')` |
+
+第 358 行的本地函数只是转调模块。第 359–364 行直接读原始文件，成功路径第 363 行对 helper 调用 `restoreCloseObservation476('helper', raw)`，不经过 `previousInputReady705`。包装的第一句仍是 `restoreObservation826`，接着 `restoreWorkspaceQuery101('helper')`，所以生效摘要一改，未还原的 helper 会先撞上 `56cb1183…`。这一行的 helper 成功路径要先做 helper 入口还原，再调用 close476。同循环里的协议、观察者和 native 样本没有新摘要，不还原。
+
+第 364 行的四个变体仍要抛 `ERR_ASSERTION`。每个变体先断言源文确实变了：标记被删时 `split` 不再是 2，标记被重复时多于 2，`OBS476` 被改成 `OBS475` 后旧标记消失，或者多了一段换行。helper 变体在摘要已经还原之后再进入 close476，这时的失败来自观察层标记，而不是因为漏了还原、新摘要去撞旧的 `56cb1183…`。`desktop-local-native-476.test.mjs` 第 326 行只对 native 测试调用 `restoreCloseObservation476('native')`，没有 helper 摘要，不加还原。
 
 还原之后，第 390 行 ui 的 `current`、`prior` 和哈希 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572` 保持不动。helper 随后仍把注释里的 `fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076` 换成 `0b193e10…`，整文件哈希保持 `1f8e2f2129378ec2ccc4510e6a4ab29a4445fa71208223ef04c4114b2bf0885d`。第 43 行在入口之后再跑 `restoreObservation788`，Swift 期望仍是 `fb446e0d…`，helper 期望仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。其余直接调用 `restoreObservation788` 的 C++、native 测试和终端夹具没有这两个标记，入口对它们原样返回。
 
@@ -107,7 +112,7 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 | 807 | 当前 ui | 旧 `inputCount==1` 恰好一次，变体使逆操作失败 | 改成 `inputs` 下标 1 的拒绝句恰好一次；不动组合框回退 |
 | 390 helper 分支 | helper 源文 | `fb446e0d…` 换成 `0b193e10…` | 保持；先把新的 `RESULT705_SOURCES` 摘要还原成 `2eca9be7…` |
 | query101 第 12–49 行 | 当前 `sheet()` 与整文件 | `guard count==1`、`guard sheets==1` 和旧调用序；`==1` 改 `>=1` 使 query101 失败 | 窗口 0 在下标 1 前拒绝，sheet 下标 1 为 true 才拒绝；变体改这两句并确实改到源文 |
-| 57、171、43、44 行的 restore | 原始 Swift 或 helper | 第一跳就做 `2eca9be7…` 或 `56cb1183…` 整文件校验 | 入口先还原，再进入这些第一跳；不改那四个摘要 |
+| 57、171、363、43、44 行的 restore | 原始 Swift 或 helper | 第一跳就做 `2eca9be7…` 或 `56cb1183…` 整文件校验 | 入口先还原，再进入这些第一跳；第 363 行只还原 helper 成功路径；不改那四个摘要 |
 | 788 测试 40–43 行 | 入口之后的 `restoreObservation788` | Swift `fb446e0d…`；helper `873b5ced…` | 期望摘要保持 |
 | 642 | helper 含当前 Swift 摘要 | 含 `2eca9be7…` | 含新摘要 |
 | 新增 | `sheet()` 与 Cancel 的当前源文 | 今天没有有序片段 | 窗口与 Cancel：下标 0 用 `try remaining()`，下标 1 用 `timeout:1`；sheet 只把 `count` 换成下标 1 的 `timeout:1`。true 拒绝。不进入 stage 7 的 5 次计数 |
