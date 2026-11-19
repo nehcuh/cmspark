@@ -218,7 +218,17 @@ helper 字节一改，`restorePickerWait('helper')` 的成功摘要 `56cb1183b0e
 
 `macos-observer-close-795.test.cjs` 和 `desktop-native-boundary-observation-705.test.ts` 只取 helper 里的方法或结果解析函数，不哈希整文件，也不读这处启动参数。它们不是还原入口。
 
-下一趟同一条 macOS 作业，只有 `xcodeClosed` 为 true，并且 `cancelReturned` 为 1、子进程退出码为 0、计时 18/19/20 都在、后三例都通过，才支持「显式结果包路径影响收尾」。若 `xcodeClosed` 仍是 false，先看中止后的结果读取是 `BUNDLE_UNAVAILABLE` 还是仍停在工具上。宿主这次已经退出码 0，不把解释改回宿主。这一道本身不是整票修复。
+下一趟同一条 macOS 作业，只有 `xcodeClosed` 为 true，并且 `cancelReturned` 为 1、子进程退出码为 0、计时 18/19/20 都在、后三例都通过，才支持「显式结果包路径影响收尾」。若 `xcodeClosed` 仍是 false，先看中止后的结果读取是 `BUNDLE_UNAVAILABLE` 还是仍停在工具上。这一道本身不是整票修复。
+
+## 12. 去掉结果包路径的这一次没有测到收尾
+
+CI run `44487668420`，macOS job `135435079906`，SHA `6067e9ee90e67609b4b418c3971dc6598efa48db`。十项检查里只有 `smoke (macos-latest)` 失败。选择框用例仍是 `test timed out after 45000ms`。
+
+最早停点是 stage 14 detail 0。`sheet(15)` 没有写下 stage 15。`cancelTiming788.events` 是空数组，没有 18/19/20。`cancelReturned` 是 0，`picks` 是 1，`pickerObserved` 是 1，`hostTicks` 是 0，`hostTickLast` 是 null。`receiptMask` 是 7，只到 `D476_WS_CONFIRMATION`，没有 `D476_WS_COMMITTED`。第二次选择框没有被请求。这不是 `orderOut`，也不是第二次辅助功能查询卡住。
+
+中止时 `childExited` 是 false，`childExitCode` 是 null。中止之后的站点 4 是非零退出，站点 7 和 8 是信号。不能把这次说成宿主已经退出码 0。`xcodeClosed` 是 false，`xcodeExit` 是 `NOT_CLOSED`。`D705_XCRESULT_DETAILS_CLOSED` 的 `reason` 是 `BUNDLE_UNAVAILABLE`，`tool826` 是空数组。结果工具没有留在等待里；包不存在，读取按原路径返回了缺包。后三例仍是 `ACQUIRE_REFUSED`：local-work 45000ms，archive 20000ms，terminal-only 45000ms。选择框用例 `RELEASE_REFUSED`。
+
+这一次没有进入上一头那种「取消点击已返回、宿主退出码 0、只差 runner 关闭」的窗口，所以不能用它支持或否定结果包路径对收尾的影响。下一道把启动参数里的 `-resultBundlePath` 和它的路径放回去，恢复到已经能走到取消的那一版。不增加 45000，不改 `DesktopHost.swift`，不改读取和 `BUNDLE_UNAVAILABLE`。放回之后的 helper 还原把这一对从源文里拿掉的句子删去，旧摘要仍不改。
 
 ## 7. 这一节点不做的事
 

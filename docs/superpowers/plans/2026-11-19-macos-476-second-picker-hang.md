@@ -168,6 +168,8 @@ run `44481851252` 的 macOS job `135415734824` 已经走到取消点击返回、
 
 下一趟同作业只有 `xcodeClosed` 为 true 且 `cancelReturned` 1、退出码 0、计时 18–20、后三例都通过，才支持结果包路径影响收尾。`xcodeClosed` 仍是 false 时，先区分 `BUNDLE_UNAVAILABLE` 和仍在等工具，不改口到已经退出的宿主，也不称整票修复。
 
+run `44487668420` 的 job `135435079906` 停在 stage 14 detail 0，没有第二次选择框，`cancelReturned` 是 0，中止时 `childExited` 是 false。`D705_XCRESULT_DETAILS_CLOSED` 是 `BUNDLE_UNAVAILABLE`，`tool826` 为空，工具没有停在等待。这次不能解释收尾。下一道把 `-resultBundlePath` 和它的路径放回 `OwnedWorkspaceUI705.start`，并去掉为这次删除准备的 helper 还原。45 秒、`DesktopHost.swift` 和读取都不改。
+
 ## 安装包
 
 这一节点没有修复提交，所以没有候选包，没有架构、sha256、构建 run、签名或公证。不读取、不写用户的 `~/.cmspark-agent`。
