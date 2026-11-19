@@ -122,6 +122,27 @@ sheet 已经有 `firstMatch.waitForExistence(timeout:try remaining())`，false �
 
 不放宽 45000，不跳过，不删 `cancelReturned == 1`。
 
+## 8. 原生证据否定了「换 API 就能返回」
+
+`5abc4ad3` 上的 `waitForExistence` 已经由 `f894bffb` 的 CI run `44475469229`、macOS job `135394832966` 跑过。选择框用例仍是 45000 毫秒超时。`uiProgress` 仍是 `{stage:15,detail:0}`，`cancelTiming788.events` 仍是空数组，`cancelReturned` 仍是 0，`childExited` 是 false，`childExitCode` 是 null。同一作业里随后的 local-work、archive history、terminal-only 三例也超时。
+
+stage 15 detail 0 写在 `sheet(15)` 进入后、下一次 `observeUIStage` 之前。当前源文里，这一笔之后才计算 `remaining()`，然后才调用 `waitForExistence`。因此这次日志不能分开「`remaining()` 没返回」和「`waitForExistence` 没返回」。它能否定的是：把 `count` 换成带 `timeout` 的 `waitForExistence` 并没有让第二次窗口查询在 45 秒内返回一个 Bool。`timeout` 不是对底层辅助功能快照的强制中断。
+
+`D826_UI_TIMING` 里的 1、2、3、5、6 是 node 侧 `note826` 的站点，不是 XCTest 的 stage 18–20。桶值 180 等于 `floor(45000/250)`。站点 5 是 `complete()` 拒绝，站点 6 是取消；站点 7 和 8（Xcode 退出）没有出现，和 `xcodeClosed:false` 一致。取消计时 18–20 的缺失仍以 `cancelTiming788.events` 为空为准。
+
+宿主在第二次 ping 时主线程还跑得动 `panel()`：`pickerObserved` 是 2，宿主 `failureSite` 是 0。ping 之后验收定时器被取消，之后没有宿主心跳。所以不能判断卡住期间宿主主线程是否还在跑。
+
+`finishPicker` 只对已经结束的那张 `NSOpenPanel` 调用 `orderOut`。稍后 `retirePicker` 又对同一对象调用 `cancel(nil)` 和 `orderOut`，然后下一次 `beginPicker` 才 `beginSheetModal`。这是第一次和第二次查询之间的生命周期差别。它是否让共享的打开面板服务停住，这次日志没有证明。
+
+## 9. 下一道诊断
+
+不增加 45000。不把查询挪到别的线程。不改 `DesktopHost.swift`，直到诊断把阻塞侧分开。下一道实现只加两笔阻塞前、跨进程能看见的记录：
+
+- `sheet()` 在 `remaining()` 返回之后、`waitForExistence` 之前写下 detail 1。停在 detail 0 表示还没进入等待；停在 detail 1 表示等待调用本身没有返回。
+- 验收夹具在发出第二次 `D476_WS_PICKER_CANCELLED` 之后，用主线程 `Timer` 继续发送有上限的 `system.ping`（每秒至多一次，最多 40 次），面板结束就停。node 测试已经在收 `system.ping`。等待期间仍能收到这些 ping，表示宿主主线程还在跑，阻塞在 XCTest 这一侧的辅助功能调用。ping 在第二次选择框出现后停止，表示宿主没有再执行这个定时器。
+
+这两笔都不是取消成功。`cancelReturned` 仍必须是 1，后三例仍必须在同一作业通过。
+
 ## 7. 这一节点不做的事
 
 不改测试源码，不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。那些要等有一个被上述 macOS 作业证明的修复提交。不开始侧栏 Task 2。发布仍暂停。

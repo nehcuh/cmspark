@@ -146,6 +146,17 @@ stage 15 的 detail 仍是 0：等待没有返回。保持失败，不重跑。d
 
 Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新源文一致。它不是原生选择框通过。
 
+## 原生证据之后的下一道诊断
+
+`f894bffb` 的 macOS job `135394832966` 已经否定「换成 `waitForExistence` 就会从 stage 15 返回」。`uiProgress` 仍是 `{stage:15,detail:0}`，取消计时没有 18–20，`cancelReturned` 是 0，子进程没有退出。`timeout` 没有把这次快照打断。
+
+下一道实现只加诊断，不改 45000，不改 `DesktopHost.swift`：
+
+1. `sheet()` 先调用 `remaining()`，返回后把 detail 写成 1，然后再调用 `waitForExistence`。
+2. `workspace-acceptance.swift` 在第二次 picker ping 之后，用主线程定时器发送 `D476_WS_HOST_TICK`，每秒至多一次，最多 40 次，面板结算后停止。
+3. 红灯仍是这条 macOS 用例。detail 停在 0：`remaining()` 没有返回。detail 停在 1 且宿主 tick 还在增加：等待调用没有返回，宿主主线程还在跑。detail 停在 1 且 tick 停在第二次 ping：宿主没有再跑这个定时器。三种都不是 `cancelReturned == 1`。
+4. 不把查询移到别的线程。不跳过用例。
+
 ## 安装包
 
 这一节点没有修复提交，所以没有候选包，没有架构、sha256、构建 run、签名或公证。不读取、不写用户的 `~/.cmspark-agent`。
