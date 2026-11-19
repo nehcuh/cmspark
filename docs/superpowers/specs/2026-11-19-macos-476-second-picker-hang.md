@@ -432,6 +432,26 @@ Windows 调查没有完成。支持：点 7 的 edge 1、code 0，没有点 8，
 
 owned 的两次清理和成功路径的计时读取保持。不重跑 `44519261215` 或 `44513461777`。发布仍暂停。
 
+## 28. 只读调查结论
+
+余量、跳过和追加探针的试错路线停止。这一节不提出下一次代码实验。
+
+保留的工件只有 GitHub Actions 的 job 日志。run `44525070865` 的 artifact 是公开构建包、gallery 证书元数据和 windows census，没有 `Result.xcresult`、xcode stdout/stderr 原文、sample、spindump 或崩溃报告。成功 run `44510689058` 同样没有这些场景文件。`.github/workflows/ci.yml` 的上传步骤不包含选择框场景目录。测试 `finally` 在 `uiOwner.cleanup()` 之后 `fs.rmSync` 删掉该目录，所以场景里的 bundle 和日志文件在 job 结束前已经不在 runner 上。
+
+对照的是同一条选择框用例。成功 SHA `b3ea545c`，job `135513859906`：`cancelReturned` 1，`childExitCode` 0，xcode 与 observer 都关闭且 code 0，`uiReceiptMask` 31，六条计时 `[18,false,30841,8387,0]` 到 `[20,true,36901,2328,1]`，工作区租约 `RELEASED` 43418ms，后三例 `RELEASED`，文件 12 通过、0 失败、0 取消。失败 SHA `85f7392b`，job `135563344587`：`cancelReturned` 0，`childExitCode` null，xcode 与 observer 在相位读取时都未关闭，`uiReceiptMask` 23，`uiRefusal` null，`uiProgress` `{stage:15,detail:1}`，`cancelTiming788.events` 空，`hostTickArmed` 1，`hostTicks` 2，`hostTickStop` null，租约 `RELEASE_REFUSED` 且 `over_budget`，后三例 `ACQUIRE_REFUSED` 后超时，文件 8 通过、0 失败、4 取消。成功日志没有 `D705_XCRESULT`，因为 xcresult 读取包在 `primaryFailed` 里面。
+
+失败日志在 `cancel()` 之后补到了三件事后记录。`D705_XCODE_FAILURE_AFTER_CANCEL` 的 stdout 和 stderr 都是 `OBSERVED`，`firstMarker` 是 `NONE`，没有 `Error Domain=`。分类器只认整行 `Testing failed:`、`xcodebuild: error:` 和 `xcode-select: error:`，并且丢掉最后一行没有换行的尾巴。`D705_XCRESULT_DETAILS_CLOSED` 的 reason 是 `TOOL_FAILURE`。`tool826` 第一行是 `[1,false,64,0,true,true,0,466,false]`：`xcresulttool get test-results tests` 退出码 64，stdout 0 字节，stderr 466 字节。stderr 正文没有进入日志。因此 `sourceCoordinates` 为空，`testPresent` 是 null。`timing826` 的点 7 和点 8 退出类是 3，也就是 xcode 的 exit 和 close 带着信号，不是自行以数字退出码结束。点 4 是宿主子进程的非零退出码，桶 184。
+
+已证实：进度文件是单文件覆盖写。`writeUIProgress` 用 `rename` 替换 `ui-progress.json`，失败会留下上一份成功发布的内容。`observeUIStage` 用 `try?`，所以写入失败不进入 `catch`，也不会产生 `ui-refusal.json`。拒绝文件只在 `catch` 里 `try?` 写。相位读取发生在 `finally`，并且当时 `xcodeClosed` 仍是 false。空的计时 `events` 只说明读取器没有看到 18–20 的六个文件。成功那次这些文件存在并被读到。
+
+已排除：这次 15/1 不是第二张 sheet 跳过造成的，跳过已经回退，而且 15/1 在第一扇窗口等待之前。也不是节点时限被改掉，两次都是 45000。成功那次证明同一条 18–20 点击、六文件写入和 xcode 退出 0 可以在这套读取里出现。`hostTicks` 2 只说明宿主进程收到了 tick，不说明 XCTest 进程里的 `waitForExistence` 已返回。
+
+未知，并且现有工件分不开：`waitForExistence` 是否仍未返回，以及它是否已返回但随后的 detail 2 或 `ui-refusal.json` 写入失败。这两种都会在相位里留下 15/1 和 null refusal。xcresult 没有给出源码行，stdout/stderr 分类没有 `Testing failed:`，信号关闭说明 xcodebuild 是被结束的而不是先以测试失败码退出。这些都偏向「结束时还没有一份正常的失败报告」，但分类器会丢弃未换行的尾巴，stderr 的 466 字节也没有保留，所以不能把缺事件写成未执行。
+
+架构上的盲区是：同步的 `waitForExistence` 在返回前不能更新那份唯一进度文件；节点中止后的读取看到的是返回前的最后一次成功发布；关闭后的 xcresult 工具失败会丢弃能指出行号的 stderr；场景目录随后被删除，而 CI 不另存这些文件。要分开上面两种未知，需要在删除前留下调用栈或带行号的结果。当前流水线没有这件工件。这是取舍，不是这一节要开始的改动。
+
+Windows 仍未分开。失败运行里点 7 已返回且 code 0，没有点 8，`flags` 751 含 `OuterDispatch` 但不含 `ControllerEntry` 16 和 `ControllerLeave` 256，进程当时 `exited` false。`85f7392b` 的 windows-latest 是 ok 24，并且有 callback 和点 8。ok 24 因此不呈现「有 OuterDispatch、无 ControllerEntry」这个失败组合。但 `outerDispatch()` 只在第一次外层 `DispatchMessageW` 返回时置一位，之后不再计数。失败快照里的这一位既符合「之后还在泵、只是完成回调没投递」，也符合「那一次返回之后线程不再泵」。ok 24 不能充当这个区分，因为成功路径已经进入了回调。没有保留的线程栈或后续泵计数，所以这两条失败假设现在分不开。缺的就是这个计数或栈，不能把缺席的点 8 写成其中一种。
+
 ## 7. 这一节点不做的事
 
-第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。第 27 节的 1 秒余量已经做完并按日志停止，`uiDeadline` 恢复为 `Date.now()+45000`。当前没有新的余量步骤。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
+第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。第 27 节的 1 秒余量已经做完并按日志停止，`uiDeadline` 恢复为 `Date.now()+45000`。第 28 节是只读结论，不开始新的代码改动。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。

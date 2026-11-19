@@ -226,7 +226,7 @@ windows-latest job `135543346278` 的 MCP 表单 not ok 24，20000ms。点 7 已
 
 ## 当前唯一下一步
 
-没有下一步余量实验。`uiDeadline` 保持 `Date.now()+45000`。节点 45000、窗口等待、第二张 sheet 拒绝、18–20 点击、owned 清理和成功计时读取保持。Windows 调查仍未完成：在能把「没投递」和「不再泵消息」分开、且不被 `35526f9f` ok 24 同时满足的方案之前，不改 `DesktopHost.cpp`。不重跑 `44525070865`。发布仍暂停。
+没有代码步骤。第 28 节记录只读结论：现有 job 日志分不开「窗口等待尚未返回」和「已返回但 detail 或 refusal 没写上」；xcresult 工具退出 64 且没有源码行，stdout/stderr 只有 `firstMarker NONE`。Windows 的失败组合也不被 ok 24 满足，但一位 `OuterDispatch` 分不开「没投递」和「不再泵」。不改余量，不加探针，不改两个 `DesktopHost`。不重跑旧 run。发布仍暂停。
 
 ## 安装包
 
