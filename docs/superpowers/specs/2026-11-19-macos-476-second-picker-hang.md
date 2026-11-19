@@ -65,21 +65,46 @@ let sheets=w.sheets.count
 
 ## 5. 下一步实现要改的调用
 
-实现还不属于这一份文档。通过这一道规划门之后，只改测试驱动 `WorkspacePickerUITests.swift` 里那些用 `count` 判定「恰好一个」的地方：`sheet()` 的窗口和 sheet，第一次面板的组合框与输入框，Choose 按钮，Cancel 按钮。按 nonce 匹配窗口的查询留在原处。
+实现还不属于这一份文档。通过这一道规划门之后，改 `WorkspacePickerUITests.swift`，并同时改 `desktop-workspace-xctest-705.test.ts` 的当前源文片段、投影和逆操作。按 nonce 匹配窗口的查询留在原处。
 
-每个这样的判定改成两次 `element(boundBy:).waitForExistence(timeout:)`：
+窗口、Cancel 和 `inputs` 没有现成的存在等待。它们改成两次 `element(boundBy:).waitForExistence(timeout:)`：下标 0 的超时参数是 `try remaining()`，false 拒绝；下标 1 的超时参数是 1 秒，true 拒绝。sheet 和 Choose 已经有下标 0 的 `waitForExistence(timeout: try remaining())` 并且 false 会拒绝，只把后面的 `count` 换成下标 1、超时 1 秒、true 拒绝。`comboBoxes.count` 是分支，不是拒绝，规则见 5.1。
 
-- 下标 0 的超时参数用 `try remaining()`。返回 false 就拒绝。
-- 下标 1 的超时参数是这个等待调用自己的 1 秒字面量，不用 `remaining()`，也不占用整段 45 秒。返回 true 就拒绝。返回 false 表示这次等待看到没有第二个匹配。
-- 两次等待都返回之后，才把 detail 写成「恰好一个」并继续。任一等待不返回，就没有 Bool，序列停在那里，交给 45 秒后盾，用例失败。
-
-这两次等待不是同一次原子快照。它们只证明：第一次等待返回时下标 0 存在，第二次等待返回时下标 1 不存在。Choose 与 Cancel 的 `isHittable` 和 `click()`，以及输入用的 `typeText` / `typeKey`，仍是没有超时参数的同步调用。历史停点不在它们上面。这一步不给它们加线程，也不新加 `count`。
+两次都返回之后才继续。任一等待不返回，就没有 Bool，序列停在那里，交给 45 秒后盾，用例失败。两次返回只证明各自那一次的结果，不是原子的 `count==1`。`isHittable`、`click()`、`typeText`、`typeKey` 仍没有超时参数。历史停点不在它们上面。这一步不给它们加线程，也不新加 `count`。
 
 `waitForExistence` 覆盖的是「`count` 要解析全部匹配、而单次快照仍能返回」这一类。它覆盖不了「单次快照不返回」。后一类仍由 45 秒后盾判失败。
 
 不改 `DesktopHost.swift` 的取消发送。历史日志里点击还没发生，没有一份产品取消帧可修。等待若能返回并且点击发生，现有宿主路径就会发出 `cancelled`。等待若仍不返回，再把当时的 stage 记下来，不先改宿主。
 
-`WorkspacePickerUITests.swift` 被 `desktop-workspace-xctest-705.test.ts` 和 `RESULT705_SOURCES` 的源文哈希锁住。实现提交要同时更新这些锁，让锁描述新源文。锁更新只说明源文被改过。它不是 macOS 红灯，也不是原生绿灯。
+## 5.1 结构断言不只是哈希
+
+`companion/tests/desktop-workspace-xctest-705.test.ts` 对当前 Swift 还有有序片段和变体。只改 Swift 再更新 `RESULT705_SOURCES` 和整文件哈希，这些断言仍失败。唯一性检查不能删。
+
+当前文件里已经核对过的锁：
+
+- 第 445 行在 `previousChoose705` 还原后的片段里要求 `let chooseCount=choose.count`，并且 `guard chooseCount==1 else` 排在可点击之前。第 448 行要求这个还原片段里 `waitForExistence(` 恰好 1 次。
+- 第 520–522 行读的是当前源文的 `uiStage=11` 到 `uiStage=12`，有序要求 `let chooseCount=choose.count` 和 `guard chooseCount==1 else`，并要求 `waitForExistence(` 与 `try remaining()` 都恰好 1 次。
+- 第 639–640 行在 `previousCriticalCensus705` 的结果上做同样的有序要求和恰好 1 次计数。
+- 第 656 行要求当前源文里 `guard chooseCount==1 else` 出现在 `choose.element.isHittable` 之前。
+- 第 683 行把当前源文的 `guard chooseCount==1 else` 换成 `guard chooseCount>=1 else`，`previousCriticalCensus705` 必须抛 `ERR_ASSERTION`。
+- 第 688–705 行把 stage 11–13 投进 `vm`。它要求源文里有且仅有一次 `guard chooseCount==1 else{throw OwnedUI705Error.refused}`，桩的 `count` 为 0 或 2 时必须在 `click` 之前拒绝。
+- 第 390 行的逆操作要求当前源文里有且仅有一次包含 `let comboCount=first.comboBoxes.count` 的输入就绪片段，换成旧片段后整文件哈希仍是 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572`。
+- 第 799–801 行要求当前 `uiStage=7` 片段里 `first.descendants` 在 `let comboCount=first.comboBoxes.count` 之前，并且仍有 `comboCount==1 ? first.comboBoxes:first.textFields` 和 `guard inputCount==1 else`。
+- 第 711–788 行的输入投影会读 `comboBoxes.count`，并在 `count` 为 0 或 2 时拒绝后续点击。第 807 行把 `guard inputCount==1 else` 换成 `>=1` 时，逆操作必须失败。
+- 第 641 行要求 `observeChooseCensus` 体内 `.count` 恰好 3 次。那是诊断普查，不是按钮权威。
+
+第 445 和 639 行的片段来自逆操作之后的源文，不是裸的当前文件。证据是第 441 行 `swift=previousChoose705(...)` 和第 639 行 `ui=previousCriticalCensus705('ui',actual.ui)`。新的逆操作若先把等待语句还原成今天的 `count` 文本，这两处应继续要求 `choose.count` 和恰好 1 次 `waitForExistence(`。把它们改成在还原结果里寻找新的 `boundBy` 等待，会和还原文本冲突。当前源文的有序片段改第 520、656、799 行，以及第 688 和 711 行的投影。
+
+第 683 行的变体是对当前源文做 `replace`。唯一性句子从源文里消失之后，这个 `replace` 不再改文件，逆操作哈希仍能对上，`assert.throws` 就会失败。所以变体要改成破坏新的「下标 1 为 true 就拒绝」句子，让新的逆操作因精确片段对不上而抛 `ERR_ASSERTION`。投影里另有一条：下标 1 的等待返回 true 时序列继续，必须在 `click` 之前拒绝。只删掉旧句子、不补这条，变体锁就没了。
+
+`comboBoxes.count` 不是恰好一个就拒绝。当前投影对 `kind:'text'` 会成功点输入；组合框数量不是 1 时改走 `textFields`，再由 `guard inputCount==1` 拒绝。若对组合框套用「下标 0 用 `try remaining()`，false 就拒绝」，没有组合框的文本路径会先占满剩余时限，或者直接被拒绝。实现不这样改。组合框分支改成两次超时都是 1 秒的 `waitForExistence`：下标 0 为 true 且下标 1 为 false 时仍用 `comboBoxes`，其余仍用 `textFields`。恰好一个的拒绝留在随后的 `inputs` 上：下标 0 的超时参数是 `try remaining()`，false 拒绝；下标 1 的超时参数是 1 秒，true 拒绝。第 390 行的 `current` 片段换成这条新分支，`prior` 和 `0b193e10…` 不动。第 799 行改成要求 `descendants` 等待仍在这条分支之前。
+
+窗口 `count`、sheet `count`、Cancel `count` 在这个测试文件里没有单独的有序片段，只进整文件哈希。同一提交要给这三处补上和 Choose 一样的当前源文有序片段，以及「下标 1 为 true 仍继续则失败」的变体。不靠只更新哈希来保住它们的唯一性。
+
+sheet 已经有 `firstMatch.waitForExistence(timeout:try remaining())`，false 会拒绝。这里只把后面的 `sheets.count` 换成下标 1、超时 1 秒、true 拒绝，不再加一次重复的下标 0 等待。Choose 的下标 0 同样是已有的 `chooseElement.waitForExistence(timeout:chooseTimeout)`，`chooseTimeout` 来自 `try remaining()`，`guard chooseSeen else` 拒绝。新句子只替换 `choose.count`。窗口、Cancel、`inputs` 没有这层已有等待，两下标都新写。
+
+新逆操作放在 `previousInputReady705` 的第一句，把上述新句子还原成今天的 `count` 文本，然后再走现有片段。还原后的哈希保持 `0b193e10…`、`1c9da3dd…`、`6efad44d…`、`182d2773…`、`ab75e477…`。`RESULT705_SOURCES` 改成新 Swift 文件的哈希。第 641 行的普查 `.count` 仍是 3，新等待不写进 `observeChooseCensus`。
+
+`RESULT705_SOURCES` 和这些逆操作哈希都只说明源文。它们不是 macOS 红灯，也不是原生绿灯。
 
 ## 6. 验证
 
