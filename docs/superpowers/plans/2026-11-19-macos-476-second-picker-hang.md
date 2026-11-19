@@ -83,7 +83,9 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 
 第 358 行的本地函数只是转调模块。第 359–364 行直接读原始文件，成功路径第 363 行对 helper 调用 `restoreCloseObservation476('helper', raw)`，不经过 `previousInputReady705`。包装的第一句仍是 `restoreObservation826`，接着 `restoreWorkspaceQuery101('helper')`，所以生效摘要一改，未还原的 helper 会先撞上 `56cb1183…`。这一行的 helper 成功路径要先做 helper 入口还原，再调用 close476。同循环里的协议、观察者和 native 样本没有新摘要，不还原。
 
-第 364 行的四个变体仍要抛 `ERR_ASSERTION`。每个变体先断言源文确实变了：标记被删时 `split` 不再是 2，标记被重复时多于 2，`OBS476` 被改成 `OBS475` 后旧标记消失，或者多了一段换行。helper 变体在摘要已经还原之后再进入 close476，这时的失败来自观察层标记，而不是因为漏了还原、新摘要去撞旧的 `56cb1183…`。`desktop-local-native-476.test.mjs` 第 326 行只对 native 测试调用 `restoreCloseObservation476('native')`，没有 helper 摘要，不加还原。
+第 364 行的四个变体仍要抛 `ERR_ASSERTION`。未改动的 helper 里 `/*OBS476_CLOSE_BEGIN*/` 有 4 处，`split` 长度是 5，对应配置里的 count 4，不是单标记的 2。变体先按这个基数证明字节变了：删掉第一处后剩 3 处，第一处被重复后变成 5 处，第一处 `OBS476` 改成 `OBS475` 后精确标记剩 3 处，多一段换行则标记仍是 4 处但全文不同。helper 先把新摘要换回 `2eca9be7…`，再进入 close476。close476 的第一跳是 `restoreObservation826`，它先做 `restoreWorkspaceQuery101('helper')` 的整文件 `56cb1183…` 校验，通过以后才数 OBS826 和 OBS476。这四个变体都改了字节，所以失败点就是 `QUERY101_COMPLETE_CURRENT_SOURCE`。不要求它们抵达后面的标记计数，也不放宽这个摘要。协议、观察者没有 query101 档案，它们的变体仍由各自的 OBS476 边界计数拒绝，基数分别是 2 和 11。`desktop-local-native-476.test.mjs` 第 326 行只对 native 测试调用 `restoreCloseObservation476('native')`，没有 helper 摘要，不加还原。
+
+同一类顺序也用于另外两处，摘要本身不改、不后移。ui 句子还原之后，`desktop-workspace-query-101.test.ts` 的变体第一失败点是 `2eca9be7…`，不是后面的 pair `split`。第 171 行的 helper 变体第一失败点同样是 `56cb1183…`，不要求先抵达 OBS826 的 16 块计数。
 
 还原之后，第 390 行 ui 的 `current`、`prior` 和哈希 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572` 保持不动。helper 随后仍把注释里的 `fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076` 换成 `0b193e10…`，整文件哈希保持 `1f8e2f2129378ec2ccc4510e6a4ab29a4445fa71208223ef04c4114b2bf0885d`。第 43 行在入口之后再跑 `restoreObservation788`，Swift 期望仍是 `fb446e0d…`，helper 期望仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。其余直接调用 `restoreObservation788` 的 C++、native 测试和终端夹具没有这两个标记，入口对它们原样返回。
 
