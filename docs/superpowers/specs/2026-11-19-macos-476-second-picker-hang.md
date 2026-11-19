@@ -174,7 +174,7 @@ id 只有一个：`system.ping` 的 `id` 是 `D476_WS_HOST_TICK`。不使用没�
 
 - `scripts/tests/native-join-observation-788.test.cjs`：`close476` 之前剥。去掉 JOIN 之后仍是 `120cc92d2c0eb1209f1db8843ea054468cb2ddd7ac80a5ed530e196e50c65164`。
 - `desktop-native-observation-788.test.ts` 的十文件循环和 801 测试：`restoreObservation788` 之前剥。现在 native 不走 picker peel。788 和 `terminalAdmissionInverse801` 之后仍是 `5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018`，再去掉 `{ llmKey: true }` 仍是 `56abd88e272e8982388507c79c4046936401937e534d5333d5f42885f563f313`。
-- `desktop-workspace-xctest-705.test.ts` 第 57 行那一对：native 只走 `restoreObservation826`，在它之前剥。去掉 CLOSE 之后仍是 `0b78022a6efaa334ce97d5d1ccfb9c6d59857997ddefed3ad5f7a0e501fb78a4`。
+- `desktop-workspace-xctest-705.test.ts`：第 57 行是 helper 的 `restorePickerWait`。native 的 `restoreHostTick` 在第 58 行，位于 `restoreObservation826` 之前。去掉 CLOSE 之后仍是 `0b78022a6efaa334ce97d5d1ccfb9c6d59857997ddefed3ad5f7a0e501fb78a4`。这个摘要入口不改。
 - 705 的 `workspaceAbortPhaseInverse705` 先调用 `close476`，所以剥在 `close476` 之前，不只在 788 之前。747 的同名函数剥在 `restore788` 之前。两处最终仍是 `6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38ad90a398fe4639eed3c` 和 `7c5d8b54f03c68fa285d60d8fd029cd10dbbf5c0073e79d5944778435e3d1288`。747 再往后的 `6d79c72e958fb35b40c42086c098235425b1f2b1b63e4ef95295d4c085007b4b` 不改。
 - `desktop-archive-observation-782.test.ts`：`restoreObservation788` 之前剥。之后仍是 `33b233999fcfcc764b4882749d7264aa534fc45938ff717dd23bcc51f4cdeaa6` 和 `f4b0ae09fd52e2ed4fa2d112ebc041e1a33e5323776ddc3e00291c1a4bea4675`。
 - `desktop-close-observation-826.test.ts` 的 native、`desktop-owned-initial-input-826.test.ts`：在 `restoreInitialOwnedInput826` 和 `restoreObservation826` 之前剥。`9e80020d…`、`08dcaea7cc828719ea144c2b42129d90919f8693854782db683bddb0deca0ab0`、`46d852529cfbb6016484b8680d534549303d9c88e0083ffa83d9071b18886e16` 不改。
@@ -183,7 +183,7 @@ id 只有一个：`system.ping` 的 `id` 是 `D476_WS_HOST_TICK`。不使用没�
 
 `705 aborted workspace context preserves the same closed phase` 执行的是当前 phase 块。它的 vm scope 必须自带 `hostTicks` 和 `hostTickLast`，否则在 abort 打印之前就是 `ReferenceError`。这个 scope 不是上面的历史摘要。
 
-`desktop-workspace-picker-readiness-705.test.ts` 的第二次面板调用序在 `D476_WS_PICKER_CANCELLED` 之后多一次 `HOST_TICK_START`。第一次面板仍只到 `D476_WS_PICKER_SELECTED`，不启动 tick。0.016 秒定时器仍在 emit 之前停。
+`desktop-workspace-picker-readiness-705.test.ts` 的同步 `panel()` 不执行定时器 callback。`startHostTick` 在这个 fixture 里是 `()=>calls.push('HOST_TICK_START')`，只记名。第一次 `panel()` 仍是 `['RETIRE_TIMER','D476_WS_PICKER_SELECTED']`。第二次仍是 `['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']`。这三条不含停因。0.016 秒定时器仍在 emit 之前停。停因断言不写在这次调用序上，见第 15 节。
 
 ## 10. 诊断运行否定了「第二次查询不返回」
 
@@ -232,7 +232,7 @@ CI run `44492046690`，macOS job `135449866902`，SHA `12f5876c6527fcdc045d6ea6a
 
 不增加 45000。不改 `DesktopHost.swift`。不把查询挪线程。不删 `cancelReturned == 1`、子进程退出码 0、计时 18–20、`xcodeClosed` 为 true、租约交还和后三例。窗口预等待和现有 tick 计数留着。
 
-同一次宿主定时器回调里，在 `invalidate` 之前最多发一次 `system.ping`。id 只是 `D476_WS_HOST_TICK_STOP`。`reason` 只允许 `not-current`、`settled`、`cap`。`cap` 只在已经数到 40 次时使用。`not-current` 先于 `settled`。没有 `workspaceSelection` 时不能记成 `settled`。`guard` 里的宿主对象消失时发不出去；中止时没有这笔记下，保持未知，不叫做 `absent`，也不叫做回调没有再进来。停因不是辅助功能查询卡住的原因，也不是取消成功。
+同一次宿主定时器回调里，在 `invalidate` 之前最多发一次 `system.ping`。id 只是 `D476_WS_HOST_TICK_STOP`。`reason` 只允许 `not-current`、`settled`、`cap`。判定沿用当前 guard 从左到右的顺序：`hostTickCount` 已经到 40 就是 `cap`，这时即使同时 `not-current` 也先记 `cap`。否则没有 `workspaceSelection`，或 `pickerCurrent` 不为真，记 `not-current`；没有 `workspaceSelection` 不能记 `settled`。再否则 `settled` 才记 `settled`。`not-current` 先于 `settled`。`guard` 里的宿主对象消失时发不出去；中止时没有这笔记下，保持未知，不叫做 `absent`，也不叫做回调没有再进来。停因不是辅助功能查询卡住的原因，也不是取消成功。
 
 `hostTickStop` 写在 `D476_WORKSPACE_NATIVE_PHASE` 里 `hostTicks` 旁边。不放进 `required`，不改 `receiptMask`。执行当前 phase 块的 vm scope 在已有的 `hostTicks`、`hostTickLast` 之外再带 `hostTickStop`。
 
@@ -242,9 +242,11 @@ CI run `44492046690`，macOS job `135449866902`，SHA `12f5876c6527fcdc045d6ea6a
 - `D476_WS_HOST_TICK` 计数分支整句仍删掉。同一组再加一句 `D476_WS_HOST_TICK_STOP` 分支，还原成空。
 - `cancelCurrent,hostTicks,hostTickLast,hostTickStop` 还原成 `cancelCurrent`。
 
-少一句先在 `HOST_TICK_ONCE` 失败，不套后面的成功摘要。这些句子仍由现在已经位于第一道旧 hash 之前的 `restoreHostTick` 剥掉。入口不增不减：join 去掉 JOIN 后仍是 `120cc92d2c0eb1209f1db8843ea054468cb2ddd7ac80a5ed530e196e50c65164`；788 的十文件循环和 801 测试之后仍是 `5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018`；705 第 57 行 native 去掉 CLOSE 后仍是 `0b78022a6efaa334ce97d5d1ccfb9c6d59857997ddefed3ad5f7a0e501fb78a4`；705 与 747 的 abort 仍是 `6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38ad90a398fe4639eed3c` 和 `7c5d8b54f03c68fa285d60d8fd029cd10dbbf5c0073e79d5944778435e3d1288`；782 仍是 `33b233999fcfcc764b4882749d7264aa534fc45938ff717dd23bcc51f4cdeaa6` 和 `f4b0ae09fd52e2ed4fa2d112ebc041e1a33e5323776ddc3e00291c1a4bea4675`；826 与 initial-input 的第一道仍是 `9e80020deed6f46ede58481ecbd2e631c796b0cc653995ad1f6bdbfa9d2cbabe`；808 配对还原后仍是 `04b5b5edcaf59cfe666f5e84de6a1a386ea4f48d493023e13ef75bd7a9c084f2`；`previousCensus705('native')` 仍是 `2f2a3d08eafb54b2eef26450e30b12000844479e759316eff3773ebad8364f2e`。旧 hash 不改、不后移。
+少一句先在 `HOST_TICK_ONCE` 失败，不套后面的成功摘要。这些句子仍由现在已经位于第一道旧 hash 之前的 `restoreHostTick` 剥掉。入口不增不减：join 去掉 JOIN 后仍是 `120cc92d2c0eb1209f1db8843ea054468cb2ddd7ac80a5ed530e196e50c65164`；788 的十文件循环和 801 测试之后仍是 `5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018`；705 第 58 行 native 的 `restoreHostTick` 去掉 CLOSE 后仍是 `0b78022a6efaa334ce97d5d1ccfb9c6d59857997ddefed3ad5f7a0e501fb78a4`，第 57 行是 helper，这个摘要入口不改；705 与 747 的 abort 仍是 `6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38ad90a398fe4639eed3c` 和 `7c5d8b54f03c68fa285d60d8fd029cd10dbbf5c0073e79d5944778435e3d1288`；782 仍是 `33b233999fcfcc764b4882749d7264aa534fc45938ff717dd23bcc51f4cdeaa6` 和 `f4b0ae09fd52e2ed4fa2d112ebc041e1a33e5323776ddc3e00291c1a4bea4675`；826 与 initial-input 的第一道仍是 `9e80020deed6f46ede58481ecbd2e631c796b0cc653995ad1f6bdbfa9d2cbabe`；808 配对还原后仍是 `04b5b5edcaf59cfe666f5e84de6a1a386ea4f48d493023e13ef75bd7a9c084f2`；`previousCensus705('native')` 仍是 `2f2a3d08eafb54b2eef26450e30b12000844479e759316eff3773ebad8364f2e`。旧 hash 不改、不后移。
 
-交叉核对过：`desktop-native-thread-metadata-476.test.ts` 的整文件还原入口就是上面这些 `restoreHostTick` 调用，没有另有一个整文件 hash 不经过它。`workspace-acceptance.swift` 不在这些整文件摘要里。`desktop-workspace-picker-readiness-705.test.ts` 的第二次面板调用序只在现有 `HOST_TICK_START` 后面增加一次停因；第一次面板仍停在 `D476_WS_PICKER_SELECTED`，不启动 tick。
+交叉核对过：`desktop-native-thread-metadata-476.test.ts` 的整文件还原入口就是上面这些 `restoreHostTick` 调用，没有另有一个整文件 hash 不经过它。`workspace-acceptance.swift` 不在这些整文件摘要里。
+
+`desktop-workspace-picker-readiness-705.test.ts` 里同步 `panel()` 和稍后的定时器 callback 是两种测试，不能并成一条调用序。同步 `panel()` 保持原样：第一次是 `['RETIRE_TIMER','D476_WS_PICKER_SELECTED']`，停在 `D476_WS_PICKER_SELECTED`，不启动 tick。第二次是 `['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']`。这里的 `startHostTick` 被 stub 成只把 `HOST_TICK_START` 推进 `calls`，callback 没有执行，所以这三条不加 `D476_WS_HOST_TICK_STOP`。另一条独立断言驱动真实 `startHostTick` 注册的定时器 callback，不是这个 stub。该 callback 在 `invalidate` 之前恰好发一次 `D476_WS_HOST_TICK_STOP`。
 
 ## 7. 这一节点不做的事
 

@@ -77,7 +77,7 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 | `previousInputReady705` | ui 与 helper | `restoreCloseObservation476` |
 | `desktop-native-observation-788.test.ts` 第 43 行 | 十个文件里的 Swift 与 helper | `restoreObservation788` |
 | `desktop-workspace-query-101.test.ts` 第 44 和 49 行 | Swift 与 helper | `restoreWorkspaceQuery101` |
-| `desktop-workspace-xctest-705.test.ts` 第 57 行 | helper | `restoreObservation826('helper')` |
+| `desktop-workspace-xctest-705.test.ts` 第 57 行 | helper 的 `restorePickerWait` | 下一跳才是第 59 行 `restoreObservation826('helper')`；native 的 `restoreHostTick` 在第 58 行 |
 | `desktop-workspace-xctest-705.test.ts` 第 363 行 | helper 成功路径 | 本地包装后的 `restoreCloseObservation476('helper', raw)` |
 | `desktop-close-observation-826.test.ts` 第 171 行 | helper | `restoreObservation826('helper')` |
 
@@ -155,7 +155,7 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 3. 消息处理在 `SELECTED`/`CANCELLED` 之外计数，不把这个 id 放进 `required` 或 `D476_WS_DIAG_`。`D476_WORKSPACE_NATIVE_PHASE` 在 `cancelCurrent` 后增加 `hostTicks` 和 `hostTickLast`。45 秒中止时已经打印的那一行因此带上次数和最后 id。0 次也可见，并且不是成功。
 4. `picker-wait-inverse.cjs` 第一对当前句换成规格 9.3 的整句，从 `uiStage=stage` 到 `let w=windows.firstMatch`，其中包含 `let windowTimeout=try remaining();uiDetail=1;observeUIStage()` 和 `timeout:windowTimeout`。还原句仍是现在的 `windows.count` 句。`NEW_DIGEST` 与 `RESULT705_SOURCES` 的 Swift 格一起从 `f0379ae7e39c248d64e088379e3b876897c86ff060c6adddb833d33fe2fa24cf` 改成新文件摘要。成功输出仍是 ui `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`、helper `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`。变体不套成功摘要。不改更早的历史摘要。
 5. query101 的 `sheet()` 成功序改为 `remaining`、`window-one`、`window-one-wait`，再接原来的 extra、first、sheet `remaining` 和 `wait`。`timeout:try remaining()` 在 `sheet()` 里只剩 1 次；`timeout:windowTimeout` 是 1 次；`timeout:1` 仍是 2 次。没有窗口时的序是 `remaining`、`window-one`、`window-one-wait`。
-6. 同一组三句在每个整源入口的第一道 hash 之前剥掉：声明、`D476_WS_HOST_TICK` 分支、`cancelCurrent` 后的两个字段。少一句先 exact-once 失败，不套成功摘要，旧 hash 不改不后移。入口是规格 9.3 的清单：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 57 行 native 的 `0b78022a…`、705/747 abort 的 `6fadbe60…`/`7c5d8b54…`、782 的 `33b23399…`/`f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。705 的 abort inverse 先走 `close476`，剥在 `close476` 之前。`705 aborted workspace context preserves the same closed phase` 的 vm scope 带上 `hostTicks` 和 `hostTickLast`。readiness 的第二次调用序在 `D476_WS_PICKER_CANCELLED` 后增加 `HOST_TICK_START`；第一次仍停在 `D476_WS_PICKER_SELECTED`。
+6. 同一组三句在每个整源入口的第一道 hash 之前剥掉：声明、`D476_WS_HOST_TICK` 分支、`cancelCurrent` 后的两个字段。少一句先 exact-once 失败，不套成功摘要，旧 hash 不改不后移。入口是规格 9.3 的清单：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 58 行 native 的 `0b78022a…`（第 57 行是 helper 的 `restorePickerWait`，摘要入口不改）、705/747 abort 的 `6fadbe60…`/`7c5d8b54…`、782 的 `33b23399…`/`f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。705 的 abort inverse 先走 `close476`，剥在 `close476` 之前。`705 aborted workspace context preserves the same closed phase` 的 vm scope 带上 `hostTicks` 和 `hostTickLast`。readiness 的同步第二次 `panel()` 在 `D476_WS_PICKER_CANCELLED` 后只增加 `HOST_TICK_START`，三条是 `['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']`，stub 不执行 callback；第一次仍停在 `D476_WS_PICKER_SELECTED`。这不是停因断言。
 7. 不改 `DesktopHost.swift`。不把 XCTest 查询移到别的线程。不把 45000 加大。不跳过用例。
 
 ## 已执行的删参数实验
@@ -172,9 +172,11 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 ## 当前唯一下一步
 
-同一次宿主定时器回调在 `invalidate` 前最多发一次 `D476_WS_HOST_TICK_STOP`。`reason` 只为 `not-current`、`settled`、`cap`。`cap` 仅在已经 40 次时。`not-current` 先于 `settled`。没有 `workspaceSelection` 不记 `settled`。宿主对象消失时发不出；没收到保持未知，不叫 `absent`，也不叫回调没进来。停因不解释成查询卡住，也不是取消成功。`hostTickStop` 写在 phase 的 `hostTicks` 旁边，不进 `required` 或 `receiptMask`。phase 的 vm scope 补上 `hostTickStop`。
+同一次宿主定时器回调在 `invalidate` 前最多发一次 `D476_WS_HOST_TICK_STOP`。`reason` 只为 `not-current`、`settled`、`cap`。沿用当前 guard 从左到右：已经 40 次先记 `cap`，即使同时 `not-current` 也优先 `cap`。否则没有 `workspaceSelection` 或 `pickerCurrent` 不为真则记 `not-current`，没有 `workspaceSelection` 不记 `settled`。再否则才记 `settled`。宿主对象消失时发不出；没收到保持未知，不叫 `absent`，也不叫回调没进来。停因不解释成查询卡住，也不是取消成功。`hostTickStop` 写在 phase 的 `hostTicks` 旁边，不进 `required` 或 `receiptMask`。phase 的 vm scope 补上 `hostTickStop`。
 
-新句子只扩 `host-tick-inverse.cjs` 现有三句，不新开还原层：声明加 `hostTickStop=null`，计数分支旁加一句 STOP 分支，phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop`。少一句先 `HOST_TICK_ONCE` 失败，不套成功摘要。现有 `restoreHostTick` 已经在这些入口的第一道旧 hash 之前：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 57 行 native 的 `0b78022a…`、705/747 abort 的 `6fadbe60…`/`7c5d8b54…`、782 的 `33b23399…`/`f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。没有另有整文件入口绕过它。旧 hash 不改不后移。readiness 第二次调用序只在现有 `HOST_TICK_START` 后加一次停因；第一次仍停在 `D476_WS_PICKER_SELECTED`。45000 和最终原生门不弱化。
+新句子只扩 `host-tick-inverse.cjs` 现有三句，不新开还原层：声明加 `hostTickStop=null`，计数分支旁加一句 STOP 分支，phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop`。少一句先 `HOST_TICK_ONCE` 失败，不套成功摘要。现有 `restoreHostTick` 已经在这些入口的第一道旧 hash 之前：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 58 行 native 的 `0b78022a…`（第 57 行是 helper，摘要入口不改）、705/747 abort 的 `6fadbe60…`/`7c5d8b54…`、782 的 `33b23399…`/`f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。没有另有整文件入口绕过它。旧 hash 不改不后移。
+
+readiness 的同步 `panel()` 与定时器 callback 分开测。第二次 `panel()` 保持 `['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']`，`startHostTick` 只被 stub 记名，callback 不执行，不在 `HOST_TICK_START` 后加停因。第一次 `panel()` 仍停在 `D476_WS_PICKER_SELECTED`。另列一条独立断言，驱动真实 `startHostTick` 的 callback，在 `invalidate` 前恰好一次 `D476_WS_HOST_TICK_STOP`。45000 和最终原生门不弱化。
 
 ## 安装包
 
