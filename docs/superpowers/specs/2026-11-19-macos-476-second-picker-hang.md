@@ -452,6 +452,29 @@ owned 的两次清理和成功路径的计时读取保持。不重跑 `445192612
 
 Windows 仍未分开。失败运行里点 7 已返回且 code 0，没有点 8，`flags` 751 含 `OuterDispatch` 但不含 `ControllerEntry` 16 和 `ControllerLeave` 256，进程当时 `exited` false。`85f7392b` 的 windows-latest 是 ok 24，并且有 callback 和点 8。ok 24 因此不呈现「有 OuterDispatch、无 ControllerEntry」这个失败组合。但 `outerDispatch()` 只在第一次外层 `DispatchMessageW` 返回时置一位，之后不再计数。失败快照里的这一位既符合「之后还在泵、只是完成回调没投递」，也符合「那一次返回之后线程不再泵」。ok 24 不能充当这个区分，因为成功路径已经进入了回调。没有保留的线程栈或后续泵计数，所以这两条失败假设现在分不开。缺的就是这个计数或栈，不能把缺席的点 8 写成其中一种。
 
+## 29. 当前唯一下一步
+
+第 28 节的负结论成立：不能再从那些投影推断等待是否已经返回。这一步只保留失败时已经存在的文件，不改产品生命周期，不重写测试架构，也不保证因此能定位根因。
+
+只在选择框用例 `primaryFailed` 时，于现有 `fs.rmSync(dir)` 之前，把下列已有文件复制到 `companion/picker-failure-evidence/`。不扫描场景目录。只打开这四个已知路径：
+
+- `Result.xcresult`，目录树合计不超过 33554432 字节。超过则不复制该目录，状态写 `OVERSIZE`。
+- `xcode.stdout`，不超过 262144 字节。
+- `xcode.stderr`，不超过 262144 字节。
+- 现有 `xcresulttool` 调用已经收到的 stderr，不超过 262144 字节，写成 `xcresulttool-stderr.txt`。不新启动 `xcresulttool`，也不为它增加等待。若回调尚未把字节留下，状态写 `ABSENT`。
+
+同时写 `evidence-status.json`，只含这四个名字的 `COPIED`、`ABSENT`、`OVERSIZE` 或 `COPY_FAILED` 和字节数。不复制 `input.json`、配置、密钥、环境、用户媒体或场景里的其它路径。
+
+复制放在现有 `cleanup()` 返回之后、`rmSync` 之前。`cancel()`、相位打印、`cleanup()` 自己的等待、节点 `timeout:45000`、真实点击、第二张 sheet 拒绝、租约和断言都不动。`cleanup()` 失败因而今天不删除目录时，同样做这次复制，然后保持今天不删除的行为。复制抛错时打印一行 `D476_PICKER_EVIDENCE_COPY_FAILED`，不抛出，因此原来的超时或断言失败仍是测试错误。成功路径不创建这个目录。
+
+`restoreSuccessTiming476` 仍先处理计时句。计时句不是恰好一次时仍是 `SUCCESS_TIMING_ONCE`，不看证据句。计时句恰好一次且文本含 `fs.rmSync(dir,{recursive:true,force:true})` 时，证据调用必须恰好一次，否则 `PICKER_EVIDENCE_ONCE`，并且不进入 `9e80020d`。没有这句 `rmSync` 的切片跳过。证据调用被剥掉之后，旧摘要保持不变。
+
+CI 在 `Native desktop interaction acceptance (#476)` 之后加一步，仅 `macos-latest`。`if: always()`，不用 `continue-on-error`。上传 `companion/picker-failure-evidence/`，`retention-days: 7`。绿色 job 没有该目录，`if-no-files-found: ignore` 只覆盖这种缺席，不把上传接口失败变成成功。失败 job 至少应有 `evidence-status.json`。没有这个文件只说明保留没有运行，原失败仍在。
+
+独立测试不启动 xcode。它们验证：成功路径零复制；失败路径的复制发生在代表 `cleanup` 完成的标记之后、`rm` 之前；白名单之外的文件不被复制；超限不复制并写 `OVERSIZE`；复制抛错不替换原失败，同时留下 `COPY_FAILED`；缺席的 xcresult 不阻止另外两个日志复制；stderr 字节来自已有缓冲区，函数自己不生成子进程。
+
+即使这些文件留下来，仍可能分不开「等待尚未返回」和「已返回但进度写入失败」。被信号结束的 bundle 可能继续让 `xcresulttool` 失败，原文里也可能没有调用栈。那时缺口仍是：没有调用栈，也没有源码行。这一步不因此追加采样或架构改动。它只改善证据能不能被再次打开。新的 SHA 走常规 CI。不重跑 `44525070865`。发布仍暂停，整票仍不能合并。
+
 ## 7. 这一节点不做的事
 
-第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。第 27 节的 1 秒余量已经做完并按日志停止，`uiDeadline` 恢复为 `Date.now()+45000`。第 28 节是只读结论，不开始新的代码改动。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
+第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。第 27 节的 1 秒余量已经做完并按日志停止，`uiDeadline` 恢复为 `Date.now()+45000`。第 28 节是只读结论。当前步骤是第 29 节，规划门通过之后才实现失败证据复制和上传。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。

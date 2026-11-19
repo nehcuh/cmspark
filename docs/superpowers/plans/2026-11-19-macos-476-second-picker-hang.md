@@ -226,7 +226,13 @@ windows-latest job `135543346278` 的 MCP 表单 not ok 24，20000ms。点 7 已
 
 ## 当前唯一下一步
 
-没有代码步骤。第 28 节记录只读结论：现有 job 日志分不开「窗口等待尚未返回」和「已返回但 detail 或 refusal 没写上」；xcresult 工具退出 64 且没有源码行，stdout/stderr 只有 `firstMarker NONE`。Windows 的失败组合也不被 ok 24 满足，但一位 `OuterDispatch` 分不开「没投递」和「不再泵」。不改余量，不加探针，不改两个 `DesktopHost`。不重跑旧 run。发布仍暂停。
+只在选择框用例失败、现有 `rmSync` 之前，把已有的 `Result.xcresult`、`xcode.stdout`、`xcode.stderr` 和已经收到的 `xcresulttool` stderr 复制到 `companion/picker-failure-evidence/`。不扫描场景目录。xcresult 目录合计不超过 33554432 字节，三个文本各不超过 262144 字节。超过写 `OVERSIZE` 且不复制该文件。缺席写 `ABSENT`。不新跑 `xcresulttool`，不等待宿主，不推迟 `cancel()` 和 `cleanup()`，不改 45000、真实操作、断言和租约。复制失败打印 `D476_PICKER_EVIDENCE_COPY_FAILED` 且不替换原失败。成功路径不创建目录。
+
+计时句不完整时仍先 `SUCCESS_TIMING_ONCE`。完整且含那句 `rmSync` 时，证据调用必须恰好一次，否则 `PICKER_EVIDENCE_ONCE`，不进入 `9e80020d`。剥掉之后旧摘要不变。
+
+macOS smoke 在交互验收步骤之后上传该目录，`retention-days: 7`，不用 `continue-on-error`。绿色缺席用 `if-no-files-found: ignore`。上传接口失败不变成成功。
+
+独立测试覆盖时序、白名单、超限、缺席、复制错误不压过原失败，以及不自己启动进程。留下的文件仍可能没有调用栈或源码行。那时明确缺口仍在，不追加采样。这不是修复。不重跑旧 run。发布仍暂停，整票不能合并。
 
 ## 安装包
 
