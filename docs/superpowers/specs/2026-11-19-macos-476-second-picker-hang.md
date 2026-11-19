@@ -222,6 +222,20 @@ CI run `44487668420`，macOS job `135435079906`，SHA `6067e9ee90e67609b4b418c39
 
 参数放回之后，helper 的第一道 hash 重新是 `restorePickerWait('helper')` 的成功摘要 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`，中间不再先剥这对参数。`source+eol` 仍走 `requireSuccessDigest:false`，然后在 `QUERY101_COMPLETE_CURRENT_SOURCE` 上因整文件不再是 `56cb1183…` 失败。`b0e30a4e3d7331dd1af008eee5ac96c673907544f4fda75a2e279ac816cba796`、`873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`、`0397f3cbc6bde4fd9293cffa26515a7407bb3d9ce47264ddfa50af52d599e8d4` 保持原位，不后移。
 
+## 14. 放回参数后的最早未闭合点
+
+CI run `44492046690`，macOS job `135449866902`，SHA `12f5876c6527fcdc045d6ea6ab3415ddd4f22f4c`。十项检查里只有 `smoke (macos-latest)` 失败。选择框用例仍是 `test timed out after 45000ms`。
+
+`uiProgress` 是 `{stage:15,detail:1}`，`uiRefusal` 是 null，没有 stage 16 或更后的 stage，计时 18–20 是空数组。按第 9.1 节，这支持第二次窗口的 `waitForExistence` 没有返回。`cancelReturned` 是 0。`picks` 和 `pickerObserved` 都是 2，`pickerReturned` 是 1，`receiptMask` 是 255，第二次选择框 ping 已经记下，取消结果没有回来。`hostTicks` 是 2，`hostTickLast` 是 `D476_WS_HOST_TICK`。现有定时器在 `pickerCurrent` 不为真或面板 `settled` 时就停，所以停在 2 不能证明 runloop 死了，也不能证明 `orderOut`。中止时 `childExited` 是 false，`childExitCode` 是 null。中止后 `[4,183,true,2]` 是非零退出，`[7,183,true,3]` 和 `[8,183,true,3]` 是信号。`xcodeClosed` 是 false。`D705_XCRESULT_DETAILS_CLOSED` 的 `reason` 是 `TOOL_FAILURE`，`tool826` 是 `[[1,false,64,0,true,true,0,466,false]]`：工具跑过并以 64 退出，不是 `BUNDLE_UNAVAILABLE`，也不是仍在等待。后三例 `ACQUIRE_REFUSED`，选择框用例 `RELEASE_REFUSED`。
+
+这和 `7c5209b0` 的取消返回、宿主退出码 0 不是同一次窗口，也不覆盖第 10 节。和第 12 节的 stage 14、`BUNDLE_UNAVAILABLE` 也不是同一次。三次都保留。
+
+## 15. 当前唯一下一步
+
+不增加 45000。不改 `DesktopHost.swift`。不把查询挪线程。不删取消成功条件。窗口预等待和现有 tick 计数留着。
+
+在现有 tick 定时器因为 `pickerCurrent` 不为真、面板 `settled`、对象消失或满 40 次而 `invalidate` 之前，先发一笔有上限的 `system.ping`，id 固定为 `D476_WS_HOST_TICK_STOP`，并在 45 秒中止时已经打印的 `D476_WORKSPACE_NATIVE_PHASE` 里记下停因：`absent`、`not-current`、`settled` 或 `cap`。这一笔写在阻塞期间的宿主 runloop 上，不是事后补记。没有这笔记下而 tick 停在 2，才支持回调没有再进来。记下 `not-current` 或 `settled` 而 stage 仍是 15 detail 1、`uiRefusal` 仍是 null，则 runloop 还在，面板已经离开当前选择。两种都不是 `cancelReturned == 1`，也不称为整票修复。
+
 ## 7. 这一节点不做的事
 
 不改测试源码，不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。那些要等有一个被上述 macOS 作业证明的修复提交。不开始侧栏 Task 2。发布仍暂停。

@@ -170,6 +170,12 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 放回之后 helper 第一道 hash 重新是 `restorePickerWait('helper')` 的 `56cb1183…`，不再先剥参数。`source+eol` 用 `requireSuccessDigest:false`，然后在 `QUERY101_COMPLETE_CURRENT_SOURCE` 失败。`b0e30a4e…`、`873b5ced…`、`0397f3cb…` 不后移。
 
+## 放回之后的最早未闭合点
+
+`12f5876c` 的 run `44492046690` job `135449866902` 停在 stage 15 detail 1，`uiRefusal` 为 null，没有 18–20。`hostTicks` 是 2。`D705_XCRESULT_DETAILS_CLOSED` 是 `TOOL_FAILURE`，工具退出码 64，不是缺包，也不是仍在等待。中止时宿主没有退出。这不覆盖 `7c5209b0` 的退出码 0，也不覆盖 `6067e9ee` 的 stage 14。
+
+当前唯一下一步：tick 定时器在 `invalidate` 前发送一次 `D476_WS_HOST_TICK_STOP`，phase 记下 `absent`、`not-current`、`settled` 或 `cap`。不增加 45000，不改 `DesktopHost.swift`。没有停因且 tick 仍是 2，才支持回调没再进来。停因是 `not-current` 或 `settled` 而 stage 仍是 15 detail 1，则 runloop 还在。两种都不是取消成功。
+
 ## 安装包
 
 这一节点没有修复提交，所以没有候选包，没有架构、sha256、构建 run、签名或公证。不读取、不写用户的 `~/.cmspark-agent`。
