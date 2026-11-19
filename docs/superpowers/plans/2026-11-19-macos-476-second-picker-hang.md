@@ -220,21 +220,13 @@ windows-latest job `135543346278` 的 MCP 表单 not ok 24，20000ms。点 7 已
 
 `269b89c7` 已经恢复第二张 sheet 拒绝。这一段不再执行。回退子门只覆盖回退。
 
+## 已停止的 1 秒余量
+
+`85f7392b` 的 macOS job `135563344587` 在 45 秒时仍是 15/1、`uiRefusal` null、xcode 未关。`uiDeadline` 已恢复为 `Date.now()+45000`。余量实验停止。Windows 调查仍未完成，这一步不改生命周期。
+
 ## 当前唯一下一步
 
-macOS 与 Windows 分开。
-
-macOS：`acfd55ec` 的 15/1 写在 `remaining()` 已返回、第一扇窗口 `waitForExistence` 之前。`uiDeadline` 和节点 `timeout:45000` 同一起点，所以这次读回不能区分等待是否还在自己的时限里。返回 false 时 detail 仍是 1，写入又可失败，所以没有 detail 2 不证明未执行。宿主在 `panel.isVisible` 后已经发出第二次通知。`35526f9f` 的 `timeout:1` 在 45 秒内没有后续 detail，是反证。`b3ea545c` 阶段 20 返回时 UI 剩余 2328ms，只属于那个 SHA。
-
-只把 `const uiDeadline=Date.now()+45000` 改成 `Date.now()+44000`。节点 45000、窗口等待、第二张 sheet 拒绝、18–20 点击不动。构造器里大于 `now+45000` 的拒绝不动。旧 hash 不改不后移。
-
-`restoreSuccessTiming476` 先处理计时句。没有 `cancelTiming788` 就原样返回。当前句不是恰好一次时走今天的 `SUCCESS_TIMING_ONCE`，不读 `+44000`。现有红灯因此不变：计时句被改成 `try{cancelTiming=...}catch{}` 且截止仍是 `+45000` 时，失败名是 `SUCCESS_TIMING_ONCE`，不出现 `DEADLINE_MARGIN_ONCE` 或 `9e80020d`。当前句恰好一次之后，有 `const uiDeadline=` 才要求 `Date.now()+44000` 恰好一次，否则 `DEADLINE_MARGIN_ONCE`，并且不进入 `9e80020d`。然后把这一处换成 `+45000`，再把计时句换成旧句。没有 `const uiDeadline=` 就跳过余量。成功返回里是 `+45000` 和旧计时句。
-
-新 SHA 的 macOS 日志：45 秒时仍是 15/1、`uiRefusal` 为 null、xcode 未关，就把 `+44000` 恢复成 `+45000` 并停止，不再改余量。`remaining()` 在 `r<=0` 时以 detail 4 拒绝，点击不执行，阶段 20 的计时写在点击之后，不能证明点击落在被削掉的那 1 秒。看到 detail 4 也恢复 `+45000` 并停止。detail 2、其它拒绝或 45 秒前的 xcode 退出只说明读回了一次可分开的结果，不是根因。只有完整成功门算通过。
-
-Windows 调查没有完成。点 7 code 0，无点 8，无 `controller_callback`。`flags` 751 有 `OuterDispatch`，无 `ControllerEntry` 16 和 `ControllerLeave` 256。`35526f9f` 的 ok 24 和同 run 的下一条进程是反证。还没有能把「没投递」和「不再泵消息」分开、且不被那次 ok 24 同时满足的证据方案。在那之前不改生命周期。这不是调查结论，也不是下一项实验。这一步不改 `DesktopHost.cpp`，不加探针，不加 20000。回退和这 1 秒都不能补回调。
-
-owned 两次清理和成功计时读取保持。不重跑旧 run。发布仍暂停。
+没有下一步余量实验。`uiDeadline` 保持 `Date.now()+45000`。节点 45000、窗口等待、第二张 sheet 拒绝、18–20 点击、owned 清理和成功计时读取保持。Windows 调查仍未完成：在能把「没投递」和「不再泵消息」分开、且不被 `35526f9f` ok 24 同时满足的方案之前，不改 `DesktopHost.cpp`。不重跑 `44525070865`。发布仍暂停。
 
 ## 安装包
 

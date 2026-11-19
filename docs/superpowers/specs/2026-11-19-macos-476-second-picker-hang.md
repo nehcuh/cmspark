@@ -408,7 +408,9 @@ windows-latest 的 MCP 表单是 not ok 24，20000ms 超时。当时 `authentica
 
 这一步不给 Windows 增加新的探针，也不把 MCP 的 20 秒失败记成下一轮可能会过。下一份 SHA 的 windows-latest 仍要自己出现点 8 或 `controller_callback`，macOS 仍要自己出现取消返回 1、退出码 0、六条计时、双收尾、租约交还和后三例。十项 CI 都看这个新 SHA。读到 stage 18 或更后，只说明当时的等待位于已发布进度之前。空 `events` 仍不能证明 18–20 没有执行。不重跑 `44519261215`。发布仍暂停。
 
-## 27. 当前唯一下一步
+## 27. 已停止的 1 秒余量
+
+`85f7392b3c02f603faebd0bdd73bf2f53dd2b32a` 做了这一次实验，run `44525070865`，macOS job `135563344587`。节点 45 秒时进度仍是 `{stage:15,detail:1}`，`uiRefusal` 是 null，`xcodeClosed` 是 false。`cancelTiming788.events` 是空的。`cancelReturned` 是 0，宿主没有退出，observer 没有关闭。租约 `RELEASE_REFUSED` 且 `over_budget`。后三例是 `ACQUIRE_REFUSED` 后的超时。文件是 8 通过、0 失败、4 取消。这命中停止条件，所以 `uiDeadline` 已恢复为 `Date.now()+45000`，余量分支已从 `restoreSuccessTiming476` 去掉。不再改这个余量，也不加探针。十项里只有这一项 macOS 失败。windows-latest job `135563344609` 在这个 SHA 上成功，不借来关闭先前的控制器回调调查，也不改 `DesktopHost.cpp`。Windows 调查仍未完成。下面留下的是这次实验当时的假设，不是下一步。
 
 两条假设分开。都不靠再跳过一次查询，也不靠下一轮碰巧通过。
 
@@ -432,4 +434,4 @@ owned 的两次清理和成功路径的计时读取保持。不重跑 `445192612
 
 ## 7. 这一节点不做的事
 
-第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。当前步骤是第 27 节：只把选择框测试的 `uiDeadline` 从 `Date.now()+45000` 改成 `Date.now()+44000`。`restoreSuccessTiming476` 先走现有的 `SUCCESS_TIMING_ONCE`，计时句恰好一次之后才把 `+44000` 还原成 `+45000`。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
+第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。第 27 节的 1 秒余量已经做完并按日志停止，`uiDeadline` 恢复为 `Date.now()+45000`。当前没有新的余量步骤。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。

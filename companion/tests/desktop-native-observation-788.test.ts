@@ -84,28 +84,6 @@ test('success timing inverse restores the failure-only read before any old hash'
  const missing=source.replace('try{cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}','try{cancelTiming=uiOwner?.scene.cancelTiming788()??null}catch{}')
  assert.throws(()=>restoreSuccessTiming476(missing),(error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('SUCCESS_TIMING_ONCE')&&!String(error.message).includes('9e80020d'))
 })
-test('deadline margin is checked only after the timing sentence passes',()=>{
- const {restoreSuccessTiming476,current,prior}=require(path.join(root,'scripts/tests/success-timing-inverse.cjs'))
- const source=read('tests/desktop-native-thread-metadata-476.test.ts')
- const deadline44000='const uiDeadline=Date.now()+44000',deadline45000='const uiDeadline=Date.now()+45000'
- assert.equal(source.split(deadline44000).length,2)
- assert.equal(source.includes('timeout:45000'),true)
- assert.equal(source.includes('timeout:44000'),false)
- const broken=source.replace(current,'try{cancelTiming=uiOwner?.scene.cancelTiming788()??null}catch{}')
- const brokenOld=broken.includes(deadline44000)?broken.replace(deadline44000,deadline45000):broken
- assert.throws(()=>restoreSuccessTiming476(brokenOld),(error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('SUCCESS_TIMING_ONCE')&&!String(error.message).includes('DEADLINE_MARGIN_ONCE')&&!String(error.message).includes('9e80020d'))
- const oldDeadline=source.includes(deadline44000)?source.replace(deadline44000,deadline45000):source
- assert.throws(()=>restoreSuccessTiming476(oldDeadline),(error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('DEADLINE_MARGIN_ONCE')&&!String(error.message).includes('9e80020d'))
- const doubled=(source.includes(deadline44000)?source:source.replace(deadline45000,deadline44000)).replace('Date.now()+44000','Date.now()+44000'+'Date.now()+44000')
- assert.throws(()=>restoreSuccessTiming476(doubled),(error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('DEADLINE_MARGIN_ONCE')&&!String(error.message).includes('9e80020d'))
- const margin=source.includes(deadline44000)?source:source.replace(deadline45000,deadline44000)
- const peeled=restoreSuccessTiming476(margin)
- assert.equal(peeled.includes('Date.now()+44000'),false)
- assert.equal(peeled.includes(deadline45000),true)
- assert.equal(peeled.includes(prior),true)
- assert.equal(peeled.includes(current),false)
- assert.equal(restoreSuccessTiming476(current),prior)
-})
 
 function actualReceiver788(role:'LOCAL'|'ARCHIVE'|'TERMINAL'){
  const source=read('tests/desktop-native-thread-metadata-476.test.ts'),ast=ts.createSourceFile('native.ts',source,ts.ScriptTarget.Latest,true),nodes:ts.ArrowFunction[]=[]
