@@ -200,25 +200,11 @@ CI run `44481851252`，macOS job `135415734824`，SHA `7c5209b0470b1aecf0b151f11
 
 宿主在桶 179 退出码 0，离 45 秒节点超时只剩不到 250ms。`xcodebuild` 还要等应用退出并写完 `Result.xcresult`，这一段没有排进剩余时间。
 
-## 11. 下一道最小纠正
+## 11. 已执行的删参数实验（历史，结论不充分）
 
-不增加 45000。不删 `cancelReturned == 1`、子进程退出码 0、stage 18–20，也不跳过后三例。不改 `DesktopHost.swift`。不改 DerivedData。`spawnOwned` 的 stdout/stderr 捕获保持原样。
+下面这一段已经在 `6067e9ee90e67609b4b418c3971dc6598efa48db` 做过，不是当前要再做的事。它从 `OwnedWorkspaceUI705.start` 去掉了 `'-resultBundlePath',path.join(this.scene.root,'Result.xcresult')`，并在 `restorePickerWait('helper')` 之前用 `restoreResultBundle` 把这对参数还原回去。第 10 节里宿主退出码 0 的事实保持不变：那是 `7c5209b0470b1aecf0b151f116371494b31b2132` 的记录，不是这次。
 
-只从 `OwnedWorkspaceUI705.start` 传给 `xcodebuild` 的参数里去掉这一处：`'-resultBundlePath',path.join(this.scene.root,'Result.xcresult')`。`result705AfterActualClose` 里 `path.join(scene.root,'Result.xcresult')` 的读取留着。包不存在时现有路径已经返回 `BUNDLE_UNAVAILABLE`，不删这段读取。
-
-helper 字节一改，`restorePickerWait('helper')` 的成功摘要 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5` 就会先失败。所以每个入口都先把上述参数精确还原回现在这一句，再调用 `restorePickerWait`。少了这一对，或一对出现超过一次，在 `exact-once` 失败，不套 `56cb1183…`。旧 hash 不改、不后移。还原之后仍保持：
-
-- `previousInputReady705` 的 helper 分支。`previousCriticalCensus705`、`previousTitle705`、`previousCensus705` 都先进入这里，不另做一次还原。
-- `desktop-workspace-xctest-705.test.ts` 第 57 行的 helper，在 `restoreObservation826` 之前。该循环去掉 CLOSE 之后的摘要仍是 `b0e30a4e3d7331dd1af008eee5ac96c673907544f4fda75a2e279ac816cba796`。
-- 同文件第 365 行的 helper peel，在 `restoreCloseObservation476('helper')` 之前。成功路径才要求 `56cb1183…`。
-- `desktop-close-observation-826.test.ts` 的 helper peel，在 `restoreObservation826('helper')` 之前。
-- `desktop-workspace-query-101.test.ts` 的 helper 循环，在 `restorePickerWait('helper')` 之前。`source+eol` 是已经换成目标换行的源文再加一个换行，参数对仍是 1 次。exact-once 通过。随后 `restorePickerWait(..., {requireSuccessDigest:false})` 不检查 `PICKER_WAIT_HELPER_SUCCESS`。`restoreWorkspaceQuery101` 在 `QUERY101_COMPLETE_CURRENT_SOURCE` 上因整文件不再是 `56cb1183…` 失败。删掉这一对，或把这一对再拼一次，才在 exact-once 失败。
-- `desktop-native-observation-788.test.ts` 的 helper 格：还原和 `restorePickerWait` 之后，`restoreObservation788` 的摘要仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。
-- `scripts/tests/native-join-observation-788.test.cjs` 的 helper 格：还原和 `restorePickerWait` 之后，去掉 JOIN 的摘要仍是 `0397f3cbc6bde4fd9293cffa26515a7407bb3d9ce47264ddfa50af52d599e8d4`。
-
-`macos-observer-close-795.test.cjs` 和 `desktop-native-boundary-observation-705.test.ts` 只取 helper 里的方法或结果解析函数，不哈希整文件，也不读这处启动参数。它们不是还原入口。
-
-下一趟同一条 macOS 作业，只有 `xcodeClosed` 为 true，并且 `cancelReturned` 为 1、子进程退出码为 0、计时 18/19/20 都在、后三例都通过，才支持「显式结果包路径影响收尾」。若 `xcodeClosed` 仍是 false，先看中止后的结果读取是 `BUNDLE_UNAVAILABLE` 还是仍停在工具上。这一道本身不是整票修复。
+第 12 节的日志没有进入那个收尾窗口。因此这次删除对「显式结果包路径影响收尾」既不支持，也不否定。当前不再执行删除，也不再保留 `restoreResultBundle`。
 
 ## 12. 去掉结果包路径的这一次没有测到收尾
 
@@ -226,9 +212,15 @@ CI run `44487668420`，macOS job `135435079906`，SHA `6067e9ee90e67609b4b418c39
 
 最早停点是 stage 14 detail 0。`sheet(15)` 没有写下 stage 15。`cancelTiming788.events` 是空数组，没有 18/19/20。`cancelReturned` 是 0，`picks` 是 1，`pickerObserved` 是 1，`hostTicks` 是 0，`hostTickLast` 是 null。`receiptMask` 是 7，只到 `D476_WS_CONFIRMATION`，没有 `D476_WS_COMMITTED`。第二次选择框没有被请求。这不是 `orderOut`，也不是第二次辅助功能查询卡住。
 
-中止时 `childExited` 是 false，`childExitCode` 是 null。中止之后的站点 4 是非零退出，站点 7 和 8 是信号。不能把这次说成宿主已经退出码 0。`xcodeClosed` 是 false，`xcodeExit` 是 `NOT_CLOSED`。`D705_XCRESULT_DETAILS_CLOSED` 的 `reason` 是 `BUNDLE_UNAVAILABLE`，`tool826` 是空数组。结果工具没有留在等待里；包不存在，读取按原路径返回了缺包。后三例仍是 `ACQUIRE_REFUSED`：local-work 45000ms，archive 20000ms，terminal-only 45000ms。选择框用例 `RELEASE_REFUSED`。
+中止时 `childExited` 是 false，`childExitCode` 是 null。中止之后的计时点是 `[4,183,true,2]`，非零退出；`[7,183,true,3]` 和 `[8,183,true,3]` 是信号。不能把这次说成宿主退出码 0。`xcodeClosed` 是 false，`xcodeExit` 是 `NOT_CLOSED`。`D705_XCRESULT_DETAILS_CLOSED` 的 `reason` 是 `BUNDLE_UNAVAILABLE`，`tool826` 是空数组。结果工具没有留在等待里。后三例仍是 `ACQUIRE_REFUSED`：local-work 45000ms，archive 20000ms，terminal-only 45000ms。选择框用例 `RELEASE_REFUSED`。`uiRefusal` 是 null。
 
-这一次没有进入上一头那种「取消点击已返回、宿主退出码 0、只差 runner 关闭」的窗口，所以不能用它支持或否定结果包路径对收尾的影响。下一道把启动参数里的 `-resultBundlePath` 和它的路径放回去，恢复到已经能走到取消的那一版。不增加 45000，不改 `DesktopHost.swift`，不改读取和 `BUNDLE_UNAVAILABLE`。放回之后的 helper 还原把这一对从源文里拿掉的句子删去，旧摘要仍不改。
+## 13. 当前唯一下一步
+
+把 `'-resultBundlePath',path.join(this.scene.root,'Result.xcresult')` 放回 `OwnedWorkspaceUI705.start` 的 `xcodebuild` 参数。窗口预等待和 `D476_WS_HOST_TICK` 诊断留着。`path.join(scene.root,'Result.xcresult')` 的读取、`BUNDLE_UNAVAILABLE`、stdout/stderr 捕获、45000 和 `DesktopHost.swift` 都不动。
+
+同时删掉整份 `companion/scripts/tests/result-bundle-inverse.cjs`，以及全部 `restoreResultBundle` 调用：`previousInputReady705` 的 helper、`desktop-workspace-xctest-705.test.ts` 第 57 行和第 365 行、`desktop-close-observation-826.test.ts` 的 helper peel、`desktop-workspace-query-101.test.ts` 的 helper `open`、`desktop-native-observation-788.test.ts` 的 helper、`scripts/tests/native-join-observation-788.test.cjs` 的 helper。只为这次删除实验新增的 `RESULT_BUNDLE_ONCE` 用例也去掉。其余无关变体和历史锁不删。
+
+参数放回之后，helper 的第一道 hash 重新是 `restorePickerWait('helper')` 的成功摘要 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`，中间不再先剥这对参数。`source+eol` 仍走 `requireSuccessDigest:false`，然后在 `QUERY101_COMPLETE_CURRENT_SOURCE` 上因整文件不再是 `56cb1183…` 失败。`b0e30a4e3d7331dd1af008eee5ac96c673907544f4fda75a2e279ac816cba796`、`873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`、`0397f3cbc6bde4fd9293cffa26515a7407bb3d9ce47264ddfa50af52d599e8d4` 保持原位，不后移。
 
 ## 7. 这一节点不做的事
 
