@@ -226,13 +226,13 @@ windows-latest job `135543346278` 的 MCP 表单 not ok 24，20000ms。点 7 已
 
 ## 当前唯一下一步
 
-只在选择框用例失败、现有 `rmSync` 之前，把已有的 `Result.xcresult`、`xcode.stdout`、`xcode.stderr` 和已经收到的 `xcresulttool` stderr 复制到 `companion/picker-failure-evidence/`。不扫描场景目录。xcresult 目录合计不超过 33554432 字节，三个文本各不超过 262144 字节。超过写 `OVERSIZE` 且不复制该文件。缺席写 `ABSENT`。不新跑 `xcresulttool`，不等待宿主，不推迟 `cancel()` 和 `cleanup()`，不改 45000、真实操作、断言和租约。复制失败打印 `D476_PICKER_EVIDENCE_COPY_FAILED` 且不替换原失败。成功路径不创建目录。
+只在选择框用例失败、现有 `rmSync` 之前复制。测试 cwd 是 `companion`，写入 `picker-failure-evidence/`；workflow 在仓库根上传 `companion/picker-failure-evidence/`。绿色忽略和上传是这同一个位置。不扫描场景目录。xcresult 先进入暂存目录，合计不超过 33554432 字节，且不跟随指向该目录之外的符号链接；超限、外部链接或失败就删掉整个暂存，最终位置不留下半棵树，状态 `OVERSIZE` 表示目标不存在。`xcode.stdout` 和 `xcode.stderr` 各不超过 262144 字节，超过则整份不留。`xcresulttool` 的 stderr 今天只计 `errBytes`，失败时 stdout `chunks` 被清空；在既有 stderr `data` 回调里最多留下 262144 字节，不新跑工具。没收到任何字节才是 `ABSENT`，超过则整份不留并写 `OVERSIZE`。不等待宿主，不推迟 `cancel()` 和 `cleanup()`，不改 45000、真实操作、断言和租约。复制失败打印 `D476_PICKER_EVIDENCE_COPY_FAILED` 且不替换原失败。成功路径不创建目录。
 
 计时句不完整时仍先 `SUCCESS_TIMING_ONCE`。完整且含那句 `rmSync` 时，证据调用必须恰好一次，否则 `PICKER_EVIDENCE_ONCE`，不进入 `9e80020d`。剥掉之后旧摘要不变。
 
 macOS smoke 在交互验收步骤之后上传该目录，`retention-days: 7`，不用 `continue-on-error`。绿色缺席用 `if-no-files-found: ignore`。上传接口失败不变成成功。
 
-独立测试覆盖时序、白名单、超限、缺席、复制错误不压过原失败，以及不自己启动进程。留下的文件仍可能没有调用栈或源码行。那时明确缺口仍在，不追加采样。这不是修复。不重跑旧 run。发布仍暂停，整票不能合并。
+独立测试覆盖时序、白名单、整份超限后目标不存在、符号链接不读外部、暂存被清理、缺席、复制错误不压过原失败，以及不自己启动进程。留下的文件仍可能没有调用栈或源码行。那时明确缺口仍在，不追加采样。这不是修复。不重跑旧 run。发布仍暂停，整票不能合并。
 
 ## 安装包
 

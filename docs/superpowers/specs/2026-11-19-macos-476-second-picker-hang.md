@@ -456,12 +456,12 @@ Windows 仍未分开。失败运行里点 7 已返回且 code 0，没有点 8，
 
 第 28 节的负结论成立：不能再从那些投影推断等待是否已经返回。这一步只保留失败时已经存在的文件，不改产品生命周期，不重写测试架构，也不保证因此能定位根因。
 
-只在选择框用例 `primaryFailed` 时，于现有 `fs.rmSync(dir)` 之前，把下列已有文件复制到 `companion/picker-failure-evidence/`。不扫描场景目录。只打开这四个已知路径：
+只在选择框用例 `primaryFailed` 时，于现有 `fs.rmSync(dir)` 之前复制。交互验收步骤先 `cd companion`，所以测试写的是 cwd 下的 `picker-failure-evidence/`。workflow 在仓库根上传 `companion/picker-failure-evidence/`。绿色缺席和上传看的是这同一个位置。不扫描场景目录。只打开这四个已知路径：
 
-- `Result.xcresult`，目录树合计不超过 33554432 字节。超过则不复制该目录，状态写 `OVERSIZE`。
-- `xcode.stdout`，不超过 262144 字节。
-- `xcode.stderr`，不超过 262144 字节。
-- 现有 `xcresulttool` 调用已经收到的 stderr，不超过 262144 字节，写成 `xcresulttool-stderr.txt`。不新启动 `xcresulttool`，也不为它增加等待。若回调尚未把字节留下，状态写 `ABSENT`。
+- `Result.xcresult`。先在诊断目录旁的暂存目录里累计，目录树合计不超过 33554432 字节，并且每一项的 `lstat` 不得是符号链接，realpath 必须仍在这个 `Result.xcresult` 里面。超限、符号链接或指向外部时删掉整个暂存目录，诊断目录里不留下这个名字，状态写 `OVERSIZE`。`OVERSIZE` 表示目标不存在，不是半棵树。只有全部检查通过才把暂存目录改名成最终目标；改名失败同样删掉暂存并写 `COPY_FAILED`。
+- `xcode.stdout`，不超过 262144 字节。超过则整份不留，状态 `OVERSIZE`。
+- `xcode.stderr`，不超过 262144 字节。超过则整份不留，状态 `OVERSIZE`。
+- `xcresulttool` 的 stderr。今天 `child.stderr` 的 `data` 回调只增加 `errBytes`，不保存正文；失败分支还会把 stdout 的 `chunks` 清空。保留加在这个既有 `data` 回调里，最多 262144 字节，不新启动工具，也不为它增加等待。一个字节都没收到则 `ABSENT`。累计超过 262144 则丢掉已经收下的全部字节，不写 `xcresulttool-stderr.txt`，状态 `OVERSIZE`。
 
 同时写 `evidence-status.json`，只含这四个名字的 `COPIED`、`ABSENT`、`OVERSIZE` 或 `COPY_FAILED` 和字节数。不复制 `input.json`、配置、密钥、环境、用户媒体或场景里的其它路径。
 
@@ -471,7 +471,7 @@ Windows 仍未分开。失败运行里点 7 已返回且 code 0，没有点 8，
 
 CI 在 `Native desktop interaction acceptance (#476)` 之后加一步，仅 `macos-latest`。`if: always()`，不用 `continue-on-error`。上传 `companion/picker-failure-evidence/`，`retention-days: 7`。绿色 job 没有该目录，`if-no-files-found: ignore` 只覆盖这种缺席，不把上传接口失败变成成功。失败 job 至少应有 `evidence-status.json`。没有这个文件只说明保留没有运行，原失败仍在。
 
-独立测试不启动 xcode。它们验证：成功路径零复制；失败路径的复制发生在代表 `cleanup` 完成的标记之后、`rm` 之前；白名单之外的文件不被复制；超限不复制并写 `OVERSIZE`；复制抛错不替换原失败，同时留下 `COPY_FAILED`；缺席的 xcresult 不阻止另外两个日志复制；stderr 字节来自已有缓冲区，函数自己不生成子进程。
+独立测试不启动 xcode。它们验证：成功路径零复制；失败路径的复制发生在代表 `cleanup` 完成的标记之后、`rm` 之前；白名单之外的文件不被复制；文本或 stderr 超限时目标文件不存在且状态是 `OVERSIZE`；xcresult 超限或暂存失败时诊断目录里没有 `Result.xcresult`，暂存目录也被删掉；指向 `Result.xcresult` 之外的符号链接不被跟随，也不把外部文件复制进来；复制抛错不替换原失败，同时留下 `COPY_FAILED`；一个 stderr 字节都没收到时是 `ABSENT`，不阻止另外两个日志复制；stderr 字节只来自既有 `data` 回调，函数自己不生成子进程。测试写出的相对目录和 workflow 上传的 `companion/picker-failure-evidence/` 是 cwd 为 `companion` 时的同一路径。
 
 即使这些文件留下来，仍可能分不开「等待尚未返回」和「已返回但进度写入失败」。被信号结束的 bundle 可能继续让 `xcresulttool` 失败，原文里也可能没有调用栈。那时缺口仍是：没有调用栈，也没有源码行。这一步不因此追加采样或架构改动。它只改善证据能不能被再次打开。新的 SHA 走常规 CI。不重跑 `44525070865`。发布仍暂停，整票仍不能合并。
 
