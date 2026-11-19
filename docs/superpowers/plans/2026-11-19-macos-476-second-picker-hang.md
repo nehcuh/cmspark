@@ -198,13 +198,21 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 `44510689058` 的 `windows-native` job `135513859817` 失败在 `meeting-pcm-generated.test.ts` 的 `finally`：`rmdir seed\.git` 得到 `EBUSY`。日志没有断言原文。`finally` 抛错会盖住 `try`。`windows-latest` job `135513859937` 的 MCP 表单测试在 20000ms 超时。当时只有 `env_callback`，点 7 `CreateCoreWebView2Controller` 已返回且 code 0，点 8 `controllerCallback` 还没有。后面的 `DESKTOP_480_NATIVE` 不是这一条测试。两项源文件都不在计时 diff 里。这不记成无关，也不记成偶发。
 
+## 已执行的 owned 清理
+
+`35526f9f` 已经把 `owned` 清理写成总共 2 次，只在第一次 `EBUSY` 时立刻再删。这一段不再执行。
+
+## 35526f9f 的 macOS 失败
+
+run `44513461777` job `135523299113`。文件汇总 8 通过、0 失败、4 取消。四条 `not ok` 都是 `testTimeoutFailure`。最后读回是 stage 17 detail 0，紧挨 `sheet(15)` 里第二张 sheet 的 `waitForExistence(timeout:1)` 之前。detail 2/3 没有读回。空 `events` 不能证明 18–20 没有执行。`uiReceiptMask` 是 23。xcode 和 observer 都没关。租约 `RELEASE_REFUSED` 且 `over_budget`。后三例是 `ACQUIRE_REFUSED` 后的超时，不是各自的功能失败。`hostTickArmed` 1 和 `hostTicks` 6 不说明 runloop 或 `orderOut`。同 SHA 的 Windows `EBUSY` 测试是 ok 2，MCP 表单是 ok 24，不说明历史 MCP 20 秒已经修好。其余九项成功。不重跑这次。
+
 ## 当前唯一下一步
 
-会议测试的 `owned` 清理总尝试次数写死为 2。日志只有一次 `rmdir seed\.git` 的 `EBUSY`，没有更长的样本，所以只在 `EBUSY` 后立刻再删一次，没有 `sleep` 或 `setTimeout`。非 `EBUSY` 第一次就抛。两次仍是 `EBUSY` 则失败，错误码仍是 `EBUSY`。`try` 的原始错误在清理之后原样抛出，不用 `EBUSY` 替换，也不吞清理错误。`git` 与 `spawnSync` 的 `10000` 不改。字节比较不改。
+只在 `sheet(15)` 不调用第二张 sheet 的 `waitForExistence(timeout:1)`。`sheet(3)` 仍拒绝多一张。阶段 16 的第一张检查保留，然后返回 `firstMatch`，现有 18–20 取消点击继续。产品门不改：`cancelReturned == 1`、退出码 0、`xcodeClosed`、六条计时、租约、后三例、45000。不改 `DesktopHost.swift`。不加 ping。
 
-先红后绿的三条断言只覆盖这个 `owned`：`try` 的断言错误在清理 `EBUSY` 时仍原样抛出；非 `EBUSY` 删除错误立即抛出且只调用 1 次；两次 `EBUSY` 后失败且错误仍是 `EBUSY`，没有第 3 次。
+`picker-wait-inverse.cjs` 第二对当前句改成带 `stage != 15` 的新句，还原句仍是 `sheets.count` 句。少一句先精确一次失败，不套 `2eca9be7…`。`NEW_DIGEST` 改为新文件摘要。旧 hash 不改不后移。
 
-MCP 仍独立阻断：`authenticated` 与 `windowRequested` 为 true，`postAuthRequestMask` 为 0，只有 `ready_accepted` 和 `env_callback`，bootstrap 只有 5、6、7，没有 8 和 `controller_callback`。`DESKTOP_480_NATIVE` 是下一条。不改 MCP，不加 20000，不重跑 `44510689058`。`b3ea545c` 的 macOS 通过只绑定原 SHA。旧 hash、45000、`DesktopHost.swift` 不动。发布仍暂停。
+下一份日志只看新 SHA。读回仍是 stage 17 detail 0，说明跳过没有改变已发布进度。读回到 18 或更后，或六条计时加上取消返回、退出码 0、`xcodeClosed`、租约交还和后三例通过，才说明那次等待挡在这些已发布结果前面。两种都不是根因。空 `events` 仍不证明 18–20 没执行。发布仍暂停。
 
 ## 安装包
 
