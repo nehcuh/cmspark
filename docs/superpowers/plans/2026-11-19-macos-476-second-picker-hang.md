@@ -224,15 +224,17 @@ windows-latest job `135543346278` 的 MCP 表单 not ok 24，20000ms。点 7 已
 
 `85f7392b` 的 macOS job `135563344587` 在 45 秒时仍是 15/1、`uiRefusal` null、xcode 未关。`uiDeadline` 已恢复为 `Date.now()+45000`。余量实验停止。Windows 调查仍未完成，这一步不改生命周期。
 
+## 已实现、被步骤锁挡住的证据保留
+
+`e196f29b` 的复制和上传已经在树上。run `44532945072` 的五处失败是 #633 里的步骤顺序锁，原生 #476 没启动，没有证据。这不是空 events，也不是原生回归。证据复制本身先不动。
+
 ## 当前唯一下一步
 
-只在选择框用例失败、现有 `rmSync` 之前复制。测试 cwd 是 `companion`，写入 `picker-failure-evidence/`；workflow 在仓库根上传 `companion/picker-failure-evidence/`。绿色忽略和上传是这同一个位置。不扫描场景目录。xcresult 先进入暂存目录，合计不超过 33554432 字节，且不跟随指向该目录之外的符号链接；超限、外部链接或失败就删掉整个暂存，最终位置不留下半棵树，状态 `OVERSIZE` 表示目标不存在。`xcode.stdout` 和 `xcode.stderr` 各不超过 262144 字节，超过则整份不留。`xcresulttool` 的 stderr 今天只计 `errBytes`，失败时 stdout `chunks` 被清空；在既有 stderr `data` 回调里最多留下 262144 字节，不新跑工具。没收到任何字节才是 `ABSENT`，超过则整份不留并写 `OVERSIZE`。不等待宿主，不推迟 `cancel()` 和 `cleanup()`，不改 45000、真实操作、断言和租约。复制失败打印 `D476_PICKER_EVIDENCE_COPY_FAILED` 且不替换原失败。成功路径不创建目录。
+在 `validateWindowsCiFeedback750` 进入 `projectActivityFirst826` 和 `collapseNativeStages760` 之前，加一个只针对 `Upload picker failure evidence (#476)` 的逆投影。恰好一次，并且解析后的整个步骤等于：`if: always() && matrix.os == 'macos-latest'`、`uses: actions/upload-artifact@v4`、工件名含 `github.sha` 和 `github.run_attempt`、路径 `companion/picker-failure-evidence/`、`retention-days` 数字 7、`if-no-files-found: ignore`，没有 `continue-on-error`。它的位置是交互验收的下一项，再下一项仍是共享编译。核对后只删除这一个对象。旧步骤顺序、个数和 baseline 摘要不变。不按 upload action 过滤，不改旧 hash，不放宽旧断言。上传不挪走，失败后的 macOS job 仍会执行它。
 
-计时句不完整时仍先 `SUCCESS_TIMING_ONCE`。完整且含那句 `rmSync` 时，证据调用必须恰好一次，否则 `PICKER_EVIDENCE_ONCE`，不进入 `9e80020d`。剥掉之后旧摘要不变。
+#750 的新变体覆盖缺步骤、重复、挪到交互之前、挪到共享编译之后、改条件、改路径、改天数、改 ignore、加 `continue-on-error`。LF 和 CRLF 都抛 `ERR_ASSERTION`。旧步骤移动或删除仍由 #750/#760 已有变体报红。`nsis`、#759、#788 build、census、#571、#572、#723、#732 和证据测试自己的上传原文检查不改。
 
-macOS smoke 在交互验收步骤之后上传该目录，`retention-days: 7`，不用 `continue-on-error`。绿色缺席用 `if-no-files-found: ignore`。上传接口失败不变成成功。
-
-独立测试覆盖时序、白名单、整份超限后目标不存在、符号链接不读外部、暂存被清理、缺席、复制错误不压过原失败，以及不自己启动进程。留下的文件仍可能没有调用栈或源码行。那时明确缺口仍在，不追加采样。这不是修复。不重跑旧 run。发布仍暂停，整票不能合并。
+失败证据复制、45000、20000、真实 OS、第二张 sheet 拒绝、租约和两个 Host 不动。不重跑 `44532945072`。规划门通过之后才实现这一层。当前整票不能合并，也不能发布。
 
 ## 安装包
 

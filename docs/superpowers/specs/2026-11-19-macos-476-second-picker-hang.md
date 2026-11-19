@@ -475,6 +475,28 @@ CI 在 `Native desktop interaction acceptance (#476)` 之后加一步，仅 `mac
 
 即使这些文件留下来，仍可能分不开「等待尚未返回」和「已返回但进度写入失败」。被信号结束的 bundle 可能继续让 `xcresulttool` 失败，原文里也可能没有调用栈。那时缺口仍是：没有调用栈，也没有源码行。这一步不因此追加采样或架构改动。它只改善证据能不能被再次打开。新的 SHA 走常规 CI。不重跑 `44525070865`。发布仍暂停，整票仍不能合并。
 
+## 30. 上传步骤的精确逆投影
+
+`e196f29bb8a4acc14ead3e06e32eccecf468bca8` 的 run `44532945072` 是 5 通过、5 失败。失败不是选择框回归。`Pinned NSIS dependency transport and integrity (#633)` 里的 #748/#760/#796 在 `validateWindowsCiFeedback750` 把四个原生阶段折回旧步骤之后，看到多出来的 `Upload picker failure evidence (#476)`，于是 `all old steps retain order/cardinality`。`Native desktop interaction acceptance (#476)` 因此被跳过。没有相位、没有取消数、退出码、六条计时、双收尾、租约或后三例。macOS 上传步骤因 `if: always()` 仍执行，日志是路径下没有文件。这不是空 events，也不能当成原生失败。windows-latest 上 gallery 元数据找不到文件、census 后诊断 `CALLER_MISSING`，是这一步提前失败之后两个 `always()` 步骤的后效。
+
+下一步只给这一个上传步骤补上和 `projectActivityFirst826`、`validateCockpitSteps748`、`conservedBuildSteps794`、`conservedBuildSteps806` 相同的精确逆投影。函数放在 `validateWindowsCiFeedback750` 调用 `projectActivityFirst826` 和 `collapseNativeStages760` 之前。它只认名字 `Upload picker failure evidence (#476)`。恰好一个，否则失败。整个解析后的步骤对象必须等于：
+
+- `if` 是 `always() && matrix.os == 'macos-latest'`
+- `uses` 是 `actions/upload-artifact@v4`
+- `with.name` 是 `picker-failure-evidence-${{ github.sha }}-${{ github.run_attempt }}`
+- `with.path` 是 `companion/picker-failure-evidence/`
+- `with.retention-days` 是数字 7
+- `with.if-no-files-found` 是 `ignore`
+- 没有 `continue-on-error`、`run`、`shell`、`id` 或其它键
+
+位置必须是 `Native desktop interaction acceptance (#476)` 的下一项，再下一项仍是 `Compile shared companion test inputs (#650)`。这样交互步骤失败后上传仍会执行，也不会插进四个必须连续的原生阶段。核对通过之后只从数组里去掉这一个对象。去掉之后，旧步骤顺序、个数、`baseline` 里的旧摘要、四个原生阶段的连续性和既有红灯原样成立。不按 `uses: actions/upload-artifact` 过滤，因此 #748 里那个名字不同的 retired upload 仍然是红灯。不改 `baseline` JSON，不改旧 hash，不放宽旧断言。
+
+上传步骤留在现在这个位置。不把它挪到不会在 macOS 失败后执行的地方。失败证据的复制、上限、符号链接、暂存、45000、20000、真实点击、第二张 sheet 拒绝、租约和两个 Host 都不改。
+
+读 `ci.yml` 的结构测试都对过。必须先走这个逆投影的是调用 `validateWindowsCiFeedback750` 的两处：`scripts/tests/windows-ci-feedback-750.test.mjs` 和 `scripts/tests/native-ci-stages-760.test.mjs`。其余读取者不比较 smoke 步骤全名单，这次不改它们的断言：`nsis-ci-setup.test.mjs` 的 census 切片和 #725 尾步仍在共享编译的下一项；`node-security-runtime-759.test.mjs` 只数 4 次 `setup-node`；`native-join-observation-788.test.cjs` 只看 build job；census 三个测试、`uia-no-autofocus-572`、`ax-native-571`、两处 UIA 572、`cockpit-native-gate-source-723`、`computer-capture-native-controls-723`、`computer-bg-module-scope-650.probe`、两处 #732，以及已经写明这一上传步骤的 `picker-failure-evidence-476.test.ts`。`skills.test.ts` 写的是合成 zip，不是这份 workflow。
+
+新红灯写在 #750 的现有变体表里，LF 和 CRLF 都要抛 `ERR_ASSERTION`。缺这个上传步骤、重复一次、挪到交互步骤之前、挪到共享编译之后、改 `if`、改路径、改 7、改 `ignore`、加上 `continue-on-error`，都失败。旧步骤的移动和删除继续由 #750/#760 已有变体报红，不改那些变体的预期。规划门通过之后才实现这一层逆投影。不重跑 `44532945072`。当前整票仍不能合并，也不能发布。
+
 ## 7. 这一节点不做的事
 
-第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。第 27 节的 1 秒余量已经做完并按日志停止，`uiDeadline` 恢复为 `Date.now()+45000`。第 28 节是只读结论。当前步骤是第 29 节，规划门通过之后才实现失败证据复制和上传。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
+第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地，并在 `269b89c7` 回退。第 27 节的 1 秒余量已经做完并按日志停止，`uiDeadline` 恢复为 `Date.now()+45000`。第 28 节是只读结论。第 29 节的失败证据复制和上传已经在 `e196f29b` 落地。当前步骤是第 30 节，规划门通过之后才实现上传步骤的逆投影。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
