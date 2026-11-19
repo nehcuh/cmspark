@@ -69,7 +69,7 @@ let sheets=w.sheets.count
 
 窗口、Cancel 和 `inputs` 没有现成的存在等待。它们改成两次 `element(boundBy:).waitForExistence(timeout:)`：下标 0 的超时参数是 `try remaining()`，false 拒绝；下标 1 的超时参数是 1 秒，true 拒绝。sheet 和 Choose 已经有下标 0 的 `waitForExistence(timeout: try remaining())` 并且 false 会拒绝，只把后面的 `count` 换成下标 1、超时 1 秒、true 拒绝。`comboBoxes.count` 是分支，不是拒绝，规则见 5.1。
 
-两次都返回之后才继续。任一等待不返回，就没有 Bool，序列停在那里，交给 45 秒后盾，用例失败。两次返回只证明各自那一次的结果，不是原子的 `count==1`。`isHittable`、`click()`、`typeText`、`typeKey` 仍没有超时参数。历史停点不在它们上面。这一步不给它们加线程，也不新加 `count`。
+拒绝型等待不返回，就没有 Bool，序列停住，交给 45 秒后盾，用例失败。组合框等待都返回但不是单一候选时，下一句是改走 `textFields`，不是拒绝。两次返回只证明各自那一次的结果，不是原子的 `count==1`。`isHittable`、`click()`、`typeText`、`typeKey` 仍没有超时参数。历史停点不在它们上面。这一步不给它们加线程，也不新加 `count`。
 
 `waitForExistence` 覆盖的是「`count` 要解析全部匹配、而单次快照仍能返回」这一类。它覆盖不了「单次快照不返回」。后一类仍由 45 秒后盾判失败。
 
@@ -89,14 +89,16 @@ let sheets=w.sheets.count
 - 第 688–705 行把 stage 11–13 投进 `vm`。它要求源文里有且仅有一次 `guard chooseCount==1 else{throw OwnedUI705Error.refused}`，桩的 `count` 为 0 或 2 时必须在 `click` 之前拒绝。
 - 第 390 行的逆操作要求当前源文里有且仅有一次包含 `let comboCount=first.comboBoxes.count` 的输入就绪片段，换成旧片段后整文件哈希仍是 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572`。
 - 第 799–801 行要求当前 `uiStage=7` 片段里 `first.descendants` 在 `let comboCount=first.comboBoxes.count` 之前，并且仍有 `comboCount==1 ? first.comboBoxes:first.textFields` 和 `guard inputCount==1 else`。
-- 第 711–788 行的输入投影会读 `comboBoxes.count`，并在 `count` 为 0 或 2 时拒绝后续点击。第 807 行把 `guard inputCount==1 else` 换成 `>=1` 时，逆操作必须失败。
+- 第 711–788 行的输入投影今天用一个 `count` 同时表示组合框和文本框。第 783 行的 `{count:0}` 与 `{kind:'combo', count:2}` 会在点击前拒绝，是因为回退后的文本框数量为 0。第 773 行的 `kind:'text'` 且数量为 1 会点到输入。第 807 行把 `guard inputCount==1 else` 换成 `>=1` 时，逆操作必须失败。
 - 第 641 行要求 `observeChooseCensus` 体内 `.count` 恰好 3 次。那是诊断普查，不是按钮权威。
 
 第 445 和 639 行的片段来自逆操作之后的源文，不是裸的当前文件。证据是第 441 行 `swift=previousChoose705(...)` 和第 639 行 `ui=previousCriticalCensus705('ui',actual.ui)`。新的逆操作若先把等待语句还原成今天的 `count` 文本，这两处应继续要求 `choose.count` 和恰好 1 次 `waitForExistence(`。把它们改成在还原结果里寻找新的 `boundBy` 等待，会和还原文本冲突。当前源文的有序片段改第 520、656、799 行，以及第 688 和 711 行的投影。
 
-第 683 行的变体是对当前源文做 `replace`。唯一性句子从源文里消失之后，这个 `replace` 不再改文件，逆操作哈希仍能对上，`assert.throws` 就会失败。所以变体要改成破坏新的「下标 1 为 true 就拒绝」句子，让新的逆操作因精确片段对不上而抛 `ERR_ASSERTION`。投影里另有一条：下标 1 的等待返回 true 时序列继续，必须在 `click` 之前拒绝。只删掉旧句子、不补这条，变体锁就没了。
+第 683 行的变体是对当前源文做 `replace`。唯一性句子从源文里消失之后，这个 `replace` 不再改文件，逆操作哈希仍能对上，`assert.throws` 就会失败。Choose、窗口、sheet、Cancel 和 `inputs` 的变体改成破坏各自的「下标 1 为 true 就拒绝」。Choose 的现有投影，以及 `inputs` 的拒绝检查，都是下标 0 为 false 或下标 1 为 true 时在 `click` 之前拒绝。窗口、sheet、Cancel 用同样的有序片段和变体，不另写成组合框那种回退。这个拒绝不用于组合框分支。只删掉旧句子、不补这条，变体锁就没了。
 
-`comboBoxes.count` 不是恰好一个就拒绝。当前投影对 `kind:'text'` 会成功点输入；组合框数量不是 1 时改走 `textFields`，再由 `guard inputCount==1` 拒绝。若对组合框套用「下标 0 用 `try remaining()`，false 就拒绝」，没有组合框的文本路径会先占满剩余时限，或者直接被拒绝。实现不这样改。组合框分支改成两次超时都是 1 秒的 `waitForExistence`：下标 0 为 true 且下标 1 为 false 时仍用 `comboBoxes`，其余仍用 `textFields`。恰好一个的拒绝留在随后的 `inputs` 上：下标 0 的超时参数是 `try remaining()`，false 拒绝；下标 1 的超时参数是 1 秒，true 拒绝。第 390 行的 `current` 片段换成这条新分支，`prior` 和 `0b193e10…` 不动。第 799 行改成要求 `descendants` 等待仍在这条分支之前。
+`comboBoxes.count` 不是恰好一个就拒绝。若对组合框套用「下标 0 用 `try remaining()`，false 就拒绝」，没有组合框的文本路径会先占满剩余时限，或者直接被拒绝。实现不这样改。组合框分支改成两次超时都是 1 秒的 `waitForExistence`：下标 0 为 true 且下标 1 为 false 时仍用 `comboBoxes`，其余仍用 `textFields`，这两次返回本身不 `throw`。恰好一个的拒绝留在随后的 `inputs` 上：下标 0 的超时参数是 `try remaining()`，false 拒绝；下标 1 的超时参数是 1 秒，true 拒绝。新的输入投影要有一条「组合框不唯一且文本框恰好一个」并点到输入；文本框不恰好一个才在点击前拒绝，而且调用序列里已经走过文本框等待。第 786 行今天还要求取消发生后执行过 `hittable`。`inputs` 的 `try remaining()` 移到 `hittable` 之前之后，取消改为在 `hittable` 之前拒绝。
+
+第 799 行改当前源文的顺序，不要求组合框片段拒绝。第 390 行的 `current` 不改：新逆操作先把组合框分支还原成今天这句 `let comboCount=first.comboBoxes.count`，再进入现有替换。开头还原之后再改 `current`，精确片段就对不上。`prior` 和 `0b193e10…` 不动。
 
 窗口 `count`、sheet `count`、Cancel `count` 在这个测试文件里没有单独的有序片段，只进整文件哈希。同一提交要给这三处补上和 Choose 一样的当前源文有序片段，以及「下标 1 为 true 仍继续则失败」的变体。不靠只更新哈希来保住它们的唯一性。
 
