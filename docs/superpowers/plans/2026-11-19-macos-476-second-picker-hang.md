@@ -170,13 +170,21 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 `12f5876c` 的 run `44492046690` job `135449866902` 停在 stage 15 detail 1，`uiRefusal` 为 null，没有 18–20。`hostTicks` 是 2。`D705_XCRESULT_DETAILS_CLOSED` 是 `TOOL_FAILURE`，`tool826` 是 `[[1,false,64,0,true,true,0,466,false]]`，工具以 64 结束且双 EOF，不是缺包，也不是仍在等待。中止时宿主没有退出；中止后是非零退出和信号，不是退出码 0。这不覆盖 `7c5209b0`，也不覆盖 `6067e9ee`。
 
+## 已执行的停因 ping
+
+`4b3ffbd1` 已经让 timer callback 在 `invalidate` 前最多发一次 `D476_WS_HOST_TICK_STOP`，phase 记下 `hostTickStop`。readiness 的同步 `panel()` 仍是原来两组调用序。callback 断言和 `panel()` 是分开的。这一段不再执行。
+
+## 停因没有被收到
+
+`4b3ffbd1` 的 run `44498584497` job `135472041422` 仍停在 stage 15 detail 1，`uiRefusal` 为 null，没有 18–20。`hostTicks` 是 0，`hostTickLast` 是 null，`hostTickStop` 是 null。`receiptMask` 是 255，`pickerObserved` 是 2，`cancelReturned` 是 0。中止时宿主没有退出；中止后 `[4,182,true,2]` 是非零退出，`[7,182,true,3]` 和 `[8,182,true,3]` 是信号。结果是 `TOOL_FAILURE`，`tool826` 是 `[[1,false,64,0,true,true,0,466,false]]`。没收到停因保持未知，不叫回调没进来，也不是取消成功。这不覆盖 `12f5876c` 的 `hostTicks` 为 2，也不覆盖 `7c5209b0` 或 `6067e9ee`。
+
 ## 当前唯一下一步
 
-同一次宿主定时器回调在 `invalidate` 前最多发一次 `D476_WS_HOST_TICK_STOP`。`reason` 只为 `not-current`、`settled`、`cap`。沿用当前 guard 从左到右：已经 40 次先记 `cap`，即使同时 `not-current` 也优先 `cap`。否则没有 `workspaceSelection` 或 `pickerCurrent` 不为真则记 `not-current`，没有 `workspaceSelection` 不记 `settled`。再否则才记 `settled`。宿主对象消失时发不出；没收到保持未知，不叫 `absent`，也不叫回调没进来。停因不解释成查询卡住，也不是取消成功。`hostTickStop` 写在 phase 的 `hostTicks` 旁边，不进 `required` 或 `receiptMask`。phase 的 vm scope 补上 `hostTickStop`。
+`startHostTick` 仅在定时器从 nil 变成已调度之后发一次 `D476_WS_HOST_TICK_ARMED`。已有定时器则不发。这一笔早于 callback，不是 tick，也不是停因。`hostTickArmed` 只为 0 或 1，写在 phase 的 `hostTickStop` 旁边，不进 `required` 或 `receiptMask`。vm scope 补上 `hostTickArmed`。0 不解释成没创建，也不解释成查询卡住。
 
-新句子只扩 `host-tick-inverse.cjs` 现有三句，不新开还原层：声明加 `hostTickStop:string|null=null`，计数分支旁加一句 STOP 分支，phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop`。少一句先 `HOST_TICK_ONCE` 失败，不套成功摘要。现有 `restoreHostTick` 已经在这些入口的第一道旧 hash 之前：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 58 行 native 的 `0b78022a…`（第 57 行是 helper，摘要入口不改）、705/747 abort 的 `6fadbe60…`/`7c5d8b54…`、782 的 `33b23399…`/`f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。没有另有整文件入口绕过它。旧 hash 不改不后移。
+新句子只扩现有 `host-tick-inverse.cjs`：声明加 `hostTickArmed=0`，STOP 分支旁加一句 ARMED 分支，phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop,hostTickArmed`。少一句先 `HOST_TICK_ONCE` 失败。入口仍是 join `120cc92d…`、788 两处 `5f225d62…`、705 第 58 行 native `0b78022a…`、705/747 abort `6fadbe60…`/`7c5d8b54…`、782 `33b23399…`/`f4b0ae09…`、826 与 initial-input `9e80020d…`、808 `04b5b5ed…`、`previousCensus705('native')` `2f2a3d08…`。旧 hash 不改不后移。
 
-readiness 的同步 `panel()` 与定时器 callback 分开测。第二次 `panel()` 保持 `['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']`，`startHostTick` 只被 stub 记名，callback 不执行，不在 `HOST_TICK_START` 后加停因。第一次 `panel()` 仍停在 `D476_WS_PICKER_SELECTED`。另列一条独立断言，驱动真实 `startHostTick` 的 callback，在 `invalidate` 前恰好一次 `D476_WS_HOST_TICK_STOP`。45000 和最终原生门不弱化。
+readiness 三条分开：同步 `panel()` 调用序不变；callback 仍只断言停因和增量 tick；第三条驱动真实 `startHostTick`，测试里的 `Timer.scheduledTimer` 只登记 callback 不调用。nil 定时器调度后恰好一次 `D476_WS_HOST_TICK_ARMED`，这次调用没有 tick 或停因。定时器已存在则不发。45000 和最终原生门不弱化。
 
 ## 安装包
 

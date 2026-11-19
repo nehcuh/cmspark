@@ -228,7 +228,7 @@ CI run `44492046690`，macOS job `135449866902`，SHA `12f5876c6527fcdc045d6ea6a
 
 这和 `7c5209b0` 的取消返回、宿主退出码 0 不是同一次窗口，也不覆盖第 10 节。和第 12 节的 stage 14、`BUNDLE_UNAVAILABLE` 也不是同一次。三次都保留。
 
-## 15. 当前唯一下一步
+## 15. 已执行的停因 ping（历史）
 
 不增加 45000。不改 `DesktopHost.swift`。不把查询挪线程。不删 `cancelReturned == 1`、子进程退出码 0、计时 18–20、`xcodeClosed` 为 true、租约交还和后三例。窗口预等待和现有 tick 计数留着。
 
@@ -247,6 +247,26 @@ CI run `44492046690`，macOS job `135449866902`，SHA `12f5876c6527fcdc045d6ea6a
 交叉核对过：`desktop-native-thread-metadata-476.test.ts` 的整文件还原入口就是上面这些 `restoreHostTick` 调用，没有另有一个整文件 hash 不经过它。`workspace-acceptance.swift` 不在这些整文件摘要里。
 
 `desktop-workspace-picker-readiness-705.test.ts` 里同步 `panel()` 和稍后的定时器 callback 是两种测试，不能并成一条调用序。同步 `panel()` 保持原样：第一次是 `['RETIRE_TIMER','D476_WS_PICKER_SELECTED']`，停在 `D476_WS_PICKER_SELECTED`，不启动 tick。第二次是 `['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']`。这里的 `startHostTick` 被 stub 成只把 `HOST_TICK_START` 推进 `calls`，callback 没有执行，所以这三条不加 `D476_WS_HOST_TICK_STOP`。另一条独立断言驱动真实 `startHostTick` 注册的定时器 callback，不是这个 stub。该 callback 在 `invalidate` 之前恰好发一次 `D476_WS_HOST_TICK_STOP`。
+
+上面这一段已经在 `4b3ffbd1d9bea36b4b84d87ebfe36f9323e1f851` 做过，不是当前要再做的事。
+
+## 16. 停因没有被收到
+
+CI run `44498584497`，macOS job `135472041422`，SHA `4b3ffbd1d9bea36b4b84d87ebfe36f9323e1f851`。选择框用例是 `test timed out after 45000ms`。`uiProgress` 是 `{stage:15,detail:1}`，`uiRefusal` 是 null，没有 stage 16 或 18–20，`cancelTiming788.events` 是空数组。`cancelReturned` 是 0，`picks` 和 `pickerObserved` 都是 2，`pickerReturned` 是 1，`receiptMask` 是 255。`hostTicks` 是 0，`hostTickLast` 是 null，`hostTickStop` 是 null。中止时 `childExited` 是 false，`childExitCode` 是 null，`firstFailedAssertion` 是 0。中止后 `[4,182,true,2]` 是非零退出，`[7,182,true,3]` 和 `[8,182,true,3]` 是信号。`xcodeClosed` 是 false。`D705_XCRESULT_DETAILS_CLOSED` 的 `reason` 是 `TOOL_FAILURE`，`tool826` 是 `[[1,false,64,0,true,true,0,466,false]]`。后三例是 `ACQUIRE_REFUSED`，选择框用例 `RELEASE_REFUSED`。
+
+`hostTickStop` 为 null 且 `hostTicks` 为 0 保持未知。不能叫做 `absent`，不能叫做回调没有进来，也不能叫做宿主对象已经消失。它不解释第二次窗口等待，也不是取消成功。这和 `12f5876c` 的 `hostTicks` 为 2 不是同一次。也不覆盖 `7c5209b0` 的取消返回、宿主退出码 0，或 `6067e9ee` 的 stage 14。四次都保留。
+
+## 17. 当前唯一下一步
+
+不增加 45000。不改 `DesktopHost.swift`。不把查询挪线程。不删取消成功条件。窗口预等待、tick 计数和停因 ping 留着。
+
+在 `startHostTick` 里，只有 `hostTickTimer` 原先是 nil、并且 `Timer.scheduledTimer` 已经返回之后，用现有的两参数 `emit` 发一次 `system.ping`，id 只是 `D476_WS_HOST_TICK_ARMED`。定时器已经存在而提前返回时不发。这一笔在 `panel()` 的 runloop 上，晚于第二次 `D476_WS_PICKER_CANCELLED`，早于任何 timer callback。它不是 tick，也不是停因。
+
+`hostTickArmed` 只记 0 或 1，写在 phase 的 `hostTickStop` 旁边。不进 `required`，不改 `receiptMask`。执行当前 phase 块的 vm scope 再带 `hostTickArmed`。没收到保持 0，不把 0 解释成定时器没创建，也不解释成查询卡住或取消成功。
+
+新句子只扩 `host-tick-inverse.cjs` 现有那一组，不另做一层还原。声明变成 `pickerObserved=0,hostTicks=0,hostTickLast=null,hostTickStop:string|null=null,hostTickArmed=0,pickerReturned=0`，还原成 `pickerObserved=0,pickerReturned=0`。tick 分支和 STOP 分支仍整句删掉。同一组再加一句 `D476_WS_HOST_TICK_ARMED` 分支，还原成空。phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop,hostTickArmed`，还原成 `cancelCurrent`。少一句先 `HOST_TICK_ONCE` 失败，不套成功摘要。旧 hash 不改、不后移。入口仍是第 15 节那一份：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 58 行 native 的 `0b78022a…`、705/747 abort 的 `6fadbe60…` 和 `7c5d8b54…`、782 的 `33b23399…` 和 `f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。
+
+readiness 保持三种测试分开。同步 `panel()` 仍是原来的两组调用序，stub 不执行 `startHostTick`。timer callback 断言仍只覆盖停因和增量 tick。第三条单独驱动真实 `startHostTick`：测试里的 `Timer.scheduledTimer` 只记下 callback，不调用它。`hostTickTimer` 为 nil 时，调度返回后恰好一次 `D476_WS_HOST_TICK_ARMED`，并且这次调用本身没有 tick 或停因。`hostTickTimer` 已经存在时不发 `D476_WS_HOST_TICK_ARMED`。
 
 ## 7. 这一节点不做的事
 
