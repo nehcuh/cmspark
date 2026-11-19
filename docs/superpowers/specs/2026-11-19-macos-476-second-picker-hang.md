@@ -332,11 +332,19 @@ CI run `44510689058`，SHA `b3ea545cb9aa0e471887a53b9fa3820c01858c81`。十项�
 
 ## 22. 当前唯一下一步
 
-只改 `meeting-pcm-generated.test.ts` 的清理。`try` 里的错误先留下来。`finally` 只对这个测试自己的临时目录，在 `EBUSY` 时最多再删几次；其它错误立刻抛出。清理之后如果 `try` 有错，抛出的仍是那个错。字节比较、`git` 的 10000ms、`spawnSync` 的 10000ms 都不改。删不掉时测试仍然失败，错误仍是 `EBUSY`。
+只改 `meeting-pcm-generated.test.ts` 里这个测试自己的 `owned` 目录清理。日志里只有一次 `rmdir seed\.git` 的 `EBUSY`，没有第二次删除。总尝试次数因此写死为 2：第一次删除，若错误码是 `EBUSY` 就立刻再删一次。没有 `sleep`，没有 `setTimeout`。两次都是 `EBUSY` 就停止。其它错误码第一次就抛出，不进入第二次。`git` 的 `timeout: 10_000` 和 `spawnSync` 的 `timeout: 10_000` 保持原样。字节比较保持原样。
 
-MCP 那一项本轮不改。不把 20000 加大。不重跑 `44510689058`。没有一份日志证明控制器回调会在 20 秒内回来。
+`try` 里的错误先保存。清理结束后如果 `try` 有错，抛出的是那个原始错误，不用清理的 `EBUSY` 替换它。清理错误不吞掉。`finally` 不再用自己的异常盖住 `try`。
 
-macOS 六条原文不挪到新的 SHA。发布仍暂停。
+三条断言只驱动这个 `owned` 路径上的删除函数，不跑真实 `git`：
+
+- `try` 抛出断言错误，同时两次删除都是 `EBUSY`：最后抛出的仍是原来的断言错误。
+- 删除抛出的不是 `EBUSY`：立刻抛出那个错误，删除函数只被调用 1 次。
+- 删除连续两次都是 `EBUSY`：抛出的错误码仍是 `EBUSY`，删除函数被调用 2 次，没有第 3 次。
+
+MCP 表单测试仍是独立阻断，本轮不改。超时当时是 `authenticated:true`、`windowRequested:true`、`postAuthRequestMask:0`，阶段只有 `ready_accepted` 和 `env_callback`。bootstrap 只有点 5、6、7，没有点 8，也没有 `controller_callback`。后面的 `DESKTOP_480_NATIVE` 是下一条用例。不把 20000 加大。不重跑 `44510689058`。
+
+`b3ea545c` 的 macOS 子门通过只绑定那个 SHA。旧 hash、45000、`DesktopHost.swift` 不动。发布仍暂停。
 
 ## 7. 这一节点不做的事
 

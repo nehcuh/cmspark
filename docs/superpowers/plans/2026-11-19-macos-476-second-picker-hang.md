@@ -200,7 +200,11 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 ## 当前唯一下一步
 
-只改会议生成测试的清理：留下 `try` 的错误；只对这个临时目录在 `EBUSY` 时有限重删；其它错误照旧抛出。字节检查和 10000ms 不改。删不掉仍是失败。MCP 测试不改，20000 不加大，不重跑 `44510689058`。macOS 六条不冒用到新 SHA。发布仍暂停。
+会议测试的 `owned` 清理总尝试次数写死为 2。日志只有一次 `rmdir seed\.git` 的 `EBUSY`，没有更长的样本，所以只在 `EBUSY` 后立刻再删一次，没有 `sleep` 或 `setTimeout`。非 `EBUSY` 第一次就抛。两次仍是 `EBUSY` 则失败，错误码仍是 `EBUSY`。`try` 的原始错误在清理之后原样抛出，不用 `EBUSY` 替换，也不吞清理错误。`git` 与 `spawnSync` 的 `10000` 不改。字节比较不改。
+
+先红后绿的三条断言只覆盖这个 `owned`：`try` 的断言错误在清理 `EBUSY` 时仍原样抛出；非 `EBUSY` 删除错误立即抛出且只调用 1 次；两次 `EBUSY` 后失败且错误仍是 `EBUSY`，没有第 3 次。
+
+MCP 仍独立阻断：`authenticated` 与 `windowRequested` 为 true，`postAuthRequestMask` 为 0，只有 `ready_accepted` 和 `env_callback`，bootstrap 只有 5、6、7，没有 8 和 `controller_callback`。`DESKTOP_480_NATIVE` 是下一条。不改 MCP，不加 20000，不重跑 `44510689058`。`b3ea545c` 的 macOS 通过只绑定原 SHA。旧 hash、45000、`DesktopHost.swift` 不动。发布仍暂停。
 
 ## 安装包
 
