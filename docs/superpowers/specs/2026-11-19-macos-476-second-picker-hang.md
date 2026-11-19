@@ -156,7 +156,7 @@ id 只有一个：`system.ping` 的 `id` 是 `D476_WS_HOST_TICK`。不使用没�
 
 实现把计数记进这个已经会打印的对象：`hostTicks` 是 0 到 40 的次数，`hostTickLast` 是 null 或正好 `D476_WS_HOST_TICK`。两个字段写在 `cancelCurrent` 后面。不放进 `required`，不改 `receiptMask`。45 秒中止时现有的 stdout 行就是证据。不要求 40 次都到达；0 次也要能看见，并且不是成功。
 
-`panel()` 里 0.016 秒的定时器仍在面板刚可见、发出 ping 之前停掉。新定时器在 `panels` 变成 2 且 `D476_WS_PICKER_CANCELLED` 已经发出之后才启动，此时面板还未 `settled`。它不在观察窗开始时停。间隔 1 秒，最多 40 次。面板变为 `settled`、次数到 40，或验收 `fail` 时停止。第一次选择框的 `D476_WS_PICKER_SELECTED` 不启动它。
+`panel()` 里 0.016 秒的定时器仍在面板刚可见、发出 ping 之前停掉。新定时器在同一次 `panel()` 里、第二次 `emit` 已经返回之后创建，不另开队列，也不 `DispatchQueue` 延后。创建和 `invalidate` 都在这个 runloop 上。面板变为 `settled`、次数到 40，或验收 `fail` 时，在同一轮调用里 `invalidate` 再返回，避免 45 秒 `terminate` 之后定时器还拖住宿主。第一次选择框的 `D476_WS_PICKER_SELECTED` 不启动它。tick 还在增加只说明这个 runloop 还在执行定时器。它不证明 `orderOut` 或打开面板服务是根因。
 
 ### 9.3 源锁和调用序
 
@@ -168,7 +168,20 @@ id 只有一个：`system.ping` 的 `id` 是 `D476_WS_HOST_TICK`。不使用没�
 
 `sheet()` 的成功调用序从 `window-one`、`remaining`、`window-one-wait` 改成 `remaining`、`window-one`、`window-one-wait`，然后再接现有的 `window-extra`、`window-extra-wait`、`window-first`、`sheet-first`、`remaining`、`wait`、`sheet-extra`、`sheet-extra-wait`、`sheet-first`。窗口没有时停在 `remaining`、`window-one`、`window-one-wait`。多一个窗口时停在 extra 等待之后。`waitForExistence(timeout:try remaining())` 在 `sheet()` 里只剩 sheet 那一次；窗口等待是 `timeout:windowTimeout`，只有一次。字面量 `timeout:1` 仍是两次。
 
-phase 源文在 `restoreObservation788` 之前先剥掉 `hostTicks` 声明、tick 分支和 `cancelCurrent` 后的两个字段。`desktop-workspace-xctest-705.test.ts` 与 `desktop-terminal-first-failure-747.test.ts` 里的 abort inverse 都走这层。剥掉之后的整文件摘要仍是 `6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38ad90a398fe4639eed3c` 和 `7c5d8b54f03c68fa285d60d8fd029cd10dbbf5c0073e79d5944778435e3d1288`。不改这两句历史锁。变体少了这些句子就在精确一次处失败，不套成功摘要。
+同一组 tick 句子只此三句，每句恰好一次：`pickerObserved=0,hostTicks=0,hostTickLast=null,pickerReturned=0` 还原成 `pickerObserved=0,pickerReturned=0`；`D476_WS_HOST_TICK` 计数分支整句删掉；`cancelCurrent,hostTicks,hostTickLast` 还原成 `cancelCurrent`。少一句先在精确一次处失败，不套后面的成功摘要。旧 hash 常量不改、不后移。
+
+这三句必须在各入口的第一道 hash 之前剥掉。`restoreObservation826` 的第一道是 `9e80020deed6f46ede58481ecbd2e631c796b0cc653995ad1f6bdbfa9d2cbabe`，`restoreCloseObservation476` 会先走进它。剥掉之后仍保持的摘要：
+
+- `scripts/tests/native-join-observation-788.test.cjs`：`close476` 之前剥。去掉 JOIN 之后仍是 `120cc92d2c0eb1209f1db8843ea054468cb2ddd7ac80a5ed530e196e50c65164`。
+- `desktop-native-observation-788.test.ts` 的十文件循环和 801 测试：`restoreObservation788` 之前剥。现在 native 不走 picker peel。788 和 `terminalAdmissionInverse801` 之后仍是 `5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018`，再去掉 `{ llmKey: true }` 仍是 `56abd88e272e8982388507c79c4046936401937e534d5333d5f42885f563f313`。
+- `desktop-workspace-xctest-705.test.ts` 第 57 行那一对：native 只走 `restoreObservation826`，在它之前剥。去掉 CLOSE 之后仍是 `0b78022a6efaa334ce97d5d1ccfb9c6d59857997ddefed3ad5f7a0e501fb78a4`。
+- 705 的 `workspaceAbortPhaseInverse705` 先调用 `close476`，所以剥在 `close476` 之前，不只在 788 之前。747 的同名函数剥在 `restore788` 之前。两处最终仍是 `6fadbe6027b50d5a1b0654ba30641d260e7dcaa098d38ad90a398fe4639eed3c` 和 `7c5d8b54f03c68fa285d60d8fd029cd10dbbf5c0073e79d5944778435e3d1288`。747 再往后的 `6d79c72e958fb35b40c42086c098235425b1f2b1b63e4ef95295d4c085007b4b` 不改。
+- `desktop-archive-observation-782.test.ts`：`restoreObservation788` 之前剥。之后仍是 `33b233999fcfcc764b4882749d7264aa534fc45938ff717dd23bcc51f4cdeaa6` 和 `f4b0ae09fd52e2ed4fa2d112ebc041e1a33e5323776ddc3e00291c1a4bea4675`。
+- `desktop-close-observation-826.test.ts` 的 native、`desktop-owned-initial-input-826.test.ts`：在 `restoreInitialOwnedInput826` 和 `restoreObservation826` 之前剥。`9e80020d…`、`08dcaea7cc828719ea144c2b42129d90919f8693854782db683bddb0deca0ab0`、`46d852529cfbb6016484b8680d534549303d9c88e0083ffa83d9071b18886e16` 不改。
+- `desktop-local-native-476.test.mjs` 的 `hostObservationSource808`：`close476` 之前剥。配对还原后仍是 `04b5b5edcaf59cfe666f5e84de6a1a386ea4f48d493023e13ef75bd7a9c084f2`。
+- `previousCensus705('native')` 经 `previousInputReady705` 进入 `close476`。剥在那之前。`2f2a3d08eafb54b2eef26450e30b12000844479e759316eff3773ebad8364f2e`、`ba6a17d9ba68cefa2ea0a4feae84a2ef41ada61c83073a5d7b47e7755b4f9b5e`、`bdba454b129cdc8364cb937a1445f57661a374b54ef1ff6904398d08cbde61e3` 不改。
+
+`705 aborted workspace context preserves the same closed phase` 执行的是当前 phase 块。它的 vm scope 必须自带 `hostTicks` 和 `hostTickLast`，否则在 abort 打印之前就是 `ReferenceError`。这个 scope 不是上面的历史摘要。
 
 `desktop-workspace-picker-readiness-705.test.ts` 的第二次面板调用序在 `D476_WS_PICKER_CANCELLED` 之后多一次 `HOST_TICK_START`。第一次面板仍只到 `D476_WS_PICKER_SELECTED`，不启动 tick。0.016 秒定时器仍在 emit 之前停。
 
