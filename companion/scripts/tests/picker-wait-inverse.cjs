@@ -39,6 +39,9 @@ function restorePickerWait(kind, raw, options = {}) {
   const digest = text => createHash('sha256').update(text).digest('hex')
   if (kind === 'helper') {
     if (!value.includes(NEW_DIGEST)) return raw
+    const stderrNote = ";try{require('./picker-failure-evidence-476').notePickerToolStderr476(b)}catch{}"
+    assert.equal(value.split(stderrNote).length, 2, 'XCRESULT_STDERR_ONCE')
+    value = value.replace(stderrNote, '')
     assert.equal(value.split(NEW_DIGEST).length, 2, 'PICKER_WAIT_HELPER_DIGEST_ONCE')
     value = value.replace(NEW_DIGEST, OLD_DIGEST)
     if (requireSuccessDigest) assert.equal(digest(value), HELPER_SUCCESS, 'PICKER_WAIT_HELPER_SUCCESS')

@@ -159,7 +159,7 @@ function result705AfterActualClose(scene:OwnedUI705Boundary,sourceRoot:string,em
    child=spawn('/usr/bin/xcrun',['xcresulttool','get','test-results',...args],{cwd:scene.root,env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'},stdio:['ignore','pipe','pipe']});current=child
    child.on('error',()=>{spawnError=true})
    child.stdout!.on('data',(b:Buffer)=>{try{if(!Buffer.isBuffer(b)){spawnError=true;return};outBytes+=b.length;if(outBytes>CAP){limited=true;chunks.length=0}else if(!limited)chunks.push(Buffer.from(b))}catch{spawnError=true;chunks.length=0}})
-   child.stderr!.on('data',(b:Buffer)=>{try{if(!Buffer.isBuffer(b)){spawnError=true;return};errBytes+=b.length;if(errBytes>CAP)limited=true}catch{spawnError=true}})
+   child.stderr!.on('data',(b:Buffer)=>{try{if(!Buffer.isBuffer(b)){spawnError=true;return};errBytes+=b.length;if(errBytes>CAP)limited=true;try{require('./picker-failure-evidence-476').notePickerToolStderr476(b)}catch{}}catch{spawnError=true}})
    child.stdout!.on('end',()=>{outEOF=true});child.stderr!.on('end',()=>{errEOF=true})
    child.stdout!.on('error',()=>{spawnError=true});child.stderr!.on('error',()=>{spawnError=true})
    // Continuously drain refusal/flood; do not destroy a pipe to manufacture close.
