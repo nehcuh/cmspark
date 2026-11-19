@@ -59,17 +59,17 @@ final class WorkspacePicker705:XCTestCase {
   guard observedState == .runningForeground || observedState == .runningBackground else{throw OwnedUI705Error.refused}
   func ready(_ file:OwnedUI705File,_ number:Int) throws {let f=try waitFile(file);try scene.tuple(f,["schema","nonce","number"]);guard try OwnedUI705Scene.number(f["number"])==Double(number) else{throw OwnedUI705Error.refused}}
   func sheet(_ stage:Int) throws ->XCUIElement {
-   uiStage=stage;uiDetail=0;observeUIStage();let windows=app.windows.matching(identifier:scene.nonce),count=windows.count;uiDetail=min(count,2)+1;observeUIStage();guard count==1 else{throw OwnedUI705Error.refused};let w=windows.firstMatch
+   uiStage=stage;uiDetail=0;observeUIStage();let windows=app.windows.matching(identifier:scene.nonce);let windowOne=windows.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=windowOne ? 2:1;observeUIStage();guard windowOne else{throw OwnedUI705Error.refused};let windowExtra=windows.element(boundBy:1).waitForExistence(timeout:1);uiDetail=windowExtra ? 3:2;observeUIStage();guard !windowExtra else{throw OwnedUI705Error.refused};let w=windows.firstMatch
    uiStage=stage+1;uiDetail=0;observeUIStage();let exists=w.sheets.firstMatch.waitForExistence(timeout:try remaining());uiDetail=exists ? 2:1;observeUIStage();guard exists else{throw OwnedUI705Error.refused}
-   uiStage=stage+2;uiDetail=0;observeUIStage();let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;observeUIStage();guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.firstMatch
+   uiStage=stage+2;uiDetail=0;observeUIStage();let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused};return w.sheets.firstMatch
   }
   uiStage=2;uiDetail=0;observeUIStage();try ready(.first,1);let first=try sheet(3)
   uiStage=6;uiDetail=0;observeUIStage();_ = try remaining();first.typeKey("g",modifierFlags:[.command,.shift])
   uiStage=7;uiDetail=0;observeUIStage()
   let inputCandidates=first.descendants(matching:.any).matching(NSPredicate(format:"elementType IN %@",[XCUIElement.ElementType.comboBox.rawValue,XCUIElement.ElementType.textField.rawValue]))
   guard inputCandidates.firstMatch.waitForExistence(timeout:try remaining()) else{throw OwnedUI705Error.refused}
-  let comboCount=first.comboBoxes.count;uiDetail=min(comboCount,2)+1;observeUIStage();let inputs=comboCount==1 ? first.comboBoxes:first.textFields
-  uiStage=8;uiDetail=0;observeUIStage();let inputCount=inputs.count;uiDetail=min(inputCount,2)+1;observeUIStage();guard inputCount==1 else{throw OwnedUI705Error.refused}
+  let comboOne=first.comboBoxes.element(boundBy:0).waitForExistence(timeout:1);let comboExtra=first.comboBoxes.element(boundBy:1).waitForExistence(timeout:1);uiDetail=(comboOne && !comboExtra) ? 2:1;observeUIStage();let inputs=(comboOne && !comboExtra) ? first.comboBoxes:first.textFields
+  uiStage=8;uiDetail=0;observeUIStage();let inputOne=inputs.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=inputOne ? 2:1;observeUIStage();guard inputOne else{throw OwnedUI705Error.refused};let inputExtra=inputs.element(boundBy:1).waitForExistence(timeout:1);uiDetail=inputExtra ? 3:2;observeUIStage();guard !inputExtra else{throw OwnedUI705Error.refused}
   uiStage=9;uiDetail=0;observeUIStage();let inputHittable=inputs.element.isHittable;uiDetail=inputHittable ? 2:1;observeUIStage();guard inputHittable else{throw OwnedUI705Error.refused}
   uiStage=10;uiDetail=0;observeUIStage();_ = try remaining();inputs.element.click();_ = try remaining();inputs.element.typeText(scene.selection.path);_ = try remaining();inputs.element.typeKey("\r",modifierFlags:[])
   let choose=first.buttons.matching(NSPredicate(format:"label IN %@ OR title IN %@",["Choose","Open"],["Choose","Open"]))
@@ -93,11 +93,11 @@ final class WorkspacePicker705:XCTestCase {
    // No receipt if any synchronous framework call does not return; missing is UNKNOWN.
    try? scene.write(.uiChooseCensus,["schema":1,"nonce":scene.nonce,"status":"OBSERVED","sheetLabelCount":min(sheetLabelCount,2),"sheetButtonCount":min(sheetButtonCount,2),"ownerLabelCount":min(ownerLabelCount,2),"buttonCount":min(sheetButtonCount,8),"buttonsMore":sheetButtonCount>8,"buttonIdentityRows":buttonIdentityRows])
   }
-  uiStage=11;uiDetail=0;observeUIStage();let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout);uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}
+  uiStage=11;uiDetail=0;observeUIStage();let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout);uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseExtra=choose.element(boundBy:1).waitForExistence(timeout:1);uiDetail=chooseExtra ? 3:2;observeUIStage();guard !chooseExtra else{throw OwnedUI705Error.refused}
   uiStage=12;uiDetail=0;observeUIStage();let chooseHittable=choose.element.isHittable;uiDetail=chooseHittable ? 2:1;observeUIStage();guard chooseHittable else{throw OwnedUI705Error.refused}
   uiStage=13;uiDetail=0;observeUIStage();_ = try remaining();choose.element.click()
   uiStage=14;uiDetail=0;observeUIStage();try ready(.second,2);let second=try sheet(15),cancel=second.buttons.matching(identifier:"Cancel")
-  uiStage=18;uiDetail=0;observeUIStage();let cancelCount=cancel.count;uiDetail=min(cancelCount,2)+1;observeUIStage();guard cancelCount==1 else{throw OwnedUI705Error.refused}
+  uiStage=18;uiDetail=0;observeUIStage();let cancelOne=cancel.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=cancelOne ? 2:1;observeUIStage();guard cancelOne else{throw OwnedUI705Error.refused};let cancelExtra=cancel.element(boundBy:1).waitForExistence(timeout:1);uiDetail=cancelExtra ? 3:2;observeUIStage();guard !cancelExtra else{throw OwnedUI705Error.refused}
   uiStage=19;uiDetail=0;observeUIStage();let cancelHittable=cancel.element.isHittable;uiDetail=cancelHittable ? 2:1;observeUIStage();guard cancelHittable else{throw OwnedUI705Error.refused}
   uiStage=20;uiDetail=0;observeUIStage();_ = try remaining();cancel.element.click()/*OBS788_BEGIN*/;observeCancelTiming788(20,true)/*OBS788_END*/
   } catch {

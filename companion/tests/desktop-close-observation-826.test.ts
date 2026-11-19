@@ -168,8 +168,15 @@ test('826 actual query fact producer keeps both stages once and projects only cl
 test('826 complete source inverse preserves raw LF/CRLF and refuses drift without refreshing old seals', () => {
   const { restoreObservation826 } = require(path.resolve('scripts/tests/observation-826-inverse.cjs'))
   for (const [kind, file] of [['helper', helper], ['native', nativeFile]]) for (const eol of ['\n', '\r\n']) {
-    const raw = fs.readFileSync(file, 'utf8').replace(/\r?\n/g, eol), prior = restoreObservation826(kind, raw)
+    const raw = fs.readFileSync(file, 'utf8').replace(/\r?\n/g, eol)
+    const peel = (value: string, success: boolean) => kind === 'helper' ? require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restorePickerWait('helper', value, {requireSuccessDigest: success}) : value
+    const prior = restoreObservation826(kind, peel(raw, true))
     assert.equal(prior.includes('/*OBS826_'), false); assert.equal(prior.includes('\r\n'), eol === '\r\n')
-    for (const mutant of [raw + eol, raw + raw, raw.replace('/*OBS826_BEGIN*/', ''), raw.replace('/*OBS826_BEGIN*/', '/*OBS825_BEGIN*/')]) assert.throws(() => restoreObservation826(kind, mutant))
+    const mutants = [raw + eol, raw + raw, raw.replace('/*OBS826_BEGIN*/', ''), raw.replace('/*OBS826_BEGIN*/', '/*OBS825_BEGIN*/')]
+    for (const mutant of mutants) {
+      assert.notEqual(mutant, raw)
+      if (kind === 'helper' && mutant === raw + raw) assert.throws(() => peel(mutant, false), {code: 'ERR_ASSERTION'})
+      else assert.throws(() => restoreObservation826(kind, peel(mutant, false)))
+    }
   }
 })
