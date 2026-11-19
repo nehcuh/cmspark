@@ -178,15 +178,17 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 `4b3ffbd1` 的 run `44498584497` job `135472041422` 仍停在 stage 15 detail 1，`uiRefusal` 为 null，没有 18–20。`hostTicks` 是 0，`hostTickLast` 是 null，`hostTickStop` 是 null。`receiptMask` 是 255，`pickerObserved` 是 2，`cancelReturned` 是 0。中止时宿主没有退出；中止后 `[4,182,true,2]` 是非零退出，`[7,182,true,3]` 和 `[8,182,true,3]` 是信号。结果是 `TOOL_FAILURE`，`tool826` 是 `[[1,false,64,0,true,true,0,466,false]]`。没收到停因保持未知，不叫回调没进来，也不是取消成功。这不覆盖 `12f5876c` 的 `hostTicks` 为 2，也不覆盖 `7c5209b0` 或 `6067e9ee`。
 
-## 当前唯一下一步
+## 已执行的挂起 ping
 
-`startHostTick` 仅在定时器从 nil 变成已调度之后发一次 `D476_WS_HOST_TICK_ARMED`。已有定时器则不发。这一笔早于 callback，不是 tick，也不是停因。`hostTickArmed` 只为 0 或 1，写在 phase 的 `hostTickStop` 旁边，不进 `required` 或 `receiptMask`。vm scope 补上 `hostTickArmed`。本轮只加这一笔，不再加别的探针。
+`ebc7cc30` 已经在定时器从 nil 调度成功后发一次 `D476_WS_HOST_TICK_ARMED`。已有定时器不发。`hostTickArmed` 写在 `hostTickStop` 旁边。这一段不再执行。
 
-下一趟只按组合判读。`hostTickArmed` 为 1、`hostTicks` 为 0、`hostTickStop` 为 null，只说明 `scheduledTimer` 已返回且两参数 `emit` 送达了 `D476_WS_HOST_TICK_ARMED`。不说明 callback 没跑、runloop 停了或 `orderOut`。`hostTickArmed` 为 0 且 `receiptMask` 已含 `D476_WS_PICKER_CANCELLED`，说明 `startHostTick` 在那次 emit 之后被调用，但 ARMED 没有送达。可能是已有非 nil 定时器提前返回，也可能是 `scheduledTimer` 或 `emit` 没有完成送达。不能说没创建。两种都不是 `cancelReturned == 1`，也都不解释 stage 15 detail 1。
+## 这一次选择框用例通过了
 
-新句子只扩现有 `host-tick-inverse.cjs`：声明加 `hostTickArmed=0`，STOP 分支旁加一句 ARMED 分支，phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop,hostTickArmed`。少一句先 `HOST_TICK_ONCE` 失败。入口仍是 join `120cc92d…`、788 两处 `5f225d62…`、705 第 58 行 native `0b78022a…`、705/747 abort `6fadbe60…`/`7c5d8b54…`、782 `33b23399…`/`f4b0ae09…`、826 与 initial-input `9e80020d…`、808 `04b5b5ed…`、`previousCensus705('native')` `2f2a3d08…`。旧 hash 不改不后移。
+`ebc7cc30` 的 run `44504061497` job `135490928834` 里，选择框用例 40028ms 通过。`cancelReturned` 是 1，`childExitCode` 是 0，`xcodeClosed` 为 true 且 `xcodeCode` 为 0。`hostTickArmed` 是 1，`hostTicks` 是 12，`hostTickStop` 是 null。同一文件 12 项都通过，随后三例没有 `ACQUIRE_REFUSED`。`hostTickStop` 为 null 是因为结束前没有收到停因；12 次 tick 说明 callback 后来跑过。这不解释 `4b3ffbd1`、`12f5876c` 或 `7c5209b0`。
 
-readiness 三条分开：同步 `panel()` 调用序不变；callback 仍只断言停因和增量 tick；第三条驱动真实 `startHostTick`，测试里的 `Timer.scheduledTimer` 只登记 callback 不调用。nil 定时器调度后恰好一次 `D476_WS_HOST_TICK_ARMED`，这次调用没有 tick 或停因。定时器已存在则不发。45000 和最终原生门不弱化。
+## 当前不再加探针
+
+不增加 45000，不改 `DesktopHost.swift`，不再加诊断 ping。一次通过不作为产品修复。发布仍暂停。
 
 ## 安装包
 

@@ -258,7 +258,9 @@ CI run `44498584497`，macOS job `135472041422`，SHA `4b3ffbd1d9bea36b4b84d87eb
 
 `hostTickStop` 为 null 且 `hostTicks` 为 0 保持未知。不能叫做 `absent`，不能叫做回调没有进来，也不能叫做宿主对象已经消失。它不解释第二次窗口等待，也不是取消成功。这和 `12f5876c` 的 `hostTicks` 为 2 不是同一次。也不覆盖 `7c5209b0` 的取消返回、宿主退出码 0，或 `6067e9ee` 的 stage 14。四次都保留。
 
-## 17. 当前唯一下一步
+## 17. 已执行的挂起 ping（历史）
+
+以下是当时实现，非当前步骤。
 
 不增加 45000。不改 `DesktopHost.swift`。不把查询挪线程。不删取消成功条件。窗口预等待、tick 计数和停因 ping 留着。
 
@@ -271,6 +273,22 @@ CI run `44498584497`，macOS job `135472041422`，SHA `4b3ffbd1d9bea36b4b84d87eb
 新句子只扩 `host-tick-inverse.cjs` 现有那一组，不另做一层还原。声明变成 `pickerObserved=0,hostTicks=0,hostTickLast=null,hostTickStop:string|null=null,hostTickArmed=0,pickerReturned=0`，还原成 `pickerObserved=0,pickerReturned=0`。tick 分支和 STOP 分支仍整句删掉。同一组再加一句 `D476_WS_HOST_TICK_ARMED` 分支，还原成空。phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop,hostTickArmed`，还原成 `cancelCurrent`。少一句先 `HOST_TICK_ONCE` 失败，不套成功摘要。旧 hash 不改、不后移。入口仍是第 15 节那一份：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 58 行 native 的 `0b78022a…`、705/747 abort 的 `6fadbe60…` 和 `7c5d8b54…`、782 的 `33b23399…` 和 `f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。
 
 readiness 保持三种测试分开。同步 `panel()` 仍是原来的两组调用序，stub 不执行 `startHostTick`。timer callback 断言仍只覆盖停因和增量 tick。第三条单独驱动真实 `startHostTick`：测试里的 `Timer.scheduledTimer` 只记下 callback，不调用它。`hostTickTimer` 为 nil 时，调度返回后恰好一次 `D476_WS_HOST_TICK_ARMED`，并且这次调用本身没有 tick 或停因。`hostTickTimer` 已经存在时不发 `D476_WS_HOST_TICK_ARMED`。
+
+上面这一段已经在 `ebc7cc30b2c0950921cb3bb9d10d76432a34c88f` 做过，不是当前要再做的事。
+
+## 18. 这一次选择框用例通过了
+
+CI run `44504061497`，macOS job `135490928834`，SHA `ebc7cc30b2c0950921cb3bb9d10d76432a34c88f`。十项检查都成功。`#476` 这一文件 12 项都通过，失败 0。选择框用例耗时 40028ms，没有碰到 45000。
+
+成功 phase 是 `failed:false`，`receiptMask` 1023，`picks` 2，`pickerObserved` 2，`pickerReturned` 1，`cancelReturned` 1，`pickOutcome` 4，`childExited` true，`childExitCode` 0，`failureSite` 0。`xcodeClosed` 为 true，`xcodeCode` 为 0，`observerClosed` 为 true，`observerCode` 为 0，`uiReceiptMask` 为 31。`uiProgress` 和 `cancelTiming788` 在成功路径上是 null，因为这两项只在失败时读取。`hostTickArmed` 是 1，`hostTicks` 是 12，`hostTickLast` 是 `D476_WS_HOST_TICK`，`hostTickStop` 是 null。同一文件随后的 local-work、archive、terminal 都通过，租约是 `RELEASED`。
+
+`hostTickArmed` 为 1 且随后有 12 次 tick，说明 `scheduledTimer` 已返回、ARMED 已送达，并且 callback 后来发出了 tick。`hostTickStop` 仍是 null，因为结束前没有收到停因；这不说明 callback 没跑。这一次是 `cancelReturned == 1` 且宿主退出码 0。它不解释以前 stage 15 detail 1 的那几次，也不把 ARMED 说成修复。
+
+这和 `4b3ffbd1` 的 `hostTicks` 0、`hostTickStop` null、取消未返回、宿主未退出不是同一次。也不覆盖 `12f5876c` 的 `hostTicks` 2，或 `7c5209b0` 的取消已返回但 `xcodeClosed` 仍为 false。那些失败都保留。
+
+## 19. 当前不再加探针
+
+不增加 45000。不改 `DesktopHost.swift`。不再加下一笔诊断 ping。一次通过不抹掉前面的失败，也还没有一份由这些日志支持的产品修复。发布仍暂停。
 
 ## 7. 这一节点不做的事
 
