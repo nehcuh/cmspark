@@ -477,7 +477,7 @@ CI 在 `Native desktop interaction acceptance (#476)` 之后加一步，仅 `mac
 
 ## 30. 上传步骤的精确逆投影
 
-`e196f29bb8a4acc14ead3e06e32eccecf468bca8` 的 run `44532945072` 是 5 通过、5 失败。失败不是选择框回归。`Pinned NSIS dependency transport and integrity (#633)` 里的 #748/#760/#796 在 `validateWindowsCiFeedback750` 把四个原生阶段折回旧步骤之后，看到多出来的 `Upload picker failure evidence (#476)`，于是 `all old steps retain order/cardinality`。`Native desktop interaction acceptance (#476)` 因此被跳过。没有相位、没有取消数、退出码、六条计时、双收尾、租约或后三例。macOS 上传步骤因 `if: always()` 仍执行，日志是路径下没有文件。这不是空 events，也不能当成原生失败。windows-latest 上 gallery 元数据找不到文件、census 后诊断 `CALLER_MISSING`，是这一步提前失败之后两个 `always()` 步骤的后效。
+`e196f29bb8a4acc14ead3e06e32eccecf468bca8` 的十项检查跨 run 聚合是 5 通过、5 失败。主 run `44532945072` 是四条 smoke 失败。ARM run `44532945063` 另失败。不要把这十项都记在主 run 上。失败不是选择框回归。`Pinned NSIS dependency transport and integrity (#633)` 里的 #748/#760/#796 在 `validateWindowsCiFeedback750` 把四个原生阶段折回旧步骤之后，看到多出来的 `Upload picker failure evidence (#476)`，于是 `all old steps retain order/cardinality`。`Native desktop interaction acceptance (#476)` 因此被跳过。没有相位、没有取消数、退出码、六条计时、双收尾、租约或后三例。macOS 上传步骤因 `if: always()` 仍执行，日志是路径下没有文件。这不是空 events，也不能当成原生失败。windows-latest 上 gallery 元数据找不到文件、census 后诊断 `CALLER_MISSING`，是这一步提前失败之后两个 `always()` 步骤的后效。
 
 下一步只给这一个上传步骤补上和 `projectActivityFirst826`、`validateCockpitSteps748`、`conservedBuildSteps794`、`conservedBuildSteps806` 相同的精确逆投影。函数放在 `validateWindowsCiFeedback750` 调用 `projectActivityFirst826` 和 `collapseNativeStages760` 之前。它只认名字 `Upload picker failure evidence (#476)`。恰好一个，否则失败。整个解析后的步骤对象必须等于：
 

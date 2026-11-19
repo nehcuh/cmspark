@@ -177,9 +177,32 @@ function cache750(step, nodeVersion) {
   assert.deepEqual(step.with['cache-dependency-path'].trim().split(/\r?\n/).map(s => s.trim()).sort(), ['chrome-extension/package-lock.json', 'companion/package-lock.json'])
 }
 
+const PICKER_EVIDENCE_UPLOAD = {
+  name: 'Upload picker failure evidence (#476)',
+  if: "always() && matrix.os == 'macos-latest'",
+  uses: 'actions/upload-artifact@v4',
+  with: {
+    name: 'picker-failure-evidence-${{ github.sha }}-${{ github.run_attempt }}',
+    path: 'companion/picker-failure-evidence/',
+    'retention-days': 7,
+    'if-no-files-found': 'ignore',
+  },
+}
+// Check this one upload completely, then remove only that object. Other
+// upload-artifact steps stay visible to the historical cardinality oracle.
+export function projectPickerEvidence476(steps) {
+  const selected = steps.filter(step => step.name === PICKER_EVIDENCE_UPLOAD.name)
+  assert.equal(selected.length, 1, 'one exact picker evidence upload')
+  assert.deepEqual(selected[0], PICKER_EVIDENCE_UPLOAD, 'picker evidence upload keys, condition, path and retention are exact')
+  const at = steps.indexOf(selected[0])
+  assert.equal(steps[at - 1]?.name, 'Native desktop interaction acceptance (#476)', 'picker evidence upload follows the interaction acceptance')
+  assert.equal(steps[at + 1]?.name, 'Compile shared companion test inputs (#650)', 'picker evidence upload precedes the shared compile')
+  return steps.filter(step => step !== selected[0])
+}
+
 export function validateWindowsCiFeedback750(text) {
   const doc = yaml.load(text)
-  doc.jobs['smoke-os'].steps = collapseNativeStages760(projectActivityFirst826(doc.jobs['smoke-os'].steps))
+  doc.jobs['smoke-os'].steps = collapseNativeStages760(projectActivityFirst826(projectPickerEvidence476(doc.jobs['smoke-os'].steps)))
   assert.equal(digest(omit(doc, ['jobs'])), baseline.workflowWithoutJobs)
   assert.deepEqual(Object.keys(doc.jobs).sort(), ['acp-history-restart', 'activity-linux-x11', 'build', 'smoke-os'])
   assert.deepEqual(doc.jobs['activity-linux-x11'], activity758.linuxJob, '#758 owned X11 job is exact, including dependencies and failure semantics')
