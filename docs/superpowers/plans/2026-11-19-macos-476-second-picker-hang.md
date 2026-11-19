@@ -180,7 +180,9 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 ## 当前唯一下一步
 
-`startHostTick` 仅在定时器从 nil 变成已调度之后发一次 `D476_WS_HOST_TICK_ARMED`。已有定时器则不发。这一笔早于 callback，不是 tick，也不是停因。`hostTickArmed` 只为 0 或 1，写在 phase 的 `hostTickStop` 旁边，不进 `required` 或 `receiptMask`。vm scope 补上 `hostTickArmed`。0 不解释成没创建，也不解释成查询卡住。
+`startHostTick` 仅在定时器从 nil 变成已调度之后发一次 `D476_WS_HOST_TICK_ARMED`。已有定时器则不发。这一笔早于 callback，不是 tick，也不是停因。`hostTickArmed` 只为 0 或 1，写在 phase 的 `hostTickStop` 旁边，不进 `required` 或 `receiptMask`。vm scope 补上 `hostTickArmed`。本轮只加这一笔，不再加别的探针。
+
+下一趟只按组合判读。`hostTickArmed` 为 1、`hostTicks` 为 0、`hostTickStop` 为 null，只说明 `scheduledTimer` 已返回且两参数 `emit` 送达了 `D476_WS_HOST_TICK_ARMED`。不说明 callback 没跑、runloop 停了或 `orderOut`。`hostTickArmed` 为 0 且 `receiptMask` 已含 `D476_WS_PICKER_CANCELLED`，说明 `startHostTick` 在那次 emit 之后被调用，但 ARMED 没有送达。可能是已有非 nil 定时器提前返回，也可能是 `scheduledTimer` 或 `emit` 没有完成送达。不能说没创建。两种都不是 `cancelReturned == 1`，也都不解释 stage 15 detail 1。
 
 新句子只扩现有 `host-tick-inverse.cjs`：声明加 `hostTickArmed=0`，STOP 分支旁加一句 ARMED 分支，phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop,hostTickArmed`。少一句先 `HOST_TICK_ONCE` 失败。入口仍是 join `120cc92d…`、788 两处 `5f225d62…`、705 第 58 行 native `0b78022a…`、705/747 abort `6fadbe60…`/`7c5d8b54…`、782 `33b23399…`/`f4b0ae09…`、826 与 initial-input `9e80020d…`、808 `04b5b5ed…`、`previousCensus705('native')` `2f2a3d08…`。旧 hash 不改不后移。
 

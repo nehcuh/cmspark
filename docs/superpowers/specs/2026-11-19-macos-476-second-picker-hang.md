@@ -230,6 +230,8 @@ CI run `44492046690`，macOS job `135449866902`，SHA `12f5876c6527fcdc045d6ea6a
 
 ## 15. 已执行的停因 ping（历史）
 
+以下是当时实现，非当前步骤。
+
 不增加 45000。不改 `DesktopHost.swift`。不把查询挪线程。不删 `cancelReturned == 1`、子进程退出码 0、计时 18–20、`xcodeClosed` 为 true、租约交还和后三例。窗口预等待和现有 tick 计数留着。
 
 同一次宿主定时器回调里，在 `invalidate` 之前最多发一次 `system.ping`。id 只是 `D476_WS_HOST_TICK_STOP`。`reason` 只允许 `not-current`、`settled`、`cap`。判定沿用当前 guard 从左到右的顺序：`hostTickCount` 已经到 40 就是 `cap`，这时即使同时 `not-current` 也先记 `cap`。否则没有 `workspaceSelection`，或 `pickerCurrent` 不为真，记 `not-current`；没有 `workspaceSelection` 不能记 `settled`。再否则 `settled` 才记 `settled`。`not-current` 先于 `settled`。`guard` 里的宿主对象消失时发不出去；中止时没有这笔记下，保持未知，不叫做 `absent`，也不叫做回调没有再进来。停因不是辅助功能查询卡住的原因，也不是取消成功。
@@ -262,7 +264,9 @@ CI run `44498584497`，macOS job `135472041422`，SHA `4b3ffbd1d9bea36b4b84d87eb
 
 在 `startHostTick` 里，只有 `hostTickTimer` 原先是 nil、并且 `Timer.scheduledTimer` 已经返回之后，用现有的两参数 `emit` 发一次 `system.ping`，id 只是 `D476_WS_HOST_TICK_ARMED`。定时器已经存在而提前返回时不发。这一笔在 `panel()` 的 runloop 上，晚于第二次 `D476_WS_PICKER_CANCELLED`，早于任何 timer callback。它不是 tick，也不是停因。
 
-`hostTickArmed` 只记 0 或 1，写在 phase 的 `hostTickStop` 旁边。不进 `required`，不改 `receiptMask`。执行当前 phase 块的 vm scope 再带 `hostTickArmed`。没收到保持 0，不把 0 解释成定时器没创建，也不解释成查询卡住或取消成功。
+`hostTickArmed` 只记 0 或 1，写在 phase 的 `hostTickStop` 旁边。不进 `required`，不改 `receiptMask`。执行当前 phase 块的 vm scope 再带 `hostTickArmed`。本轮只加这一笔，不再加别的探针。
+
+下一趟只按组合判读。`hostTickArmed` 为 1、`hostTicks` 为 0、`hostTickStop` 为 null，只说明 `scheduledTimer` 已经返回，并且两参数 `emit` 把 `D476_WS_HOST_TICK_ARMED` 送达了。这不说明 callback 没跑，不说明 runloop 停了，也不说明 `orderOut`。`hostTickArmed` 为 0，且 `receiptMask` 已经含有 `D476_WS_PICKER_CANCELLED`，说明 `startHostTick` 在那次 emit 之后被调用，但 `D476_WS_HOST_TICK_ARMED` 没有送达。可能是已有非 nil 定时器提前返回，也可能是 `scheduledTimer` 或 `emit` 没有完成送达。不能说定时器没创建。两种都不是 `cancelReturned == 1`，也都不解释 stage 15 detail 1。
 
 新句子只扩 `host-tick-inverse.cjs` 现有那一组，不另做一层还原。声明变成 `pickerObserved=0,hostTicks=0,hostTickLast=null,hostTickStop:string|null=null,hostTickArmed=0,pickerReturned=0`，还原成 `pickerObserved=0,pickerReturned=0`。tick 分支和 STOP 分支仍整句删掉。同一组再加一句 `D476_WS_HOST_TICK_ARMED` 分支，还原成空。phase 字段变成 `cancelCurrent,hostTicks,hostTickLast,hostTickStop,hostTickArmed`，还原成 `cancelCurrent`。少一句先 `HOST_TICK_ONCE` 失败，不套成功摘要。旧 hash 不改、不后移。入口仍是第 15 节那一份：join 的 `120cc92d…`、788 两处的 `5f225d62…`、705 第 58 行 native 的 `0b78022a…`、705/747 abort 的 `6fadbe60…` 和 `7c5d8b54…`、782 的 `33b23399…` 和 `f4b0ae09…`、826 与 initial-input 的 `9e80020d…`、808 的 `04b5b5ed…`、`previousCensus705('native')` 的 `2f2a3d08…`。
 
