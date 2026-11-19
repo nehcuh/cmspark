@@ -192,9 +192,9 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 ## 当前唯一下一步
 
-成功路径也读取现有 `cancelTiming788()`，写进现有 phase。只把 `try{if(primaryFailed)cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}` 改成 `try{cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}`。读取留在 `uiOwner?.cancel()`、phase 打印、`cleanup()` 和 `fs.rmSync` 之前。六份计时文件在场景根，不在结果包里。`cancel()` 和 `cleanup()` 都不删它们。null、空 `events`、`invalid:true` 都不是 18–20。失败路径仍读同一函数。`uiProgress` 仍只在失败时读。不新增 ping。
+成功路径也读取现有 `cancelTiming788()`，写进现有 phase。只把 `try{if(primaryFailed)cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}` 改成 `try{cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}`。读取留在 `uiOwner?.cancel()`、phase 打印、`cleanup()` 和 `fs.rmSync` 之前。六份计时文件在场景根，不在结果包里。`cancel()` 和 `cleanup()` 都不删它们。六份都缺时函数返回 `{schema:1,events:[],invalid:false}`，不是 null。空 `events`、`invalid:true` 和 null 都不是 18–20。失败路径仍读同一函数。`uiProgress` 仍只在失败时读。不新增 ping。
 
-新句先还原成带 `if(primaryFailed)` 的旧句。少一句先 `SUCCESS_TIMING_ONCE` 失败，不套 `9e80020d`。还原放在第一道旧 hash 之前：788 十文件与 801、705 第 58 行 native、705 与 747 的 abort、782、826 与 initial-input、808、`previousInputReady705('native')`。进度守恒切片 `aa950d5b…` 也要在算摘要前还原这一句。旧 hash 不改不后移。
+新句先还原成带 `if(primaryFailed)` 的旧句。少一句先 `SUCCESS_TIMING_ONCE` 失败，不套 `9e80020d`。还原放在 `restoreHostTick` 之前，因而在第一道旧 hash `9e80020d` 之前：JOIN 的 native 文件（去掉 JOIN 后仍是 `120cc92d…`）、788 十文件与 801、705 第 58 行 native、705 第 365 行 native peel（随后进 `restoreCloseObservation476`，不经过第 58 行）、705 与 747 的 abort、782、826 与 initial-input、808、`previousInputReady705('native')`。进度守恒切片 `aa950d5b…` 也要在算摘要前还原这一句。旧 hash 不改不后移。
 
 TDD：success 变体先要求 `cancelTiming788` 在 `cancel()` 前调用一次，phase 带六条形状，并且 success 仍不调用 `uiProgress`。这条今天失败。然后再改那一句。新实现自己的 macOS 成功日志要有六条原文，才谈合并。发布仍暂停。
 
