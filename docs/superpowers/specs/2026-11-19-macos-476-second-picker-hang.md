@@ -98,7 +98,9 @@ let sheets=w.sheets.count
 
 `comboBoxes.count` 不是恰好一个就拒绝。若对组合框套用「下标 0 用 `try remaining()`，false 就拒绝」，没有组合框的文本路径会先占满剩余时限，或者直接被拒绝。实现不这样改。组合框分支改成两次超时都是 1 秒的 `waitForExistence`：下标 0 为 true 且下标 1 为 false 时仍用 `comboBoxes`，其余仍用 `textFields`，这两次返回本身不 `throw`。恰好一个的拒绝留在随后的 `inputs` 上：下标 0 的超时参数是 `try remaining()`，false 拒绝；下标 1 的超时参数是 1 秒，true 拒绝。新的输入投影要有一条「组合框不唯一且文本框恰好一个」并点到输入；文本框不恰好一个才在点击前拒绝，而且调用序列里已经走过文本框等待。第 786 行今天还要求取消发生后执行过 `hittable`。`inputs` 的 `try remaining()` 移到 `hittable` 之前之后，取消改为在 `hittable` 之前拒绝。
 
-第 799 行改当前源文的顺序，不要求组合框片段拒绝。第 390 行的 `current` 不改：新逆操作先把组合框分支还原成今天这句 `let comboCount=first.comboBoxes.count`，再进入现有替换。开头还原之后再改 `current`，精确片段就对不上。`prior` 和 `0b193e10…` 不动。
+第 797–801 行整段都是当前源文，起点 `uiStage=7`，终点 Choose 查询。第 798 行今天把 `waitForExistence(` 锁成恰好 1 次；新片段是 5 次：descendants 的 `timeout:try remaining()`，组合框两次 `timeout:1`，`inputs` 的 `timeout:try remaining()` 和 `timeout:1`。第 800 和 801 行锁住的 `comboCount==1 ?` 与 `guard inputCount==1 else` 只留在逆操作之后。第 786 行同时覆盖 `cancelOnWait` 和 `expireOnWait`，两条都改为候选等待返回后、`hittable` 之前拒绝。
+
+Swift 句子逆操作只在 `kind==='ui'` 执行。helper 没有这些句子，精确一次替换会失败。第 792 行 helper 哈希 `1f8e2f2129378ec2ccc4510e6a4ab29a4445fa71208223ef04c4114b2bf0885d` 保持；helper 只先把新的 `RESULT705_SOURCES` 摘要还原成今天的 `2eca9be7…`，再走既有的 `fb446e0d…` 替换。第 390 行 ui 的 `current` 不改。`desktop-native-observation-788.test.ts` 第 40 行不经过 `previousInputReady705`，所以同一套 ui 句子逆操作和 helper 摘要还原也要接在 `restoreObservation788` 后面，`fb446e0d…` 与 helper 的 `873b5ced…` 才保持。完整对照表在计划里。
 
 窗口 `count`、sheet `count`、Cancel `count` 在这个测试文件里没有单独的有序片段，只进整文件哈希。同一提交要给这三处补上和 Choose 一样的当前源文有序片段，以及「下标 1 为 true 仍继续则失败」的变体。不靠只更新哈希来保住它们的唯一性。
 

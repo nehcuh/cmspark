@@ -29,7 +29,17 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 
 ## 结构断言和变体怎么一起改
 
-`desktop-workspace-xctest-705.test.ts` 里，第 520 和 656 行读 Choose 的当前源文，改成：已有的下标 0 等待和 `guard chooseSeen else` 在前，下标 1 的 1 秒等待和 true 拒绝在 `isHittable` 与 `click()` 之前。第 522 行 stage 11 片段的 `waitForExistence(` 与 `try remaining()` 改成新源文的精确次数，不删计数。第 799 行读的是 `uiStage=7` 到 Choose 查询之前的当前源文，顺序改为：`descendants` 等待、组合框两次 1 秒等待构成的回退、然后 `inputs` 的 `try remaining()` 拒绝和 1 秒拒绝。这里不要求组合框片段出现 `throw`。
+`desktop-workspace-xctest-705.test.ts` 第 797–801 行的片段来自当前 Swift：起点 `uiStage=7`，终点 Choose 查询，不是逆操作结果。今天第 798 行要求这个片段里 `waitForExistence(` 恰好 1 次。新片段恰好 5 次，顺序固定：
+
+1. `inputCandidates.firstMatch.waitForExistence(timeout:try remaining())`
+2. 组合框下标 0：`waitForExistence(timeout:1)`
+3. 组合框下标 1：`waitForExistence(timeout:1)`
+4. `inputs` 下标 0：`waitForExistence(timeout:try remaining())`，false 拒绝
+5. `inputs` 下标 1：`waitForExistence(timeout:1)`，true 拒绝
+
+因此当前片段里 `waitForExistence(timeout:try remaining())` 恰好 2 次，`waitForExistence(timeout:1)` 恰好 3 次。两次字面量 1 秒先出现在组合框上，且这两句不含 `try remaining()`。第 800 和 801 行今天锁在当前片段上的 `comboCount==1 ? first.comboBoxes:first.textFields` 与 `guard inputCount==1 else` 改到逆操作之后的文本；当前片段不再要求这两句，也不要求组合框 `throw`。第 799 行只改顺序不够，第 798、800、801 行同一片段一起改。
+
+第 520 和 656 行读 Choose 的当前源文。第 519 行的片段止于 `uiStage=12`，所以新增的 `waitForExistence(timeout:1)` 必须写在 `guard chooseSeen else` 之后、`uiStage=12` 之前。这个片段里 `waitForExistence(` 恰好 2 次，`try remaining()` 恰好 1 次。第 655 行的片段延续到 `uiStage=14`，同一句拒绝仍在 `isHittable` 之前。第 522 行的计数改成这两个数，不删计数。`sheet()` 在 stage 7 之前，不计入这 5 次或这 2 次。
 
 第 688–705 行只覆盖 Choose。下标 0 返回 false 时，在下标 1 等待和 `click` 之前拒绝。下标 1 返回 true 时，在 `click` 之前拒绝。`count` 桩不再被调用。
 
@@ -39,13 +49,45 @@ GitHub: 现有 #476 桌面验收。没有新的用户可见行为。
 - 组合框 0 不存在，或 0 存在且 1 也存在，同时文本框恰好一个：仍点到输入，调用序列里要出现文本框等待。这是回退成功。
 - 选中的 `inputs` 下标 0 为 false，或下标 1 为 true：在 `click` 之前拒绝。组合框不唯一且文本框也不恰好一个时同样拒绝，但拒绝点在 `inputs`，调用序列里仍要有文本框等待。
 
-把组合框回退写成 `throw` 的变体，必须让「组合框不唯一且文本框恰好一个」这一条失败。第 786 行现在在 `cancelOnWait` 时期望已经执行过 `hittable`，因为下一个 `try remaining()` 在 stage 10，晚于 stage 9。`inputs` 的 `try remaining()` 会挪到 `hittable` 之前，这条期望改为：候选等待里取消后，在 `hittable` 和 `click` 之前拒绝。
+把组合框回退写成 `throw` 的变体，必须让「组合框不唯一且文本框恰好一个」这一条失败。第 776 行今天要求 `wait` 恰好 1 次且早于 `comboCount`；成功路径改为 5 次等待，顺序是 descendants、组合框两下标、`inputs` 两下标，然后才 `hittable` 和点击。第 732–734 行要求当前投影正文里恰好一次 `guard inputCount==1`、`min(comboCount,2)` 和 `min(inputCount,2)`，这些替换改到新的 `inputs` 拒绝句，不再要求组合框 `count`。
+
+第 786 行的条件是 `cancelOnWait` 或 `expireOnWait`，两边今天都期望 `wait` 恰好 1 次并且已经执行 `hittable`。下一个 `try remaining()` 今天在 stage 10，晚于 stage 9。`inputs` 的 `timeout:try remaining()` 会先求值 `remaining()`，发生在两次组合框字面量等待之后、`hittable` 之前。取消和过期都改为：候选等待返回后，组合框两次字面量等待仍执行，然后在 `hittable` 和 `click` 之前拒绝。`wait` 恰好 3 次。不能只改取消。
 
 第 445 和 639 行读的是逆操作之后的文本。新逆操作先还原今天的 `count` 句子，这两处继续要求 `let chooseCount=choose.count` 和 `guard chooseCount==1 else`，还原片段里的 `waitForExistence(` 仍恰好 1 次。不把这两处改去找新的 `boundBy`。
 
 第 683 行的 `guard chooseCount==1 else` 变体改成破坏 Choose 的「下标 1 为 true 就拒绝」。新逆操作找不到这句精确片段时抛 `ERR_ASSERTION`。第 807 行只改 `inputs` 的拒绝句，不改组合框回退句。窗口、sheet、Cancel 补当前源文有序片段和同样的拒绝变体。组合框不补「下标 1 为 true 却没拒绝就失败」这种变体。
 
-新逆操作写在 `previousInputReady705` 开头，把窗口、sheet、Choose、Cancel、`inputs` 和组合框回退全部还原成今天的 `count` 文本，其中包括 `let comboCount=first.comboBoxes.count` 和 `comboCount==1 ? first.comboBoxes:first.textFields`。还原之后，第 390 行现有的 `current`、`prior` 和哈希 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572` 保持不动。若开头已经还原，再把第 390 行的 `current` 改成新分支，`split(current).length` 就不再是 2。其后的哈希保持 `1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68`、`6efad44df4a39d7b4aa33a2509dd01b17e97f8ed333252169c058aa5815f064e`、`182d2773a37134d289fec9c80a27107b5359c51d2cab1545bdfd62c3f6a2cee4`、`ab75e477a7f678cbc86191ca3997ea9d55fa8e6ba9cca6a408536af82afa7a79`。`RESULT705_SOURCES` 改成新 Swift 的哈希。
+Swift 句子的逆操作只在 `kind==='ui'` 时做精确一次替换，写在 `previousInputReady705` 里现有 `ui`/`helper` 分支之前，并放在 `restoreObservation788` 之后。它把窗口、sheet、Choose、Cancel、`inputs` 和组合框回退还原成今天的 `count` 文本，其中包括 `let comboCount=first.comboBoxes.count` 和 `comboCount==1 ? first.comboBoxes:first.textFields`。还原之后，第 390 行 ui 的 `current`、`prior` 和哈希 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572` 保持不动。helper 源文没有这些 Swift 句子；对 helper 做同一组精确一次替换会失败。
+
+helper 分支保持今天的替换：`fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076` 换成 `0b193e101ccee97e618500e56208e6e1740bad28558a8c2439252efca7b9b572`，整文件哈希保持 `1f8e2f2129378ec2ccc4510e6a4ab29a4445fa71208223ef04c4114b2bf0885d`。`RESULT705_SOURCES` 里现在生效的 Swift 摘要是 `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`，只出现一次。实现把这一格改成新文件摘要之后，helper 逆操作先把新摘要精确一次还原成 `2eca9be7…`，再走上面的既有替换。`desktop-native-observation-788.test.ts` 第 40–41 行只调用 `restoreObservation788`，不调用 `previousInputReady705`；Swift 文件在观察层还原后还要走同一套 `kind==='ui'` 句子逆操作，期望摘要仍是 `fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076`。helper 在观察层还原后先还原 `2eca9be7…`，期望摘要仍是 `873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b`。
+
+其后 ui 哈希保持 `1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68`、`6efad44df4a39d7b4aa33a2509dd01b17e97f8ed333252169c058aa5815f064e`、`182d2773a37134d289fec9c80a27107b5359c51d2cab1545bdfd62c3f6a2cee4`、`ab75e477a7f678cbc86191ca3997ea9d55fa8e6ba9cca6a408536af82afa7a79`。第 642 行改为 helper 含有新 Swift 文件的摘要。
+
+## 约束映射
+
+| 位置 | 读的文本 | 今天 | 实现后 |
+| --- | --- | --- | --- |
+| 84、100 | 当前 Swift | 窗口 nonce、`remaining()`、stage 10 的 click 后 `try remaining()` | 保持这三句，不挪 stage 10 |
+| 353 | 当前 Swift | `uiRefusal` 只写一次 | 不改 |
+| 441–448 | `previousChoose705` 之后 | `choose.count`，`waitForExistence(` 1 次 | 保持；句子逆操作先还原 |
+| 474–490 | 逆操作后的整文件 | `ab75e477…` 等 | 保持 |
+| 513–522 | 当前 stage 11–12 | `choose.count`，两种调用都 1 次 | `waitForExistence(` 2 次，`try remaining()` 1 次，新增 `timeout:1` |
+| 575、641 | 当前或还原后的普查函数 | `.count` 3 次，函数内无 `waitForExistence` | 保持，新等待不写进普查 |
+| 639–640 | `previousCriticalCensus705('ui')` | stage 11 的 `choose.count`，等待 1 次 | 保持 |
+| 646–660 | 当前 stage 11–14 | `guard chooseCount==1` 在 hittable 之前；逆操作哈希 `182d2773…` | 当前片段改成下标 1 的 true 拒绝仍在 hittable 之前；哈希保持 |
+| 676–705 | 当前 Choose 投影 | `count` 为 0 或 2 时点击前拒绝 | 下标 0 false 在下标 1 之前拒绝；下标 1 true 在点击前拒绝 |
+| 683、684 | 当前 ui 变体；helper 多一个换行 | ui 变体破坏旧 `chooseCount==1`；helper 哈希路径失败 | ui 变体改破坏 Choose 的下标 1 拒绝；helper 仍只靠多一个换行失败 |
+| 711–734 | 当前输入投影正文 | 恰好一次 `inputCount==1` 与两处 `min(…Count,2)` | 改写 `inputs` 拒绝句；不要求组合框 `count` |
+| 769–780 | 当前与 `previousInputReady705('ui')` | 成功路径 `wait` 1 次且早于 `comboCount` | 成功路径 `wait` 5 次；旧路径仍是还原后的 `count` |
+| 783–786 | 当前输入投影 | `cancelOnWait` 与 `expireOnWait` 都要求 `hittable`，`wait` 1 次 | 两条都在候选等待和两次组合框等待之后、`hittable`/`click` 之前拒绝，`wait` 3 次 |
+| 791–795 | `previousInputReady705` 的 ui 与 helper | ui `0b193e10…`；helper `1f8e2f21…` | 两个哈希都保持；Swift 句子只还原 ui |
+| 797–801 | 当前 stage 7 到 Choose | `waitForExistence(` 1 次；当前片段含 `comboCount==1` 与 `inputCount==1` | 等待 5 次；字面量 `timeout:1` 3 次；`timeout:try remaining()` 2 次；那两句旧 `count` 只出现在逆操作后 |
+| 803 | 当前 stage 7 片段 | 禁止 `.count >=`、双击、定时器 | 保持 |
+| 807 | 当前 ui | 旧 `inputCount==1` 恰好一次，变体使逆操作失败 | 改成 `inputs` 下标 1 的拒绝句恰好一次；不动组合框回退 |
+| 390 helper 分支 | helper 源文 | `fb446e0d…` 换成 `0b193e10…` | 保持；先把新的 `RESULT705_SOURCES` 摘要还原成 `2eca9be7…` |
+| 788 测试 40–43 行 | `restoreObservation788` 的直接结果 | Swift `fb446e0d…`；helper `873b5ced…` | 先补上面对应逆操作，这两个期望摘要保持 |
+| 642 | helper 含当前 Swift 摘要 | 含 `2eca9be7…` | 含新摘要 |
+| 新增 | `sheet()` 与 Cancel 的当前源文 | 今天没有有序片段 | 窗口与 Cancel：下标 0 用 `try remaining()`，下标 1 用 `timeout:1`；sheet 只把 `count` 换成下标 1 的 `timeout:1`。true 拒绝。不进入 stage 7 的 5 次计数 |
 
 不改 `DesktopHost.swift`，不改 45000，不给用例加 `skip`，不删唯一性拒绝。
 
