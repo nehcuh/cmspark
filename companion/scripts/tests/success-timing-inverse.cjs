@@ -14,6 +14,10 @@ function restoreSuccessTiming476(raw) {
     return raw
   }
   assert.equal(seen, 1, 'SUCCESS_TIMING_ONCE')
+  if (value.includes('const uiDeadline=')) {
+    assert.equal(value.split('Date.now()+44000').length, 2, 'DEADLINE_MARGIN_ONCE')
+    value = value.replace('Date.now()+44000', 'Date.now()+45000')
+  }
   value = value.replace(current, prior)
   return value.replace(/\n/g, eol)
 }
