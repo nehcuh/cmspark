@@ -358,7 +358,9 @@ CI run `44513461777`，macOS job `135523299113`，SHA `35526f9f5f31ea7686ba1b73b
 
 这和 `b3ea545c` 的六条计时、取消返回、退出码 0 不是同一次。也和先前最后读回停在 stage 15 detail 1 的记录不是同一次。各次都保留。不重跑 `44513461777`。
 
-## 24. 当前唯一下一步
+## 24. 已执行的 sheet(15) 跳过
+
+以下是 `acfd55ecfe500472117c48a811e3b27d5790453c` 的实现，不是当前步骤。
 
 不再加诊断 ping。45000、`DesktopHost.swift` 和产品取消条件保持。真实 OS 点击保持。新 SHA 仍要自己拿到取消返回、宿主退出码 0、六条计时、xcode 与 observer 都关闭、租约交还、后三例通过，以及十项 CI。
 
@@ -380,6 +382,30 @@ CI run `44513461777`，macOS job `135523299113`，SHA `35526f9f5f31ea7686ba1b73b
 
 下一份 macOS 日志只属于新的 SHA。stage 17 detail 0 仍在分支前写入，再读到 17/0 就是这句保留的发布。读到 stage 18 或更后，只说明这次第二张 sheet 调用原来位于已发布进度之前，不是根因。空 `events` 仍不能证明 18–20 没有执行。不重跑 `44513461777`。发布仍暂停。
 
+## 25. acfd55ec 的两处失败
+
+CI run `44519261215`，SHA `acfd55ecfe500472117c48a811e3b27d5790453c`。失败的是 macOS job `135543346448` 和 windows-latest job `135543346278`。windows-native job `135543346400` 成功。其余八项成功。这两处不在同一个进程、同一套二进制或同一次消息循环里。
+
+macOS 选择框文件是 8 通过、0 失败、4 取消。四条 `not ok` 都是 `testTimeoutFailure`。选择框用例 45000ms 超时。最后读回是 `{stage:15,detail:1}`。`sheet(15)` 里这是 `let windowTimeout=try remaining();uiDetail=1;observeUIStage()` 之后、`windows.element(boundBy:0).waitForExistence(timeout:windowTimeout)` 之前。`remaining()` 已经返回，超时参数是距离 `uiDeadline` 的剩余秒数，并且必须大于 0、不超过 45。节点的 `timeout:45000` 和 `uiDeadline=Date.now()+45000` 是同一个起点。这次等待的合法结束点和节点中止是同一时刻。因此 15/1 不能证明这次 `waitForExistence` 忽略了它的超时，也不能证明它已经返回。被跳过的第二张 sheet 等待在阶段 16 和 stage 17 detail 0 之后。这次没有读到那两处。空 `cancelTiming788.events` 仍不能证明 18–20 没有执行。`cancelReturned` 是 0，宿主没有退出。xcode 和 observer 都没关。`uiReceiptMask` 是 7。`hostTickArmed` 是 1，`hostTicks` 是 2，`hostTickStop` 是 null。租约 `RELEASE_REFUSED`，`over_budget`。后三例是 `ACQUIRE_REFUSED` 后的超时。
+
+`b3ea545c` 在第二张 sheet 拒绝还在时，有取消返回、六条计时、退出码 0 和双收尾。那次成功不能借给 `acfd55ec`。它说明拿掉 `sheet(15)` 的第二张 sheet 拒绝不是已知成功的条件。`acfd55ec` 又没有执行到这个跳过。所以这次跳过既不能支持、也不能反驳「第二张 sheet 等待挡住了取消」这个假设。不在第一扇窗口的 `waitForExistence` 上再叠一个跳过。
+
+windows-latest 的 MCP 表单是 not ok 24，20000ms 超时。当时 `authenticated` 与 `windowRequested` 为 true，`postAuthRequestMask` 为 0，阶段只有 `ready_accepted` 和 `env_callback`。bootstrap 行是 `[5,1,0,0,0,2]`、`[6,1,0,8,0,2]`、`[6,1,2,8,0,1]`、`[7,1,0,8,0,2]`、`[7,1,1,11,0,2]`、`[5,1,1,11,0,2]`。点 5 是 `CreateCoreWebView2EnvironmentWithOptions`，点 6 是环境回调，点 7 是 `CreateCoreWebView2Controller`。点 7 的 edge 1、code 0 表示这次调用已经返回 0。没有点 8，阶段里也没有 `controller_callback`。`snapshot825` 在测试截止前 1500ms 的窗口里采到，`sampleOffsetMs` 是 2，`flags` 是 751。751 是 `EnvApi|EnvLeave|ControllerApi|WrapperLeave|OuterDispatch|Armed|EnvEntry|SendReturned`。其中没有 `ControllerEntry`（16）和 `ControllerLeave`（256）。`envHr` 与 `controllerHr` 都是 0，`callbackPresent` 是 0。`sendKind` 2、`sendSite` 5、`sendEdge` 1、`sendStage` 6 对得上最后一条点 5 的返回。`OuterDispatch` 只说明 `CreateCoreWebView2Controller` 返回之后，外层 `DispatchMessageW` 至少返回过一次。它不说明之后的 20 秒都在泵消息。超时当时的 bootstrap 行仍然没有点 8。后面的 `DESKTOP_480_NATIVE` 属于下一条 Windows 绑定测试，那条有 `controller_callback` 并且退出码 0。那不是这条 MCP 进程补上的回调。文件是 25 通过、0 失败、1 取消、12 跳过。`35526f9f` 的 ok 24 不能借给这个 SHA。同一条隐藏窗口路径曾经在 20 秒内进入过回调，所以这次日志还不够把 `ShowWindow` 写成产品改动。`DesktopHost.cpp` 这一步不改。20000 不加大。
+
+## 26. 当前唯一下一步
+
+回退 `acfd55ec` 的 `sheet(15)` 跳过。第二张 sheet 的等待和 `guard !sheetExtra` 对 `sheet(15)` 与 `sheet(3)` 都恢复。18–20 的取消点击保持。45000、`DesktopHost.swift`、`DesktopHost.cpp` 和 20000 都不改。
+
+`WorkspacePickerUITests.swift` 恢复为：
+
+`uiStage=stage+2;uiDetail=0;observeUIStage();let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused};return w.sheets.firstMatch`
+
+`picker-wait-inverse.cjs` 第二对当前句恢复成这一整句，还原句仍是 `sheets.count` 那句。`NEW_DIGEST` 与 `RESULT705_SOURCES` 里 `WorkspacePickerUITests.swift` 的引号摘要恢复为 `b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00`。这是跳过前那份文件的摘要，两处同一步写回。helper 成功输出仍是 `56cb1183…`，ui 成功输出仍是 `2eca9be7…`。注释里的 `fb446e0d…` 保持。
+
+`desktop-workspace-query-101.test.ts` 去掉 `stage == 15` 的跳过断言和 `if stage != 15` 的投影改写。`sheetQuery` 的 stage 3 调用序保持。先红后绿：在当前带 `if` 的源文上，`sheet(15)` 遇到第二张 sheet 仍应拒绝；这条现在不拒绝，所以先失败。源文和两处摘要恢复后，这条连同原有的 stage 3 用例通过。
+
+这一步不给 Windows 增加新的探针，也不把 MCP 的 20 秒失败记成下一轮可能会过。下一份 SHA 的 windows-latest 仍要自己出现点 8 或 `controller_callback`，macOS 仍要自己出现取消返回 1、退出码 0、六条计时、双收尾、租约交还和后三例。十项 CI 都看这个新 SHA。读到 stage 18 或更后，只说明当时的等待位于已发布进度之前。空 `events` 仍不能证明 18–20 没有执行。不重跑 `44519261215`。发布仍暂停。
+
 ## 7. 这一节点不做的事
 
-第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。当前步骤是第 24 节。规划门通过之后，同一步只改三处：`WorkspacePickerUITests.swift` 里第 24 节那一整句；`picker-wait-inverse.cjs` 第二对当前句和 `NEW_DIGEST`；`workspace-xctest-owned-705.ts` 的 `RESULT705_SOURCES` 里 `WorkspacePickerUITests.swift` 引号中的 `b2884ab5…`。这三处用同一个新文件摘要。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
+第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。第 24 节的跳过已经在 `acfd55ec` 落地。当前步骤是第 26 节：把那次跳过退回跳过前的句子和 `b2884ab5…` 摘要，并去掉 query-101 里只为跳过增加的断言。不改 `DesktopHost.swift`，也不改 `DesktopHost.cpp`。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。

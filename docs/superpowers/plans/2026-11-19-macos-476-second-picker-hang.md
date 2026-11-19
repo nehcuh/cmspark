@@ -206,23 +206,27 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 run `44513461777` job `135523299113`。文件汇总 8 通过、0 失败、4 取消。四条 `not ok` 都是 `testTimeoutFailure`。最后读回是 stage 17 detail 0，紧挨 `sheet(15)` 里第二张 sheet 的 `waitForExistence(timeout:1)` 之前。detail 2/3 没有读回。空 `events` 不能证明 18–20 没有执行。`uiReceiptMask` 是 23。xcode 和 observer 都没关。租约 `RELEASE_REFUSED` 且 `over_budget`。后三例是 `ACQUIRE_REFUSED` 后的超时，不是各自的功能失败。`hostTickArmed` 1 和 `hostTicks` 6 不说明 runloop 或 `orderOut`。同 SHA 的 Windows `EBUSY` 测试是 ok 2，MCP 表单是 ok 24，不说明历史 MCP 20 秒已经修好。其余九项成功。不重跑这次。
 
+## 已执行的 sheet(15) 跳过
+
+`acfd55ec` 已经让 `sheet(15)` 跳过第二张 sheet 的等待和拒绝。这一段不再执行。
+
+## acfd55ec 的两处失败
+
+run `44519261215`。macOS job `135543346448` 最后读回是 stage 15 detail 1，在 `sheet(15)` 第一扇窗口的 `waitForExistence(timeout:windowTimeout)` 之前。`windowTimeout` 来自已经返回的 `remaining()`。节点 45000 和 `uiDeadline=Date.now()+45000` 是同一个起点，所以这次读回不能支持或反驳第二张 sheet 等待。`b3ea545c` 在第二张 sheet 拒绝还在时通过，那个通过不能借过来。跳过没有被这次日志执行到。不在窗口等待上再跳过。
+
+windows-latest job `135543346278` 的 MCP 表单 not ok 24，20000ms。点 7 已返回且 code 0，没有点 8，也没有 `controller_callback`。`flags` 751 含 `ControllerApi`、`OuterDispatch`、`Armed`，不含 `ControllerEntry`。`callbackPresent` 是 0。`OuterDispatch` 只说明外层 `DispatchMessageW` 至少返回过一次。同 job 后面的 `DESKTOP_480_NATIVE` 有 `controller_callback`，那是下一条进程。windows-native 这次成功。`35526f9f` 的 ok 24 不能借用。同一隐藏窗口路径曾经进入过回调，所以这一步不改 `DesktopHost.cpp`，也不加 20000。
+
 ## 当前唯一下一步
 
-阶段 16 的第一张检查保持。`uiStage=stage+2;uiDetail=0;observeUIStage()` 保持，这就是 `sheet(15)` 的 stage 17 detail 0。只在 `stage == 15` 时跳过这句之后的第二张 sheet 等待和多一张拒绝。`sheet(3)` 仍拒绝多张。随后仍返回 `firstMatch`，现有 18–20 取消点击保持。45000、`DesktopHost.swift`、真实 OS 点击保持。新 SHA 自己要有取消返回、退出码 0、六条计时、xcode 与 observer 都关闭、租约交还、后三例通过，以及十项 CI。
+回退 `sheet(15)` 的跳过。Swift 整句恢复为：
 
-Swift 整句：
+`uiStage=stage+2;uiDetail=0;observeUIStage();let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused};return w.sheets.firstMatch`
 
-`uiStage=stage+2;uiDetail=0;observeUIStage();if stage != 15 {let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused}};return w.sheets.firstMatch`
+第二对当前句恢复成这一整句。还原句仍是 `sheets.count` 句。`NEW_DIGEST` 与 `RESULT705_SOURCES` 的引号摘要同一步恢复为 `b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00`。ui 成功输出仍是 `2eca9be7…`，helper 成功输出仍是 `56cb1183…`。`fb446e0d…` 保持。query-101 去掉 stage 15 跳过断言和 `if` 投影。stage 3 调用序保持。
 
-第二对当前句就是这一整句。还原句仍是：
+先红后绿：当前源文让 `sheet(15)` 在第二张 sheet 存在时不拒绝，断言它拒绝会先失败。恢复源文和两处摘要后通过。45000、20000、`DesktopHost.swift`、`DesktopHost.cpp` 不改。18–20 取消点击不改。
 
-`uiStage=stage+2;uiDetail=0;observeUIStage();let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;observeUIStage();guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.firstMatch`
-
-少掉整句先 `PICKER_WAIT_UI_ONCE` 失败，不落入 `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`。成功 ui 输出仍是它。
-
-`NEW_DIGEST` 和 `RESULT705_SOURCES` 里 `WorkspacePickerUITests.swift` 引号中的 `b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00` 同一步换成新文件摘要。helper 把这一处精确一次换成 `2eca9be7…`，成功输出仍是 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`。注释中的 `fb446e0d…` 保持。`2eca9be7…`、`56cb1183…` 和更早 hash 不改不后移。query-101 的 `stage` 仍是 3，调用序保持。
-
-下一份日志只看新 SHA。再读到 17/0 是保留的那句发布。读到 18 或更后，只说明这次调用原来位于已发布进度之前，不是根因。空 `events` 仍不能证明 18–20 没执行。不重跑旧 run。发布仍暂停。
+下一份 SHA 自己要有 macOS 取消返回 1、退出码 0、六条计时、双收尾、租约交还、后三例，以及 windows-latest 自己的点 8 或 `controller_callback`，再加十项 CI。回退不把 Windows 的回调补上。不重跑 `44519261215`。发布仍暂停。
 
 ## 安装包
 
