@@ -286,9 +286,33 @@ CI run `44504061497`，macOS job `135490928834`，SHA `ebc7cc30b2c0950921cb3bb9d
 
 这和 `4b3ffbd1` 的 `hostTicks` 0、`hostTickStop` null、取消未返回、宿主未退出不是同一次。也不覆盖 `12f5876c` 的 `hostTicks` 2，或 `7c5209b0` 的取消已返回但 `xcodeClosed` 仍为 false。那些失败都保留。
 
-## 19. 当前不再加探针
+## 19. 已停的探针
 
-不增加 45000。不改 `DesktopHost.swift`。不再加下一笔诊断 ping。一次通过不抹掉前面的失败，也还没有一份由这些日志支持的产品修复。发布仍暂停。
+不增加 45000。不改 `DesktopHost.swift`。不再加下一笔诊断 ping。一次通过不抹掉前面的失败，也还没有一份由这些日志支持的产品修复。发布仍暂停。`ebc7cc30` 的成功日志保留为那个 SHA 的事实。它的 `cancelTiming788` 是 null，不能当作 18–20 六条计时，后续实现的 CI 不得冒用。
+
+## 20. 当前唯一下一步
+
+成功路径也把现有 `cancelTiming788()` 读进现有的 `D476_WORKSPACE_NATIVE_PHASE`。不新增 ping。不改 45000。不改 `DesktopHost.swift`。不改 `uiProgress` 的失败门。不把 null、空 `events` 或 `invalid:true` 当成 18–20。
+
+文件生命周期已经对过源码。六份 `cancel-18-enter.json` 到 `cancel-20-return.json` 由 XCTest 的 `writeCancelTiming788` 写在场景目录根上，不在 `Result.xcresult` 里。`UI705_FILES` 允许 `cancelTiming788()` 读它们。缺文件就跳过，不补造成功。`finally` 里这次读取位于 `uiOwner?.cancel()`、`t.diagnostic`、`child?.terminate()`、`cleanup()` 和 `fs.rmSync(dir)` 之前。`cancel()` 只写 `cancel.json` 并给 xcode 发 SIGTERM，不删除这六份文件。`cleanup()` 不删除场景目录。目录删除在 `cleanup()` 之后。成功时 `uiDone` 要等 xcode 与 observer 都已退出才返回，所以进入 `finally` 时写入已经结束，文件还在。`ebc7cc30` 的 phase 能打出来，null 是因为 `if(primaryFailed)` 跳过了读取，不是文件已经被清掉。读取必须留在这个位置，不能挪到 `cleanup()` 或 `rmSync` 之后。
+
+只改这一句：`try{if(primaryFailed)cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}` 改成 `try{cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}`。失败路径仍会读到同一函数。phase 字段名不新增。抛错时保持 null，null 不是六条。
+
+六条的形状是 `events` 长度为 6，stage 依次 18、18、19、19、20、20，`returned` 依次 false、true、false、true、false、true。合并门要看新实现自己的 macOS 成功日志里这六条原文。不重跑 `ebc7cc30`。
+
+旧 hash 不改。新句子先精确还原成带 `if(primaryFailed)` 的旧句，少一句先在 `SUCCESS_TIMING_ONCE` 失败，不套 `9e80020d` 或其他成功摘要。这道还原要放在每个整源入口的第一道旧 hash 之前。第一道旧 hash是 `restoreInitialOwnedInput826` 的 `9e80020deed6f46ede58481ecbd2e631c796b0cc653995ad1f6bdbfa9d2cbabe`，它在 `restoreObservation826('native')` 和 `restoreCloseObservation476('native')` 里面。入口是：
+
+- `desktop-native-observation-788.test.ts` 的十文件循环和 801 测试：在 `restoreHostTick` 之前还原。后面的 `5f225d62…` 不改。
+- `desktop-workspace-xctest-705.test.ts` 第 58 行 native：在 `restoreHostTick` 之前还原。`0b78022a…` 不改。第 57 行仍是 helper。
+- 705 的 `workspaceAbortPhaseInverse705` 和 747 的同名函数：在各自的 `restoreHostTick` 之前还原。`6fadbe60…`、`7c5d8b54…` 不改。
+- `desktop-archive-observation-782.test.ts`：在 `restoreHostTick` 之前还原。`33b23399…`、`f4b0ae09…` 不改。
+- `desktop-close-observation-826.test.ts` 的 native 与 `desktop-owned-initial-input-826.test.ts`：在 `restoreHostTick` 之前还原。`9e80020d…`、`08dcaea7…`、`46d85252…` 不改。
+- `desktop-local-native-476.test.mjs` 的 `hostObservationSource808`：在 `restoreHostTick` 之前还原。`04b5b5ed…` 不改。
+- `previousInputReady705('native')`，因而 `previousCensus705('native')`：在 native 的 `restoreCloseObservation476` 之前还原。`2f2a3d08…` 不改。
+
+另外，705 里进度守恒那一刀从 `surfaceLease.retain()` 切到函数结束，摘要是 `aa950d5bf4a8cbb67fce423534261f026acb99c7e7057b2f8988c69009e2c52e`。这刀包含计时读取句，但不走上面的整文件还原。同一句要在算这个摘要之前还原回去。这不是新的整文件入口。
+
+TDD 先红后绿。红灯是现有 `finally` 前缀的 success 变体：场景提供 `cancelTiming788`，成功时它在 `cancel()` 之前被调用一次，phase 带上六条形状；`uiProgress` 在 success 仍不调用。今天 success 不调用计时读取，所以这条断言失败。少掉新句子时 `SUCCESS_TIMING_ONCE` 失败，错误里不出现 `9e80020d`。绿灯只做上面这一句和这些还原。
 
 ## 7. 这一节点不做的事
 

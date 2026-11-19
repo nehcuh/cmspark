@@ -186,9 +186,17 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 `ebc7cc30` 的 run `44504061497` job `135490928834` 里，选择框用例 40028ms 通过。`cancelReturned` 是 1，`childExitCode` 是 0，`xcodeClosed` 为 true 且 `xcodeCode` 为 0。`hostTickArmed` 是 1，`hostTicks` 是 12，`hostTickStop` 是 null。同一文件 12 项都通过，随后三例没有 `ACQUIRE_REFUSED`。`hostTickStop` 为 null 是因为结束前没有收到停因；12 次 tick 说明 callback 后来跑过。这不解释 `4b3ffbd1`、`12f5876c` 或 `7c5209b0`。
 
-## 当前不再加探针
+## 已停的探针
 
-不增加 45000，不改 `DesktopHost.swift`，不再加诊断 ping。一次通过不作为产品修复。发布仍暂停。
+不增加 45000，不改 `DesktopHost.swift`，不再加诊断 ping。`ebc7cc30` 的成功是那个 SHA 的事实，它的 `cancelTiming788` 是 null，不能当作六条计时，也不重跑那个 SHA。
+
+## 当前唯一下一步
+
+成功路径也读取现有 `cancelTiming788()`，写进现有 phase。只把 `try{if(primaryFailed)cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}` 改成 `try{cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}`。读取留在 `uiOwner?.cancel()`、phase 打印、`cleanup()` 和 `fs.rmSync` 之前。六份计时文件在场景根，不在结果包里。`cancel()` 和 `cleanup()` 都不删它们。null、空 `events`、`invalid:true` 都不是 18–20。失败路径仍读同一函数。`uiProgress` 仍只在失败时读。不新增 ping。
+
+新句先还原成带 `if(primaryFailed)` 的旧句。少一句先 `SUCCESS_TIMING_ONCE` 失败，不套 `9e80020d`。还原放在第一道旧 hash 之前：788 十文件与 801、705 第 58 行 native、705 与 747 的 abort、782、826 与 initial-input、808、`previousInputReady705('native')`。进度守恒切片 `aa950d5b…` 也要在算摘要前还原这一句。旧 hash 不改不后移。
+
+TDD：success 变体先要求 `cancelTiming788` 在 `cancel()` 前调用一次，phase 带六条形状，并且 success 仍不调用 `uiProgress`。这条今天失败。然后再改那一句。新实现自己的 macOS 成功日志要有六条原文，才谈合并。发布仍暂停。
 
 ## 安装包
 
