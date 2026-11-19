@@ -208,11 +208,21 @@ run `44513461777` job `135523299113`。文件汇总 8 通过、0 失败、4 取�
 
 ## 当前唯一下一步
 
-只在 `sheet(15)` 不调用第二张 sheet 的 `waitForExistence(timeout:1)`。`sheet(3)` 仍拒绝多一张。阶段 16 的第一张检查保留，然后返回 `firstMatch`，现有 18–20 取消点击继续。产品门不改：`cancelReturned == 1`、退出码 0、`xcodeClosed`、六条计时、租约、后三例、45000。不改 `DesktopHost.swift`。不加 ping。
+阶段 16 的第一张检查保持。`uiStage=stage+2;uiDetail=0;observeUIStage()` 保持，这就是 `sheet(15)` 的 stage 17 detail 0。只在 `stage == 15` 时跳过这句之后的第二张 sheet 等待和多一张拒绝。`sheet(3)` 仍拒绝多张。随后仍返回 `firstMatch`，现有 18–20 取消点击保持。45000、`DesktopHost.swift`、真实 OS 点击保持。新 SHA 自己要有取消返回、退出码 0、六条计时、xcode 与 observer 都关闭、租约交还、后三例通过，以及十项 CI。
 
-`picker-wait-inverse.cjs` 第二对当前句改成带 `stage != 15` 的新句，还原句仍是 `sheets.count` 句。少一句先精确一次失败，不套 `2eca9be7…`。`NEW_DIGEST` 改为新文件摘要。旧 hash 不改不后移。
+Swift 整句：
 
-下一份日志只看新 SHA。读回仍是 stage 17 detail 0，说明跳过没有改变已发布进度。读回到 18 或更后，或六条计时加上取消返回、退出码 0、`xcodeClosed`、租约交还和后三例通过，才说明那次等待挡在这些已发布结果前面。两种都不是根因。空 `events` 仍不证明 18–20 没执行。发布仍暂停。
+`uiStage=stage+2;uiDetail=0;observeUIStage();if stage != 15 {let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused}};return w.sheets.firstMatch`
+
+第二对当前句就是这一整句。还原句仍是：
+
+`uiStage=stage+2;uiDetail=0;observeUIStage();let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;observeUIStage();guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.firstMatch`
+
+少掉整句先 `PICKER_WAIT_UI_ONCE` 失败，不落入 `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`。成功 ui 输出仍是它。
+
+`NEW_DIGEST` 和 `RESULT705_SOURCES` 里 `WorkspacePickerUITests.swift` 引号中的 `b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00` 同一步换成新文件摘要。helper 把这一处精确一次换成 `2eca9be7…`，成功输出仍是 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`。注释中的 `fb446e0d…` 保持。`2eca9be7…`、`56cb1183…` 和更早 hash 不改不后移。query-101 的 `stage` 仍是 3，调用序保持。
+
+下一份日志只看新 SHA。再读到 17/0 是保留的那句发布。读到 18 或更后，只说明这次调用原来位于已发布进度之前，不是根因。空 `events` 仍不能证明 18–20 没执行。不重跑旧 run。发布仍暂停。
 
 ## 安装包
 

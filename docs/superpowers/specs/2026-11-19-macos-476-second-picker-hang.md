@@ -360,14 +360,26 @@ CI run `44513461777`，macOS job `135523299113`，SHA `35526f9f5f31ea7686ba1b73b
 
 ## 24. 当前唯一下一步
 
-不再加诊断 ping。不放宽 45000。不改 `DesktopHost.swift`。不改产品取消条件。
+不再加诊断 ping。45000、`DesktopHost.swift` 和产品取消条件保持。真实 OS 点击保持。新 SHA 仍要自己拿到取消返回、宿主退出码 0、六条计时、xcode 与 observer 都关闭、租约交还、后三例通过，以及十项 CI。
 
-`sheet(3)` 仍执行第二张 sheet 的 `waitForExistence(timeout:1)` 和「多一张就拒绝」。只在 `sheet(15)` 里不调用这一句，阶段 16 的第一张 sheet 检查仍然保留，然后返回 `w.sheets.firstMatch`，让现有的 18–20 取消点击继续走。这少做的是第二次选择框上的「第二张 sheet」拒绝，不是取消结果、退出码、`xcodeClosed`、六条计时、租约或后三例。
+`sheet()` 里阶段 16 的第一张 sheet 检查保持。阶段 17 的 detail 0 写入也保持，它就是 `uiStage=stage+2;uiDetail=0;observeUIStage()`。这句留着，是因为 `sheet(15)` 时它发布的就是 stage 17 detail 0；删掉它之后，以后的 17/0 不再是这次跳过的对照点。只在 `stage == 15` 时跳过这句写入之后的第二张 sheet `waitForExistence(timeout:1)` 和 `guard !sheetExtra`。`stage != 15` 时这两句照旧，所以 `sheet(3)` 仍拒绝多一张。然后仍 `return w.sheets.firstMatch`。调用方现有的 18–20 取消点击保持。
 
-`picker-wait-inverse.cjs` 里第二张 sheet 那一对的当前句改成带 `stage != 15` 的新句，还原句仍是现在的 `sheets.count` 句。少一句先在精确一次处失败，不套 `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`。旧 hash 不改、不后移。`NEW_DIGEST` 改成新的 `WorkspacePickerUITests.swift` 摘要。还原成功后的 ui 摘要仍是 `2eca9be7…`。
+`WorkspacePickerUITests.swift` 里这一整句改成：
 
-下一份 macOS 日志只属于新的 SHA。最后读回仍是 stage 17 detail 0，说明这次跳过没有改变已发布的进度。读回到 stage 18 或更后，或者出现六条计时并且 `cancelReturned` 为 1、宿主退出码 0、`xcodeClosed` 为 true、租约交还、后三例通过，才说明第二次选择框上的那次等待曾经挡在这些已发布结果前面。两种都不称为根因，也不把空 `events` 说成 18–20 没有执行。
+`uiStage=stage+2;uiDetail=0;observeUIStage();if stage != 15 {let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused}};return w.sheets.firstMatch`
+
+`picker-wait-inverse.cjs` 第二对的当前句就是上面这一整句，还原句仍是：
+
+`uiStage=stage+2;uiDetail=0;observeUIStage();let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;observeUIStage();guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.firstMatch`
+
+当前句必须含 `if stage != 15 {` 和 `return` 前的 `}`。少掉这一整句时，`split` 长度不是 2，先在 `PICKER_WAIT_UI_ONCE` 失败，不进入 `2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8`。成功路径的 ui 输出仍是这个摘要。
+
+`NEW_DIGEST` 与 `workspace-xctest-owned-705.ts` 的 `RESULT705_SOURCES` 里 `WorkspacePickerUITests.swift` 那一格引号中的 `b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00` 同一步换成新的整文件摘要。helper 还原是把这一处精确一次换成 `2eca9be7…`，成功输出仍是 `56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5`。只改 `NEW_DIGEST` 时 helper 里仍是旧字面量，还原找不到新摘要，到不了 `56cb1183…`。注释里的 `fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076` 保持。`2eca9be7…`、`56cb1183…` 和更早的 hash 不改、不后移。
+
+`desktop-workspace-query-101.test.ts` 的 `sheetQuery` 作用域 `stage` 仍是 3，期望调用序保持。它继续覆盖 `sheet(3)` 的多一张拒绝，不覆盖 `stage == 15` 的跳过。
+
+下一份 macOS 日志只属于新的 SHA。stage 17 detail 0 仍在分支前写入，再读到 17/0 就是这句保留的发布。读到 stage 18 或更后，只说明这次第二张 sheet 调用原来位于已发布进度之前，不是根因。空 `events` 仍不能证明 18–20 没有执行。不重跑 `44513461777`。发布仍暂停。
 
 ## 7. 这一节点不做的事
 
-第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。当前步骤是第 24 节，规划门通过之后只改 `WorkspacePickerUITests.swift` 里 `sheet(15)` 的第二张 sheet 等待，以及 `picker-wait-inverse.cjs` 里对应的还原句。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
+第 7 节原先的「不改测试源码」是当时还没有修复提交时的边界。第 22 节的 `owned` 清理已经在 `35526f9f` 落地。当前步骤是第 24 节。规划门通过之后，同一步只改三处：`WorkspacePickerUITests.swift` 里第 24 节那一整句；`picker-wait-inverse.cjs` 第二对当前句和 `NEW_DIGEST`；`workspace-xctest-owned-705.ts` 的 `RESULT705_SOURCES` 里 `WorkspacePickerUITests.swift` 引号中的 `b2884ab5…`。这三处用同一个新文件摘要。除此之外仍不改产品源码，不打安装包，不覆盖 `~/.cmspark-agent`。没有候选安装包，也就没有架构、sha256、签名或公证可报。不开始侧栏 Task 2。发布仍暂停。
