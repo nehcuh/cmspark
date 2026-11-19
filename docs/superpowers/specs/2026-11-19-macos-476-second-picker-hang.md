@@ -238,7 +238,7 @@ CI run `44492046690`，macOS job `135449866902`，SHA `12f5876c6527fcdc045d6ea6a
 
 新句子只加进 `host-tick-inverse.cjs` 现有的那一组，不另做一层还原，也不新开入口。现有三句改成仍各恰好一次：
 
-- `pickerObserved=0,hostTicks=0,hostTickLast=null,hostTickStop=null,pickerReturned=0` 还原成 `pickerObserved=0,pickerReturned=0`。
+- `pickerObserved=0,hostTicks=0,hostTickLast=null,hostTickStop:string|null=null,pickerReturned=0` 还原成 `pickerObserved=0,pickerReturned=0`。
 - `D476_WS_HOST_TICK` 计数分支整句仍删掉。同一组再加一句 `D476_WS_HOST_TICK_STOP` 分支，还原成空。
 - `cancelCurrent,hostTicks,hostTickLast,hostTickStop` 还原成 `cancelCurrent`。
 

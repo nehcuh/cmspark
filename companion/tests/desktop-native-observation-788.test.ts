@@ -59,6 +59,16 @@ test('host tick inverse refuses a missing sentence before any success digest',()
  assert.doesNotThrow(()=>restoreHostTick(source))
  const missing=source.replace('hostTicks=0,','')
  assert.throws(()=>restoreHostTick(missing), (error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('HOST_TICK_ONCE')&&!String(error.message).includes('5f225d62')&&!String(error.message).includes('9e80020d'))
+ const stop="if(f.id==='D476_WS_HOST_TICK_STOP'){if(hostTickStop===null&&(f.reason==='not-current'||f.reason==='settled'||f.reason==='cap'))hostTickStop=f.reason as any}"
+ assert.equal(source.split(stop).length,2)
+ assert.throws(()=>restoreHostTick(source.replace(stop,'')), (error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('HOST_TICK_ONCE')&&!String(error.message).includes('5f225d62')&&!String(error.message).includes('0b78022a'))
+ const requiredStart=source.indexOf("const required=['D476_WS_UNBOUND'"),required=source.slice(requiredStart,source.indexOf('],receipts',requiredStart))
+ assert.equal(required.includes('D476_WS_HOST_TICK_STOP'),false);assert.equal(required.includes('D476_WS_HOST_TICK'),false)
+ const apply=vm.runInNewContext('('+ts.transpileModule('function apply(state,f){let hostTicks=state.hostTicks,hostTickLast=state.hostTickLast,hostTickStop=state.hostTickStop;'+stop+';return{hostTicks,hostTickLast,hostTickStop}}',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+')',{})
+ const first=apply({hostTicks:2,hostTickLast:'D476_WS_HOST_TICK',hostTickStop:null},{id:'D476_WS_HOST_TICK_STOP',reason:'not-current'})
+ assert.equal(first.hostTicks,2);assert.equal(first.hostTickLast,'D476_WS_HOST_TICK');assert.equal(first.hostTickStop,'not-current')
+ assert.equal(apply(first,{id:'D476_WS_HOST_TICK_STOP',reason:'settled'}).hostTickStop,'not-current')
+ assert.equal(apply({hostTicks:0,hostTickLast:null,hostTickStop:null},{id:'D476_WS_HOST_TICK_STOP',reason:'absent'}).hostTickStop,null)
 })
 
 function actualReceiver788(role:'LOCAL'|'ARCHIVE'|'TERMINAL'){

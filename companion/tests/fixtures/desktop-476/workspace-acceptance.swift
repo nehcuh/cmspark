@@ -5,8 +5,19 @@ private enum D476Acceptance {
  static func fail(_ h:NativeDesktop,_ site:Int){stopHostTick();note(h,0,site);emit(h,"D476_WS_FAIL")}
  static weak var owner:NativeDesktop?;static var documentGeneration:String?;static var selection:URL?;static var pickerTimer:Timer?;static var hostTickTimer:Timer?;static var hostTickCount=0;static var cancelPicker=false;static var uiNonce="";static var panels=0;static var confirmations=0;static var receipts=0
  static func stopHostTick(){hostTickTimer?.invalidate();hostTickTimer=nil}
- static func startHostTick(_ h:NativeDesktop){guard hostTickTimer==nil else{return};hostTickTimer=Timer.scheduledTimer(withTimeInterval:1,repeats:true){[weak h] _ in guard let h=h else{stopHostTick();return};guard hostTickCount<40,let p=h.workspaceSelection,h.pickerCurrent(p),!p.settled else{stopHostTick();return};hostTickCount+=1;emit(h,"D476_WS_HOST_TICK")}}
+ static func startHostTick(_ h:NativeDesktop){guard hostTickTimer==nil else{return};hostTickTimer=Timer.scheduledTimer(withTimeInterval:1,repeats:true){[weak h] _ in
+  guard let h=h else{stopHostTick();return}
+  let selection=h.workspaceSelection
+  let current=selection != nil && h.pickerCurrent(selection!)
+  let settled=selection != nil && selection!.settled
+  if(hostTickCount>=40 || selection==nil || !current || settled){
+   let reason=hostTickCount>=40 ? "cap" : (selection==nil || !current ? "not-current" : "settled")
+   emit(h,"D476_WS_HOST_TICK_STOP",reason);stopHostTick();return
+  }
+  hostTickCount+=1;emit(h,"D476_WS_HOST_TICK")
+ }}
  static func emit(_ h:NativeDesktop,_ id:String){if let task=h.socket{h.transmit(["type":"system.ping","id":id],to:task)}}
+ static func emit(_ h:NativeDesktop,_ id:String,_ reason:String){if let task=h.socket{h.transmit(["type":"system.ping","id":id,"reason":reason],to:task)}}
  static func document(_ h:NativeDesktop){guard owner == nil,let web=h.web,let generation=h.generation else{fail(h,1);return};owner=h;documentGeneration=generation;let code="const documentGeneration="+String(data:try! JSONSerialization.data(withJSONObject:generation,options:.fragmentsAllowed),encoding:.utf8)!+";"+D476_FORM_SOURCE;web.evaluateJavaScript(code){_,error in if error != nil{fail(h,2)}}}
  static func confirmation(_ h:NativeDesktop){confirmations+=1;DispatchQueue.main.async{guard owner === h,h.generation==documentGeneration,panels==1,confirmations==1,let p=h.confirmation,p.purpose=="workspace",p.alert.window.isVisible,p.alert.window.sheetParent === h.window,let raw=p.full.data(using:.utf8),let a=flatFrame(raw),a["path"] as? String==selection?.path else{fail(h,3);return};h.revealConfirmation(nil);guard p.details?.string==p.full else{fail(h,4);return};note(h,256);emit(h,"D476_WS_CONFIRMATION");p.alert.buttons[1].performClick(nil)}}
  static func picker(_ h:NativeDesktop,_ f:[String:Any])->Bool {

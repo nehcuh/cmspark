@@ -25,6 +25,26 @@ test('705 Mac readiness waits for genuine visibility without navigating',()=>{co
 test('705 Mac unowned panel cannot publish readiness',()=>{const f=fixture({foreign:true});panelBody()(f.s);assert.equal(f.calls.includes('FAIL'),true);assert.equal(f.s.panels,0)})
 test('705 Mac retired tuple cannot publish readiness',()=>{const f=fixture({stale:true});panelBody()(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER']);assert.equal(f.s.panels,0)})
 test('705 Mac second panel only reports cancellation readiness without synthesizing cancel',()=>{const f=fixture({cancel:true});panelBody()(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']);assert.equal(f.s.panels,2)})
+function registeredHostTick(){
+ const source=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/workspace-acceptance.swift'),'utf8').replace(/\r\n/g,'\n')
+ const begin='Timer.scheduledTimer(withTimeInterval:1,repeats:true){[weak h] _ in\n'
+ assert.equal(source.split(begin).length,2)
+ const rest=source.slice(source.indexOf(begin)+begin.length),end='\n }}'
+ assert.equal(rest.split(end).length,2)
+ let body=rest.slice(0,rest.indexOf(end))
+ for(const [from,to,count]of[['guard let h=h else{stopHostTick();return}','if(h==null){stopHostTick();return}',2],['selection!','selection',3]]as const){assert.equal(body.split(from).length,count);body=body.split(from).join(to)}
+ body=body.replace(/\bnil\b/g,'null');assert.doesNotMatch(body,/\bguard\b/);assert.equal(body.split('emit(h,"D476_WS_HOST_TICK_STOP",reason);stopHostTick()').length,2)
+ return vm.runInNewContext('(function(s){with(s){'+body+'}})',{},{timeout:1000}) as(s:any)=>void
+}
+test('705 host tick callback records one stop reason before invalidate',()=>{
+ const run=registeredHostTick(),drive=(h:any,count:number)=>{const calls:string[]=[],state:any={h,hostTickCount:count,stopHostTick(){calls.push('INVALIDATE')},emit(_h:any,id:string,reason?:string){calls.push(reason?id+':'+reason:id)}};run(state);return{calls,hostTickCount:state.hostTickCount}};
+ const absent=drive(null,1);assert.deepEqual(absent.calls,['INVALIDATE']);assert.equal(absent.hostTickCount,1)
+ const capped=drive({workspaceSelection:{settled:true},pickerCurrent:()=>false},40);assert.deepEqual(capped.calls,['D476_WS_HOST_TICK_STOP:cap','INVALIDATE']);assert.equal(capped.hostTickCount,40)
+ const missing=drive({workspaceSelection:null,pickerCurrent(){throw Error('MISSING_SKIPS_CURRENT')}},3);assert.deepEqual(missing.calls,['D476_WS_HOST_TICK_STOP:not-current','INVALIDATE'])
+ const stale=drive({workspaceSelection:{settled:true},pickerCurrent:()=>false},4);assert.deepEqual(stale.calls,['D476_WS_HOST_TICK_STOP:not-current','INVALIDATE'])
+ const settled=drive({workspaceSelection:{settled:true},pickerCurrent:()=>true},5);assert.deepEqual(settled.calls,['D476_WS_HOST_TICK_STOP:settled','INVALIDATE']);assert.equal(settled.hostTickCount,5)
+ const live=drive({workspaceSelection:{settled:false},pickerCurrent:()=>true},39);assert.deepEqual(live.calls,['D476_WS_HOST_TICK']);assert.equal(live.hostTickCount,40)
+})
 test('705 Mac empty correlator refuses without any UI event',()=>{const f=fixture();f.s.uiNonce='';panelBody()(f.s);assert.equal(f.calls.includes('FAIL'),true);assert.equal(f.s.panels,0)})
 
 test('705 actual workspace fixture generator keeps both normal providers byte exact for LF and CRLF',async()=>{
