@@ -190,13 +190,17 @@ Linux 上的结构测试只证明有序片段、变体和逆操作哈希与新�
 
 不增加 45000，不改 `DesktopHost.swift`，不再加诊断 ping。`ebc7cc30` 的成功是那个 SHA 的事实，它的 `cancelTiming788` 是 null，不能当作六条计时，也不重跑那个 SHA。
 
+## 已执行的成功路径计时读取
+
+`b3ea545c` 已经去掉 `if(primaryFailed)`。该 SHA 的 macOS job `135513859906` 有六条原文，只属于这个 SHA。
+
+## 同一次运行的两项 Windows 失败
+
+`44510689058` 的 `windows-native` job `135513859817` 失败在 `meeting-pcm-generated.test.ts` 的 `finally`：`rmdir seed\.git` 得到 `EBUSY`。日志没有断言原文。`finally` 抛错会盖住 `try`。`windows-latest` job `135513859937` 的 MCP 表单测试在 20000ms 超时。当时只有 `env_callback`，点 7 `CreateCoreWebView2Controller` 已返回且 code 0，点 8 `controllerCallback` 还没有。后面的 `DESKTOP_480_NATIVE` 不是这一条测试。两项源文件都不在计时 diff 里。这不记成无关，也不记成偶发。
+
 ## 当前唯一下一步
 
-成功路径也读取现有 `cancelTiming788()`，写进现有 phase。只把 `try{if(primaryFailed)cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}` 改成 `try{cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}`。读取留在 `uiOwner?.cancel()`、phase 打印、`cleanup()` 和 `fs.rmSync` 之前。六份计时文件在场景根，不在结果包里。`cancel()` 和 `cleanup()` 都不删它们。六份都缺时函数返回 `{schema:1,events:[],invalid:false}`，不是 null。空 `events`、`invalid:true` 和 null 都不是 18–20。失败路径仍读同一函数。`uiProgress` 仍只在失败时读。不新增 ping。
-
-新句先还原成带 `if(primaryFailed)` 的旧句。少一句先 `SUCCESS_TIMING_ONCE` 失败，不套 `9e80020d`。还原放在 `restoreHostTick` 之前，因而在第一道旧 hash `9e80020d` 之前：JOIN 的 native 文件（去掉 JOIN 后仍是 `120cc92d…`）、788 十文件与 801、705 第 58 行 native、705 第 365 行 native peel（随后进 `restoreCloseObservation476`，不经过第 58 行）、705 与 747 的 abort、782、826 与 initial-input、808、`previousInputReady705('native')`。进度守恒切片 `aa950d5b…` 也要在算摘要前还原这一句。旧 hash 不改不后移。
-
-TDD：success 变体先要求 `cancelTiming788` 在 `cancel()` 前调用一次，phase 带六条形状，并且 success 仍不调用 `uiProgress`。这条今天失败。然后再改那一句。新实现自己的 macOS 成功日志要有六条原文，才谈合并。发布仍暂停。
+只改会议生成测试的清理：留下 `try` 的错误；只对这个临时目录在 `EBUSY` 时有限重删；其它错误照旧抛出。字节检查和 10000ms 不改。删不掉仍是失败。MCP 测试不改，20000 不加大，不重跑 `44510689058`。macOS 六条不冒用到新 SHA。发布仍暂停。
 
 ## 安装包
 

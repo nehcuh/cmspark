@@ -290,7 +290,9 @@ CI run `44504061497`，macOS job `135490928834`，SHA `ebc7cc30b2c0950921cb3bb9d
 
 不增加 45000。不改 `DesktopHost.swift`。不再加下一笔诊断 ping。一次通过不抹掉前面的失败，也还没有一份由这些日志支持的产品修复。发布仍暂停。`ebc7cc30` 的成功日志保留为那个 SHA 的事实。它的 `cancelTiming788` 是 null，不能当作 18–20 六条计时，后续实现的 CI 不得冒用。
 
-## 20. 当前唯一下一步
+## 20. 已执行的成功路径计时读取
+
+以下是 `b3ea545cb9aa0e471887a53b9fa3820c01858c81` 的实现，不是当前步骤。该 SHA 的 macOS job `135513859906` 有六条原文，只属于这个 SHA，不能冒用给后来的提交。
 
 成功路径也把现有 `cancelTiming788()` 读进现有的 `D476_WORKSPACE_NATIVE_PHASE`。不新增 ping。不改 45000。不改 `DesktopHost.swift`。不改 `uiProgress` 的失败门。不把 null、空 `events` 或 `invalid:true` 当成 18–20。
 
@@ -317,6 +319,24 @@ CI run `44504061497`，macOS job `135490928834`，SHA `ebc7cc30b2c0950921cb3bb9d
 另外，705 里进度守恒那一刀从 `surfaceLease.retain()` 切到函数结束，摘要是 `aa950d5bf4a8cbb67fce423534261f026acb99c7e7057b2f8988c69009e2c52e`。这刀包含计时读取句，但不走上面的整文件还原。同一句要在算这个摘要之前还原回去。这不是新的整文件入口。
 
 TDD 先红后绿。红灯是现有 `finally` 前缀的 success 变体：场景提供 `cancelTiming788`，成功时它在 `cancel()` 之前被调用一次，phase 带上六条形状；`uiProgress` 在 success 仍不调用。今天 success 不调用计时读取，所以这条断言失败。少掉新句子时 `SUCCESS_TIMING_ONCE` 失败，错误里不出现 `9e80020d`。绿灯只做上面这一句和这些还原。
+
+## 21. 同一次运行里的两项 Windows 失败
+
+CI run `44510689058`，SHA `b3ea545cb9aa0e471887a53b9fa3820c01858c81`。十项里失败的是 `smoke (windows-native)` job `135513859817` 和 `smoke (windows-latest)` job `135513859937`。macOS job `135513859906` 的六条计时仍只属于这个 SHA。不重跑这个 SHA。不放宽 20000 或 10000。不改旧 hash。
+
+`windows-native` 的失败测试是 `Windows-style Git checkout preserves canonical capture bytes and still rejects drift`，位置 `companion/tests/meeting-pcm-generated.test.ts`。可见错误只有 `EBUSY`，`rmdir` 的路径是 `seed\.git`。这个文件里唯一的 `fs.rmSync` 在 `finally`，删的是整个临时目录。`git` 调用都是 `execFileSync`，返回之后才执行 `finally`。日志里没有断言失败原文。`finally` 抛错会盖住 `try` 里先抛出的错误，所以这份日志不能证明字节检查已经通过，也不能证明它没通过。
+
+`windows-latest` 的失败测试是 `#476 actual native MCP form + OS-only confirmation approves update/add and denies update`，文件 `companion/tests/desktop-native-mcp-476.test.ts`，时限是测试自己的 `timeout:20000`。超时当下的 `DESKTOP_476_PROGRESS` 是 `authenticated:true`、`windowRequested:true`、`postAuthRequestMask:0`、`nativePhases` 只有 `ready_accepted` 和 `env_callback`、`exited:false`、窗口 0、批准 0、拒绝 0、`done:false`。bootstrap 行到了点 5 `CreateCoreWebView2EnvironmentWithOptions`、点 6 `environmentCallback`（edge 2、code 0、present 1）、点 7 `CreateCoreWebView2Controller` 的调用返回（edge 1、code 0）。点 8 `controllerCallback` 不在这些行里，阶段名也没有 `controller_callback`。后面日志里的 `DESKTOP_480_NATIVE` 属于下一条 Windows 绑定测试，不是这一条超时测试的补完。
+
+这两项的源文件不在这次计时读取的 diff 里，`DesktopHost.cpp` 也没改。这只说明计时那一句没有进入这两个测试的源码。它不把这两项记成无关，也不记成偶发。
+
+## 22. 当前唯一下一步
+
+只改 `meeting-pcm-generated.test.ts` 的清理。`try` 里的错误先留下来。`finally` 只对这个测试自己的临时目录，在 `EBUSY` 时最多再删几次；其它错误立刻抛出。清理之后如果 `try` 有错，抛出的仍是那个错。字节比较、`git` 的 10000ms、`spawnSync` 的 10000ms 都不改。删不掉时测试仍然失败，错误仍是 `EBUSY`。
+
+MCP 那一项本轮不改。不把 20000 加大。不重跑 `44510689058`。没有一份日志证明控制器回调会在 20 秒内回来。
+
+macOS 六条原文不挪到新的 SHA。发布仍暂停。
 
 ## 7. 这一节点不做的事
 
