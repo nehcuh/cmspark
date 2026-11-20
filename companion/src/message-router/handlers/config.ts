@@ -3,6 +3,7 @@
 
 import { getConfig, getConfigSnapshot, getCommittedConfigRevision, saveConfig, saveConfigWithReceipt, isMaskedApiKey } from "../../config"
 import { isReasoningEffort } from "../../llm/reasoning-effort"
+import { isChatOutputLimit } from "../../llm/output-budget"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
 import { probeVisionConnection } from "../../llm/vision-pipeline"
@@ -87,6 +88,11 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       const hasNestedEffort = cfg.llm != null && Object.prototype.hasOwnProperty.call(cfg.llm, "reasoning_effort")
       const hasFlatEffort = Object.prototype.hasOwnProperty.call(cfg, "reasoning_effort")
       if ((hasNestedEffort && !isReasoningEffort(cfg.llm.reasoning_effort)) || (hasFlatEffort && !isReasoningEffort(cfg.reasoning_effort))) return stampSettingsSaveId( { type: "error", error: "INVALID_REASONING_EFFORT" })
+      const hasNestedLimit = cfg.llm != null && Object.prototype.hasOwnProperty.call(cfg.llm, "max_tokens")
+      const hasFlatLimit = Object.prototype.hasOwnProperty.call(cfg, "max_tokens")
+      if ((hasNestedLimit && !isChatOutputLimit(cfg.llm.max_tokens)) || (hasFlatLimit && !isChatOutputLimit(cfg.max_tokens))) {
+        return stampSettingsSaveId({ type: "error", error: "INVALID_CHAT_OUTPUT_LIMIT" })
+      }
       // Normalize: if caller sends flat LLM fields, nest them under llm
       const normalized: any = {}
       if (cfg.llm) {
@@ -99,6 +105,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         cfg.temperature !== undefined ||
         cfg.context_window !== undefined ||
         cfg.reasoning_effort !== undefined ||
+        hasFlatLimit ||
         cfg.context_compaction !== undefined ||
         typeof cfg.context_compaction_m2 === "boolean" ||
         cfg.native_vision === "auto" || cfg.native_vision === "on" || cfg.native_vision === "off" ||
@@ -112,6 +119,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         if (cfg.model_name) normalized.llm.model_name = cfg.model_name
         if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
         if (cfg.reasoning_effort !== undefined) normalized.llm.reasoning_effort = cfg.reasoning_effort
+        if (hasFlatLimit) normalized.llm.max_tokens = cfg.max_tokens
         if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
         if (
           cfg.context_compaction === "auto" ||

@@ -94,10 +94,11 @@ export function computeReserve(opts: {
   contextWindow: number
   systemPromptTokens: number
   toolsJsonTokens: number
+  outputTokens?: number
 }): number {
   const { contextWindow, systemPromptTokens, toolsJsonTokens } = opts
   const floor = Math.floor(contextWindow * 0.15)
-  const replyReserve = Math.min(8192, Math.floor(contextWindow / 8))
+  const replyReserve = Math.max(opts.outputTokens ?? 0, Math.min(8192, Math.floor(contextWindow / 8)))
   return Math.max(floor, systemPromptTokens + toolsJsonTokens + replyReserve)
 }
 
@@ -494,7 +495,7 @@ export function applyContextBudget(
   messages: CanonicalChatMessage[],
   contextWindow: number,
   tools: unknown,
-  opts?: { rollingSummary?: string; phase?: "pre_loop" | "mid_loop" },
+  opts?: { rollingSummary?: string; phase?: "pre_loop" | "mid_loop"; outputTokens?: number },
 ): CompactResult {
   const systemPromptTokens = messages
     .filter((m) => m.role === "system")
@@ -509,6 +510,7 @@ export function applyContextBudget(
     contextWindow,
     systemPromptTokens,
     toolsJsonTokens,
+    outputTokens: opts?.outputTokens,
   })
   const budget = Math.max(256, contextWindow - reserve)
   return compactMessagesTurnSafe(messages, budget, opts)

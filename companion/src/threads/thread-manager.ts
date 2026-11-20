@@ -297,6 +297,7 @@ interface Message {
   truncated?: boolean
   incomplete_tools?: boolean
   finish_reason?: string | null
+  generation_limit?: import("../llm/overflow").GenerationLimit
 }
 
 /** Narrow native projection; canonical transcripts remain the sole source. */

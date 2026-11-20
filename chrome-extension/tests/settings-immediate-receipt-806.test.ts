@@ -280,6 +280,22 @@ function ready(ui: ReturnType<typeof harness>, patch: Record<string, unknown>, r
   return ui.renderSlideout()
 }
 
+test("output limit control keeps an explicit draft value when a bad number edit reads as empty", () => {
+  const ui = harness()
+  const field = (view: any) => ui.find(view,
+    node => node.type === "input" && node.props.id === "chat-output-limit", "chat output limit")
+  const input = field(ready(ui, { max_tokens: 64000 }))
+  assert.equal(input.props.value, 64000)
+  const invalid = { value: "", valueAsNumber: NaN, validity: { badInput: true } }
+  input.props.onChange({ target: invalid, currentTarget: invalid })
+  assert.equal(field(ui.renderSlideout()).props.value, 64000)
+
+  const cleared = { value: "", valueAsNumber: NaN, validity: { badInput: false } }
+  input.props.onChange({ target: cleared, currentTarget: cleared })
+  assert.equal(ui.state().settingsDraft?.value.max_tokens, 0)
+  assert.equal(field(ui.renderSlideout()).props.value, "")
+})
+
 test("wrong arming phrase does not send protocol unlock or write a local audit", () => {
   const ui = harness()
   let view = ui.openAdvanced(ready(ui, { allow_all_schemes: false }))

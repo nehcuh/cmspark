@@ -25,16 +25,20 @@ test("page: 要对这页做什么 + 当前页 prefix + 3 static fills", () => {
 test("truncationHonestyChip: empty content + reasoning vs truncated", () => {
   assert.equal(
     truncationHonestyChip({ content: "", reasoning_content: "thinking", truncated: true }),
-    "思考用尽输出上限",
+    "达到长度限制",
   )
   assert.equal(
     truncationHonestyChip({ content: "", reasoning_content: "thinking", finish_reason: "length" }),
-    "思考用尽输出上限",
+    "达到长度限制",
   )
   assert.equal(
     truncationHonestyChip({ content: "partial", truncated: true }),
-    "输出被截断",
+    "达到长度限制",
   )
+  assert.equal(truncationHonestyChip({ content: "partial", generation_limit: "output_budget" }), "单次输出预算用尽")
+  assert.equal(truncationHonestyChip({ reasoning_content: "thinking", generation_limit: "output_budget" }), "思考用尽输出上限")
+  assert.equal(truncationHonestyChip({ content: "partial", generation_limit: "context_window" }), "已到上下文上限")
+  assert.equal(truncationHonestyChip({ content: "", finish_reason: "model_context_window_exceeded" }), "已到上下文上限")
   assert.equal(truncationHonestyChip({ content: "ok" }), null)
   assert.equal(
     truncationHonestyChip({
@@ -75,4 +79,9 @@ test("#295 truncationHonestyChip: empty reply without length evidence is neutral
   )
   // NEVER: 额度 (billing quota) wording for a max_tokens/output-limit event.
   assert.ok(!JSON.stringify(String(truncationHonestyChip({ content: "", reasoning_content: "t", finish_reason: "length" }))).includes("额度"))
+  assert.equal(truncationHonestyChip({
+    incomplete_tools: true,
+    tool_calls: [{}],
+    generation_limit: "length",
+  }), "达到长度限制")
 })
