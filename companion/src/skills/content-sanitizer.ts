@@ -120,7 +120,7 @@ export function sanitizeKnowledgeContent(content: string): string {
  */
 export function wrapKnowledgeBlock(id: string, title: string, summary: string): string {
   const wrapId = crypto.createHash("sha256").update(`knowledge:${id}`).digest("hex").slice(0, 12)
-  const body = String(summary || "").replace(/<\/?untrusted\b/gi, "")
+  const body = neutralizeKnowledgeBoundary(String(summary || ""))
   return (
     `## Knowledge: ${title} [${id}]\n` +
     `<untrusted-${wrapId} source="knowledge">\n` +
@@ -128,6 +128,10 @@ export function wrapKnowledgeBlock(id: string, title: string, summary: string): 
     `${body}\n` +
     `</untrusted-${wrapId}>`
   )
+}
+
+export function neutralizeKnowledgeBoundary(text: string): string {
+  return text.replace(/<\/?untrusted\b/gi, "")
 }
 
 /**

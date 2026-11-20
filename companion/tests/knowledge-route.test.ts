@@ -100,6 +100,60 @@ function extractGroupmapBlock(prompt: string): string | null {
   return m ? m[0] : null
 }
 
+test("chat grouped selection verifies body evidence before expanding or listing a document", async () => {
+  resetKnowledgeDirs()
+  corpus.seedEvalCorpus(path.join(getConfigDir(), "knowledge"))
+  seedCustomDoc("group-distractor", {
+    title: "Refund policy return process irrelevant title",
+    description: "refund policy return process",
+    folder: corpus.EVAL_FOLDER,
+    topic: ["tea", "roasting"],
+  })
+  const siteDir = path.join(getConfigDir(), "knowledge", "sites")
+  fs.mkdirSync(siteDir, { recursive: true })
+  fs.writeFileSync(path.join(siteDir, "operator-notes.md"),
+    "---\nname: operator-notes\ntitle: Operator notes\ndescription: Store guide\ntype: site_knowledge\nsite: shop.example.com\n---\nVerified refund policy return process.\n")
+  const se = new SkillEngine()
+  const manager = new ThreadManager()
+  const thread = manager.create("grounded grouping")
+  se.bindThreadManager(manager)
+  se.refresh()
+  const { buildSiteContext } = await import("../src/site-context/service")
+  const result = await buildSiteContext(se, {
+    scopeId: thread.id, hostnameHint: "shop.example.com", query: corpus.EVAL_CERT_FOLDER_QUERY + " verified",
+    selection: { kind: "thread", skillMode: "auto", knowledgeMode: "auto" },
+    options: { chatKnowledge: true, knowledgeRouteByGroup: true },
+  })
+  assert.ok(result.knowledge_routing)
+  assert.ok(result.retrieved_sources.some(source => source.id === "fa1"))
+  assert.ok(result.retrieved_sources.some(source => source.id === "operator-notes"))
+  assert.ok(result.knowledge_routing.s_pre.includes("operator-notes"))
+  assert.ok(!result.knowledge_routing.s_pre.includes("group-distractor"))
+  assert.doesNotMatch(result.prompt, /roasting|irrelevant title/)
+})
+
+test("chat does not spend the remaining budget on group titles when no automatic passage fits", async () => {
+  resetKnowledgeDirs()
+  corpus.seedEvalCorpus(path.join(getConfigDir(), "knowledge"))
+  const pinned = ["pin-a", "pin-b", "pin-c", "pin-d"]
+  for (const name of pinned) seedCustomDoc(name, { title: name, topic: ["shipping"], bodyLen: 1900 })
+  const manager = new ThreadManager()
+  const thread = manager.create("grouped budget")
+  manager.update(thread.id, { active_knowledge_ids: pinned })
+  const se = new SkillEngine()
+  se.bindThreadManager(manager)
+  se.refresh()
+  const { buildSiteContext } = await import("../src/site-context/service")
+  const result = await buildSiteContext(se, {
+    scopeId: thread.id, query: corpus.EVAL_CERT_FOLDER_QUERY,
+    selection: { kind: "thread", skillMode: "auto", knowledgeMode: "auto" },
+    options: { chatKnowledge: true, knowledgeRouteByGroup: true },
+  })
+  assert.equal(result.knowledge_routing?.groupmap, "omitted")
+  assert.deepEqual(result.retrieved_sources.map(source => source.id), pinned)
+  assert.equal(extractGroupmapBlock(result.prompt), null)
+})
+
 // --- AC-14: 出厂常数 + 评测命令存在可跑 + 算例体制 ---
 
 test("AC-14: branch constants certified open (true) since 2026-09-03; eval command + fixture pinned in-repo", () => {

@@ -51,15 +51,17 @@ export async function buildSiteContext(engine: ContextEngine, request: SiteConte
     options.knowledgeMode = "manual"
     options.knowledgeRouteByGroup = false
   } else {
+    const groundedAuto = options.chatKnowledge === true && request.selection.knowledgeMode === "auto"
     skillIds = [...new Set([
       ...await engine.resolveSkillIdsForThread(request.scopeId, request.selection.skillMode, request.query, hostname,
-        request.selection.cachedMatchedSkillIds, request.selection.knowledgeMode !== "manual"),
+        request.selection.cachedMatchedSkillIds, request.selection.knowledgeMode !== "manual" && !groundedAuto),
       ...(request.selection.extraSkillIds || []),
     ])]
     knowledgeIds = engine.resolveKnowledgeIdsForThread(
-      request.scopeId, request.selection.knowledgeMode, hostname, request.query, options.knowledgeSmartMatch !== false,
+      request.scopeId, request.selection.knowledgeMode, hostname, request.query, options.knowledgeSmartMatch !== false, groundedAuto,
     )
     options.knowledgeMode = request.selection.knowledgeMode
+    if (groundedAuto) options.knowledgeDescriptionOnly = false
   }
   const built = engine.buildSystemPromptWithSources(
     request.scopeId, hostname, skillIds, knowledgeIds, request.query, options,
