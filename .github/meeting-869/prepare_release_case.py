@@ -9,7 +9,6 @@ import sys
 import tempfile
 import time
 from urllib.request import Request, urlopen
-import wave
 import zipfile
 
 if os.name != "nt" or os.environ.get("GITHUB_ACTIONS") != "true":
@@ -85,13 +84,8 @@ server, = (base / "llama").rglob("llama-server.exe")
 model = fetch("https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf", base / "minutes.gguf", "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e")
 config = {"port":23401, "llm":{"base_url":"http://127.0.0.1:18839/v1", "api_key":"owned-local-test", "model_name":"meeting-local", "temperature":0.1, "max_tokens":1024, "context_window":8192}, "voice":{"sttEngine":"local","localModelId":"large-v3-turbo"}}
 (data / "config.json").write_text(json.dumps(config), encoding="utf-8")
-recording = fetch("https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/ES2002a/audio/ES2002a.Mix-Headset.wav", base / "meeting.wav")
-clip = base / "clip.wav"
-with wave.open(str(recording), "rb") as source, wave.open(str(clip), "wb") as dest:
-    assert (source.getframerate(), source.getnchannels(), source.getsampwidth()) == (16000, 1, 2)
-    source.setpos(30 * 16000)
-    dest.setparams(source.getparams())
-    dest.writeframes(source.readframes(120 * 16000))
+# The exact public excerpt is stored alongside the driver on this diagnostic branch.
+clip = Path(__file__).with_name("ES2002a-30s-150s.wav")
 
 
 def wait_healthy(p, url):
