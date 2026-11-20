@@ -6,38 +6,119 @@ permissions:
   contents: read
 jobs:
   collect:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 18
-    defaults:
-      run:
-        working-directory: companion
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            lane: census
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
+          # #650: full Windows children must not inherit checkout credentials.
+          persist-credentials: ${{ matrix.os != 'windows-latest' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '22.23.4'
-          cache: npm
-          cache-dependency-path: companion/package-lock.json
-      - name: Install and build current source
+          cache: 'npm'
+          cache-dependency-path: |
+            companion/package-lock.json
+            chrome-extension/package-lock.json
+
+      - name: Install native-lane frontend dependencies (#750)
+        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
         env:
           ONNXRUNTIME_NODE_INSTALL: skip
         run: |
+          cd chrome-extension
           npm ci
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install + build companion
+        # Keep all npm lifecycle scripts; only optional external ORT GPU files are omitted.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: |
+          cd companion
+          npm ci
           npm run build
-      - name: Build native fixtures and compile the original test
+
+      - name: Pinned NSIS dependency transport and integrity (#633)
+        run: node --test scripts/tests/nsis-ci-setup.test.mjs scripts/tests/windows-ci-feedback-750.test.mjs scripts/tests/node-security-runtime-759.test.mjs scripts/tests/native-ci-stages-760.test.mjs
+
+      - name: Stage native-lane Windows scripts (#750)
+        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
+        shell: bash
+        run: |
+          cd companion
+          npm run stage:win-scripts
+
+      - name: "Fixed gallery collector CPU controls (#70; no native signature claim)"
+        run: node --test scripts/tests/app-gallery-reference-70.test.mjs
+
+      - name: "Read-only fixed-release gallery certificate sampling (#70)"
+        if: matrix.os == 'windows-latest' && matrix.lane == 'census'
+        # Exact two official ZIPs, streamed/pinned; sole root EXE metadata only.
+        # No app execution/install. A failed collection fails this job.
+        run: node scripts/collect-app-gallery-reference-70.mjs "${{ runner.temp }}/gallery70-reference-metadata.json"
+
+      - name: "Publish only gallery certificate metadata (#70)"
+        if: always() && matrix.os == 'windows-latest' && matrix.lane == 'census'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gallery70-reference-metadata
+          path: ${{ runner.temp }}/gallery70-reference-metadata.json
+          if-no-files-found: error
+
+      - name: Desktop build helper controls (#480)
+        run: node --test companion/scripts/tests/desktop-artifacts.test.mjs companion/scripts/tests/desktop-build-windows-480.test.mjs companion/scripts/tests/computer-uia-no-focus-build.test.mjs companion/scripts/tests/computer-uia-no-focus-resolver.test.mjs companion/scripts/tests/computer-uia-native-probe-572.test.mjs scripts/tests/uia-no-autofocus-572.test.mjs scripts/tests/metadata-key-phase-650.test.mjs
+
+      - name: Pinned runtime header controls (macOS)
+        if: matrix.os == 'macos-latest'
+        run: node --test companion/scripts/tests/desktop-runtime-headers-480.test.mjs
+
+      - name: Build fixed no-autofocus UIA DLL (#572)
+        if: matrix.os == 'windows-latest'
+        run: |
+          node companion/scripts/build-computer-uia-no-focus.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node companion/scripts/build-computer-uia-native-probe-572.mjs
+
+      - name: Build native desktop fixtures (#480)
+        if: matrix.os != 'ubuntu-latest'
         shell: bash
         run: |
           set -euo pipefail
+          cd companion
           node scripts/build-desktop-native.mjs --test-fixtures
+
+      - name: Compile native desktop acceptance tests (#480)
+        if: matrix.os != 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd companion
           ./node_modules/.bin/tsc -p tsconfig.test.json
+
+      - name: "Actual passive activity capture and local OCR (#758)"
+        if: matrix.os == 'windows-latest' && matrix.lane == 'native'
+        shell: bash
+        env:
+          CMSPARK_ACTIVITY_NATIVE_758: '1'
+        run: |
+          cd companion
+          node scripts/run-tests.mjs .test-dist/tests/activity-platform-native-758.test.js .test-dist/tests/activity-apps-825.test.js .test-dist/tests/activity-scope825-native.test.js .test-dist/tests/activity-scope825-readiness.test.js .test-dist/tests/activity-failure-observation-826.test.js
+
       - name: Verify collector source and projection
+        working-directory: companion
         run: node --test scripts/tests/mcp-stack-probe-826.test.mjs scripts/tests/mcp-stack-capture-826.test.cjs
       - name: Qualify CDB and run the original 20-second MCP case once
         env:
           CMSPARK_MCP_STACK_PROBE_826: '1'
+          CMSPARK_MCP_STACK_CANONICAL_GROUP_869: '1'
+        working-directory: companion
         run: node scripts/mcp-stack-probe-826.mjs
       - name: Preserve only finite projected evidence
         if: always()

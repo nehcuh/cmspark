@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import yaml from 'js-yaml'
-import { deriveMcpStackProbe826, withTemporaryStackProbe826, classifyMcpStackOutcome826, runMcpStackProbe826 } from '../mcp-stack-probe-826.mjs'
+import { deriveMcpStackProbe826, withTemporaryStackProbe826, classifyGroupedMcpOutcome869, classifyMcpStackOutcome826, runMcpStackProbe826 } from '../mcp-stack-probe-826.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const source = fs.readFileSync(path.join(root, 'tests/desktop-native-mcp-476.test.ts'), 'utf8')
@@ -101,12 +101,24 @@ test('diagnostic workflow is read-only and restricted to the probe branch', () =
   assert.deepEqual(doc.permissions, {contents: 'read'})
   assert.deepEqual(Object.keys(doc.jobs), ['collect'])
   const job = doc.jobs.collect
-  assert.equal(job['runs-on'], 'windows-latest')
-  assert.deepEqual(job.steps[0].with, {'persist-credentials': false})
-  const upload = job.steps.find(step => step.uses === 'actions/upload-artifact@v4')
+  assert.deepEqual(job.strategy.matrix.include, [{os: 'windows-latest', lane: 'census'}])
+  const canonical = yaml.load(fs.readFileSync(path.join(root, '../.github/workflows/ci.yml'), 'utf8')).jobs['smoke-os'].steps
+  const acceptance = canonical.findIndex(step => step.name === 'Native desktop bootstrap and process acceptance (#480)')
+  assert.ok(acceptance > 0)
+  assert.deepEqual(job.steps.slice(0, acceptance), canonical.slice(0, acceptance))
+  const upload = job.steps.find(step => step.uses === 'actions/upload-artifact@v4' && step.with.name === 'mcp-stack-probe-869')
   assert.equal(upload.if, 'always()')
   assert.deepEqual(upload.with.path.trim().split(/\r?\n/).map(line => path.posix.basename(line)),
     ['qualification.json','run.json','capture.json'])
+})
+
+test('grouped probe classifies only the MCP form case', () => {
+  const title = '\\#476 actual native MCP form + OS-only confirmation approves update/add and denies update'
+  const stdout = 'not ok 1 - neighboring case\n  failureType: \'testTimeoutFailure\'\n  ...\n'
+  const timeout = '  failureType: \'testTimeoutFailure\'\n  error: \'test timed out after 20000ms\'\n'
+  assert.equal(classifyGroupedMcpOutcome869({status: 1, stdout: stdout + 'ok 24 - ' + title + '\n  ---\n  ...\n'}), 'PASS')
+  assert.equal(classifyGroupedMcpOutcome869({status: 1, stdout: stdout + 'not ok 24 - ' + title + '\n' + timeout + '  ...\n'}), 'TIMEOUT')
+  assert.equal(classifyGroupedMcpOutcome869({status: 1, stdout}), 'INCOMPLETE')
 })
 test('probe execution refuses without the explicit opt-in before touching files or tools', async () => {
   const before = process.env.CMSPARK_MCP_STACK_PROBE_826

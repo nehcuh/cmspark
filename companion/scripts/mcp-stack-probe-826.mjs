@@ -72,24 +72,41 @@ export async function runMcpStackProbe826() {
     return 1
   }
   console.log('MCP_STACK_PROBE_826 NON_ACCEPTANCE originalMs=20000 snapshotMs=20000 toolTimeoutsMs=3000+6000+6000 actualToolCloseRequired=true')
+  const group = process.env.CMSPARK_MCP_STACK_CANONICAL_GROUP_869 === '1'
   let result
   try {
-    result = withTemporaryStackProbe826(canonical, derived, file => spawnSync(process.execPath, [path.join(root, 'scripts/run-tests.mjs'), file], {
+    result = withTemporaryStackProbe826(canonical, derived, file => {
+      const sibling = name => path.join(path.dirname(file), name)
+      const files = group ? [
+        sibling('desktop-native-macos-480.test.js'), sibling('desktop-native-windows-480.test.js'),
+        file, sibling('desktop-mcp-snapshot-cpu-825.test.js'),
+      ] : [file]
+      return spawnSync(process.execPath, [path.join(root, 'scripts/run-tests.mjs'), ...files], {
       cwd: root, env: { ...process.env, CMSPARK_MCP_STACK_OUTPUT_826: outputRoot }, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
-    }))
+      })
+    })
     // Only the unchanged test's usual receipts/TAP; CDB output never reaches these streams.
     if (result.stdout) process.stdout.write(result.stdout)
     if (result.stderr) process.stderr.write(result.stderr)
     write('run', {
       schema: 1, kind: 'NON_ACCEPTANCE', originalMs: 20000, snapshotMs: 20000,
       sourceSha256: sha(source), compiledSha256: sha(compiled), derivedSha256: sha(derived),
-      originalOutcome: classifyMcpStackOutcome826(result), exit: Number.isInteger(result.status) ? result.status : null,
+      originalOutcome: group ? classifyGroupedMcpOutcome869(result) : classifyMcpStackOutcome826(result),
+      group, exit: Number.isInteger(result.status) ? result.status : null,
     })
   } finally {
     if (!fs.readFileSync(sourceFile).equals(source) || !fs.readFileSync(canonical).equals(compiled)) throw Error('MCP826_STACK_CANONICAL_CHANGED')
   }
   // A stack capture never changes the actual test's exit code into success.
   return result.error || result.signal ? 1 : result.status ?? 1
+}
+
+export function classifyGroupedMcpOutcome869(result) {
+  if (result.error || result.signal || ![0, 1].includes(result.status)) return 'INCOMPLETE'
+  const match = String(result.stdout).match(/^(ok|not ok) \d+ - \\?#476 actual native MCP form \+ OS-only confirmation approves update\/add and denies update\r?\n([\s\S]*?)(?=^\s*\.\.\.|^# Subtest:)/m)
+  if (!match) return 'INCOMPLETE'
+  if (match[1] === 'ok') return /# SKIP/i.test(match[0]) ? 'INCOMPLETE' : 'PASS'
+  return /failureType: 'testTimeoutFailure'/.test(match[2]) && /test timed out after 20000ms/.test(match[2]) ? 'TIMEOUT' : 'FAIL'
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
