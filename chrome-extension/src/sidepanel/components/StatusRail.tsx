@@ -215,6 +215,7 @@ export function StatusRail({
       ref={railRef} className="cm-status-rail"
       role="banner"
       aria-label="状态栏"
+      data-active-thread-id={state.activeThreadId || undefined}
       style={{
         ...railStyles.rail,
         ...(modeLine ? { boxShadow: `inset 0 -2px 0 ${modeLine}` } : null),

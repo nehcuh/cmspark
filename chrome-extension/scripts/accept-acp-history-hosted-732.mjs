@@ -383,7 +383,7 @@ export function seedOwnedThread(ThreadManager,workspace) {
 // Real side-panel project navigation. Hidden ancestors and invisible boxes are not targets.
 export function seededThreadSelectionExpression(operation) {
   if(!['home','recent','ready','owner','session','restored'].includes(operation))fail()
-  return `(${function(operation,alias){
+  return `(${function(operation,alias,ownerId){
     const refuse=()=>{throw Error('OWNED_THREAD_UI_REFUSED')}
     const shown=el=>{
       if(!el||el.nodeType!==1)return false
@@ -395,14 +395,14 @@ export function seededThreadSelectionExpression(operation) {
     const buttons=text=>[...document.querySelectorAll('button')].filter(button=>button.textContent===text)
     const usable=list=>list.filter(button=>shown(button)&&!button.disabled)
     const projects=()=>shown(document.querySelector('.cm-projects'))
-    const location=()=>[...document.querySelectorAll('header[aria-label="会话位置"]')].find(shown)
+    const rail=()=>[...document.querySelectorAll('.cm-status-rail[data-active-thread-id]')].find(shown)
     const sessionReady=()=>{
-      const header=location()
-      if(!header||(!document.querySelector('[data-navigation-mode="resident"]')&&projects()))return false
-      return [...header.querySelectorAll('p')].some(line=>shown(line)&&line.textContent.endsWith(' / '+alias))
+      const header=rail()
+      if(!header||header.getAttribute('data-active-thread-id')!==ownerId||(!document.querySelector('[data-navigation-mode="resident"]')&&projects()))return false
+      return [...header.querySelectorAll('.cm-task-title')].some(line=>shown(line)&&line.textContent===alias)
     }
     if(operation==='home'){
-      if(location())refuse()
+      if(rail())refuse()
       return projects()||usable([...document.querySelectorAll('button[aria-label="打开工作区导航"]')]).length===1
     }
     if(operation==='recent'){
@@ -420,7 +420,7 @@ export function seededThreadSelectionExpression(operation) {
     if(operation==='owner'){const found=usable(buttons(alias));if(found.length!==1)refuse();found[0].click();return true}
     if(operation==='session'||operation==='restored')return sessionReady()
     refuse()
-  }.toString()})(${JSON.stringify(operation)},${JSON.stringify(OWNED_THREAD.alias)})`
+  }.toString()})(${JSON.stringify(operation)},${JSON.stringify(OWNED_THREAD.alias)},${JSON.stringify(OWNED_THREAD.id)})`
 }
 // Root contents may change; inode/dev/uid/mode/type/canonical path must not.
 export function sameOwnedRoot(root,identity,stat=fs.lstatSync,realpath=fs.realpathSync,uid=process.getuid?.()) {

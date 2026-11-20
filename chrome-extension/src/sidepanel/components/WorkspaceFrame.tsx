@@ -145,7 +145,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   }, [dispatch, full, destinationOwner, state.settingsOpen, state.activeThreadId, state.activeThreadSelectionRevision, state.pendingSecurityConfirmations.length, state.computerTask])
   const openResource = (panel: Parameters<typeof openPanelForce>[0]) => { navigate("chat"); openPanelForce(panel) }
   const navProps = { full, destination: visibleView, onView: navigate, level, onNavigate: afterNavigation, focusComposer }
-  const navigation = (projectProps?: Pick<Parameters<typeof ProjectPanel>[0], "onSnapshot" | "onOpenProject">) => (
+  const navigation = (projectProps?: Pick<Parameters<typeof WorkspaceNavigation>[0], "onSnapshot" | "onOpenProject" | "sessionDetails">) => (
     <div ref={navRef} className="cm-sidebar-navigation" id="cm-sidebar-navigation" role={wide ? undefined : "dialog"} aria-label={wide ? undefined : "工作区导航"} hidden={!navVisible}
       onKeyDown={event => {
         if (!wide && event.key === "Escape" && !event.defaultPrevented) {
@@ -184,14 +184,15 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   </div>
 }
 
-function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, level, onSnapshot, onOpenProject, focusComposer }: {
-  onNavigate: () => void; focusComposer: () => void; onClose?: () => void; full: boolean; destination: WorkspaceDestination; onView: (view: WorkspaceDestination) => void; level: CapabilityLevel
+function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, level, onSnapshot, onOpenProject, focusComposer, sessionDetails }: {
+  sessionDetails?: ReactNode; onNavigate: () => void; focusComposer: () => void; onClose?: () => void; full: boolean; destination: WorkspaceDestination; onView: (view: WorkspaceDestination) => void; level: CapabilityLevel
 } & Pick<Parameters<typeof ProjectPanel>[0], "onSnapshot" | "onOpenProject">) {
   const { state, dispatch } = useAgentStore()
   const { activePanel, openPanelForce, closePanel } = useContextPanelHost()
   const [query, setQuery] = useState("")
   const [projectFilter, setProjectFilter] = useState("*")
   const [conversationsOpen, setConversationsOpen] = useState(true)
+  const compact = !!onClose
   const conversationsId = useId()
   const q = query.toLocaleLowerCase().trim()
   const threadsById = new Map(state.threads.map(thread => [thread.id, thread]))
@@ -205,7 +206,7 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, l
     const hay = `${workerBelongTitle(t, parent)} ${t.id || ""} ${t.worker_role_label || ""}`.toLocaleLowerCase()
     return hay.includes(q)
   }).sort((a, b) => threadRecency(b).localeCompare(threadRecency(a))).slice(0, 30)
-  const resources = <details open className="cm-nav-tools"><summary>资料与工具</summary><div className="cm-tool-groups cm-nav-resources">{toolGroups(level).map(group => <div role="group" aria-label={group.title} key={group.title}><div className="cm-resource-group">{group.ids.map(id => {
+  const resources = <details key={compact ? "compact-tools" : "resident-tools"} open={!compact} className="cm-nav-tools"><summary>资料与工具</summary><div className="cm-tool-groups cm-nav-resources">{toolGroups(level).map(group => <div role="group" aria-label={group.title} key={group.title}><div className="cm-resource-group">{group.ids.map(id => {
     const tab = CONTEXT_PANEL_TABS.find(item => item.id === id)
     if (!tab) return null
     const { label, Icon } = tab
@@ -213,6 +214,10 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, l
       onView("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: false }); openPanelForce(id); onNavigate()
     }}><Icon size={16} /><span>{id === "board" ? "Agent 执行记录" : label}</span></button>
   })}</div></div>)}</div></details>
+  const search = (
+    <input className="cm-nav-search" aria-label="筛选最近对话" placeholder="查找对话…"
+      value={query} onChange={event => { setQuery(event.target.value); setConversationsOpen(true) }} />
+  )
   return <nav className="cm-navigation" aria-label="工作区">
     <div className="cm-nav-brand"><CompanionMark size={24} /><strong>CMspark</strong>
       {onClose && <button type="button" className="cm-icon-button" aria-label="关闭导航" onClick={onClose}>×</button>}
@@ -221,9 +226,10 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, l
     <button type="button" className="cm-nav-new" onClick={() => { onView("chat"); createBlankThread(dispatch); onNavigate(); focusComposer() }}><IconNewChat size={17} />新对话</button>
     <ProjectPanel filter={projectFilter} onFilter={setProjectFilter} onSnapshot={onSnapshot}
       onOpenProject={id => { setProjectFilter(id); onOpenProject?.(id); setConversationsOpen(true) }} />
-    {resources}
-    <label className="cm-nav-search-label">查找对话<input className="cm-nav-search" aria-label="筛选最近对话"
-      placeholder="查找对话…" value={query} onChange={e => { setQuery(e.target.value); setConversationsOpen(true) }} /></label>
+    {!compact && <>
+      {resources}
+      <label className="cm-nav-search-label">查找对话{search}</label>
+    </>}
     <section className="cm-nav-conversations" data-collapsed={!conversationsOpen} aria-label="最近对话">
     <div className="cm-nav-section"><button type="button" className="cm-nav-collapse" aria-expanded={conversationsOpen} aria-controls={conversationsId} onClick={() => setConversationsOpen(value => !value)}><IconChevronDown size={14} /><span>最近对话</span></button><button type="button" className="cm-nav-manage" data-open-thread-manager disabled={state.pendingSecurityConfirmations.length > 0} onClick={event => {
       onView("chat")
@@ -231,6 +237,7 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, l
       onNavigate()
     }}>管理对话</button></div>
     <div id={conversationsId} className="cm-nav-conversation-body" hidden={!conversationsOpen}>
+    {compact && search}
     {projectFilter !== "*" && <button type="button" className="cm-nav-manage" onClick={() => setProjectFilter("*")}>显示全部项目的对话</button>}
     <div className="cm-nav-threads">
       {recent.map(thread => <button type="button" className="cm-nav-thread" key={thread.id} aria-current={thread.id === state.activeThreadId ? "page" : undefined}
@@ -241,6 +248,8 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, l
     </div>
     </div>
     </section>
+    {compact && resources}
+    {sessionDetails}
     <button type="button" className="cm-nav-item cm-nav-settings" onClick={() => { onView("chat"); closePanel(); dispatch({ type: "SET_SETTINGS_OPEN", open: true }); onNavigate() }}><IconSettings size={16} />设置</button>
   </nav>
 }

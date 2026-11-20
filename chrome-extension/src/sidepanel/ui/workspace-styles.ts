@@ -71,7 +71,12 @@ export const workspaceCSS = `
 .cm-first-conversation{font-size:13px;margin:0 auto 6px}
 .cm-workspace-r3 .cm-sidebar-navigation{flex:none;min-height:0}
 .cm-workspace-r3 .cm-sidebar-navigation[hidden]{display:none}
-.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation{max-height:28dvh;overflow:auto}
+.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation{max-height:28dvh;overflow:auto;border-bottom:1px solid ${tokens.border}}
+.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-navigation{border-bottom:0;padding:8px 12px;gap:4px}
+.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-nav-brand{padding:0 8px 4px}
+.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-nav-new{margin-bottom:2px}
+.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-projects{padding:4px 0}
+.cm-workspace-r3 .cm-sidebar-navigation .cm-session-location{display:block;padding:0 8px}
 .cm-workspace-r3.cm-workspace-layered .cm-navigation{max-height:none}
 .cm-workspace-r3 .cm-nav-search-label{display:grid;gap:4px;color:${tokens.textSecondary};font-size:12px}
 .cm-workspace-r3 .cm-nav-thread:disabled{opacity:.65}
@@ -81,7 +86,7 @@ export const workspaceCSS = `
 .cm-workspace-r3 .cm-nav-tools .cm-nav-resources{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:0;padding:2px 0 8px;gap:2px}
 .cm-workspace-r3 .cm-nav-tools :is([role=group],.cm-resource-group){display:contents}
 .cm-workspace-r3 .cm-nav-resources .cm-nav-item{min-height:28px;padding:5px 6px}
-.cm-workspace-r3 .cm-navigation-toggle[aria-expanded="true"] span{display:none}
+.cm-workspace-r3[data-navigation-mode="resident"] .cm-navigation-toggle[aria-expanded="true"] span{display:none}
 .cm-workspace-r3 .cm-nav-settings{margin-top:auto}
 .cm-session-location{flex:none;display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 16px;font-size:12px;color:${tokens.textSecondary}}
 .cm-session-location p{margin:0;padding:7px 0}

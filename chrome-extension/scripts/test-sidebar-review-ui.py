@@ -56,13 +56,35 @@ def verify(page, base, output):
     toggle = page.get_by_role("button", name=NAV)
     expect(toggle).to_have_attribute("aria-expanded", "false")
     expect(page.get_by_text("资料与工具", exact=True)).to_be_hidden()
+    rail = page.get_by_role("banner", name="状态栏")
+    expect(rail).to_have_attribute("data-active-thread-id", "sidebar-0")
+    expect(page.get_by_text("会话详情", exact=True)).to_be_hidden()
+    rail_height = rail.bounding_box()["height"]
+    assert rail_height <= 60
+    composer = page.locator(".cm-composer-dock")
+    closed_composer = composer.bounding_box()
     shot("narrow-collapsed")
     toggle.click()
     disclosure = page.get_by_role("dialog", name="工作区导航")
     expect(disclosure).to_be_visible()
-    assert disclosure.bounding_box()["height"] <= 860 * .28 + 1
+    bounds = disclosure.bounding_box()
+    assert bounds["height"] <= 860 * .28 + 1
+    assert bounds["y"] < rail.bounding_box()["y"]
+    assert rail.bounding_box()["height"] == rail_height
+    assert composer.bounding_box() == closed_composer
     assert disclosure.evaluate("(e) => e.contains(document.activeElement)")
+    recent = disclosure.get_by_role("button", name="最近对话", exact=True)
+    tools = disclosure.get_by_text("资料与工具", exact=True)
+    assert recent.bounding_box()["y"] < tools.bounding_box()["y"]
+    expect(disclosure.locator(".cm-nav-tools")).not_to_have_attribute("open", "")
+    expect(disclosure.get_by_role("button", name="历史", exact=True)).to_be_hidden()
+    expect(disclosure.get_by_role("button", name="周末清单", exact=True)).to_be_in_viewport()
     shot("narrow-navigation")
+    tools.click()
+    expect(disclosure.get_by_role("button", name="历史", exact=True)).to_be_visible()
+    details = disclosure.get_by_text("会话详情", exact=True)
+    details.click()
+    expect(disclosure.get_by_text("更改当前会话归属")).to_be_visible()
     page.keyboard.press("Escape")
     expect(toggle).to_be_focused()
     expect(disclosure).to_be_hidden()

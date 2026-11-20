@@ -381,8 +381,8 @@ function projectSurface({alias,onRecent,onOwner,missing=false,disabled=false,dup
   const navRecent=node({textContent:'最近对话',parentElement:nav,getAttribute:name=>name==='aria-expanded'?String(listOpen):null,click(){recentClicks++;onRecent()}})
   const owner=node({textContent:alias,disabled,parentElement:recentWrap,click(){if(!owner.disabled)onOwner()}})
   const copy=node({textContent:alias,parentElement:recentWrap,click(){onOwner()}})
-  const header=node(),title=node({textContent:'项目外 / '+alias,parentElement:header})
-  header.querySelectorAll=sel=>sel==='p'?[title]:[]
+  const header=node({getAttribute:name=>name==='data-active-thread-id'?'owned-history-732':null}),title=node({textContent:alias,parentElement:header})
+  header.querySelectorAll=sel=>sel==='.cm-task-title'?[title]:[]
   const sync=()=>{nav.hidden=!navOpen;recentWrap.hidden=!listOpen;header.hidden=!selected;toggle.hidden=!allowToggle}
   sync()
   const document={
@@ -395,7 +395,7 @@ function projectSurface({alias,onRecent,onOwner,missing=false,disabled=false,dup
         if(duplicate)list.push(copy)
         return list
       }
-      if(sel==='header[aria-label="会话位置"]')return [header]
+      if(sel==='.cm-status-rail[data-active-thread-id]')return [header]
       return []
     },
   }

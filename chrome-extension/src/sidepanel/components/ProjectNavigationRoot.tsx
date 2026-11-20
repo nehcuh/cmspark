@@ -13,7 +13,7 @@ export function ProjectNavigationRoot({ surface, mode, shellClass, children, top
   mode: "resident" | "layered"
   shellClass: string
   onSelectThread: () => void
-  renderNavigation: (props: Pick<Parameters<typeof ProjectPanel>[0], "onSnapshot" | "onOpenProject">) => ReactNode
+  renderNavigation: (props: Pick<Parameters<typeof ProjectPanel>[0], "onSnapshot" | "onOpenProject"> & { sessionDetails?: ReactNode }) => ReactNode
   children?: ReactNode
   top?: ReactNode
   bottom?: ReactNode
@@ -78,33 +78,38 @@ export function ProjectNavigationRoot({ surface, mode, shellClass, children, top
     {localBind && <p role="status">{localBind}</p>}
     {bindNotice && <p role="status">{bindNotice}</p>}
   </section>
-  const navigation = renderNavigation({ onSnapshot: setProjects, onOpenProject: openProject })
+  const sessionDetails = active ? (
+    <SessionContextBar
+      compact={mode === "layered"}
+      projectName={activeProject?.name || null}
+      projectId={active.project_id || null}
+      threadTitle={displayThreadTitle(active)}
+      connection={state.connectionState}
+      workspaceRoot={active.workspace_root}
+      busy={!!state.threadBusyById[active.id]}
+      pending={state.pendingSecurityConfirmations.length > 0}
+      onProject={openProject}
+    >
+      <fieldset>
+        <legend>{projectCopy.moveLegend}</legend>
+        {!membership && <p>{moveCopy}</p>}
+        {projects?.projects.filter(item => !item.archived_at).map(item => <button type="button" key={item.id} disabled={!membership} onClick={() => void requestProject("thread.project.set", { thread_id: active.id, project_id: item.id, user_gesture: true, expected_revision: projects.revision, operation_id: crypto.randomUUID() }, new AbortController().signal)}>{`移入 ${item.name}`}</button>)}
+        <button type="button" disabled={!membership} onClick={() => void requestProject("thread.project.set", { thread_id: active.id, project_id: null, user_gesture: true, expected_revision: projects?.revision || 0, operation_id: crypto.randomUUID() }, new AbortController().signal)}>{projectCopy.moveOut}</button>
+      </fieldset>
+    </SessionContextBar>
+  ) : null
+  const navigation = renderNavigation({
+    onSnapshot: setProjects,
+    onOpenProject: openProject,
+    sessionDetails: mode === "layered" ? sessionDetails : null,
+  })
   return <div data-navigation-mode={mode} data-navigation-surface={surface} className={shellClass}>
-    {mode === "resident" && navigation}
+    {navigation}
     <div className="cm-workspace-main cm-shell-column">
       {top}
-      {mode === "layered" && navigation}
       <div className="cm-shell-layers">
         {!active && state.navigationHomeCopy && <p role="status">{state.navigationHomeCopy}</p>}
-        {layer === "project" ? detail : <>
-          {active && <SessionContextBar
-            projectName={activeProject?.name || null}
-            projectId={active.project_id || null}
-            threadTitle={displayThreadTitle(active)}
-            connection={state.connectionState}
-            workspaceRoot={active.workspace_root}
-            busy={!!state.threadBusyById[active.id]}
-            pending={state.pendingSecurityConfirmations.length > 0}
-            onProject={openProject}
-          >
-            <fieldset>
-              <legend>{projectCopy.moveLegend}</legend>
-              {!membership && <p>{moveCopy}</p>}
-              {projects?.projects.filter(item => !item.archived_at).map(item => <button type="button" key={item.id} disabled={!membership} onClick={() => void requestProject("thread.project.set", { thread_id: active.id, project_id: item.id, user_gesture: true, expected_revision: projects.revision, operation_id: crypto.randomUUID() }, new AbortController().signal)}>{`移入 ${item.name}`}</button>)}
-              <button type="button" disabled={!membership} onClick={() => void requestProject("thread.project.set", { thread_id: active.id, project_id: null, user_gesture: true, expected_revision: projects?.revision || 0, operation_id: crypto.randomUUID() }, new AbortController().signal)}>{projectCopy.moveOut}</button>
-            </fieldset>
-          </SessionContextBar>}
-        </>}
+        {layer === "project" ? detail : mode === "resident" && sessionDetails}
         <div className="cm-chat-mount" hidden={layer === "project"}>{children}</div>
       </div>
       <div className="cm-thread-manager-mount" />
