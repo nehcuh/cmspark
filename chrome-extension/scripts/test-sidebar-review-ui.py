@@ -78,7 +78,7 @@ def verify(page, base, output):
     assert recent.bounding_box()["y"] < tools.bounding_box()["y"]
     expect(disclosure.locator(".cm-nav-tools")).not_to_have_attribute("open", "")
     expect(disclosure.get_by_role("button", name="历史", exact=True)).to_be_hidden()
-    expect(disclosure.get_by_role("button", name="周末清单", exact=True)).to_be_in_viewport()
+    expect(disclosure.get_by_role("button", name="周末清单", exact=True)).to_be_in_viewport(ratio=1)
     shot("narrow-navigation")
     tools.click()
     expect(disclosure.get_by_role("button", name="历史", exact=True)).to_be_visible()

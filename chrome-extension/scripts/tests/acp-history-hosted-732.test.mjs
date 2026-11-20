@@ -374,14 +374,14 @@ function productionNavigationClicks(ts,repo) {
   return {recent:recent[0],owner:owner[0]}
 }
 function projectSurface({alias,onRecent,onOwner,missing=false,disabled=false,duplicate=false,listed=()=>true}) {
-  let selected=false,navOpen=false,listOpen=false,allowToggle=true,recentClicks=0
+  let selected=false,navOpen=false,listOpen=false,allowToggle=true,recentClicks=0,activeId='owned-history-732'
   const node=extra=>({nodeType:1,hidden:false,disabled:false,textContent:'',parentElement:null,click(){},getClientRects(){return[{width:10,height:10}]},querySelectorAll(){return[]},getAttribute(){return null},...extra})
   const nav=node(),projects=node({parentElement:nav}),recentWrap=node({parentElement:nav})
   const toggle=node({getAttribute:name=>name==='aria-expanded'?String(navOpen):null,click(){navOpen=true;sync()}})
   const navRecent=node({textContent:'最近对话',parentElement:nav,getAttribute:name=>name==='aria-expanded'?String(listOpen):null,click(){recentClicks++;onRecent()}})
   const owner=node({textContent:alias,disabled,parentElement:recentWrap,click(){if(!owner.disabled)onOwner()}})
   const copy=node({textContent:alias,parentElement:recentWrap,click(){onOwner()}})
-  const header=node({getAttribute:name=>name==='data-active-thread-id'?'owned-history-732':null}),title=node({textContent:alias,parentElement:header})
+  const header=node({getAttribute:name=>name==='data-active-thread-id'?activeId:null}),title=node({textContent:alias,parentElement:header})
   header.querySelectorAll=sel=>sel==='.cm-task-title'?[title]:[]
   const sync=()=>{nav.hidden=!navOpen;recentWrap.hidden=!listOpen;header.hidden=!selected;toggle.hidden=!allowToggle}
   sync()
@@ -402,6 +402,7 @@ function projectSurface({alias,onRecent,onOwner,missing=false,disabled=false,dup
   return {
     document,
     setSelected(value){selected=value;sync()},
+    setActiveId(value){activeId=value},
     close(){navOpen=false;sync()},
     expand(set){listOpen=set(listOpen);sync()},
     disableNavigation(){allowToggle=false;sync()},
@@ -431,6 +432,8 @@ test('seeded UI selector uses the shipping project navigation handlers and refus
     assert.deepEqual(actions.map(action=>[action.type,action.threadId]),[['SET_ACTIVE_THREAD',thread.id]])
     assert.deepEqual(selection.map(message=>[message.type,message.threadId]),[['thread.select',thread.id]])
     assert.equal(run('session'),true);assert.equal(run('restored'),true);assert.throws(()=>run('home'))
+    surface.setActiveId('foreign')
+    assert.equal(run('session'),false);assert.equal(run('restored'),false)
     const hidden=projectSurface({alias:thread.alias,onRecent(){throw Error('HIDDEN_RECENT_CLICKED')},onOwner(){throw Error('HIDDEN_OWNER_CLICKED')}})
     hidden.disableNavigation()
     assert.throws(()=>vm.runInNewContext(h.seededThreadSelectionExpression('recent'),{document:hidden.document,getComputedStyle:hidden.getComputedStyle}))

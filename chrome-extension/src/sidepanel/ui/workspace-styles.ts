@@ -76,6 +76,8 @@ export const workspaceCSS = `
 .cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-nav-brand{padding:0 8px 4px}
 .cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-nav-new{margin-bottom:2px}
 .cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-projects{padding:4px 0}
+.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-nav-search{padding-block:6px}
+.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-nav-collapse,.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation .cm-nav-thread{min-height:32px}
 .cm-workspace-r3 .cm-sidebar-navigation .cm-session-location{display:block;padding:0 8px}
 .cm-workspace-r3.cm-workspace-layered .cm-navigation{max-height:none}
 .cm-workspace-r3 .cm-nav-search-label{display:grid;gap:4px;color:${tokens.textSecondary};font-size:12px}
