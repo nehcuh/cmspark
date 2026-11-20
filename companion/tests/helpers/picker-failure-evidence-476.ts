@@ -55,38 +55,41 @@ function contained(root: string, name: string) {
   return file
 }
 
-function sameIdentity(a: fs.Stats, b: fs.Stats) {
-  return a.dev === b.dev && a.ino === b.ino && a.birthtimeMs === b.birthtimeMs
+function sameIdentity(a: fs.BigIntStats, b: fs.BigIntStats) {
+  return a.dev === b.dev && a.ino === b.ino && a.birthtimeNs === b.birthtimeNs
 }
 
-function readBounded(file: string, expected: fs.Stats, cap: number) {
+function readBounded(file: string, expected: fs.BigIntStats, cap: number) {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0))
   try {
-    const opened = fs.fstatSync(fd)
-    if (!opened.isFile() || opened.nlink !== 1 || !sameIdentity(opened, expected)) throw limit('COPY_FAILED')
+    const opened = fs.fstatSync(fd, {bigint: true})
+    if (!opened.isFile() || opened.nlink !== 1n || !sameIdentity(opened, expected)) throw limit('COPY_FAILED')
     if (opened.size > cap) throw limit('OVERSIZE')
-    const data = Buffer.allocUnsafe(opened.size + 1)
+    const size = Number(opened.size)
+    const data = Buffer.allocUnsafe(size + 1)
     let offset = 0
     while (offset < data.length) {
       const count = fs.readSync(fd, data, offset, data.length - offset, offset)
       if (count === 0) break
       offset += count
     }
-    if (offset > cap || fs.fstatSync(fd).size > cap) throw limit('OVERSIZE')
-    if (offset > opened.size) throw limit('COPY_FAILED')
-    if (!sameIdentity(fs.lstatSync(file), opened)) throw limit('COPY_FAILED')
+    if (offset > cap || fs.fstatSync(fd, {bigint: true}).size > cap) throw limit('OVERSIZE')
+    if (offset > size) throw limit('COPY_FAILED')
+    if (!sameIdentity(fs.lstatSync(file, {bigint: true}), opened)) throw limit('COPY_FAILED')
     return data.subarray(0, offset)
   } finally { fs.closeSync(fd) }
 }
 
-function copyText(source: string, target: string): Item {
+function copyText(source: string, target: string, checkRoot: () => void): Item {
   const stage = `${target}.staging-${randomBytes(8).toString('hex')}`
   try {
-    const stat = fs.lstatSync(source)
+    checkRoot()
+    const stat = fs.lstatSync(source, {bigint: true})
     if (stat.isSymbolicLink()) throw limit('OVERSIZE')
     if (!stat.isFile()) throw limit('COPY_FAILED')
     if (stat.size > TEXT_CAP) throw limit('OVERSIZE')
     const data = readBounded(source, stat, TEXT_CAP)
+    checkRoot()
     fs.writeFileSync(stage, data, {flag: 'wx', mode: 0o600})
     fs.renameSync(stage, target)
     return {status: 'COPIED', bytes: data.length}
@@ -100,8 +103,9 @@ function copyText(source: string, target: string): Item {
   }
 }
 
-function copyTree(source: string, target: string, stage: string): Item {
+function copyTree(source: string, target: string, stage: string, checkRoot: () => void): Item {
   try {
+    checkRoot()
     const rootStat = fs.lstatSync(source)
     if (rootStat.isSymbolicLink()) throw limit('OVERSIZE')
     if (!rootStat.isDirectory()) throw limit('COPY_FAILED')
@@ -110,7 +114,7 @@ function copyTree(source: string, target: string, stage: string): Item {
     let total = 0
     const walk = (relative: string) => {
       const from = relative ? path.join(source, relative) : source
-      const stat = fs.lstatSync(from)
+      const stat = fs.lstatSync(from, {bigint: true})
       if (stat.isSymbolicLink()) throw limit('OVERSIZE')
       const real = fs.realpathSync(from)
       if (real !== path.join(rootReal, relative)) throw limit('OVERSIZE')
@@ -118,7 +122,7 @@ function copyTree(source: string, target: string, stage: string): Item {
       if (stat.isDirectory()) {
         if (relative) fs.mkdirSync(to, {recursive: true, mode: 0o700})
         const checkDirectory = () => {
-          const current = fs.lstatSync(from)
+          const current = fs.lstatSync(from, {bigint: true})
           if (!current.isDirectory() || !sameIdentity(current, stat) || fs.realpathSync(from) !== real) throw limit('COPY_FAILED')
         }
         for (const name of fs.readdirSync(from)) {
@@ -129,7 +133,7 @@ function copyTree(source: string, target: string, stage: string): Item {
         return
       }
       if (!stat.isFile()) throw limit('OVERSIZE')
-      if (stat.size > TREE_CAP || total > TREE_CAP - stat.size) throw limit('OVERSIZE')
+      if (stat.size > TREE_CAP - total) throw limit('OVERSIZE')
       const data = readBounded(from, stat, TREE_CAP - total)
       total += data.length
       if (total > TREE_CAP) throw limit('OVERSIZE')
@@ -137,6 +141,7 @@ function copyTree(source: string, target: string, stage: string): Item {
       fs.writeFileSync(to, data, {flag: 'wx', mode: 0o600})
     }
     walk('')
+    checkRoot()
     fs.renameSync(stage, target)
     return {status: 'COPIED', bytes: total}
   } catch (error) {
@@ -153,14 +158,32 @@ export function preservePickerFailureEvidence476(uiOwner?: {scene?: {root?: stri
   const dest = path.join(cwd, 'picker-failure-evidence')
   fs.mkdirSync(dest, {recursive: true, mode: 0o700})
   if (!fs.lstatSync(dest).isDirectory()) throw limit('COPY_FAILED')
+  const manifest = path.join(dest, 'evidence-status.json')
+  try {
+    if (fs.lstatSync(manifest).isFile()) fs.rmSync(path.join(dest, 'Result.xcresult'), {recursive: true, force: true})
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
   let root: string | undefined
+  let rootIdentity: fs.BigIntStats | undefined
   try {
     const candidate = uiOwner?.scene?.root
     if (candidate) {
-      const stat = fs.lstatSync(candidate)
-      if (stat.isDirectory() && !stat.isSymbolicLink()) root = fs.realpathSync(candidate)
+      const stat = fs.lstatSync(candidate, {bigint: true})
+      if (stat.isDirectory()) {
+        const resolved = fs.realpathSync(candidate)
+        if (sameIdentity(stat, fs.lstatSync(resolved, {bigint: true}))) {
+          root = resolved
+          rootIdentity = stat
+        }
+      }
     }
   } catch { root = undefined }
+  const checkRoot = () => {
+    if (!root || !rootIdentity) throw limit('COPY_FAILED')
+    const current = fs.lstatSync(root, {bigint: true})
+    if (!current.isDirectory() || !sameIdentity(current, rootIdentity) || fs.realpathSync(root) !== root) throw limit('COPY_FAILED')
+  }
   const files: Record<string, Item> = {}
   const treeStage = path.join(path.dirname(dest), `.picker-xcresult-staging-${randomBytes(8).toString('hex')}`)
   if (!root) {
@@ -168,9 +191,9 @@ export function preservePickerFailureEvidence476(uiOwner?: {scene?: {root?: stri
       fs.rmSync(path.join(dest, name), {recursive: true, force: true})
     }
   }
-  files['Result.xcresult'] = root ? copyTree(contained(root, 'Result.xcresult'), path.join(dest, 'Result.xcresult'), treeStage) : absent()
-  files['xcode.stdout'] = root ? copyText(contained(root, 'xcode.stdout'), path.join(dest, 'xcode.stdout')) : absent()
-  files['xcode.stderr'] = root ? copyText(contained(root, 'xcode.stderr'), path.join(dest, 'xcode.stderr')) : absent()
+  files['Result.xcresult'] = root ? copyTree(contained(root, 'Result.xcresult'), path.join(dest, 'Result.xcresult'), treeStage, checkRoot) : absent()
+  files['xcode.stdout'] = root ? copyText(contained(root, 'xcode.stdout'), path.join(dest, 'xcode.stdout'), checkRoot) : absent()
+  files['xcode.stderr'] = root ? copyText(contained(root, 'xcode.stderr'), path.join(dest, 'xcode.stderr'), checkRoot) : absent()
   const tool = snapshotStderr()
   const toolTarget = path.join(dest, 'xcresulttool-stderr.txt')
   if (tool.status === 'COPIED') {
@@ -188,5 +211,9 @@ export function preservePickerFailureEvidence476(uiOwner?: {scene?: {root?: stri
     rmQuiet(toolTarget)
     files['xcresulttool-stderr.txt'] = tool.status === 'OVERSIZE' ? oversize() : absent()
   }
-  fs.writeFileSync(path.join(dest, 'evidence-status.json'), JSON.stringify({schema: 1, files}))
+  const statusStage = `${manifest}.staging-${randomBytes(8).toString('hex')}`
+  try {
+    fs.writeFileSync(statusStage, JSON.stringify({schema: 1, files}), {flag: 'wx', mode: 0o600})
+    fs.renameSync(statusStage, manifest)
+  } finally { rmQuiet(statusStage) }
 }
