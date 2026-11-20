@@ -1,0 +1,35 @@
+name: Released Windows meeting acceptance
+on:
+  push:
+    branches: [codex/meeting-869-release-acceptance]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  meeting:
+    runs-on: windows-2025
+    env:
+      CMSPARK_PREVIEW_READINESS: "1"
+      PYTHONUTF8: "1"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Chromium in the disposable runner
+        run: uv run --no-project --python 3.12 --with playwright==1.57.0 python -m playwright install chromium
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44668903073
+          name: cmspark-windows-x64
+          path: ${{ runner.temp }}/candidate
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44668908173
+          name: cmspark-chrome-extension
+          path: ${{ runner.temp }}/candidate
+      - name: Verify candidate pairing and on-device speech model readiness
+        run: uv run --no-project --python 3.12 --with playwright==1.57.0 python .github/meeting-869/prepare_release_case.py v1.3.0
