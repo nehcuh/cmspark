@@ -1349,8 +1349,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           }
           g.__cmsparkBlankCreateUntil = now + 2000
         }
-        wsClient.send({ type: "thread.create", alias, id: message.id })
-        sendResponse({ ok: true })
+        const sent = wsClient.send({ type: "thread.create", alias, id: message.id })
+        sendResponse({ ok: sent, sent })
         return true
       }
 

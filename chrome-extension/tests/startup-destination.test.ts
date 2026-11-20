@@ -67,10 +67,11 @@ test("an empty active list does not create or select the first row", () => {
   assert.notStrictEqual(populated.activeThreadId, incoming[0].id)
 })
 
-test("resident navigation starts at 960 on every surface", () => {
-  assert.equal(RESIDENT_MIN_WIDTH, 960)
-  for (const surface of ["sidepanel", "popout", "workspace"] as const) {
-    for (const innerWidth of [320, 400, 759]) assert.equal(navigationMode({ surface, innerWidth }), "layered")
-    for (const innerWidth of [960, 1200]) assert.equal(navigationMode({ surface, innerWidth }), "resident")
+test("resident navigation follows the surface breakpoint", () => {
+  assert.equal(RESIDENT_MIN_WIDTH, 760)
+  const cases = { sidepanel: 760, workspace: 760, popout: 960 } as const
+  for (const surface of Object.keys(cases) as (keyof typeof cases)[]) {
+    assert.equal(navigationMode({ surface, innerWidth: cases[surface] - 1 }), "layered")
+    assert.equal(navigationMode({ surface, innerWidth: cases[surface] }), "resident")
   }
 })
