@@ -25,7 +25,6 @@ def main():
     for key in ("extension", "data", "audio", "output", "profile"):
         p.add_argument("--" + key, type=Path, required=True)
     p.add_argument("--version", required=True)
-    p.add_argument("--ready-only", action="store_true")
     a = p.parse_args()
     manifest = read_json(a.extension / "manifest.json")
     assert manifest["version"] == a.version
@@ -59,9 +58,6 @@ def main():
                 raise
             upload = panel.get_by_test_id("meeting-import-audio")
             expect(upload).to_be_enabled()
-            if a.ready_only:
-                print("Candidate paired; both consent prompts and real local STT readiness passed", flush=True)
-                return
             # The original panel owns the file picker, audio decode, PCM chunking and STT.
             with panel.expect_file_chooser() as picker:
                 upload.click()
@@ -129,7 +125,7 @@ def main():
             (a.output / "receipt.json").write_text(json.dumps({
                 "version":a.version, "clip":"AMI ES2002a, 30-150s, CC BY 4.0",
                 "audio_sha256":"16ea66ffc7a02735b6510bca34c7a74555d115eb8ffb20b2f209f90d351c3fb2",
-                "stt_segments":len(originals), "minutes_chars":len(raw), "reload":True,
+                "imported_segments":int(match[1]), "total_segments":int(match[2]), "stt_segments":len(originals), "minutes_chars":len(raw), "reload":True,
             }, ensure_ascii=False), encoding="utf-8")
         finally:
             browser.close()

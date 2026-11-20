@@ -22,11 +22,10 @@ base = Path(tempfile.mkdtemp(prefix="cmspark-e2e-", dir=os.environ["RUNNER_TEMP"
 data = base / "data"
 data.mkdir()
 public = Path(os.environ["RUNNER_TEMP"]) / "meeting-result"
-preview = os.environ.get("CMSPARK_PREVIEW_READINESS") == "1"
-release = None
-if not preview:
-    release = json.load(urlopen("https://api.github.com/repos/nehcuh/cmspark/releases/tags/" + tag))
-    assert release["tag_name"] == tag and not release["draft"] and not release["prerelease"]
+release = json.load(urlopen("https://api.github.com/repos/nehcuh/cmspark/releases/tags/" + tag))
+assert release["tag_name"] == tag and not release["draft"] and not release["prerelease"]
+assert len(release["assets"]) == 19 and any(a["name"] == "SHA256SUMS-INSTALLERS.txt" for a in release["assets"])
+
 
 
 def fetch(url, path, sha=None):
@@ -53,9 +52,6 @@ def unpack(archive, directory):
 
 
 def asset(name, directory):
-    if preview:
-        unpack(Path(os.environ["RUNNER_TEMP"]) / "candidate" / name, directory)
-        return
     entry, = [a for a in release["assets"] if a["name"] == name]
     assert re.fullmatch(r"sha256:[a-f0-9]{64}", entry["digest"])
     unpack(fetch(entry["browser_download_url"], base / name, entry["digest"][7:]), directory)
@@ -121,7 +117,16 @@ try:
     daemon = subprocess.Popen([node,bundle,"start"], cwd=node.parent, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     children.append(daemon)
     wait_healthy(daemon,"http://127.0.0.1:23401/healthz")
-    subprocess.run([sys.executable, Path(__file__).with_name("released_meeting_ui.py"), "--version", tag[1:], "--extension", manifest.parent, "--data",data,"--audio",clip,"--profile",base / "profile","--output",public, *(["--ready-only"] if preview else [])], check=True)
+    subprocess.run([sys.executable, Path(__file__).with_name("released_meeting_ui.py"), "--version", tag[1:], "--extension", manifest.parent, "--data",data,"--audio",clip,"--profile",base / "profile","--output",public], check=True)
+    receipt_path = public / "receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt.update({
+        "companion_asset": next({"name":a["name"], "digest":a["digest"]} for a in release["assets"] if a["name"] == f"cmspark-{tag}-windows-x64.zip"),
+        "extension_asset": next({"name":a["name"], "digest":a["digest"]} for a in release["assets"] if a["name"] == f"CMspark-Chrome-Extension-{tag}.zip"),
+        "speech_model": {"id":"large-v3-turbo", "sha256":expected["sha256"]},
+        "minutes_model":"Qwen2.5-1.5B-Instruct-Q4_K_M via local llama.cpp b12556",
+    })
+    receipt_path.write_text(json.dumps(receipt, indent=2, ensure_ascii=False), encoding="utf-8")
 finally:
     for p in reversed(children):
         if p.poll() is None: p.terminate()
