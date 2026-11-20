@@ -398,11 +398,24 @@ export function seededThreadSelectionExpression(operation) {
     const location=()=>[...document.querySelectorAll('header[aria-label="会话位置"]')].find(shown)
     const sessionReady=()=>{
       const header=location()
-      if(!header||projects())return false
+      if(!header||(!document.querySelector('[data-navigation-mode="resident"]')&&projects()))return false
       return [...header.querySelectorAll('p')].some(line=>shown(line)&&line.textContent.endsWith(' / '+alias))
     }
-    if(operation==='home'){if(location())refuse();return projects()}
-    if(operation==='recent'){const found=usable(buttons('最近对话'));if(!found.length)refuse();found[0].click();return true}
+    if(operation==='home'){
+      if(location())refuse()
+      return projects()||usable([...document.querySelectorAll('button[aria-label="打开工作区导航"]')]).length===1
+    }
+    if(operation==='recent'){
+      const toggle=usable([...document.querySelectorAll('button[aria-label="打开工作区导航"]')])
+      if(!usable(buttons('最近对话')).length&&toggle.length===1&&toggle[0].getAttribute('aria-expanded')==='false'){
+        toggle[0].click()
+        return false
+      }
+      const found=usable(buttons('最近对话'))
+      if(found.length!==1)refuse()
+      if(found[0].getAttribute('aria-expanded')!=='true')found[0].click()
+      return true
+    }
     if(operation==='ready'){const found=buttons(alias).filter(shown);if(found.length>1)refuse();if(found.length===1&&found[0].disabled)refuse();return found.length===1&&!found[0].disabled}
     if(operation==='owner'){const found=usable(buttons(alias));if(found.length!==1)refuse();found[0].click();return true}
     if(operation==='session'||operation==='restored')return sessionReady()
@@ -479,7 +492,7 @@ export async function main() {
     const seeded=initialList.threads[0]
     if(seeded.id!==OWNED_THREAD.id||seeded.alias!==OWNED_THREAD.alias||seeded.workspace_root!==workspace)fail()
     thread=seeded.id;panelStep='identity'
-    await evaluate(seededThreadSelectionExpression('recent'));await waitDOM(seededThreadSelectionExpression('ready'));panelStep='recent'
+    await waitDOM(seededThreadSelectionExpression('recent'));await waitDOM(seededThreadSelectionExpression('ready'));panelStep='recent'
     await evaluate(seededThreadSelectionExpression('owner'));panelStep='owner'
     await waitDOM(seededThreadSelectionExpression('session'));panelStep='session'
     const openPanel=()=>evaluate("window.dispatchEvent(new CustomEvent('cmspark:open-coding-handoff'));true");await openPanel()

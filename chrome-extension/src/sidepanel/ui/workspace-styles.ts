@@ -62,9 +62,35 @@ export const workspaceCSS = `
 .cm-navigation-toggle{gap:4px;flex-shrink:0}
 .cm-history-panel{max-width:720px;margin:0 auto}
 .cm-history-panel button:focus-visible,.cm-history-panel [role="button"]:focus-visible{outline:2px solid ${tokens.accent};outline-offset:-2px}
-@media(min-width:760px){.cm-navigation-toggle{display:none!important}.cm-status-rail{padding:12px 24px!important;border-bottom:1px solid ${tokens.border}!important}.cm-chat-scroll{padding:28px 32px!important}.cm-composer-dock{padding-bottom:24px!important}}
+@media(min-width:760px){.cm-status-rail{padding:12px 24px!important;border-bottom:1px solid ${tokens.border}!important}.cm-chat-scroll{padding:28px 32px!important}.cm-composer-dock{padding-bottom:24px!important}}
 @media(max-width:759px){.cm-workspace{flex-direction:column;height:100dvh;overflow:hidden}.cm-workspace .cm-navigation,.cm-workspace-layered .cm-navigation{flex-shrink:1;width:100%;height:auto;max-height:30dvh;min-height:0;overflow:auto}.cm-shell-column{flex:1;min-height:0}.cm-task-title{font-size:12px}.cm-composer-dock{padding:8px 12px 12px!important}.cm-settings-panel{align-self:flex-end;width:100%!important;max-height:90dvh!important;border-radius:16px 16px 0 0!important}.cm-settings-header{padding:16px!important}.cm-settings-body{padding:8px 16px 16px!important}}
 @media(max-height:560px){.cm-context-panel{max-height:26vh!important}.cm-composer-dock{padding-top:4px!important;padding-bottom:6px!important}.cm-navigation{padding-top:10px}.cm-nav-brand{padding-bottom:8px}.cm-nav-resources{margin-bottom:4px}.cm-nav-new{margin-bottom:2px}}
+/* Shared R3/R4 navigation across side panel, popout and work center. */
+.cm-settings-extra{padding:8px 0}
+.cm-settings-extra summary{cursor:pointer;color:${tokens.textSecondary};font-size:13px}
+.cm-first-conversation{font-size:13px;margin:0 auto 6px}
+.cm-workspace-r3 .cm-sidebar-navigation{flex:none;min-height:0}
+.cm-workspace-r3 .cm-sidebar-navigation[hidden]{display:none}
+.cm-workspace-r3.cm-workspace-layered .cm-sidebar-navigation{max-height:28dvh;overflow:auto}
+.cm-workspace-r3.cm-workspace-layered .cm-navigation{max-height:none}
+.cm-workspace-r3 .cm-nav-search-label{display:grid;gap:4px;color:${tokens.textSecondary};font-size:12px}
+.cm-workspace-r3 .cm-nav-thread:disabled{opacity:.65}
+.cm-workspace-r3 .cm-shell-layers{display:flex;flex-direction:column}
+.cm-workspace-r3 .cm-header-new,.cm-workspace-r3 .cm-thread-manager-trigger,.cm-workspace-r3 .cm-rail-brand{display:none!important}
+.cm-workspace-r3 .cm-nav-tools{border-top:0}
+.cm-workspace-r3 .cm-nav-tools .cm-nav-resources{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:0;padding:2px 0 8px;gap:2px}
+.cm-workspace-r3 .cm-nav-tools :is([role=group],.cm-resource-group){display:contents}
+.cm-workspace-r3 .cm-nav-resources .cm-nav-item{min-height:28px;padding:5px 6px}
+.cm-workspace-r3 .cm-navigation-toggle[aria-expanded="true"] span{display:none}
+.cm-workspace-r3 .cm-nav-settings{margin-top:auto}
+.cm-session-location{flex:none;display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 16px;font-size:12px;color:${tokens.textSecondary}}
+.cm-session-location p{margin:0;padding:7px 0}
+.cm-session-location details{margin-left:auto}
+.cm-session-location button,.cm-session-location summary{font:inherit}
+.cm-session-location summary{cursor:pointer}
+.cm-thread-manager-mount:empty,.cm-workspace-r3 .cm-shell-layers:has(~ .cm-thread-manager-mount:not(:empty)),.cm-workspace-r3 .cm-thread-manager-mount:not(:empty) ~ .cm-shell-bottom{display:none}
+.cm-thread-manager-mount:not(:empty){display:flex;flex:1;min-height:0;overflow:hidden}
+.cm-workspace-r3 .cm-thread-manager-mount .cm-history-panel{position:relative!important;inset:auto!important;z-index:auto!important;flex:1;max-height:none!important;border:0;border-radius:0;box-shadow:none}
 @media(prefers-reduced-motion:reduce){.cm-workspace *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 .cm-settings-panel{width:min(980px,100vw - 32px)!important;height:88dvh;max-height:88dvh!important}

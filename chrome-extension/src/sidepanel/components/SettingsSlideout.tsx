@@ -1257,6 +1257,8 @@ export function SettingsSlideout() {
             </div>
           </div>
 
+          <details className="cm-settings-extra">
+            <summary>其他能力</summary>
                     {/* --- Vision Model Settings --- */}
           <div style={styles.sectionTitle}>视觉模型（看图描述）</div>
 
@@ -1506,6 +1508,8 @@ export function SettingsSlideout() {
               </>
             )
           })()}
+
+          </details>
 
             </SettingsPage>
           </div>
@@ -1981,6 +1985,8 @@ export function SettingsSlideout() {
                         <span style={{ color: tokens.textMuted, fontSize: 12 }}> — {ENGINE_BROWSER_HINT}</span>
                       </span>
                     </label>
+                    <details className="cm-settings-extra" open={engineDraft === "external" || undefined}>
+                      <summary>{externalView?.keyConfigured || committedExternal ? "外部转写已配置" : "其他能力"}</summary>
                     <label
                       style={{
                         display: "flex",
@@ -2092,6 +2098,7 @@ export function SettingsSlideout() {
                         </button>
                       </div>
                     ) : null}
+                    </details>
                     <label
                       style={{
                         display: "flex",
@@ -3623,6 +3630,8 @@ export function SettingsSlideout() {
               title="实验功能"
               id="experimental"
             >
+          <details className="cm-settings-extra">
+            <summary>本地视觉定位</summary>
           {/* --- WP5-I4 实验功能(Qwen3-VL 本地模型定位层) --- */}
           <div style={styles.sectionTitle}>实验功能</div>
           {(() => {
@@ -4255,6 +4264,8 @@ export function SettingsSlideout() {
               </div>
             )
           })()}
+
+          </details>
 
             </SettingsPage>
           </div>

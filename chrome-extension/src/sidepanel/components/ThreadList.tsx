@@ -123,15 +123,28 @@ type ListView = "time" | "tags" | "topics" | "ai"
 export function ThreadList() {
   const { state, dispatch } = useAgentStore()
   const [open, setOpen] = useState(false)
+  const managerReturnFocus = useRef<HTMLElement | null>(null)
+  const [confirmExtract, setConfirmExtract] = useState(false)
+  function returnManagerFocus() {
+    const target = managerReturnFocus.current || triggerRef.current
+    managerReturnFocus.current = null
+    const visible = target?.getClientRects().length ? target : document.querySelector<HTMLElement>(".cm-navigation-toggle")
+    visible?.focus({ focusVisible: true } as FocusOptions)
+  }
   const [editingThread, setEditingThread] = useState<Thread | null>(null)
   const [metadataNotice, setMetadataNotice] = useState("")
   const [mutationNotice, setMutationNotice] = useState("")
   const [mutating, setMutating] = useState(false)
   const mutationRef = useRef<AbortController | null>(null)
   useEffect(() => () => mutationRef.current?.abort(), [])
-  useEffect(() => { if (!open) { setEditingThread(null); setMetadataNotice(""); setPendingDelete(null) } }, [open])
+  useEffect(() => { if (!open) { setEditingThread(null); setMetadataNotice(""); setPendingDelete(null); setConfirmExtract(false) } }, [open])
   useEffect(() => {
-    const show = () => { if (!state.pendingSecurityConfirmations.length) setOpen(true) }
+    const show = (event: Event) => {
+      if (state.pendingSecurityConfirmations.length) return
+      const trigger = (event as CustomEvent<unknown>).detail
+      managerReturnFocus.current = trigger instanceof HTMLElement ? trigger : document.querySelector<HTMLElement>(".cm-navigation-toggle")
+      setOpen(true)
+    }
     window.addEventListener("cmspark:open-thread-manager", show)
     return () => window.removeEventListener("cmspark:open-thread-manager", show)
   }, [state.pendingSecurityConfirmations.length])
@@ -519,7 +532,6 @@ export function ThreadList() {
       },
     )
     setMenuOpen(false)
-    setOpen(false)
   }, [threads, relatedSeedId, activeThreadId])
 
   /** Wave C-4: lint stats for cleanup helper. */
@@ -761,6 +773,14 @@ export function ThreadList() {
     beginExtractBatch(capped, force)
   }
 
+  function requestExtractUntagged() {
+    setMenuOpen(false)
+    setConfirmExtract(true)
+  }
+  useEffect(() => {
+    if (confirmExtract) historyRef.current?.querySelector<HTMLButtonElement>("[data-extract-cancel]")?.focus()
+  }, [confirmExtract])
+
   /** A-1 menu / A-2 CTA: extract untagged (uses selection.force — S1). */
   const handleExtractUntagged = () => {
     if (untaggedExtract.ids.length === 0) return
@@ -934,7 +954,7 @@ export function ThreadList() {
       return
     }
     const place = () => {
-      const r = triggerRef.current?.getBoundingClientRect()
+      const r = document.querySelector(".cm-status-rail")?.getBoundingClientRect() || triggerRef.current?.getBoundingClientRect()
       const top = Math.round((r?.bottom ?? 48) + 6)
       setPanelBox({
         top,
@@ -975,11 +995,12 @@ export function ThreadList() {
       event.preventDefault()
       event.stopPropagation()
       if (menuOpenRef.current) { setMenuOpen(false); menuBtnRef.current?.focus(); return }
-      setOpen(false); triggerRef.current?.focus()
+      if (confirmExtract) { setConfirmExtract(false); return }
+      setOpen(false); returnManagerFocus()
     }
     document.addEventListener("keydown", key)
     return () => document.removeEventListener("keydown", key)
-  }, [open, !!panelBox])
+  }, [open, !!panelBox, confirmExtract])
 
   const closeMetadataEditor = (threadId = editingThread?.id) => {
     setEditingThread(null)
@@ -1395,7 +1416,7 @@ export function ThreadList() {
                 cursor: extractDisabled ? "not-allowed" : "pointer",
               }}
               disabled={extractDisabled}
-              onClick={handleExtractUntagged}
+              onClick={requestExtractUntagged}
               title={
                 extractDisabled
                   ? "没有可提取的未标注会话（已跳过运行中与 worker）"
@@ -1502,7 +1523,7 @@ export function ThreadList() {
         createPortal(
         <>
           <div
-            ref={historyRef} className="cm-history-panel" role="dialog" aria-label="历史对话列表" aria-modal="false"
+            ref={historyRef} className="cm-history-panel" role="dialog" aria-label="对话管理" aria-modal="false"
             style={{
               ...styles.panel,
               position: "fixed",
@@ -1514,7 +1535,12 @@ export function ThreadList() {
               zIndex: 10050,
             }}
           >
-            <div className="cm-thread-management-title" style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>对话管理</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); triggerRef.current?.focus() }}>×</button></div>
+            <div className="cm-thread-management-title" style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>对话管理</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); returnManagerFocus() }}>×</button></div>
+            {confirmExtract && <div role="alertdialog" aria-label="确认提取标签" style={styles.pendingDelete}>
+              <p>最多处理 20 条还没有要点的对话，写入要点和标签，保留手动分组和原有对话。</p>
+              <button type="button" data-extract-cancel onClick={() => setConfirmExtract(false)}>取消</button>
+              <button type="button" onClick={() => { setConfirmExtract(false); handleExtractUntagged() }}>开始提取</button>
+            </div>}
             {pendingDelete && (
               <div
                 role="alertdialog"
@@ -1675,7 +1701,7 @@ export function ThreadList() {
                                 : "pointer",
                           }}
                           disabled={untaggedExtract.ids.length === 0}
-                          onClick={handleExtractUntagged}
+                          onClick={requestExtractUntagged}
                           title={
                             untaggedExtract.ids.length === 0
                               ? "没有可提取的未标注会话"
@@ -1709,7 +1735,7 @@ export function ThreadList() {
             </div>
 
             <div className="cm-thread-management-actions" aria-label="对话整理工具">
-              <button type="button" onClick={handleExtractUntagged} disabled={untaggedExtract.ids.length === 0 || !!extractProgress}>AI 提取标签</button>
+              <button type="button" onClick={requestExtractUntagged} disabled={untaggedExtract.ids.length === 0 || !!extractProgress}>AI 提取标签</button>
               <button type="button" onClick={() => { setCleanupOpen(true); runCleanupScan() }}>整理助手</button>
               <button type="button" onClick={openThreadGraph}>关系图谱</button>
               <button type="button" onClick={() => trashView ? closeTrashView() : openTrashView()}>{trashView ? "返回对话" : "回收站"}</button>
@@ -2018,7 +2044,7 @@ export function ThreadList() {
           </div>
 
         </>,
-        document.body,
+        document.querySelector(".cm-thread-manager-mount") || document.body,
       )}
     </div>
   )

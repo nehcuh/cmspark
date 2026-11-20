@@ -24,5 +24,6 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-ThreadingHTTPServer.allow_reuse_address = True
-ThreadingHTTPServer(("127.0.0.1", 8766), Handler).serve_forever()
+with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+    print(server.server_port, flush=True)
+    server.serve_forever()

@@ -65,6 +65,7 @@ import { useComposerVoice } from "./hooks/useComposerVoice"
 import { useComposerIngest } from "./hooks/useComposerIngest"
 import { useComposerMentions } from "./hooks/useComposerMentions"
 import { extractHostname, resolveNativeVision } from "./components/vision-reuse-logic"
+import { requestProjectThread } from "./utils/project-request"
 import { buildOptimisticUploadBubble, nextComposerText, sendComposerUpload, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
 import { newTempUserMessageId } from "../utils/temp-message-id"
 import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
@@ -311,7 +312,23 @@ function AppContent() {
 function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
   const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
-  const [text, setText] = useState("")
+  const [drafts, setDrafts] = useState<Map<string | null, string>>(() => new Map())
+  const draftOwner = state.activeThreadId
+  const text = drafts.get(draftOwner) || ""
+  const setText = useCallback((change: string | ((previous: string) => string)) => {
+    setDrafts(previous => {
+      const before = previous.get(draftOwner) || ""
+      const value = typeof change === "function" ? change(before) : change
+      if (before === value) return previous
+      const next = new Map(previous)
+      if (value) next.set(draftOwner, value)
+      else next.delete(draftOwner)
+      return next
+    })
+  }, [draftOwner])
+  const firstThreadRequest = useRef<AbortController | null>(null)
+  const [firstThreadError, setFirstThreadError] = useState("")
+  useEffect(() => () => firstThreadRequest.current?.abort(), [])
 
   useEffect(() => {
     const restore = state.composerRestore
@@ -465,7 +482,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const canSend =
     composerMode !== "l2_task" &&
     hasContent &&
-    !!state.activeThreadId &&
     state.connectionState === "connected" &&
     !voice.listening &&
     !overlayStandby
@@ -491,8 +507,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   )
   const getPlaceholder = () => {
     if (overlayStandby) return overlayStandby.label
-    if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
+    if (needsThread) return "输入第一条消息…"
     if (voice.processing) return sttEngine === "local" ? "正在本机识别…" : "正在识别…"
     if (voice.listening) {
       const localNearRt =
@@ -549,17 +565,40 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     }
   }
 
+  async function startFirstThread() {
+    if (firstThreadRequest.current || state.activeThreadId || needsConnection || overlayStandby) return
+    const request = new AbortController()
+    firstThreadRequest.current = request
+    setFirstThreadError("")
+    try {
+      await requestProjectThread(request.signal, thread => {
+        setDrafts(previous => {
+          const draft = previous.get(null)
+          if (draft === undefined) return previous
+          const next = new Map(previous)
+          next.delete(null)
+          next.set(thread.id, draft)
+          return next
+        })
+      }, "")
+    } catch {
+      if (!request.signal.aborted) setFirstThreadError("新对话尚未确认创建，输入已保留。")
+    } finally {
+      if (firstThreadRequest.current === request) firstThreadRequest.current = null
+    }
+  }
+
   const handleSend = (overrideFiles?: FileAttachment[], opts?: { enqueue?: boolean }) => {
     const files = Array.isArray(overrideFiles) ? overrideFiles : selectedFilesRef.current
     const trimmed = textRef.current.trim()
     const sendAllowed =
       composerMode !== "l2_task" &&
-      !!state.activeThreadId &&
       state.connectionState === "connected" &&
       !voice.listening &&
       !state.overlayStandby
     if (!sendAllowed || sendingRef.current) return
     if (!trimmed && files.length === 0) return
+    if (!state.activeThreadId) { void startFirstThread(); return }
     if (threadBusy) {
       if (files.length > 0) return
       sendingRef.current = true
@@ -876,6 +915,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       <ComposerDock
         chips={<ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />}
       >
+        {needsThread && !needsConnection && !overlayStandby && <button type="button" className="cm-icon-button cm-first-conversation" onClick={() => void startFirstThread()}>开始第一则对话</button>}
+        {needsThread && firstThreadError && <div role="alert">{firstThreadError}</div>}
         <div
           className="cm-composer-capsule"
           style={{
@@ -896,7 +937,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             // Disable whenever live overlay owns the value (listening + processing gaps).
             // Otherwise keystrokes are invisible and next final flush overwrites them.
             disabled={
-              needsThread ||
               needsConnection ||
               voice.liveOverlay !== null ||
               !!overlayStandby
@@ -985,9 +1025,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               title={
                 overlayStandby
                   ? overlayStandby.label
-                  : needsThread
-                    ? "请先创建线程"
-                    : needsConnection
+                  : needsConnection
                       ? "Companion 未连接"
                       : taskActive
                         ? "任务进行中，请在确认台发送"
