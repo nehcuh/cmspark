@@ -4,7 +4,12 @@
 
 ## [Unreleased]
 
-## [1.3.0] — 2026-11-20（发布准备）
+## [1.3.1] — 2026-11-20（发布准备）
+
+- Chrome 扩展窄栏和弹出对话框沿用 v1.0.1 的紧凑导航布局。最近对话和搜索排在前面，工具默认收起，详情按需打开，聊天输入固定在底部。
+- 宽窗口保留常驻导航；可从历史搜索打开对话，重开时恢复上次确认的对话。[#867](https://github.com/nehcuh/cmspark/pull/867)
+
+## [1.3.0] — 2026-11-20（正式发布）
 
 - 聊天可以另选外部转写（[#861](https://github.com/nehcuh/cmspark/pull/861)，[#860](https://github.com/nehcuh/cmspark/issues/860)）。DeepSeek 官方转写与 OpenAI 兼容转写只把聊天麦克风这一段打成一份 WAV，发送一次。会议录音、导入音频和说话人分离仍走本机或系统识别；会议选成外部转写时拒绝，不上传会议音频。实现已合并到 `08fe57feacd6ca634eb2f8369dada10420ce0d44`（feature head `6d69c5771da4412c8b4e58321718872614618a6e`）。该 head 的 [CI](https://github.com/nehcuh/cmspark/actions/runs/44238627364)、[会话持久化](https://github.com/nehcuh/cmspark/actions/runs/44238627291)、[ARM](https://github.com/nehcuh/cmspark/actions/runs/44238627294) 与 [Linux ARM 集成](https://github.com/nehcuh/cmspark/actions/runs/44238627250) 均为 success。本准备没有重跑这些检查。
 - Windows 桌面启动器从系统目录取得系统盘符，WebView2 子进程可正确解析系统缓存路径。Apps 枚举在可执行文件存在时才读取版本信息，缺失时沿用进程名。macOS 工作区选择框夹具在界面就绪后直接核对控件数量，真实选择与第二次取消均在原 45 秒内完成。[#869](https://github.com/nehcuh/cmspark/pull/869) · [跨平台检查](https://github.com/nehcuh/cmspark/actions/runs/44666158868)

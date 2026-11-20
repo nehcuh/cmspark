@@ -1,12 +1,18 @@
 # 版本与交付状态
 
-> 源码开发版本 **1.3.0（尚未正式发布）**。当前已发布的正式安装包是 [v1.2.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.2.1)。
+> 源码开发版本 **1.3.1（尚未正式发布）**。本次准备的已发布基线是 [v1.3.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.3.0)。
 
-## 1.3.0 发布准备
+## 1.3.1 发布准备
+
+- 本版恢复 Chrome 扩展窄栏与弹出对话框的紧凑导航布局。发布内容见 [CHANGELOG](../CHANGELOG.md) 与 [#867](https://github.com/nehcuh/cmspark/pull/867)。
+
+## 1.3.0
+
+- 正式标签 `v1.3.0` 指向 `32227749b0fb4ab394dac8f4bf15e31a84763b97`，于 2026-11-20 发布。公开资产共 19 项。[GitHub Release](https://github.com/nehcuh/cmspark/releases/tag/v1.3.0) · [安装器校验清单](https://github.com/nehcuh/cmspark/releases/download/v1.3.0/SHA256SUMS-INSTALLERS.txt)
 
 - 发布基线为 main `1f8daa1176f232c1893056843b8446813e735410`，包含 [#861](https://github.com/nehcuh/cmspark/pull/861) 和 [#869](https://github.com/nehcuh/cmspark/pull/869)。#869 的最后提交 `12fcfff2` 通过全部 10 项检查。Windows 的 WebView2 回调和 Apps 枚举在原时限内通过；macOS 完成两次真实选择框交互、核对目录并正常退出，耗时 37.18 秒。[原生平台 CI](https://github.com/nehcuh/cmspark/actions/runs/44666158868)
 - 聊天外部转写已在该合并里实现，范围以已审的[用户指南 §2.8](meeting-and-dictation-user-guide.md) 为准：只发送聊天麦克风这一段；会议不走这条地址。该 head 的四条 workflow 均 success：[CI 44238627364](https://github.com/nehcuh/cmspark/actions/runs/44238627364)、[Session save recovery 44238627291](https://github.com/nehcuh/cmspark/actions/runs/44238627291)、[ARM acceptance 44238627294](https://github.com/nehcuh/cmspark/actions/runs/44238627294)、[Linux integration ARM 44238627250](https://github.com/nehcuh/cmspark/actions/runs/44238627250)。本准备没有重跑它们。
-- 没有对真实 DeepSeek 或 OpenAI 转写服务做准确率测量或实服务验收。#860 保持开放。本机 Whisper 的速度和准确率优化仍是以后的计划。#853 保持开放。正式 tag、GitHub Release 与 1.3.0 安装器上传尚未执行。
+- 没有对真实 DeepSeek 或 OpenAI 转写服务做准确率测量或实服务验收。#860 保持开放。本机 Whisper 的速度和准确率优化仍是以后的计划。#853 保持开放。
 
 ## 1.2.1
 
