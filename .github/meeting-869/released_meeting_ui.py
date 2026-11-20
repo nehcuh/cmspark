@@ -106,17 +106,25 @@ def main():
             expect(minutes_view).to_have_count(1)
             expect(minutes_view).to_have_text(raw)
             # Reopen the extension document and load through its normal Companion API.
+            print("UI and disk agree on the raw ASR and generated minutes; checking fresh extension document", flush=True)
             panel.reload()
             saved = panel.evaluate("""id => new Promise((resolve,reject) => {
+              const request = "meeting-rpc-" + crypto.randomUUID();
               const stop = () => chrome.runtime.onMessage.removeListener(receive);
               const timer = setTimeout(() => { stop(); reject(Error("reload timed out")) }, 15000);
               const receive = m => {
+                if (m.id !== request) return;
+                if (m.type === 'error' || m.type === 'meeting.error') {
+                  clearTimeout(timer); stop(); reject(Error(m.code || 'readback rejected')); return;
+                }
                 if (m.type === 'meeting.get_result' && m.meeting?.id === id) {
                   clearTimeout(timer); stop(); resolve(m.meeting);
                 }
               };
               chrome.runtime.onMessage.addListener(receive);
-              chrome.runtime.sendMessage({type:'meeting.get', v:1, meeting_id:id});
+              chrome.runtime.sendMessage({type:'meeting.get', v:1, id:request, meeting_id:id}).then(reply => {
+                if (!reply?.ok || reply.sent === false) { clearTimeout(timer); stop(); reject(Error('readback not sent')); }
+              }, err => { clearTimeout(timer); stop(); reject(err); });
             })""", session.name)
             assert saved["minutes"]["raw_md"].strip() == raw and saved["transcript"] == rows
             assert saved["original_transcript"] == originals
