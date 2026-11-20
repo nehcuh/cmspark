@@ -109,7 +109,7 @@ test('diagnostic workflow is read-only and restricted to the probe branch', () =
   const upload = job.steps.find(step => step.uses === 'actions/upload-artifact@v4' && step.with.name === 'mcp-stack-probe-869')
   assert.equal(upload.if, 'always()')
   assert.deepEqual(upload.with.path.trim().split(/\r?\n/).map(line => path.posix.basename(line)),
-    ['qualification.json','run.json','capture.json'])
+    ['qualification.json','run.json','capture.json','process-timing.json'])
 })
 
 test('grouped probe classifies only the MCP form case', () => {

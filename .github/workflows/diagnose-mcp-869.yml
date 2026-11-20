@@ -116,7 +116,7 @@ jobs:
           CMSPARK_MCP_STACK_PROBE_826: '1'
           CMSPARK_MCP_STACK_CANONICAL_GROUP_869: '1'
         working-directory: companion
-        run: node scripts/mcp-stack-probe-826.mjs
+        run: pwsh -NoProfile -File scripts/mcp-controller-process-timing.ps1
       - name: Verify collector source and projection
         if: always()
         working-directory: companion
@@ -130,4 +130,5 @@ jobs:
             ${{ runner.temp }}/mcp-stack-probe-826/qualification.json
             ${{ runner.temp }}/mcp-stack-probe-826/run.json
             ${{ runner.temp }}/mcp-stack-probe-826/capture.json
+            ${{ runner.temp }}/mcp-stack-probe-826/process-timing.json
           if-no-files-found: warn
