@@ -245,6 +245,37 @@ test('failure evidence keeps only bounded whitelist bytes and never follows an o
   } finally { fs.rmSync(parent, {recursive: true, force: true}) }
 })
 
+test('failure evidence bounds reads while the source grows and clears old copies when the scene is gone', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'picker-growing-476-'))
+  const scene = path.join(root, 'scene')
+  const stdout = path.join(scene, 'xcode.stdout')
+  const dest = path.join(root, 'picker-failure-evidence')
+  const mod = evidenceModule()
+  try {
+    sceneFiles(scene, {'xcode.stdout': Buffer.from('initial'), 'xcode.stderr': Buffer.from('previous')})
+    const originalRead = fs.readSync
+    let grown = false
+    const hook = t.mock.method(fs, 'readSync', (...args: Parameters<typeof fs.readSync>) => {
+      if (!grown) {
+        grown = true
+        fs.appendFileSync(stdout, Buffer.alloc(TEXT_CAP))
+        assert.equal((args as unknown[])[3], 'initial'.length + 1)
+      }
+      return Reflect.apply(originalRead, fs, args)
+    })
+    try { mod.preservePickerFailureEvidence476({scene: {root: scene}}, root) }
+    finally { hook.mock.restore() }
+    assert.equal(grown, true)
+    const status = () => JSON.parse(fs.readFileSync(path.join(dest, 'evidence-status.json'), 'utf8'))
+    assert.deepEqual(status().files['xcode.stdout'], {status: 'OVERSIZE', bytes: 0})
+    assert.equal(fs.existsSync(path.join(dest, 'xcode.stdout')), false)
+    assert.equal(fs.existsSync(path.join(dest, 'xcode.stderr')), true)
+    mod.preservePickerFailureEvidence476(undefined, root)
+    assert.deepEqual(status().files['xcode.stderr'], {status: 'ABSENT', bytes: 0})
+    assert.equal(fs.existsSync(path.join(dest, 'xcode.stderr')), false)
+  } finally { fs.rmSync(root, {recursive: true, force: true}) }
+})
+
 test('actual cleanup copies after it returns and before rm, and a copy fault keeps the original failure', async () => {
   const source = read(nativePath)
   const ast = ts.createSourceFile(nativePath, source, ts.ScriptTarget.Latest, true)

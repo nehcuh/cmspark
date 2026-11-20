@@ -228,13 +228,25 @@ windows-latest job `135543346278` 的 MCP 表单 not ok 24，20000ms。点 7 已
 
 `e196f29b` 的复制和上传已经在树上。该 SHA 的十项检查跨 run 聚合是 5 通过、5 失败。主 run `44532945072` 是四条 smoke 失败，ARM run `44532945063` 另失败。不要把这十项都记在主 run 上。四条 smoke 都是 #633 里的步骤顺序锁，原生 #476 没启动，没有证据。这不是空 events，也不是原生回归。证据复制本身先不动。
 
-## 当前唯一下一步
+## 已实现的证据上传步骤锁
 
 在 `validateWindowsCiFeedback750` 进入 `projectActivityFirst826` 和 `collapseNativeStages760` 之前，加一个只针对 `Upload picker failure evidence (#476)` 的逆投影。恰好一次，并且解析后的整个步骤等于：`if: always() && matrix.os == 'macos-latest'`、`uses: actions/upload-artifact@v4`、工件名含 `github.sha` 和 `github.run_attempt`、路径 `companion/picker-failure-evidence/`、`retention-days` 数字 7、`if-no-files-found: ignore`，没有 `continue-on-error`。它的位置是交互验收的下一项，再下一项仍是共享编译。核对后只删除这一个对象。旧步骤顺序、个数和 baseline 摘要不变。不按 upload action 过滤，不改旧 hash，不放宽旧断言。上传不挪走，失败后的 macOS job 仍会执行它。
 
 #750 的新变体覆盖缺步骤、重复、挪到交互之前、挪到共享编译之后、改条件、改路径、改天数、改 ignore、加 `continue-on-error`。LF 和 CRLF 都抛 `ERR_ASSERTION`。旧步骤移动或删除仍由 #750/#760 已有变体报红。`nsis`、#759、#788 build、census、#571、#572、#723、#732 和证据测试自己的上传原文检查不改。
 
 失败证据复制、45000、20000、真实 OS、第二张 sheet 拒绝、租约和两个 Host 不动。不重跑 `44532945072`。规划门通过之后才实现这一层。当前整票不能合并，也不能发布。
+
+## 0ad770ad 的 CI 回执
+
+步骤锁的精确逆投影已实现。该提交 10 项检查中 9 项通过。macOS 原生选择框用例记录 `pickerObserved=2`、`cancelReturned=1`、`childExitCode=0` 和 `xcodeCode=0`，取消计时 18、19、20 均有进入和返回记录。这次验收通过，历史挂起的触发条件仍未知。[macOS 日志](https://github.com/nehcuh/cmspark/actions/runs/44536143567/job/135601957721)
+
+唯一失败的 `windows-latest` 作业里，原生 MCP 表单用例触及 20000ms 截止。宿主已认证，工作区窗口请求已发出，`postAuthRequestMask=0`。观察记录到 `CreateCoreWebView2Controller` 返回 HRESULT 0。截止快照 `callbackPresent=0`，没有控制器回调入口或导航回执。同作业随后成功的 `DESKTOP_480_NATIVE` 属于另一用例。现有回执把失败范围收窄到控制器请求返回之后、测试观察到控制器回调之前，SDK 内部状态仍未知。[Windows 日志](https://github.com/nehcuh/cmspark/actions/runs/44536143567/job/135601957873)
+
+保留原 20 秒和业务断言。当前合并门仍被该 Windows 失败阻塞。
+
+同一源码在本机 Windows 用 Node 22.23.4 x64 编译测试。完整夹具构建在后续 terminal 夹具报 `C2026`，本机复现只使用该次构建已经生成的 MCP 夹具与 launcher。原 MCP 表单用例耗时 1027ms，观察到控制器回调、导航、三次窗口回执、两次批准、一次拒绝与持久化，退出断言通过。快照为 `UNKNOWN`。配套快照用例通过。本机结果未复现托管 runner 的超时，合并仍以托管检查为准。
+
+同一工作树通过 152 项 CI 步骤契约测试和 23 项会议相关测试，覆盖纪要生成、参考材料、转写持久化、生成的 PCM 资源与外部聊天转写隔离。真实会议录音到纪要的端到端验收仍待完成。
 
 ## 安装包
 
