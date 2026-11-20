@@ -65,12 +65,6 @@ export async function runMcpStackProbe826() {
   fs.mkdirSync(outputRoot, { mode: 0o700 })
   const write = (name, value) => fs.writeFileSync(path.join(outputRoot, name + '.json'), JSON.stringify(value), { flag: 'wx', mode: 0o600 })
   const { qualifyCdb826 } = require('./mcp-stack-capture-826.cjs')
-  const qualification = await qualifyCdb826({ outputRoot })
-  write('qualification', qualification)
-  if (qualification.status !== 'OBSERVED') {
-    write('run', { schema: 1, kind: 'NON_ACCEPTANCE', originalOutcome: 'NOT_RUN', qualification: qualification.status })
-    return 1
-  }
   console.log('MCP_STACK_PROBE_826 NON_ACCEPTANCE originalMs=20000 snapshotMs=20000 toolTimeoutsMs=3000+6000+6000 actualToolCloseRequired=true')
   const group = process.env.CMSPARK_MCP_STACK_CANONICAL_GROUP_869 === '1'
   let result
@@ -97,8 +91,11 @@ export async function runMcpStackProbe826() {
   } finally {
     if (!fs.readFileSync(sourceFile).equals(source) || !fs.readFileSync(canonical).equals(compiled)) throw Error('MCP826_STACK_CANONICAL_CHANGED')
   }
-  // A stack capture never changes the actual test's exit code into success.
-  return result.error || result.signal ? 1 : result.status ?? 1
+  // Qualify on the same VM after execution so CDB, PowerShell and the
+  // qualification dummy cannot change the cold-start conditions of the case.
+  const qualification = await qualifyCdb826({ outputRoot })
+  write('qualification', qualification)
+  return qualification.status !== 'OBSERVED' || result.error || result.signal ? 1 : result.status ?? 1
 }
 
 export function classifyGroupedMcpOutcome869(result) {

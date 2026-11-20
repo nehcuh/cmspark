@@ -111,15 +111,16 @@ jobs:
           cd companion
           node scripts/run-tests.mjs .test-dist/tests/activity-platform-native-758.test.js .test-dist/tests/activity-apps-825.test.js .test-dist/tests/activity-scope825-native.test.js .test-dist/tests/activity-scope825-readiness.test.js .test-dist/tests/activity-failure-observation-826.test.js
 
-      - name: Verify collector source and projection
-        working-directory: companion
-        run: node --test scripts/tests/mcp-stack-probe-826.test.mjs scripts/tests/mcp-stack-capture-826.test.cjs
-      - name: Qualify CDB and run the original 20-second MCP case once
+      - name: Run original 20-second MCP group before debugger qualification
         env:
           CMSPARK_MCP_STACK_PROBE_826: '1'
           CMSPARK_MCP_STACK_CANONICAL_GROUP_869: '1'
         working-directory: companion
         run: node scripts/mcp-stack-probe-826.mjs
+      - name: Verify collector source and projection
+        if: always()
+        working-directory: companion
+        run: node --test scripts/tests/mcp-stack-probe-826.test.mjs scripts/tests/mcp-stack-capture-826.test.cjs
       - name: Preserve only finite projected evidence
         if: always()
         uses: actions/upload-artifact@v4
