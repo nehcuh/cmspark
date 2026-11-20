@@ -348,7 +348,15 @@ export interface Message {
    */
   client_message_id?: string
   /** Companion-attached knowledge ledger (Wave 1). Never model-authored. */
-  retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number; group_label?: string }>
+  retrieved_sources?: Array<{
+    id: string
+    title: string
+    chunk_index?: number
+    chars: number
+    group_label?: string
+    selection?: "automatic" | "explicit" | "library"
+    excerpt?: string
+  }>
   /** #273 Wave B（AC-18）：路由元数据——分组概览两态 + 芯片口径 M=|S_pre|。 */
   knowledge_routing?: { groupmap: "injected" | "omitted"; m: number }
   /** Length-stop / truncated-tool-batch honesty (hydrate chip). */

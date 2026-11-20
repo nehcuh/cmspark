@@ -583,13 +583,13 @@ export function KnowledgeSubPanel() {
   const modeHint = (() => {
     const base =
       selectionMode === "auto"
-        ? "自动：按这轮问题选相关知识；已钉的优先。当前站点加权。"
+        ? "自动：按这轮问题核对正文片段，已钉资料优先。"
         : selectionMode === "all"
           ? "全选：在全库里检索，仍受条数/长度上限。"
           : "按需：只注入勾选的；超预算时从末尾截断并在芯片上可见。"
     if (smartMatch) return base
     // 智能匹配已关：诚实说明退回的选择行为（预算仍生效）
-    if (selectionMode === "auto") return `${base}（已关智能匹配：按当前站点+勾选注入。）`
+    if (selectionMode === "auto") return `${base}（已关智能匹配：仅使用勾选资料。）`
     if (selectionMode === "all") return `${base}（已关智能匹配：不检索，按列表序注入，超预算截断。）`
     return base
   })()
@@ -887,7 +887,7 @@ export function KnowledgeSubPanel() {
               borderColor: selectionMode === mode ? tokens.accent : tokens.border,
             }}
             onClick={() => handleModeChange(mode)}
-            title={mode === "auto" ? "按这轮问题选相关知识，当前站点加权" : mode === "all" ? "在全库里检索，有总量上限" : "仅使用勾选知识"}
+            title={mode === "auto" ? "按这轮问题从正文确认相关知识" : mode === "all" ? "在全库里检索，有总量上限" : "仅使用勾选知识"}
           >
             {modeLabels[mode]}
           </button>
@@ -897,7 +897,7 @@ export function KnowledgeSubPanel() {
       {!isManual && (
         <label
           style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: tokens.textSecondary, cursor: "pointer", marginBottom: 4 }}
-          title="开：按这轮问题从知识库打分选文；关：按站点+勾选（全选模式为按列表序），注入总量上限仍生效"
+          title="自动模式开启时核对正文，关闭时仅使用勾选资料。全选模式关闭时按列表顺序使用，仍有总量上限。"
         >
           <input
             type="checkbox"

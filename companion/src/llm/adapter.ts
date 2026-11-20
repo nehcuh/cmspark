@@ -15,7 +15,7 @@ import type { SiteTarget } from "../site-context/target"
 import { wrapKnowledgeBlock } from "../skills/content-sanitizer"
 import { siteExperienceIdentity, isOwnedSiteExperience, readSiteExperienceEntries } from "../skills/site-experience-identity"
 import type { ThreadManager } from "../threads/thread-manager"
-import type { SkillEngine } from "../skills/skill-engine"
+import type { RetrievedSource, SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
 import { getAllToolDefinitions, getToolDefinitions, getMcpMetaToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
 import { tryParseToolArgs } from "../bridge/tool-schemas"
@@ -896,13 +896,17 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         knowledgeMode: currentThread?.knowledge_selection_mode || knowledgeMode,
         knowledgeSmartMatch: currentThread?.knowledge_smart_match ?? knowledgeSmartMatch,
         knowledgeRouteByGroup: currentThread?.knowledge_route_by_group ?? knowledgeRouteByGroup,
+        chatKnowledge: true,
       },
     })
     if (contextTarget) {
       const selectedIds = new Set(context.retrieved_sources.map(source => source.id))
+      // Exact-origin tool safeguards also apply when an automatic knowledge
+      // document has no passage relevant to the current user message.
+      const automaticSiteSafeguard = selection.kind === "thread" && selection.knowledgeMode === "auto"
       const entries = readSiteExperienceEntries(contextTarget.origin, id => {
         const doc = skillEngine.get(id)
-        return doc && selectedIds.has(doc.id || doc.name) ? doc : undefined
+        return doc && (automaticSiteSafeguard || selectedIds.has(doc.id || doc.name)) ? doc : undefined
       })
       refreshPersistedSiteOpExperience(threadId, contextTarget.origin, entries)
     }
@@ -1401,7 +1405,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     truncated?: boolean
     incomplete_tools?: boolean
     finish_reason?: string | null
-    retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number; group_label?: string }>
+    retrieved_sources?: RetrievedSource[]
     /** #273 Wave B（AC-18）：路由元数据（groupmap 两态 + M=|S_pre|）。 */
     knowledge_routing?: { groupmap: "injected" | "omitted"; m: number }
   }) {
@@ -1417,7 +1421,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       truncated?: boolean
       incomplete_tools?: boolean
       finish_reason?: string | null
-      retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number; group_label?: string }>
+      retrieved_sources?: RetrievedSource[]
       knowledge_routing?: { groupmap: "injected" | "omitted"; m: number }
     } = {
       thread_id: threadId,
@@ -1435,7 +1439,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     if (draft.truncated) savedMsg.truncated = true
     if (draft.incomplete_tools) savedMsg.incomplete_tools = true
     if (draft.finish_reason !== undefined) savedMsg.finish_reason = draft.finish_reason
-    if (assistantMsg.length === 0 && draft.retrieved_sources && draft.retrieved_sources.length > 0) {
+    if ((assistantMsg.length === 0 || draft.incomplete_tools) && draft.retrieved_sources &&
+        (params.contextSelection || draft.retrieved_sources.length > 0)) {
       savedMsg.retrieved_sources = draft.retrieved_sources
       if (draft.knowledge_routing) savedMsg.knowledge_routing = draft.knowledge_routing
     }
@@ -1824,6 +1829,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           truncated: true,
           incomplete_tools: true,
           finish_reason: finishReason ?? null,
+          retrieved_sources: retrievedSources,
+          knowledge_routing: knowledgeRoutingWire,
         })
         savedAssistantId = savedTruncated.id
         persistInterruptedRemainder(savedAssistantId, "interrupted")
@@ -1835,6 +1842,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           incomplete_tools: true,
           finish_reason: finishReason ?? "max_tokens",
           ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+          ...(params.contextSelection || retrievedSources.length > 0 ? { retrieved_sources: retrievedSources } : {}),
+          ...(knowledgeRoutingWire ? { knowledge_routing: knowledgeRoutingWire } : {}),
         })
         sendToExtension({
           type: "chat.error",
@@ -1948,7 +1957,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           message_id: savedAssistant.id,
           ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
           ...(leak ? { tool_format_leak: true } : {}),
-          ...(retrievedSources.length > 0 ? { retrieved_sources: retrievedSources } : {}),
+          ...(params.contextSelection || retrievedSources.length > 0 ? { retrieved_sources: retrievedSources } : {}),
           ...(knowledgeRoutingWire ? { knowledge_routing: knowledgeRoutingWire } : {}),
           // Length-stop with no tool_call deltas = pure-text truncation. The reply
           // is kept as-is but flagged (optional, backward-compatible) so the UI can
