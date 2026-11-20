@@ -49,11 +49,14 @@ def main():
             open_meeting(panel)
             panel.get_by_test_id("meeting-voice-privacy-v2-accept").click()
             panel.get_by_role("button", name="我已了解", exact=True).click()
-            enable = panel.get_by_test_id("meeting-enable-local-stt")
-            if enable.is_visible():
-                expect(enable).to_be_enabled(timeout=30000)
-                enable.click()
-            expect(panel.get_by_test_id("meeting-start-capture")).to_be_enabled(timeout=30000)
+            # The released Companion was configured for local STT. The optional
+            # enable button disappears when its authenticated model state arrives.
+            try:
+                expect(panel.get_by_test_id("meeting-start-capture")).to_be_enabled(timeout=30000)
+            except AssertionError:
+                scene = panel.get_by_test_id("meeting-panel")
+                print("Readiness:", scene.inner_text()[:1300] if scene.count() else "meeting panel closed", flush=True)
+                raise
             upload = panel.get_by_test_id("meeting-import-audio")
             expect(upload).to_be_enabled()
             if a.ready_only:
