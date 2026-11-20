@@ -56,6 +56,7 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
     ]
     const requests: string[] = []
     const completed: any[] = []
+    const finalFinishReason = initialTab === undefined ? "max_tokens" : "stop"
     proto = Object.getPrototypeOf(new OpenAI({ baseURL: "http://localhost:9999", apiKey: "test" }).chat.completions)
     original = proto.create
     proto.create = async (params: any) => {
@@ -63,7 +64,7 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
       const step = steps.shift()
       return (async function* () {
         yield { choices: [{ delta: step ? { tool_calls: [{ index: 0, id: `call-${requests.length}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } : { content: "done" } }] }
-        yield { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }
+        yield { choices: [{ delta: {}, finish_reason: step ? "tool_calls" : finalFinishReason }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }
       })()
     }
     let actualUrl: string | undefined = "https://a.test/start"
@@ -107,7 +108,11 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
     assert.ok(final)
     assert.deepEqual(final.retrieved_sources?.map(source => [source.id, source.selection]), [["manual-c", "explicit"]])
     assert.match(final.retrieved_sources?.[0].excerpt ?? "", /MANUAL_C_451/)
-    assert.deepEqual(completed.find(frame => frame.message_id === final.id)?.retrieved_sources, final.retrieved_sources)
+    const finalFrame = completed.find(frame => frame.message_id === final.id)
+    assert.deepEqual(finalFrame?.retrieved_sources, final.retrieved_sources)
+    const generationLimit = finalFinishReason === "max_tokens" ? "output_budget" : undefined
+    assert.equal(final.generation_limit, generationLimit)
+    assert.equal(finalFrame?.generation_limit, generationLimit)
   } finally {
     if (proto && original) proto.create = original
     if (previous === undefined) delete process.env.CMSPARK_DATA_DIR

@@ -19,6 +19,8 @@ import { throwIfLlmEndpointBlocked } from "../../security"
 import { isBenignStreamTailClose } from "../transport-error"
 import { cleanCompanionUserAgent } from "./headers"
 import { reasoningSupport, reasoningWireEffort } from "../reasoning-effort"
+import { LLM_MAX_TOKENS_DEFAULT } from "./anthropic-convert"
+import { providerModelLimits } from "../output-budget"
 
 export class OpenAIProvider implements LlmProvider {
   private readonly client: OpenAI
@@ -55,8 +57,9 @@ export class OpenAIProvider implements LlmProvider {
     }
     if (effort) (createParams as unknown as { reasoning_effort: string }).reasoning_effort = effort
     if (typeof params.max_tokens === "number" && params.max_tokens > 0) {
-      if (support === "openai") createParams.max_completion_tokens = params.max_tokens
-      else createParams.max_tokens = params.max_tokens
+      const limit = Math.min(params.max_tokens, providerModelLimits(this.config, model)?.output ?? Infinity)
+      if (support === "openai") createParams.max_completion_tokens = limit
+      else createParams.max_tokens = limit
     }
     if (tools && tools.length > 0) {
       createParams.tools = tools
@@ -141,10 +144,11 @@ export class OpenAIProvider implements LlmProvider {
     }
     if (effort) (createParams as unknown as { reasoning_effort: string }).reasoning_effort = effort
     // Same policy as streamChat: send a cap only when explicitly requested.
-    const completeMax = params.max_tokens ?? this.config.max_tokens
+    const completeMax = params.max_tokens ?? (this.config.max_tokens === 0 ? LLM_MAX_TOKENS_DEFAULT : this.config.max_tokens)
     if (typeof completeMax === "number" && completeMax > 0) {
-      if (support === "openai") createParams.max_completion_tokens = completeMax
-      else createParams.max_tokens = completeMax
+      const limit = Math.min(completeMax, providerModelLimits(this.config, model)?.output ?? Infinity)
+      if (support === "openai") createParams.max_completion_tokens = limit
+      else createParams.max_tokens = limit
     }
 
     const response = await this.client.chat.completions.create(createParams, {
