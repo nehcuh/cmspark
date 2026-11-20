@@ -31,6 +31,25 @@ for (const [label, source] of [['LF', workflow], ['CRLF', workflow.replaceAll('\
     validateWindowsCiFeedback750(source)
   })
 }
+const pickerEvidence = 'Upload picker failure evidence (#476)'
+const interaction476 = 'Native desktop interaction acceptance (#476)'
+const sharedCompile = 'Compile shared companion test inputs (#650)'
+for (const [label, mutate] of [
+  ['missing', d => { d.jobs['smoke-os'].steps = d.jobs['smoke-os'].steps.filter(s => s.name !== pickerEvidence) }],
+  ['duplicate', d => { d.jobs['smoke-os'].steps.push(structuredClone(find(d, pickerEvidence))) }],
+  ['before interaction', d => { const steps = d.jobs['smoke-os'].steps; const step = steps.splice(steps.findIndex(s => s.name === pickerEvidence), 1)[0]; steps.splice(steps.findIndex(s => s.name === interaction476), 0, step) }],
+  ['after shared compile', d => { const steps = d.jobs['smoke-os'].steps; const step = steps.splice(steps.findIndex(s => s.name === pickerEvidence), 1)[0]; steps.splice(steps.findIndex(s => s.name === sharedCompile) + 1, 0, step) }],
+  ['changed if', d => { find(d, pickerEvidence).if = "success() && matrix.os == 'macos-latest'" }],
+  ['changed path', d => { find(d, pickerEvidence).with.path = 'picker-failure-evidence/' }],
+  ['changed retention', d => { find(d, pickerEvidence).with['retention-days'] = 1 }],
+  ['changed ignore', d => { find(d, pickerEvidence).with['if-no-files-found'] = 'error' }],
+  ['continue-on-error', d => { find(d, pickerEvidence)['continue-on-error'] = true }],
+]) test('#476 picker evidence upload refuses: ' + label, () => {
+  validateWindowsCiFeedback750(workflow)
+  const doc = parseWorkflow750(workflow); mutate(doc)
+  const source = printWorkflow750(doc)
+  for (const value of [source, source.replaceAll('\n', '\r\n')]) assert.throws(() => validateWindowsCiFeedback750(value), { code: 'ERR_ASSERTION' })
+})
 test('#750 finite condition grammar retains status and refuses unknown syntax', () => {
   const context = { success: false, cancelled: false, values: { 'matrix.lane': 'census' } }
   assert.equal(condition750("matrix.lane == 'census'", context), false)

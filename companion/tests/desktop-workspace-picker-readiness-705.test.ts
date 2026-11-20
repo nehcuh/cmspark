@@ -18,13 +18,60 @@ function panelBody(){
 }
 function fixture(options:{visible?:boolean;foreign?:boolean;cancel?:boolean;stale?:boolean}={}){
  const calls:string[]=[],h:any={generation:'owned-document',window:{},authenticated:true,requests:{'desktop.workspace.pick':{}},pickerCurrent:()=>!options.stale};const panel={isVisible:options.visible!==false,sheetParent:options.foreign?{}:h.window}
- h.workspaceSelection={panel,settled:false};const s:any={owner:h,documentGeneration:h.generation,selection:{owned:true},uiNonce:'a'.repeat(64),cancelPicker:!!options.cancel,panels:options.cancel?1:0,pickerTimer:{invalidate(){calls.push('RETIRE_TIMER')}},note:()=>{},emit:(_h:any,id:string)=>calls.push(id),fail:()=>calls.push('FAIL'),h};return{s,calls,panel}
+ h.workspaceSelection={panel,settled:false};const s:any={owner:h,documentGeneration:h.generation,selection:{owned:true},uiNonce:'a'.repeat(64),cancelPicker:!!options.cancel,panels:options.cancel?1:0,pickerTimer:{invalidate(){calls.push('RETIRE_TIMER')}},note:()=>{},emit:(_h:any,id:string)=>calls.push(id),startHostTick:()=>calls.push('HOST_TICK_START'),fail:()=>calls.push('FAIL'),h};return{s,calls,panel}
 }
 test('705 actual Mac retained panel publishes readiness without programmatic selection',()=>{const f=fixture(),run=panelBody();run(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER','D476_WS_PICKER_SELECTED']);assert.equal(f.s.panels,1);run(f.s);assert.equal(f.s.panels,1)})
 test('705 Mac readiness waits for genuine visibility without navigating',()=>{const f=fixture({visible:false}),run=panelBody();run(f.s);assert.equal(f.calls.length,0);f.panel.isVisible=true;run(f.s);assert.equal(f.calls.includes('D476_WS_PICKER_SELECTED'),true)})
 test('705 Mac unowned panel cannot publish readiness',()=>{const f=fixture({foreign:true});panelBody()(f.s);assert.equal(f.calls.includes('FAIL'),true);assert.equal(f.s.panels,0)})
 test('705 Mac retired tuple cannot publish readiness',()=>{const f=fixture({stale:true});panelBody()(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER']);assert.equal(f.s.panels,0)})
-test('705 Mac second panel only reports cancellation readiness without synthesizing cancel',()=>{const f=fixture({cancel:true});panelBody()(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER','D476_WS_PICKER_CANCELLED']);assert.equal(f.s.panels,2)})
+test('705 Mac second panel only reports cancellation readiness without synthesizing cancel',()=>{const f=fixture({cancel:true});panelBody()(f.s);assert.deepEqual(f.calls,['RETIRE_TIMER','D476_WS_PICKER_CANCELLED','HOST_TICK_START']);assert.equal(f.s.panels,2)})
+function registeredHostTick(){
+ const source=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/workspace-acceptance.swift'),'utf8').replace(/\r\n/g,'\n')
+ const begin='Timer.scheduledTimer(withTimeInterval:1,repeats:true){[weak h] _ in\n'
+ assert.equal(source.split(begin).length,2)
+ const rest=source.slice(source.indexOf(begin)+begin.length),end='\n }\n emit(h,"D476_WS_HOST_TICK_ARMED")'
+ assert.equal(rest.split(end).length,2)
+ let body=rest.slice(0,rest.indexOf(end))
+ for(const [from,to,count]of[['guard let h=h else{stopHostTick();return}','if(h==null){stopHostTick();return}',2],['selection!','selection',3]]as const){assert.equal(body.split(from).length,count);body=body.split(from).join(to)}
+ body=body.replace(/\bnil\b/g,'null');assert.doesNotMatch(body,/\bguard\b/);assert.equal(body.split('emit(h,"D476_WS_HOST_TICK_STOP",reason);stopHostTick()').length,2)
+ return vm.runInNewContext('(function(s){with(s){'+body+'}})',{},{timeout:1000}) as(s:any)=>void
+}
+test('705 host tick callback records one stop reason before invalidate',()=>{
+ const run=registeredHostTick(),drive=(h:any,count:number)=>{const calls:string[]=[],state:any={h,hostTickCount:count,stopHostTick(){calls.push('INVALIDATE')},emit(_h:any,id:string,reason?:string){calls.push(reason?id+':'+reason:id)}};run(state);return{calls,hostTickCount:state.hostTickCount}};
+ const absent=drive(null,1);assert.deepEqual(absent.calls,['INVALIDATE']);assert.equal(absent.hostTickCount,1)
+ const capped=drive({workspaceSelection:{settled:true},pickerCurrent:()=>false},40);assert.deepEqual(capped.calls,['D476_WS_HOST_TICK_STOP:cap','INVALIDATE']);assert.equal(capped.hostTickCount,40)
+ const missing=drive({workspaceSelection:null,pickerCurrent(){throw Error('MISSING_SKIPS_CURRENT')}},3);assert.deepEqual(missing.calls,['D476_WS_HOST_TICK_STOP:not-current','INVALIDATE'])
+ const stale=drive({workspaceSelection:{settled:true},pickerCurrent:()=>false},4);assert.deepEqual(stale.calls,['D476_WS_HOST_TICK_STOP:not-current','INVALIDATE'])
+ const settled=drive({workspaceSelection:{settled:true},pickerCurrent:()=>true},5);assert.deepEqual(settled.calls,['D476_WS_HOST_TICK_STOP:settled','INVALIDATE']);assert.equal(settled.hostTickCount,5)
+ const live=drive({workspaceSelection:{settled:false},pickerCurrent:()=>true},39);assert.deepEqual(live.calls,['D476_WS_HOST_TICK']);assert.equal(live.hostTickCount,40)
+})
+function registeredStartHostTick(){
+ const source=fs.readFileSync(path.resolve('tests/fixtures/desktop-476/workspace-acceptance.swift'),'utf8').replace(/\r\n/g,'\n')
+ const begin='static func startHostTick(_ h:NativeDesktop){'
+ assert.equal(source.split(begin).length,2)
+ const rest=source.slice(source.indexOf(begin)+begin.length),end='\n static func emit'
+ assert.equal(rest.split(end).length,3)
+ let body=rest.slice(0,rest.indexOf(end))
+ const open=body.indexOf('{[weak h] _ in')
+ assert.ok(open>0)
+ let depth=0,close=open
+ for(;close<body.length;close++){if(body[close]==='{')depth++;else if(body[close]==='}'){depth--;if(depth===0){close++;break}}}
+ assert.equal(depth,0)
+ const after=body.slice(close)
+ assert.equal(after.split('emit(h,"D476_WS_HOST_TICK_ARMED")').length,2)
+ assert.equal(after.includes('D476_WS_HOST_TICK_STOP'),false)
+ assert.equal(after.includes('D476_WS_HOST_TICK"'),false)
+ let outer=body.slice(0,open).replace('Timer.scheduledTimer(withTimeInterval:1,repeats:true)','Timer.scheduledTimer()')+after
+ assert.equal(outer.split('guard hostTickTimer==nil else{return}').length,2)
+ outer=outer.replace('guard hostTickTimer==nil else{return}','if(hostTickTimer!=null)return').replace(/\}\s*$/,'')
+ assert.doesNotMatch(outer,/\bguard\b|\[weak h\]/)
+ return vm.runInNewContext('(function(s){with(s){'+outer+'}})',{},{timeout:1000}) as(s:any)=>void
+}
+test('705 host tick arms once after scheduling and does not replace an existing timer',()=>{
+ const run=registeredStartHostTick(),drive=(timer:any)=>{const calls:string[]=[],callbacks:Function[]=[],state:any={h:{},hostTickTimer:timer,Timer:{scheduledTimer(){callbacks.push(()=>calls.push('CALLBACK'));return{id:'scheduled'}}},emit(_h:any,id:string,reason?:string){calls.push(reason?id+':'+reason:id)}};run(state);return{calls,callbacks,timer:state.hostTickTimer}}
+ const fresh=drive(null);assert.deepEqual(fresh.calls,['D476_WS_HOST_TICK_ARMED']);assert.equal(fresh.callbacks.length,1);assert.equal(fresh.timer.id,'scheduled')
+ const kept=drive({id:'kept'});assert.deepEqual(kept.calls,[]);assert.equal(kept.callbacks.length,0);assert.equal(kept.timer.id,'kept')
+})
 test('705 Mac empty correlator refuses without any UI event',()=>{const f=fixture();f.s.uiNonce='';panelBody()(f.s);assert.equal(f.calls.includes('FAIL'),true);assert.equal(f.s.panels,0)})
 
 test('705 actual workspace fixture generator keeps both normal providers byte exact for LF and CRLF',async()=>{

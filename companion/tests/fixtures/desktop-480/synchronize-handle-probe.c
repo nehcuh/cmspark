@@ -56,10 +56,14 @@ int wmain(int argc,wchar_t **argv) {
     if(strcmp(field,"\"}\n")||number>(uintptr_t)-1)goto receiver_done;parent=(HANDLE)(uintptr_t)number;
     char expected[CMSPARK_BOOT_MAX+1];int length=snprintf(expected,sizeof(expected),"{\"capability_id\":\"11111111111111111111111111111111\",\"secret\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"url\":\"ws://127.0.0.1:1/desktop\",\"protocol_version\":1,\"issued_method_set_version\":10,\"parent_handle\":\"%llu\"}\n",(unsigned long long)number);
     if(length<=0||(DWORD)length!=count||memcmp(bytes,expected,count)||!d480_sync_parent(parent))goto receiver_done;
+    if(!d480_client_finish(&bootstrap,parent))goto receiver_done;
     int denied=GetEnvironmentVariableW(L"CMSPARK_DESKTOP_INERT_SECRET",NULL,0)||GetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",NULL,0);
     int required=GetEnvironmentVariableW(L"SystemRoot",NULL,0)&&GetEnvironmentVariableW(L"PATH",NULL,0)&&GetEnvironmentVariableW(L"TEMP",NULL,0);
-    if(denied||!required){result=72;goto receiver_done;}
-    if(d480_client_finish(&bootstrap,parent))result=0;
+    wchar_t windows[MAX_PATH],drive[4];
+    UINT windows_length=GetWindowsDirectoryW(windows,MAX_PATH);
+    DWORD drive_length=GetEnvironmentVariableW(L"SystemDrive",drive,4);
+    if(denied||!required||windows_length<3||windows_length>=MAX_PATH||drive_length!=2||drive[0]!=windows[0]||drive[1]!=L':'||windows[1]!=L':'){result=72;goto receiver_done;}
+    result=0;
 receiver_done:
     SecureZeroMemory(bytes,sizeof(bytes));d480_client_close(&bootstrap);if(parent)CloseHandle(parent);return result;
   }

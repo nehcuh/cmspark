@@ -40,18 +40,49 @@ test('788 marked observation increments invert exactly to the ten original actio
   "tests/fixtures/workspace-ui-705/WorkspacePickerUITests.swift": "fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076",
   "tests/helpers/workspace-xctest-owned-705.ts": "873b5ced054248db5af1b6b007104ec7f4095f34ff622b5335e751419c2eff3b",
   "tests/desktop-native-thread-metadata-476.test.ts": "5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018"
-};assert.equal(Object.keys(hashes).length,10);for(const [file,expected]of Object.entries(hashes)){const observed=restoreObservation788(read(file)),restored=file==='tests/desktop-native-thread-metadata-476.test.ts'?require('./fixtures/archive-first-failure-782').terminalAdmissionInverse801(observed):observed;assert.equal(createHash('sha256').update(restored).digest('hex'),expected,file);if(file==='tests/desktop-native-thread-metadata-476.test.ts'){const current=', { llmKey: true }';assert.equal(restored.split(current).length,2);const prior=restored.replace(current,'');assert.equal(createHash('sha256').update(prior).digest('hex'),'56abd88e272e8982388507c79c4046936401937e534d5333d5f42885f563f313')}}})
+};assert.equal(Object.keys(hashes).length,10);for(const [file,expected]of Object.entries(hashes)){const kind=file.endsWith('WorkspacePickerUITests.swift')?'ui':file.endsWith('workspace-xctest-owned-705.ts')?'helper':'other';const opened=file==='tests/desktop-native-thread-metadata-476.test.ts'?require(path.join(root,'scripts/tests/host-tick-inverse.cjs')).restoreHostTick(require(path.join(root,'scripts/tests/success-timing-inverse.cjs')).restoreSuccessTiming476(read(file))):read(file);const peeled=require(path.join(root,'scripts/tests/picker-wait-inverse.cjs')).restorePickerWait(kind,opened);const observed=restoreObservation788(peeled),restored=file==='tests/desktop-native-thread-metadata-476.test.ts'?require('./fixtures/archive-first-failure-782').terminalAdmissionInverse801(observed):observed;assert.equal(createHash('sha256').update(restored).digest('hex'),expected,file);if(file==='tests/desktop-native-thread-metadata-476.test.ts'){const current=', { llmKey: true }';assert.equal(restored.split(current).length,2);const prior=restored.replace(current,'');assert.equal(createHash('sha256').update(prior).digest('hex'),'56abd88e272e8982388507c79c4046936401937e534d5333d5f42885f563f313')}}})
 
 test('801 terminal admission inverse rejects drift and duplicates in LF and CRLF',()=>{
  const {restoreObservation788}=require(path.join(root,'scripts/tests/observation-788-inverse.mjs'))
  const {terminalAdmissionInverse801}=require('./fixtures/archive-first-failure-782')
  for(const eol of ['\n','\r\n']){
-  const raw=restoreObservation788(read('tests/desktop-native-thread-metadata-476.test.ts').replace(/\r?\n/g,eol))
+  const raw=restoreObservation788(require(path.join(root,'scripts/tests/host-tick-inverse.cjs')).restoreHostTick(require(path.join(root,'scripts/tests/success-timing-inverse.cjs')).restoreSuccessTiming476(read('tests/desktop-native-thread-metadata-476.test.ts').replace(/\r?\n/g,eol))))
   const prior=terminalAdmissionInverse801(raw)
   assert.equal(createHash('sha256').update(prior.replace(/\r\n/g,'\n')).digest('hex'),'5f225d624d4d83a55b76ebe0b7f82bbe1202dffda843139c674156ea72e2e018')
   assert.throws(()=>terminalAdmissionInverse801(raw.replace(' hostedTerminalHost705()',' hostedTerminalHost706()')))
   assert.throws(()=>terminalAdmissionInverse801(raw+raw))
  }
+})
+test('host tick inverse refuses a missing sentence before any success digest',()=>{
+ const {restoreHostTick}=require(path.join(root,'scripts/tests/host-tick-inverse.cjs'))
+ const source=read('tests/desktop-native-thread-metadata-476.test.ts')
+ assert.doesNotThrow(()=>restoreHostTick(source))
+ const missing=source.replace('hostTicks=0,','')
+ assert.throws(()=>restoreHostTick(missing), (error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('HOST_TICK_ONCE')&&!String(error.message).includes('5f225d62')&&!String(error.message).includes('9e80020d'))
+ const stop="if(f.id==='D476_WS_HOST_TICK_STOP'){if(hostTickStop===null&&(f.reason==='not-current'||f.reason==='settled'||f.reason==='cap'))hostTickStop=f.reason as any}"
+ assert.equal(source.split(stop).length,2)
+ assert.throws(()=>restoreHostTick(source.replace(stop,'')), (error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('HOST_TICK_ONCE')&&!String(error.message).includes('5f225d62')&&!String(error.message).includes('0b78022a'))
+ const requiredStart=source.indexOf("const required=['D476_WS_UNBOUND'"),required=source.slice(requiredStart,source.indexOf('],receipts',requiredStart))
+ assert.equal(required.includes('D476_WS_HOST_TICK_STOP'),false);assert.equal(required.includes('D476_WS_HOST_TICK'),false);assert.equal(required.includes('D476_WS_HOST_TICK_ARMED'),false)
+ const armed="if(f.id==='D476_WS_HOST_TICK_ARMED'){if(hostTickArmed===0)hostTickArmed=1}"
+ assert.equal(source.split(armed).length,2)
+ assert.throws(()=>restoreHostTick(source.replace(armed,'')), (error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('HOST_TICK_ONCE')&&!String(error.message).includes('5f225d62')&&!String(error.message).includes('0b78022a'))
+ const apply=vm.runInNewContext('('+ts.transpileModule('function apply(state,f){let hostTicks=state.hostTicks,hostTickLast=state.hostTickLast,hostTickStop=state.hostTickStop;'+stop+';return{hostTicks,hostTickLast,hostTickStop}}',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+')',{})
+ const first=apply({hostTicks:2,hostTickLast:'D476_WS_HOST_TICK',hostTickStop:null},{id:'D476_WS_HOST_TICK_STOP',reason:'not-current'})
+ assert.equal(first.hostTicks,2);assert.equal(first.hostTickLast,'D476_WS_HOST_TICK');assert.equal(first.hostTickStop,'not-current')
+ assert.equal(apply(first,{id:'D476_WS_HOST_TICK_STOP',reason:'settled'}).hostTickStop,'not-current')
+ assert.equal(apply({hostTicks:0,hostTickLast:null,hostTickStop:null},{id:'D476_WS_HOST_TICK_STOP',reason:'absent'}).hostTickStop,null)
+ const note=vm.runInNewContext('('+ts.transpileModule('function note(state,f){let hostTickArmed=state.hostTickArmed;'+armed+';return hostTickArmed}',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+')',{})
+ assert.equal(note({hostTickArmed:0},{id:'D476_WS_HOST_TICK_ARMED'}),1)
+ assert.equal(note({hostTickArmed:1},{id:'D476_WS_HOST_TICK_ARMED'}),1)
+ assert.equal(note({hostTickArmed:0},{id:'D476_WS_HOST_TICK'}),0)
+})
+test('success timing inverse restores the failure-only read before any old hash',()=>{
+ const {restoreSuccessTiming476}=require(path.join(root,'scripts/tests/success-timing-inverse.cjs'))
+ const source=read('tests/desktop-native-thread-metadata-476.test.ts')
+ assert.doesNotThrow(()=>restoreSuccessTiming476(source))
+ const missing=source.replace('try{cancelTiming788=uiOwner?.scene.cancelTiming788()??null}catch{}','try{cancelTiming=uiOwner?.scene.cancelTiming788()??null}catch{}')
+ assert.throws(()=>restoreSuccessTiming476(missing),(error:any)=>error?.code==='ERR_ASSERTION'&&String(error.message).includes('SUCCESS_TIMING_ONCE')&&!String(error.message).includes('9e80020d'))
 })
 
 function actualReceiver788(role:'LOCAL'|'ARCHIVE'|'TERMINAL'){
