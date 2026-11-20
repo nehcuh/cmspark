@@ -5,6 +5,23 @@ import * as os from "node:os"
 import * as fs from "node:fs"
 import { execFileSync, spawnSync } from "node:child_process"
 
+function removeOwnedDirectory(owned: string, remove: (target: string) => void, caught?: unknown) {
+  let cleanup: unknown
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      remove(owned)
+      cleanup = undefined
+      break
+    } catch (error) {
+      cleanup = error
+      const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined
+      if (code !== "EBUSY") break
+    }
+  }
+  if (caught !== undefined) throw caught
+  if (cleanup !== undefined) throw cleanup
+}
+
 test("canonical meeting browser assets are byte-exact from both package and unrelated working directories", () => {
   const script = path.resolve("scripts/generate-meeting-capture.mjs")
   for (const cwd of [path.resolve("."), os.tmpdir()]) {
@@ -26,6 +43,7 @@ test("Windows-style Git checkout preserves canonical capture bytes and still rej
     "companion/src/summoner/meeting-continuous-generated.ts",
   ]
   const fixtures = [...canonical, "companion/scripts/generate-meeting-capture.mjs", "chrome-extension/tsconfig.json"]
+  let caught: unknown
   try {
     fs.mkdirSync(seed)
     fs.writeFileSync(emptyConfig, "", { flag: "wx" })
@@ -65,5 +83,35 @@ test("Windows-style Git checkout preserves canonical capture bytes and still rej
       } finally { fs.writeFileSync(file, original) }
     }
     assert.equal(check().status, 0)
-  } finally { fs.rmSync(owned, { recursive: true, force: true }) }
+  } catch (error) { caught = error }
+  removeOwnedDirectory(owned, (target) => fs.rmSync(target, { recursive: true, force: true }), caught)
+})
+
+function errno(code: string) {
+  const error = new Error(code) as NodeJS.ErrnoException
+  error.code = code
+  return error
+}
+
+test("owned cleanup keeps the original assertion when both deletes are EBUSY", () => {
+  const owned = path.join(os.tmpdir(), "cmspark-meeting-owned-assertion")
+  const calls: string[] = []
+  const failure = new assert.AssertionError({ message: "byte mismatch", actual: 0, expected: 1, operator: "strictEqual" })
+  assert.throws(() => removeOwnedDirectory(owned, () => { calls.push(owned); throw errno("EBUSY") }, failure), (error) => error === failure)
+  assert.deepEqual(calls, [owned, owned])
+})
+
+test("owned cleanup throws a non-EBUSY delete error on the first call", () => {
+  const owned = path.join(os.tmpdir(), "cmspark-meeting-owned-other")
+  const calls: string[] = []
+  const failure = errno("EPERM")
+  assert.throws(() => removeOwnedDirectory(owned, () => { calls.push(owned); throw failure }), (error) => error === failure)
+  assert.deepEqual(calls, [owned])
+})
+
+test("owned cleanup fails with EBUSY after exactly two deletes", () => {
+  const owned = path.join(os.tmpdir(), "cmspark-meeting-owned-busy")
+  const calls: string[] = []
+  assert.throws(() => removeOwnedDirectory(owned, () => { calls.push(owned); throw errno("EBUSY") }), (error: NodeJS.ErrnoException) => error.code === "EBUSY")
+  assert.deepEqual(calls, [owned, owned])
 })

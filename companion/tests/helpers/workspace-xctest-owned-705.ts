@@ -80,7 +80,7 @@ const result705Unknown=(reason:Result705Projection['reason']):Result705Projectio
 const RESULT705_IDS=new Set(['WorkspacePicker705/testOwnedPanel','WorkspacePicker705/testOwnedPanel()','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel','OwnedPickerUITests/WorkspacePicker705/testOwnedPanel()'])
 const RESULT705_TYPES=new Set(['Test Plan','Unit test bundle','UI test bundle','Test Suite','Test Case','Device','Test Plan Configuration','Arguments','Repetition','Test Case Run','Failure Message','Source Code Reference','Attachment','Expression','Test Value','Runtime Warning'])
 // Both hashes are independently bound to b975 actual source; paths never come from runtime JSON.
-const RESULT705_SOURCES=[['WorkspacePickerUITests.swift',/*OBS788_VALUE:fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076*/'2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8'/*OBS788_END_VALUE*/],['OwnedUIProtocol.swift',/*OBS788_VALUE:fbad4db2905d6bb58a40062ec844716554fb4bb8f52ae73f3f5b094ec27c979c*//*OBS476_CLOSE_VALUE:69b5fb718b3d0cd405f8285fd89db3c506872ef80e340360ab69d3f2a6feabe5*/'a96609272104b705e3d970a42c48ba15f3cf62ee84ad8d2f9d7c82326e5e80e6'/*OBS476_CLOSE_END_VALUE*//*OBS788_END_VALUE*/]] as const
+const RESULT705_SOURCES=[['WorkspacePickerUITests.swift',/*OBS788_VALUE:fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076*/'cae70de5964a0bdd3b7d1e460385188584a2b09729f91a5a079fb86b9017d2a9'/*OBS788_END_VALUE*/],['OwnedUIProtocol.swift',/*OBS788_VALUE:fbad4db2905d6bb58a40062ec844716554fb4bb8f52ae73f3f5b094ec27c979c*//*OBS476_CLOSE_VALUE:69b5fb718b3d0cd405f8285fd89db3c506872ef80e340360ab69d3f2a6feabe5*/'a96609272104b705e3d970a42c48ba15f3cf62ee84ad8d2f9d7c82326e5e80e6'/*OBS476_CLOSE_END_VALUE*//*OBS788_END_VALUE*/]] as const
 // Actual Tests response: nodeIdentifier is optional in the official schema.
 // Only a present allowlisted Test Case identifier counts; never derive one from name.
 function result705Select(data:Buffer):string {
@@ -159,7 +159,7 @@ function result705AfterActualClose(scene:OwnedUI705Boundary,sourceRoot:string,em
    child=spawn('/usr/bin/xcrun',['xcresulttool','get','test-results',...args],{cwd:scene.root,env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'},stdio:['ignore','pipe','pipe']});current=child
    child.on('error',()=>{spawnError=true})
    child.stdout!.on('data',(b:Buffer)=>{try{if(!Buffer.isBuffer(b)){spawnError=true;return};outBytes+=b.length;if(outBytes>CAP){limited=true;chunks.length=0}else if(!limited)chunks.push(Buffer.from(b))}catch{spawnError=true;chunks.length=0}})
-   child.stderr!.on('data',(b:Buffer)=>{try{if(!Buffer.isBuffer(b)){spawnError=true;return};errBytes+=b.length;if(errBytes>CAP)limited=true}catch{spawnError=true}})
+   child.stderr!.on('data',(b:Buffer)=>{try{if(!Buffer.isBuffer(b)){spawnError=true;return};errBytes+=b.length;if(errBytes>CAP)limited=true;try{require('./picker-failure-evidence-476').notePickerToolStderr476(b)}catch{}}catch{spawnError=true}})
    child.stdout!.on('end',()=>{outEOF=true});child.stderr!.on('end',()=>{errEOF=true})
    child.stdout!.on('error',()=>{spawnError=true});child.stderr!.on('error',()=>{spawnError=true})
    // Continuously drain refusal/flood; do not destroy a pipe to manufacture close.

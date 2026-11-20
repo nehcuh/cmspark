@@ -101,7 +101,7 @@ test('826 current Windows LOCAL/ARCHIVE hosted-only admission is explicit, pure 
 test('826 behavior2call inverse then OBS9 full inverse retains prior46d and rejects missing/mutated admission', () => {
  const source = read('tests/desktop-native-thread-metadata-476.test.ts')
  for (const eol of ['\n', '\r\n']) {
-  const raw = source.replace(/\r?\n/g, eol), intermediate = lineage.restoreInitialOwnedInput826(raw), prior = lineage.restoreObservation826('native', raw)
+  const raw = source.replace(/\r?\n/g, eol), opened = require(path.resolve('scripts/tests/host-tick-inverse.cjs')).restoreHostTick(require(path.resolve('scripts/tests/success-timing-inverse.cjs')).restoreSuccessTiming476(raw)), intermediate = lineage.restoreInitialOwnedInput826(opened), prior = lineage.restoreObservation826('native', opened)
   assert.doesNotMatch(intermediate, /OWNED_INPUT826/); assert.equal((intermediate.match(/\/\*OBS826_BEGIN\*\//g) || []).length, 9); assert.doesNotMatch(prior, /OBS826_|OWNED_INPUT826/)
   for (const changed of [raw + eol, raw.replace('OWNED_INPUT826_LOCAL', 'OWNED_INPUT826_CHANGED'), raw.replace("/*OWNED_INPUT826_LOCAL*/if(process.platform==='win32')hostedTerminalHost705();", '')]) assert.throws(() => lineage.restoreObservation826('native', changed))
  }

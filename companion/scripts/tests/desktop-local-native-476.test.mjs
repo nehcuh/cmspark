@@ -5,6 +5,8 @@ import fs from 'node:fs'
 import {createHash} from 'node:crypto'
 import {desktopLocalFixture} from '../desktop-mcp-fixture.mjs'
 import {restoreCloseObservation476} from './observation-788-inverse.mjs'
+import {restoreHostTick} from './host-tick-inverse.cjs'
+import {restoreSuccessTiming476} from './success-timing-inverse.cjs'
 const root=new URL('../../',import.meta.url),read=rel=>fs.readFileSync(new URL(rel,root),'utf8')
 const methods=['desktop.local.state','desktop.terminal.open','desktop.terminal.input','desktop.terminal.resize','desktop.terminal.ack','desktop.terminal.ping','desktop.terminal.close','desktop.terminal.return','desktop.agent.start','desktop.agent.prompt','desktop.agent.cancel']
 test('both native finite method grammars agree with exactly eleven approved local methods',()=>{
@@ -323,7 +325,7 @@ const hostObservation808=[{"path": "tests/fixtures/desktop-476/local-acceptance.
 function hostObservationSource808(file,source){
  if(file!=='tests/desktop-native-thread-metadata-476.test.ts')return source
  assert.ok(source.includes('/*OBS476_CLOSE_BEGIN*/'),'current owned close observation required')
- return restoreCloseObservation476('native',source)
+ return restoreCloseObservation476('native',restoreHostTick(restoreSuccessTiming476(source)))
 }
 test('host observation source consumer rejects missing duplicated and altered close layer in both EOL profiles',()=>{
  const file='tests/desktop-native-thread-metadata-476.test.ts',marker='/*OBS476_CLOSE_BEGIN*/',end='/*OBS476_CLOSE_END*/',actual=read(file).replace(/\r\n/g,'\n')

@@ -67,7 +67,11 @@ function Process-Identity($p) {
 }
 function App-Name($p, [string]$exe) {
   $info = $null
-  try { $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe) } catch { }
+  # A process can outlive its executable. Avoid a version-resource exception
+  # for every missing path while preserving the process-name fallback.
+  if ([IO.File]::Exists($exe)) {
+    try { $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe) } catch { }
+  }
   foreach ($candidate in @($info.ProductName, $info.FileDescription, $p.ProcessName)) {
     if (-not [string]::IsNullOrWhiteSpace([string]$candidate)) {
       $name = ([string]$candidate -replace '[\x00-\x1F\x7F]', ' ').Trim()

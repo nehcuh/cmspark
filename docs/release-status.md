@@ -4,7 +4,7 @@
 
 ## 1.3.0 发布准备
 
-- 准备基线是 main `08fe57feacd6ca634eb2f8369dada10420ce0d44`（[#861](https://github.com/nehcuh/cmspark/pull/861) 已合并，feature head `6d69c5771da4412c8b4e58321718872614618a6e`）。本段在打 tag 前只记录准备状态。
+- 发布基线为 main `1f8daa1176f232c1893056843b8446813e735410`，包含 [#861](https://github.com/nehcuh/cmspark/pull/861) 和 [#869](https://github.com/nehcuh/cmspark/pull/869)。#869 的最后提交 `12fcfff2` 通过全部 10 项检查。Windows 的 WebView2 回调和 Apps 枚举在原时限内通过；macOS 完成两次真实选择框交互、核对目录并正常退出，耗时 37.18 秒。[原生平台 CI](https://github.com/nehcuh/cmspark/actions/runs/44666158868)
 - 聊天外部转写已在该合并里实现，范围以已审的[用户指南 §2.8](meeting-and-dictation-user-guide.md) 为准：只发送聊天麦克风这一段；会议不走这条地址。该 head 的四条 workflow 均 success：[CI 44238627364](https://github.com/nehcuh/cmspark/actions/runs/44238627364)、[Session save recovery 44238627291](https://github.com/nehcuh/cmspark/actions/runs/44238627291)、[ARM acceptance 44238627294](https://github.com/nehcuh/cmspark/actions/runs/44238627294)、[Linux integration ARM 44238627250](https://github.com/nehcuh/cmspark/actions/runs/44238627250)。本准备没有重跑它们。
 - 没有对真实 DeepSeek 或 OpenAI 转写服务做准确率测量或实服务验收。#860 保持开放。本机 Whisper 的速度和准确率优化仍是以后的计划。#853 保持开放。正式 tag、GitHub Release 与 1.3.0 安装器上传尚未执行。
 
