@@ -1,0 +1,49 @@
+name: Cold WebView2 first-consumer diagnostic
+on:
+  push:
+    branches: [codex/mcp-476-cold-comparison]
+permissions:
+  contents: read
+jobs:
+  compare:
+    name: Cold ${{ matrix.consumer }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - consumer: MCP form
+            test_file: desktop-native-mcp-476.test.js
+          - consumer: metadata
+            test_file: desktop-native-windows-480.test.js
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+      - name: Build the original test host and acceptance inputs
+        working-directory: companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          node scripts/build-desktop-native.mjs --test-fixtures
+          ./node_modules/.bin/tsc -p tsconfig.test.json
+      - name: Record only the runner and installed runtime versions
+        run: |
+          Write-Output "RunnerImage=$env:ImageVersion"
+          $runtime = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeWebView\Application'
+          Get-ChildItem -LiteralPath $runtime -Directory | Where-Object Name -Match '^\d+\.\d+\.\d+\.\d+$' | ForEach-Object { Write-Output "WebView2=$($_.Name)" }
+      - name: Run the original cold consumer for diagnosis
+        working-directory: companion
+        env:
+          PROBE_TEST_FILE: ${{ matrix.test_file }}
+        shell: bash
+        run: node scripts/run-tests.mjs ".test-dist/tests/$PROBE_TEST_FILE"
