@@ -44,7 +44,22 @@ assert.equal(stateDeclarations.length, 1)
 const initialExpression = stateDeclarations[0].initializer
 assert.ok(initialExpression)
 const draftFunctions = ["sameValue", "createSettingsDraft", "editSettingsDraft", "receiveSettingsSnapshot", "prepareSettingsSubmission", "resolveSettingsConflict", "acknowledgeSettingsSubmission", "compareSettingsRevisions"].map(name => functionText(draft, name)).join("\n")
-const consumerCode = [draftFunctions, functionText(effort, "isReasoningEffort"), functionText(effort, "effectiveReasoningEffort"), functionText(normalizer, "isMaskedApiKey"), functionText(normalizer, "normalizeConfig"), functionText(store, "agentReducer"), `globalThis.initialState = ${initialExpression.getText(store)}; globalThis.agentReducer = agentReducer; globalThis.prepareSettingsSubmission = prepareSettingsSubmission; globalThis.normalizeConfig = normalizeConfig;`].join("\n")
+const budgetLimit = normalizer.statements
+  .filter(ts.isVariableStatement)
+  .flatMap(node => [...node.declarationList.declarations])
+  .filter(node => node.name.getText(normalizer) === "CHAT_OUTPUT_LIMIT_MAX")
+assert.equal(budgetLimit.length, 1, "unique actual chat output limit")
+const consumerCode = [
+  draftFunctions,
+  functionText(effort, "isReasoningEffort"),
+  functionText(effort, "effectiveReasoningEffort"),
+  functionText(normalizer, "isMaskedApiKey"),
+  `const ${budgetLimit[0].getText(normalizer)};`,
+  functionText(normalizer, "normalizeSavedChatOutputLimit"),
+  functionText(normalizer, "normalizeConfig"),
+  functionText(store, "agentReducer"),
+  `globalThis.initialState = ${initialExpression.getText(store)}; globalThis.agentReducer = agentReducer; globalThis.prepareSettingsSubmission = prepareSettingsSubmission; globalThis.normalizeConfig = normalizeConfig;`,
+].join("\n")
 const receiveCode = receiver.statements.filter(node => !ts.isBreakStatement(node)).map(node => node.getText(incoming)).join("\n")
 
 test("#806 actual config producers and source consumers preserve draft provenance", async t => {
