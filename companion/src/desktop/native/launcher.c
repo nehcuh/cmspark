@@ -110,12 +110,20 @@ static wchar_t *host_environment(void) {
   if (!windows || !temporary) { free(windows); free(temporary); return NULL; }
   UINT wn = GetWindowsDirectoryW(windows, 32768); DWORD tn = GetTempPathW(32768, temporary);
   if (!wn || wn >= 32768 || !tn || tn >= 32768) { free(windows); free(temporary); return NULL; }
+  /* WebView2 expands %SystemDrive% for Windows cache paths. Derive it from the
+   * same OS directory as SystemRoot, independent of the parent environment. */
+  if (wn < 3 || !((windows[0] >= L'A' && windows[0] <= L'Z') ||
+      (windows[0] >= L'a' && windows[0] <= L'z')) || windows[1] != L':' ||
+      windows[2] != L'\\') { free(windows); free(temporary); return NULL; }
   size_t capacity = (size_t)wn * 3 + (size_t)tn * 2 + 64;
   wchar_t *result = calloc(capacity, sizeof(wchar_t)); size_t used = 0;
   if (result) {
     int n = swprintf(result, capacity, L"PATH=%ls\\System32;%ls", windows, windows);
     if (n < 0) { free(result); result = NULL; } else {
       used = (size_t)n + 1;
+      n = swprintf(result + used, capacity - used, L"SystemDrive=%.2ls", windows);
+      if (n < 0) { free(result); free(windows); free(temporary); return NULL; }
+      used += (size_t)n + 1;
       n = swprintf(result + used, capacity - used, L"SystemRoot=%ls", windows);
       if (n < 0) { free(result); result = NULL; } else {
         used += (size_t)n + 1;

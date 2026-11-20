@@ -56,7 +56,7 @@ test("actual Windows native parser rejects invalid URL types and endpoints befor
 })
 
 test("actual Windows launcher forwards OS environment only, excluding provider-like and WebView2 overrides",{skip:process.platform!=="win32",timeout:20000},()=>{
- const driver=path.resolve(process.cwd(),"tests/fixtures/desktop-480/environment-controller.cjs");const result=spawnSync(process.execPath,[driver,path.join(native,"desktop-launcher.node"),path.join(native,"desktop-synchronize-handle-probe.exe")],{stdio:"ignore",timeout:10000,windowsHide:true,env:{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,PATH:process.env.SystemRoot+"\\System32",CMSPARK_DESKTOP_INERT_SECRET:"inert-not-a-credential",WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:"--owned-inert-override"}});assert.equal(result.status,0)
+ const driver=path.resolve(process.cwd(),"tests/fixtures/desktop-480/environment-controller.cjs");const result=spawnSync(process.execPath,[driver,path.join(native,"desktop-launcher.node"),path.join(native,"desktop-synchronize-handle-probe.exe")],{stdio:"ignore",timeout:10000,windowsHide:true,env:{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,PATH:process.env.SystemRoot+"\\System32",SystemDrive:"invalid-parent-drive",CMSPARK_DESKTOP_INERT_SECRET:"inert-not-a-credential",WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:"--owned-inert-override"}});assert.equal(result.status,0)
 })
 
 function requireOwnedPeerRefusal(value:any):void{
