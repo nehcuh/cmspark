@@ -108,7 +108,10 @@ def verify(page, base, output):
     extract.click()
     confirm = manager.get_by_role("alertdialog", name="确认提取标签")
     expect(confirm).to_be_visible()
-    confirm.get_by_role("button", name="取消", exact=True).click()
+    cancel = confirm.get_by_role("button", name="取消", exact=True)
+    expect(cancel).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(extract).to_be_focused()
     assert page.evaluate("window.sent.filter(m=>m.type==='thread.extract_digest').length") == 0
     shot("history-management")
     manager.get_by_role("button", name="关系图谱", exact=True).click()
@@ -147,7 +150,14 @@ def verify(page, base, output):
     expect(chat_b).to_be_visible()
     expect(page.get_by_role("region", name="项目详情")).to_be_visible()
     shot("project-filter")
-    chat_b.click()
+    page.set_viewport_size({"width": 420, "height": 860})
+    expect(disclosure).to_be_hidden()
+    toggle.click()
+    page.get_by_role("region", name="项目详情").get_by_role("button", name="示例采购").click()
+    expect(disclosure).to_be_hidden()
+    expect(box).to_be_focused()
+    page.set_viewport_size({"width": 960, "height": 860})
+    expect(nav).to_be_visible()
     expect(box).to_have_value("B 的草稿")
     print("PASS project list retry and filter", flush=True)
 
@@ -163,6 +173,7 @@ def verify(page, base, output):
     page.evaluate("window.dispatchUI({type:'SET_ACTIVE_THREAD',threadId:null})")
     page.wait_for_function("window.fixtureState.activeThreadId === null")
     expect(box).to_be_enabled()
+    page.clock.install()
     box.fill("第一句")
     send = page.get_by_role("button", name="发送", exact=True)
     send.click()
@@ -171,13 +182,21 @@ def verify(page, base, output):
     created = page.evaluate("window.sent.filter(m=>m.type==='thread.create')")
     assert len(created) == 1
     expect(box).to_have_value("第一句")
+    page.clock.fast_forward(15_100)
+    lookup = page.get_by_role("button", name="查询创建结果")
+    expect(lookup).to_be_visible()
+    count = page.evaluate("window.sent.filter(m=>m.type==='thread.list').length")
+    lookup.click()
+    assert page.evaluate("window.sent.filter(m=>m.type==='thread.list').length") == count + 1
+    assert page.evaluate("window.sent.filter(m=>m.type==='thread.create').length") == 1
+    expect(box).to_have_value("第一句")
     page.evaluate("""(id) => window.emitRuntime({type:'thread.created', id, thread:{
       id, alias:'', created_at:new Date().toISOString(), updated_at:new Date().toISOString(),
       config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]
     }})""", created[0]["id"])
     expect(page.get_by_role("button", name="开始第一则对话")).to_have_count(0)
     expect(box).to_have_value("第一句")
-    print("PASS first conversation creation and draft receipt", flush=True)
+    print("PASS late creation receipt preserves the first draft", flush=True)
 
 def main():
     parser = argparse.ArgumentParser()

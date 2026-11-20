@@ -125,6 +125,13 @@ export function ThreadList() {
   const [open, setOpen] = useState(false)
   const managerReturnFocus = useRef<HTMLElement | null>(null)
   const [confirmExtract, setConfirmExtract] = useState(false)
+  const extractTrigger = useRef<HTMLElement | null>(null)
+  function closeExtractConfirmation() {
+    setConfirmExtract(false)
+    const trigger = extractTrigger.current
+    const target = trigger?.isConnected ? trigger : historyRef.current?.querySelector<HTMLElement>("[data-extract-untagged]")
+    target?.focus()
+  }
   function returnManagerFocus() {
     const target = managerReturnFocus.current || triggerRef.current
     managerReturnFocus.current = null
@@ -773,7 +780,8 @@ export function ThreadList() {
     beginExtractBatch(capped, force)
   }
 
-  function requestExtractUntagged() {
+  function requestExtractUntagged(event: React.MouseEvent<HTMLButtonElement>) {
+    extractTrigger.current = event.currentTarget
     setMenuOpen(false)
     setConfirmExtract(true)
   }
@@ -989,13 +997,16 @@ export function ThreadList() {
   useEffect(() => {
     if (!open || !panelBox) return
     historyRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus()
+  }, [open, !!panelBox])
+  useEffect(() => {
+    if (!open || !panelBox) return
     const key = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return
       if (!historyRef.current?.contains(event.target as Node) && event.target !== triggerRef.current && !historyMenuRef.current?.contains(event.target as Node)) return
       event.preventDefault()
       event.stopPropagation()
       if (menuOpenRef.current) { setMenuOpen(false); menuBtnRef.current?.focus(); return }
-      if (confirmExtract) { setConfirmExtract(false); return }
+      if (confirmExtract) { closeExtractConfirmation(); return }
       setOpen(false); returnManagerFocus()
     }
     document.addEventListener("keydown", key)
@@ -1538,8 +1549,8 @@ export function ThreadList() {
             <div className="cm-thread-management-title" style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${tokens.border}` }}><strong style={{ flex: 1, fontSize: 14 }}>对话管理</strong><button type="button" className="cm-icon-button" aria-label="关闭历史对话" onClick={() => { setOpen(false); returnManagerFocus() }}>×</button></div>
             {confirmExtract && <div role="alertdialog" aria-label="确认提取标签" style={styles.pendingDelete}>
               <p>最多处理 20 条还没有要点的对话，写入要点和标签，保留手动分组和原有对话。</p>
-              <button type="button" data-extract-cancel onClick={() => setConfirmExtract(false)}>取消</button>
-              <button type="button" onClick={() => { setConfirmExtract(false); handleExtractUntagged() }}>开始提取</button>
+              <button type="button" data-extract-cancel onClick={closeExtractConfirmation}>取消</button>
+              <button type="button" onClick={() => { closeExtractConfirmation(); handleExtractUntagged() }}>开始提取</button>
             </div>}
             {pendingDelete && (
               <div
@@ -1735,7 +1746,7 @@ export function ThreadList() {
             </div>
 
             <div className="cm-thread-management-actions" aria-label="对话整理工具">
-              <button type="button" onClick={requestExtractUntagged} disabled={untaggedExtract.ids.length === 0 || !!extractProgress}>AI 提取标签</button>
+              <button type="button" data-extract-untagged onClick={requestExtractUntagged} disabled={untaggedExtract.ids.length === 0 || !!extractProgress}>AI 提取标签</button>
               <button type="button" onClick={() => { setCleanupOpen(true); runCleanupScan() }}>整理助手</button>
               <button type="button" onClick={openThreadGraph}>关系图谱</button>
               <button type="button" onClick={() => trashView ? closeTrashView() : openTrashView()}>{trashView ? "返回对话" : "回收站"}</button>

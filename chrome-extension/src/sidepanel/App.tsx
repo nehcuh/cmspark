@@ -313,7 +313,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const { state, dispatch } = useAgentStore()
   const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
   const [drafts, setDrafts] = useState<Map<string | null, string>>(() => new Map())
-  const draftOwner = state.activeThreadId
+  const [firstThreadId, setFirstThreadId] = useState<string | null>(null)
+  const draftOwner = state.activeThreadId === firstThreadId ? null : state.activeThreadId
   const text = drafts.get(draftOwner) || ""
   const setText = useCallback((change: string | ((previous: string) => string)) => {
     setDrafts(previous => {
@@ -329,6 +330,20 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const firstThreadRequest = useRef<AbortController | null>(null)
   const [firstThreadError, setFirstThreadError] = useState("")
   useEffect(() => () => firstThreadRequest.current?.abort(), [])
+  const firstThreadSaved = firstThreadId !== null && state.threads.some(thread => thread.id === firstThreadId && !thread.trashed_at)
+  useEffect(() => {
+    if (!firstThreadSaved || firstThreadId === null) return
+    setDrafts(previous => {
+      const draft = previous.get(null)
+      if (draft === undefined) return previous
+      const next = new Map(previous)
+      next.delete(null)
+      next.set(firstThreadId, draft)
+      return next
+    })
+    setFirstThreadId(null)
+    setFirstThreadError("")
+  }, [firstThreadId, firstThreadSaved])
 
   useEffect(() => {
     const restore = state.composerRestore
@@ -567,20 +582,17 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   async function startFirstThread() {
     if (firstThreadRequest.current || state.activeThreadId || needsConnection || overlayStandby) return
+    if (firstThreadId) {
+      if (firstThreadError) chrome.runtime.sendMessage({ type: "thread.list" })
+      return
+    }
     const request = new AbortController()
+    const id = crypto.randomUUID()
     firstThreadRequest.current = request
+    setFirstThreadId(id)
     setFirstThreadError("")
     try {
-      await requestProjectThread(request.signal, thread => {
-        setDrafts(previous => {
-          const draft = previous.get(null)
-          if (draft === undefined) return previous
-          const next = new Map(previous)
-          next.delete(null)
-          next.set(thread.id, draft)
-          return next
-        })
-      }, "")
+      await requestProjectThread(request.signal, undefined, { alias: "", id })
     } catch {
       if (!request.signal.aborted) setFirstThreadError("新对话尚未确认创建，输入已保留。")
     } finally {
@@ -915,7 +927,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       <ComposerDock
         chips={<ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />}
       >
-        {needsThread && !needsConnection && !overlayStandby && <button type="button" className="cm-icon-button cm-first-conversation" onClick={() => void startFirstThread()}>开始第一则对话</button>}
+        {needsThread && !needsConnection && !overlayStandby && <button type="button" className="cm-icon-button cm-first-conversation" onClick={() => void startFirstThread()}>{firstThreadError ? "查询创建结果" : "开始第一则对话"}</button>}
         {needsThread && firstThreadError && <div role="alert">{firstThreadError}</div>}
         <div
           className="cm-composer-capsule"

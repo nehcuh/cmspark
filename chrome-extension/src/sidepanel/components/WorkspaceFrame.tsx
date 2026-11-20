@@ -161,7 +161,8 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   if (!full) return <>
     <style>{personalWorkspaceCSS}</style>
     <ProjectNavigationRoot mode={mode} surface={surface} shellClass={shellClass} top={top}
-      bottom={bottom} overlays={overlays} renderNavigation={navigation}>{children}</ProjectNavigationRoot>
+      bottom={bottom} overlays={overlays} renderNavigation={navigation}
+      onSelectThread={() => { afterNavigation(); focusComposer() }}>{children}</ProjectNavigationRoot>
   </>
   return <div className={shellClass} data-navigation-mode={mode} data-navigation-surface={surface}>
     <style>{personalWorkspaceCSS}</style>

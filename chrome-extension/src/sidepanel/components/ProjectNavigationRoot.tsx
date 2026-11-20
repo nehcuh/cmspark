@@ -8,10 +8,11 @@ import type { NavigationSurface } from "../navigation/navigation-mode"
 import { ProjectPanel } from "./ProjectPanel"
 import { SessionContextBar } from "./SessionContextBar"
 
-export function ProjectNavigationRoot({ surface, mode, shellClass, children, top, bottom, overlays, renderNavigation }: {
+export function ProjectNavigationRoot({ surface, mode, shellClass, children, top, bottom, overlays, renderNavigation, onSelectThread }: {
   surface: NavigationSurface
   mode: "resident" | "layered"
   shellClass: string
+  onSelectThread: () => void
   renderNavigation: (props: Pick<Parameters<typeof ProjectPanel>[0], "onSnapshot" | "onOpenProject">) => ReactNode
   children?: ReactNode
   top?: ReactNode
@@ -66,6 +67,7 @@ export function ProjectNavigationRoot({ surface, mode, shellClass, children, top
     dispatch({ type: "SET_ACTIVE_THREAD", threadId: id })
     dispatch({ type: "NAVIGATE", layer: "session", projectId })
     chrome.runtime.sendMessage({ type: "thread.select", threadId: id })
+    onSelectThread()
   }
   const detail = <section aria-label="项目详情" data-project-threads>
     <button type="button" onClick={() => dispatch({ type: "NAVIGATE", layer: "session", projectId: null })}>{projectCopy.back}</button>
