@@ -54,6 +54,7 @@ async function main() {
     EVAL_DOC_FULL_CHARS,
   } = await import("../tests/fixtures/knowledge-eval/corpus")
   const { SkillEngine, KNOWLEDGE_DOC_TOPK_AUTO, KNOWLEDGE_SCORE_MIN } = await import("../src/skills/skill-engine")
+  const { buildSiteContext } = await import("../src/site-context/service")
   const clusters = await import("../src/skills/knowledge-clusters")
 
   const docs = buildEvalDocs()
@@ -183,16 +184,62 @@ async function main() {
     }
   }
 
+  // #873 chat uses passages. Certify the same gold queries against the actual
+  // chat entry point, with each branch open by itself as in the legacy gate.
+  const bodies = new Map(docs.map(doc => [doc.name, evalDocBody(doc)]))
+  const runGrounded = (query: string, routeByGroup: boolean) => buildSiteContext(se, {
+    scopeId: THREAD,
+    query,
+    selection: { kind: "thread", skillMode: "manual", knowledgeMode: "auto" },
+    options: { chatKnowledge: true, knowledgeRouteByGroup: routeByGroup },
+  })
+  type GroundedTurn = Awaited<ReturnType<typeof runGrounded>>
+  const groundedFlat = new Map<string, GroundedTurn>()
+  for (const q of queries) groundedFlat.set(q.id, await runGrounded(q.text, false))
+  for (const { branch, certQueryId } of columns) {
+    clusters.setKnowledgeRouteBranchOverrides({ folder: branch === "folder", group: branch === "group" })
+    const failures: string[] = []
+    let certifiedTail: string[] = []
+    try {
+      for (const q of queries) {
+        const flat = groundedFlat.get(q.id)!
+        const routed = await runGrounded(q.text, true)
+        const good = new Set(q.rel)
+        const validSource = (result: GroundedTurn, row: GroundedTurn["retrieved_sources"][number]) =>
+          row.selection === "automatic" && good.has(row.id) && !!row.excerpt &&
+          row.chars === row.excerpt.length && row.chars <= 900 && bodies.get(row.id)?.includes(row.excerpt) &&
+          result.prompt.includes(row.excerpt)
+        if (flat.retrieved_sources.some(row => !validSource(flat, row)) ||
+            routed.retrieved_sources.some(row => !validSource(routed, row))) failures.push(`${q.id}: excerpt or relevance`)
+        const candidates = routed.knowledge_routing?.s_pre
+        if (candidates && routed.retrieved_sources.some(row => !candidates.includes(row.id))) {
+          failures.push(`${q.id}: missing candidate accounting`)
+        }
+        if (routed.retrieved_sources.length < flat.retrieved_sources.length - 1) failures.push(`${q.id}: recall tax`)
+        if (q.id === certQueryId) {
+          const flatIds = flat.retrieved_sources.map(row => row.id)
+          certifiedTail = routed.retrieved_sources
+            .filter(row => !flatIds.includes(row.id) && validSource(routed, row)).map(row => row.id)
+          if (!certifiedTail.length) failures.push(`${q.id}: no delivered relevant tail`)
+        }
+      }
+    } finally {
+      clusters.setKnowledgeRouteBranchOverrides(null)
+    }
+    verdicts[`chat-${branch}`] = failures.length ? "fail" : "pass"
+    console.log(`\n[chat-${branch}] delivered tail=${JSON.stringify(certifiedTail)}; ${failures.join("; ") || "all queries passed"}`)
+  }
+
   console.log("\n--- gate verdicts (absent = fail for opening purposes; branch stays off) ---")
-  for (const { branch } of columns) {
-    console.log(`${branch}: ${verdicts[branch]}`)
+  for (const [branch, verdict] of Object.entries(verdicts)) {
+    console.log(`${branch}: ${verdict}`)
   }
 
   // --strict：任一栏 fail|absent → exit 1（默认 exit 0 不是开闸依据，见 .mjs 头注释）
   if (process.argv.includes("--strict")) {
-    const bad = columns.filter(({ branch }) => verdicts[branch] !== "pass")
+    const bad = Object.keys(verdicts).filter(branch => verdicts[branch] !== "pass")
     if (bad.length > 0) {
-      console.error(`strict mode: non-pass columns: ${bad.map((c) => c.branch).join(", ")}`)
+      console.error(`strict mode: non-pass columns: ${bad.join(", ")}`)
       fs.rmSync(tempHome, { recursive: true, force: true })
       process.exit(1)
     }

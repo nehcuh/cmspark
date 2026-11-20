@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { spawnSync } from "node:child_process"
 
 // #273 Wave B: 簇路由 + 分组概览 + 诚实门（spec §6.5/§6.6；AC-10/13/14/17/18/19）
 // 出厂两只分支常数已于 2026-09-03 评测双栏 pass 后开闸为 true（漂移扳机仍在，
@@ -152,6 +153,16 @@ test("chat does not spend the remaining budget on group titles when no automatic
   assert.equal(result.knowledge_routing?.groupmap, "omitted")
   assert.deepEqual(result.retrieved_sources.map(source => source.id), pinned)
   assert.equal(extractGroupmapBlock(result.prompt), null)
+})
+
+test("strict knowledge route certification exercises both live chat branches and legacy branches", () => {
+  const result = spawnSync(process.execPath, ["scripts/knowledge-route-eval.mjs", "--strict"], {
+    encoding: "utf8", timeout: 30_000,
+  })
+  assert.equal(result.status, 0, result.stderr || result.error?.message)
+  for (const column of ["folder", "group", "chat-folder", "chat-group"]) {
+    assert.match(result.stdout, new RegExp(`^${column}: pass$`, "m"))
+  }
 })
 
 // --- AC-14: 出厂常数 + 评测命令存在可跑 + 算例体制 ---
