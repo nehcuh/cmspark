@@ -1,0 +1,30 @@
+name: Gallery certificate readback diagnostic
+on:
+  push:
+    branches: [codex/gallery70-readback-probe]
+permissions:
+  contents: read
+jobs:
+  readback:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+      - name: Build the original PowerShell runner
+        working-directory: companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        shell: bash
+        run: |
+          npm ci
+          npm run build
+      - name: Verify the finite diagnostic and preserved sampler
+        run: node --test scripts/tests/app-gallery-reference-70.test.mjs
+      - name: Run the original bounded certificate sampler for diagnosis
+        run: node scripts/collect-app-gallery-reference-70.mjs "${{ runner.temp }}/gallery70-reference-metadata.json"

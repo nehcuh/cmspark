@@ -61,6 +61,7 @@ try {
   $output.Dispose(); $output = $null
   [Console]::Error.WriteLine('GALLERY70_PHASE=ENTRY_WRITTEN:' + $phaseClock.ElapsedMilliseconds)
   $held = [IO.File]::Open($OutputPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+  [Console]::Error.WriteLine('GALLERY70_PHASE=EXE_HANDLE_OPENED:' + $phaseClock.ElapsedMilliseconds)
   $reader = [IO.BinaryReader]::new($held, [Text.Encoding]::UTF8, $true)
   if ($held.Length -lt 64 -or $reader.ReadUInt16() -ne 23117) { throw 'PE_REJECTED' }
   $held.Position = 60
@@ -68,8 +69,10 @@ try {
   if ($peOffset -lt 64 -or $peOffset -gt ($held.Length - 6)) { throw 'PE_REJECTED' }
   $held.Position = $peOffset
   if ($reader.ReadUInt32() -ne 17744 -or $reader.ReadUInt16() -ne 34404) { throw 'X64_REQUIRED' }
+  [Console]::Error.WriteLine('GALLERY70_PHASE=PE_HEADER_VERIFIED:' + $phaseClock.ElapsedMilliseconds)
   $held.Position = 0
   $exeHash = ([BitConverter]::ToString($hash.ComputeHash($held))).Replace('-','').ToLowerInvariant()
+  [Console]::Error.WriteLine('GALLERY70_PHASE=EXE_HASH_COMPUTED:' + $phaseClock.ElapsedMilliseconds)
   $fileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($OutputPath).FileVersion
   [Console]::Error.WriteLine('GALLERY70_PHASE=EXE_VERIFIED:' + $phaseClock.ElapsedMilliseconds)
   [Console]::Error.WriteLine('GALLERY70_PHASE=SIGNATURE_ENTERED:' + $phaseClock.ElapsedMilliseconds)

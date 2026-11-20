@@ -144,6 +144,7 @@ export function parseSample(stdout, app) {
 export function sampleFailureDiagnostic(error) {
   const order = ['ENTERED', 'ASSEMBLY_READY', 'ARCHIVE_VERIFIED', 'ZIP_OPENED',
     'ENTRY_SELECTED', 'ENTRY_OPENED', 'OUTPUT_OPENED', 'BUFFER_READY', 'ENTRY_WRITTEN',
+    'EXE_HANDLE_OPENED', 'PE_HEADER_VERIFIED', 'EXE_HASH_COMPUTED',
     'EXE_VERIFIED', 'SIGNATURE_ENTERED', 'SIGNATURE_RETURNED', 'COMPLETE']
   const phases = []
   let last = -1, lastElapsed = -1

@@ -353,9 +353,10 @@ test('#70 finite failure fields snapshot actual accessors once before admission'
   assert.equal(JSON.stringify(result).includes('OWNED_INERT_SENTINEL_DO_NOT_ECHO'), false)
 })
 
-test('#70 extraction boundary reports a strict prefix through buffer readiness', () => {
+test('#70 extraction and EXE readback report a strict phase prefix', () => {
   const phases = ['ENTERED', 'ASSEMBLY_READY', 'ARCHIVE_VERIFIED', 'ZIP_OPENED',
     'ENTRY_SELECTED', 'ENTRY_OPENED', 'OUTPUT_OPENED', 'BUFFER_READY', 'ENTRY_WRITTEN',
+    'EXE_HANDLE_OPENED', 'PE_HEADER_VERIFIED', 'EXE_HASH_COMPUTED',
     'EXE_VERIFIED', 'SIGNATURE_ENTERED', 'SIGNATURE_RETURNED', 'COMPLETE']
   for (let length = 1; length <= phases.length; length++) {
     const prefix = phases.slice(0, length)
@@ -394,7 +395,12 @@ test('#70 explicit JSON input binding preserves the complete signed sampler inve
   const explicitLine = "  Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress -InputObject ([ordered]@{entry=$EntryName; exeBytes=$written; exeSHA256=$exeHash; signatureStatus=$signature.Status.ToString(); certificateSHA256DER=$certificateHash; subject=$signature.SignerCertificate.Subject; collectedAtUTC=[DateTime]::UtcNow.ToString('o'); psVersion=$PSVersionTable.PSVersion.ToString(); machine='x64'; fileVersion=$fileVersion})"
   const inverse = text => {
     assert.equal(text.split(explicitLine).length, 2, 'one exact explicit binding of the original primitive object')
-    const restored = text.replace(explicitLine, oldLine).replace(/\r\n/g, '\n')
+    let restored = text.replace(explicitLine, oldLine).replace(/\r\n/g, '\n')
+    for (const phase of ['EXE_HANDLE_OPENED', 'PE_HEADER_VERIFIED', 'EXE_HASH_COMPUTED']) {
+      const marker = `  [Console]::Error.WriteLine('GALLERY70_PHASE=${phase}:' + $phaseClock.ElapsedMilliseconds)\n`
+      assert.equal(restored.split(marker).length, 2)
+      restored = restored.replace(marker, '')
+    }
     assert.equal(createHash('sha256').update(restored).digest('hex'), "a44c7353317649beb41c807121af8cfc8601dd86999a66074e88f3244e8520cf", 'all original fields, expressions, native guards, budget and cleanup remain exact')
   }
   inverse(source)
