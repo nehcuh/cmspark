@@ -81,7 +81,14 @@ if not (node.parent / "bin/cmspark-whisper-win-x64.exe").is_file():
 llama_url = "https://github.com/ggml-org/llama.cpp/releases/download/b12556/llama-b12556-bin-win-cpu-x64.zip"
 unpack(fetch(llama_url, base / "llama.zip", "98882a3ca45688ffa585c3adba49213ca90c5b2dbbf1bc2af41ac437a0987d17"), base / "llama")
 server, = (base / "llama").rglob("llama-server.exe")
-model = fetch("https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf", base / "minutes.gguf", "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e")
+model_repo = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/bb5d59e06d9551d752d08b292a50eb208b07ab1f/"
+shards = [
+    ("qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf", "dfce12e3862a5283ccfb88221b48480e58745165de856439950d0f22590580db"),
+    ("qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf", "539cf93f78e887edea1c04e2d7d8cdaca9d01dae9c9025bcb8accbe29df3d72a"),
+]
+for name, digest in shards:
+    fetch(model_repo + name, base / name, digest)
+model = base / shards[0][0]
 config = {"port":23401, "llm":{"base_url":"http://127.0.0.1:18839/v1", "api_key":"owned-local-test", "model_name":"meeting-local", "temperature":0.1, "max_tokens":1024, "context_window":8192}, "voice":{"sttEngine":"local","localModelId":"large-v3-turbo"}}
 (data / "config.json").write_text(json.dumps(config), encoding="utf-8")
 # The exact public excerpt is stored alongside the driver on this diagnostic branch.
@@ -118,7 +125,7 @@ try:
         "companion_asset": next({"name":a["name"], "digest":a["digest"]} for a in release["assets"] if a["name"] == f"cmspark-{tag}-windows-x64.zip"),
         "extension_asset": next({"name":a["name"], "digest":a["digest"]} for a in release["assets"] if a["name"] == f"CMspark-Chrome-Extension-{tag}.zip"),
         "speech_model": {"id":"large-v3-turbo", "sha256":expected["sha256"]},
-        "minutes_model":"Qwen2.5-1.5B-Instruct-Q4_K_M via local llama.cpp b12556",
+        "minutes_model":"Qwen2.5-7B-Instruct-Q4_K_M via local llama.cpp b12556",
     })
     receipt_path.write_text(json.dumps(receipt, indent=2, ensure_ascii=False), encoding="utf-8")
 finally:
