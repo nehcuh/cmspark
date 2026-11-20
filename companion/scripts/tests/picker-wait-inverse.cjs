@@ -2,7 +2,7 @@
 'use strict'
 const assert = require('node:assert/strict')
 const {createHash} = require('node:crypto')
-const NEW_DIGEST = 'b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00'
+const NEW_DIGEST = 'd6d4ae50774d564d7c9c8cde78f762ebddf127e64aef4002af70896f032db476'
 const OLD_DIGEST = '2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8'
 const HELPER_SUCCESS = '56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5'
 const pairs = [
@@ -13,18 +13,6 @@ const pairs = [
   [
     'uiStage=stage+2;uiDetail=0;observeUIStage();let sheetExtra=w.sheets.element(boundBy:1).waitForExistence(timeout:1);uiDetail=sheetExtra ? 3:2;observeUIStage();guard !sheetExtra else{throw OwnedUI705Error.refused};return w.sheets.firstMatch',
     'uiStage=stage+2;uiDetail=0;observeUIStage();let sheets=w.sheets.count;uiDetail=min(sheets,2)+1;observeUIStage();guard sheets==1 else{throw OwnedUI705Error.refused};return w.sheets.firstMatch'
-  ],
-  [
-    'let comboOne=first.comboBoxes.element(boundBy:0).waitForExistence(timeout:1);let comboExtra=first.comboBoxes.element(boundBy:1).waitForExistence(timeout:1);uiDetail=(comboOne && !comboExtra) ? 2:1;observeUIStage();let inputs=(comboOne && !comboExtra) ? first.comboBoxes:first.textFields',
-    'let comboCount=first.comboBoxes.count;uiDetail=min(comboCount,2)+1;observeUIStage();let inputs=comboCount==1 ? first.comboBoxes:first.textFields'
-  ],
-  [
-    'let inputOne=inputs.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=inputOne ? 2:1;observeUIStage();guard inputOne else{throw OwnedUI705Error.refused};let inputExtra=inputs.element(boundBy:1).waitForExistence(timeout:1);uiDetail=inputExtra ? 3:2;observeUIStage();guard !inputExtra else{throw OwnedUI705Error.refused}',
-    'let inputCount=inputs.count;uiDetail=min(inputCount,2)+1;observeUIStage();guard inputCount==1 else{throw OwnedUI705Error.refused}'
-  ],
-  [
-    'guard chooseSeen else{throw OwnedUI705Error.refused};let chooseExtra=choose.element(boundBy:1).waitForExistence(timeout:1);uiDetail=chooseExtra ? 3:2;observeUIStage();guard !chooseExtra else{throw OwnedUI705Error.refused}',
-    'guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}'
   ],
   [
     'let cancelOne=cancel.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=cancelOne ? 2:1;observeUIStage();guard cancelOne else{throw OwnedUI705Error.refused};let cancelExtra=cancel.element(boundBy:1).waitForExistence(timeout:1);uiDetail=cancelExtra ? 3:2;observeUIStage();guard !cancelExtra else{throw OwnedUI705Error.refused}',

@@ -526,9 +526,9 @@ test('705 Choose stage11 splits only original firstMatch remaining and wait boun
   // Git source-only LF digest binds all other actions, deadlines and assertions.
   assert.equal(createHash('sha256').update(prior.replace(/\r\n/g,'\n')).digest('hex'),'6efad44df4a39d7b4aa33a2509dd01b17e97f8ed333252169c058aa5815f064e')
   const fragment=source.slice(source.indexOf('uiStage=11;'),source.indexOf('uiStage=12;'))
-  const ordered=['uiDetail=0;observeUIStage()','let chooseElement=choose.firstMatch','uiDetail=3;observeUIStage()','let chooseTimeout=try remaining()','uiDetail=4;observeUIStage()','let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout)','uiDetail=chooseSeen ? 2:1;observeUIStage()','guard chooseSeen else','let chooseExtra=choose.element(boundBy:1).waitForExistence(timeout:1)','guard !chooseExtra else']
+  const ordered=['uiDetail=0;observeUIStage()','let chooseElement=choose.firstMatch','uiDetail=3;observeUIStage()','let chooseTimeout=try remaining()','uiDetail=4;observeUIStage()','let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout)','uiDetail=chooseSeen ? 2:1;observeUIStage()','guard chooseSeen else','let chooseCount=choose.count','guard chooseCount==1 else']
   let position=-1;for(const item of ordered){const at=fragment.indexOf(item);assert.ok(at>position,item);position=at}
-  assert.equal(fragment.match(/choose\.firstMatch/g)?.length,1);assert.equal(fragment.match(/try remaining\(\)/g)?.length,1);assert.equal(fragment.match(/waitForExistence\(/g)?.length,2)
+  assert.equal(fragment.match(/choose\.firstMatch/g)?.length,1);assert.equal(fragment.match(/try remaining\(\)/g)?.length,1);assert.equal(fragment.match(/waitForExistence\(/g)?.length,1)
   assert.doesNotMatch(fragment,/Timer|Task\.|Dispatch|sleep|setPrompt|\.prompt\s*=|debugDescription|snapshot/)
  }
 })
@@ -662,7 +662,7 @@ test('705 same owned sheet title or label query preserves one unique hittable ap
  assert.equal(matches([{label:'Go',title:'Go'},{label:'Cancel',title:'Cancel'}]).length,0)
  assert.equal(matches([{label:'Choose',title:''},{label:'',title:'Open'}]).length,2)
  const fragment=ui.slice(ui.indexOf('  uiStage=11;'),ui.indexOf('  uiStage=14;'))
- assert.ok(fragment.indexOf('guard !chooseExtra else')<fragment.indexOf('let chooseHittable=choose.element.isHittable'))
+ assert.ok(fragment.indexOf('guard chooseCount==1 else')<fragment.indexOf('let chooseHittable=choose.element.isHittable'))
  assert.ok(fragment.indexOf('guard chooseHittable else')<fragment.indexOf('choose.element.click()'))
  assert.ok(ui.includes('let sheetLabelCount=labelChoose.count'));assert.ok(ui.includes('buttonIdentityRows.append([label,title])'))
  assert.ok(ui.includes('guard r>0,r<=45 else'));assert.ok(ui.includes('cancel=second.buttons.matching(identifier:"Cancel")'))
@@ -689,41 +689,35 @@ test('705 live Choose path omits the synchronous auxiliary census and restores e
   assert.equal(canonical.split('observeChooseCensus();').length,1,'historical census definition is not invoked')
   assert.equal(prior.split('observeChooseCensus();').length,2,'inverse restores the original one call')
   assert.equal(previousCriticalCensus705('helper',owner).includes('1c9da3dd55238e24652db387a3dd351ae49f40bc4c566c5db8621a9fdf453b68'),true)
-  for(const mutant of [source+'\n',source.replace('guard !chooseExtra else','guard chooseExtra else'),source.replace('guard chooseHittable else','guard true else'),source.replace('choose.element.click()','choose.element.doubleClick()'),source.replace('guard r>0,r<=45 else','guard r>0,r<=46 else')])assert.throws(()=>previousCriticalCensus705('ui',mutant),{code:'ERR_ASSERTION'})
+  for(const mutant of [source+'\n',source.replace('guard chooseCount==1 else','guard chooseCount>=1 else'),source.replace('guard chooseHittable else','guard true else'),source.replace('choose.element.click()','choose.element.doubleClick()'),source.replace('guard r>0,r<=45 else','guard r>0,r<=46 else')])assert.throws(()=>previousCriticalCensus705('ui',mutant),{code:'ERR_ASSERTION'})
   assert.throws(()=>previousCriticalCensus705('helper',owner+'\n'),{code:'ERR_ASSERTION'})
  }
  // Project the actual stage11→13 statements; this is a controlled synchronous
  // framework fault, not an AX/macOS execution or the hosted physical cause.
- function run(source:string,{seen=true,extra=false,count=1,hittable=true}={}){
+ function run(source:string,{seen=true,count=1,hittable=true}={}){
   const ui=source.replace(/\r\n/g,'\n'),start=ui.indexOf('  uiStage=11;'),end=ui.indexOf('  uiStage=14;',start);assert.ok(start>=0&&end>start)
   let body=ui.slice(start,end)
-  const modern=body.includes('chooseExtra')
-  const pairs:Array<[string,string]>=[
+  for(const [current,replacement]of [
    ['guard chooseSeen else{throw OwnedUI705Error.refused}',"if(!chooseSeen){throw Error('OWNED_UI_REFUSED')}"],
+   ['guard chooseCount==1 else{throw OwnedUI705Error.refused}',"if(!(chooseCount==1)){throw Error('OWNED_UI_REFUSED')}"],
    ['guard chooseHittable else{throw OwnedUI705Error.refused}',"if(!chooseHittable){throw Error('OWNED_UI_REFUSED')}"],
    ['chooseElement.waitForExistence(timeout:chooseTimeout)','chooseElement.waitForExistence({timeout:chooseTimeout})']
-  ]
-  if(modern)pairs.push(['guard !chooseExtra else{throw OwnedUI705Error.refused}',"if(chooseExtra){throw Error('OWNED_UI_REFUSED')}"],['choose.element(boundBy:1).waitForExistence(timeout:1)','choose.element({boundBy:1}).waitForExistence({timeout:1})'])
-  else pairs.push(['guard chooseCount==1 else{throw OwnedUI705Error.refused}',"if(!(chooseCount==1)){throw Error('OWNED_UI_REFUSED')}"])
-  for(const [current,replacement]of pairs){assert.equal(body.split(current).length,2,current);body=body.replace(current,replacement)}
+  ]){assert.equal(body.split(current).length,2,current);body=body.replace(current,replacement)}
   body=body.replaceAll('_ = try remaining()','remaining()').replaceAll('try remaining()','remaining()').replaceAll('let ','const ').replaceAll('min(chooseCount,2)','Math.min(chooseCount,2)')
   assert.doesNotMatch(body,/\bguard\b|\btry\b|OwnedUI|waitForExistence\(timeout:|_ =|\blet\b/)
-  const calls:string[]=[]
-  function element(arg?:{boundBy:number}){if(arg&&typeof arg.boundBy==='number'){assert.equal(arg.boundBy,1);calls.push('extra');return{waitForExistence(value:{timeout:number}){assert.equal(value.timeout,1);calls.push('extra-wait');return extra}}}throw Error('CHOOSE_ELEMENT_SHAPE')}
-  Object.defineProperty(element,'isHittable',{get(){calls.push('hittable');return hittable}})
-  element.click=()=>{calls.push('click')}
+  const calls:string[]=[],element={get isHittable(){calls.push('hittable');return hittable},click(){calls.push('click')}}
   const scope={Math,observeUIStage(){},observeChooseCensus(){calls.push('census');throw Error('OWNED_CENSUS_INTERFERENCE')},remaining(){calls.push('remaining');return 1},choose:{get firstMatch(){calls.push('firstMatch');return{waitForExistence(value:{timeout:number}){assert.equal(value.timeout,1);calls.push('wait');return seen}}},get count(){calls.push('count');return count},element}}
   return{calls,run:()=>vm.runInNewContext('let uiStage=0,uiDetail=0;'+body,scope,{timeout:1000})}
  }
- const current=run(actual);assert.doesNotThrow(current.run);assert.deepEqual(current.calls,['firstMatch','remaining','wait','extra','extra-wait','hittable','remaining','click'])
+ const current=run(actual);assert.doesNotThrow(current.run);assert.deepEqual(current.calls,['firstMatch','remaining','wait','count','hittable','remaining','click'])
  const old=run(previousCriticalCensus705('ui',actual));assert.throws(old.run,/OWNED_CENSUS_INTERFERENCE/);assert.deepEqual(old.calls,['firstMatch','census'])
- for(const options of [{seen:false},{extra:true},{hittable:false}]){const refusal=run(actual,options);assert.throws(refusal.run,/OWNED_UI_REFUSED/);assert.equal(refusal.calls.includes('click'),false);assert.equal(refusal.calls.includes('census'),false)}
+ for(const options of [{seen:false},{count:0},{count:2},{hittable:false}]){const refusal=run(actual,options);assert.throws(refusal.run,/OWNED_UI_REFUSED/);assert.equal(refusal.calls.includes('click'),false);assert.equal(refusal.calls.includes('census'),false)}
 })
 
 
 // Actual Swift statements with explicit inert XCUI/clock seams. This neither
 // executes Swift nor simulates the observed macOS AX hierarchy.
-function inputReadyProjection705(source:string,options:{initial?:boolean;appears?:boolean;kind?:'combo'|'text';count?:number;hittable?:boolean;cancelled?:boolean;expired?:boolean;cancelOnWait?:boolean;expireOnWait?:boolean;comboOne?:boolean;comboExtra?:boolean;inputOne?:boolean;inputExtra?:boolean}={}){
+function inputReadyProjection705(source:string,options:{initial?:boolean;appears?:boolean;kind?:'combo'|'text';count?:number;hittable?:boolean;cancelled?:boolean;expired?:boolean;cancelOnWait?:boolean;expireOnWait?:boolean}={}){
  const ui=source.replace(/\r\n/g,'\n'),start=ui.indexOf('  uiStage=7;'),end=ui.indexOf('  let choose=first.buttons.matching(',start)
  assert.ok(start>=0&&end>start);let body=ui.slice(start,end)
  const remainingLine=ui.split('\n').find(line=>line.includes('func remaining() throws ->TimeInterval {'));assert.ok(remainingLine)
@@ -743,26 +737,17 @@ function inputReadyProjection705(source:string,options:{initial?:boolean;appears
    ['guard inputCandidates.firstMatch.waitForExistence(timeout:try remaining()) else{throw OwnedUI705Error.refused}',"if(!inputCandidates.firstMatch.waitForExistence({timeout:remaining()})){throw Error('OWNED_UI_REFUSED')}"],
   ]as const){assert.equal(body.split(current).length,2,current);body=body.replace(current,replacement)}
  }
- const modern=body.includes('let comboOne=')
- const shared:[string,string][]=[['guard inputHittable else{throw OwnedUI705Error.refused}',"if(!inputHittable){throw Error('OWNED_UI_REFUSED')}"],['modifierFlags:[]','{modifierFlags:[]}']]
- if(modern)shared.push(['guard inputOne else{throw OwnedUI705Error.refused}',"if(!inputOne){throw Error('OWNED_UI_REFUSED')}"],['guard !inputExtra else{throw OwnedUI705Error.refused}',"if(inputExtra){throw Error('OWNED_UI_REFUSED')}"])
- else shared.push(['guard inputCount==1 else{throw OwnedUI705Error.refused}',"if(!(inputCount==1)){throw Error('OWNED_UI_REFUSED')}"],['min(comboCount,2)','Math.min(comboCount,2)'],['min(inputCount,2)','Math.min(inputCount,2)'])
- for(const [current,replacement]of shared){assert.equal(body.split(current).length,2,current);body=body.replace(current,replacement)}
- if(modern){for(const [current,replacement,times]of [['element(boundBy:0)','element({boundBy:0})',3],['element(boundBy:1)','element({boundBy:1})',3],['waitForExistence(timeout:1)','waitForExistence({timeout:1})',4],['waitForExistence(timeout:try remaining())','waitForExistence({timeout:remaining()})',2]] as const){assert.equal(body.split(current).length,times,current);body=body.replaceAll(current,replacement)}}
+ for(const [current,replacement]of[
+  ['guard inputCount==1 else{throw OwnedUI705Error.refused}',"if(!(inputCount==1)){throw Error('OWNED_UI_REFUSED')}"],
+  ['guard inputHittable else{throw OwnedUI705Error.refused}',"if(!inputHittable){throw Error('OWNED_UI_REFUSED')}"],
+  ['min(comboCount,2)','Math.min(comboCount,2)'],['min(inputCount,2)','Math.min(inputCount,2)'],
+  ['modifierFlags:[]','{modifierFlags:[]}'],
+ ]as const){assert.equal(body.split(current).length,2,current);body=body.replace(current,replacement)}
  body=body.replaceAll('_ = try remaining()','remaining()').replaceAll('try remaining()','remaining()').replaceAll('let ','const ')
  assert.doesNotMatch(body+'\n'+remaining,/\bguard\b|\btry\b|OwnedUI705Error|NSPredicate|XCUIElement|matching:\.any|_ =|\blet\b|Date\(\)/)
  let available=options.initial??true,cancelled=options.cancelled??false,expired=options.expired??false;const kind=options.kind??'combo',count=options.count??1,calls:string[]=[]
  const element={get isHittable(){calls.push('hittable');return options.hittable??true},click(){calls.push('click')},typeText(value:string){assert.equal(value,'/owned/selection705');calls.push('text')},typeKey(key:string,flags:{modifierFlags:unknown[]}){assert.equal(key,'\r');assert.equal(flags.modifierFlags.length,0);calls.push('return')}}
- const query=(name:'combo'|'text')=>{
-  if(!modern)return{get count(){calls.push(name+'Count');return available&&name===kind?count:0},get element(){calls.push(name+'Element');return element}}
-  const seen:{[key:string]:number}={}
-  function pick(arg?:{boundBy:number}){if(!arg||typeof arg.boundBy!=='number')throw Error('INPUT_ELEMENT_SHAPE');const key=name+':'+arg.boundBy;calls.push(key);seen[key]=(seen[key]??0)+1;return{waitForExistence(value:{timeout:number}){assert.equal(value.timeout,1);calls.push('wait');const branch=name==='combo'&&seen[key]===1;return branch?(arg.boundBy===0?options.comboOne!==false:options.comboExtra===true):(arg.boundBy===0?options.inputOne!==false:options.inputExtra===true)}}}
-  Object.defineProperty(pick,'isHittable',{get(){calls.push('hittable');return options.hittable??true}})
-  pick.click=()=>{calls.push('click')}
-  pick.typeText=(value:string)=>{assert.equal(value,'/owned/selection705');calls.push('text')}
-  pick.typeKey=(key:string,flags:{modifierFlags:unknown[]})=>{assert.equal(key,'\r');assert.equal(flags.modifierFlags.length,0);calls.push('return')}
-  return{get count(){calls.push(name+'Count');return 0},element:pick}
- }
+ const query=(name:'combo'|'text')=>({get count(){calls.push(name+'Count');return available&&name===kind?count:0},get element(){calls.push(name+'Element');return element}})
  const combo=query('combo'),text=query('text')
  const candidateQuery={get firstMatch(){
   calls.push('firstMatch')
@@ -794,19 +779,20 @@ test('705 actual input readiness waits in the owned sheet before original count 
  const actual=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8')
  for(const eol of ['\n','\r\n']){
   const source=actual.replace(/\r\n/g,'\n').replace(/\n/g,eol),prior=previousInputReady705('ui',source)
-  for(const choice of [{comboOne:true,comboExtra:false},{comboOne:false,inputOne:true,inputExtra:false},{comboOne:true,comboExtra:true,inputOne:true,inputExtra:false}] as const){
-   const current=inputReadyProjection705(source,choice);assert.doesNotThrow(current.run)
+  for(const kind of ['combo','text']as const)for(const initial of [true,false]){
+   const current=inputReadyProjection705(source,{kind,initial});assert.doesNotThrow(current.run)
    assert.deepEqual(current.calls.filter(value=>['click','text','return'].includes(value)),['click','text','return'])
-   assert.equal(current.calls.filter(value=>value==='wait').length,5)
+   assert.equal(current.calls.filter(value=>value==='wait').length,1)
+   assert.ok(current.calls.indexOf('wait')<current.calls.indexOf('comboCount'))
    assert.ok(current.calls.indexOf('hittable')<current.calls.indexOf('click'))
-   if(choice.comboOne===false||choice.comboExtra===true)assert.ok(current.calls.includes('text:0'))
+   const old=inputReadyProjection705(prior,{kind,initial})
+   if(initial){assert.doesNotThrow(old.run);assert.deepEqual(old.calls,current.calls.filter(value=>!['descendants','predicate','matching','firstMatch','wait'].includes(value)).slice(2))}
+   else{assert.throws(old.run,/OWNED_UI_REFUSED/);assert.equal(old.calls.some(value=>['click','text','return'].includes(value)),false)}
   }
-  const oldReady=inputReadyProjection705(prior,{kind:'combo',initial:true});assert.doesNotThrow(oldReady.run)
-  const oldMissing=inputReadyProjection705(prior,{kind:'combo',initial:false});assert.throws(oldMissing.run,/OWNED_UI_REFUSED/);assert.equal(oldMissing.calls.some(value=>['click','text','return'].includes(value)),false)
-  for(const options of [{appears:false},{cancelled:true},{expired:true},{inputOne:false},{inputExtra:true},{comboOne:false,inputOne:false},{hittable:false},{cancelOnWait:true},{expireOnWait:true}]){
+  for(const options of [{initial:false,appears:false},{cancelled:true},{expired:true},{count:0},{kind:'text' as const,count:2},{kind:'combo' as const,count:2},{hittable:false},{cancelOnWait:true},{expireOnWait:true}]){
    const refused=inputReadyProjection705(source,options);assert.throws(refused.run,/OWNED_UI_(?:REFUSED|CANCELLED)/)
    assert.equal(refused.calls.some(value=>['click','text','return'].includes(value)),false)
-   if('cancelOnWait'in options||'expireOnWait'in options){assert.equal(refused.calls.filter(value=>value==='wait').length,3);assert.equal(refused.calls.includes('hittable'),false)}
+   if('cancelOnWait'in options||'expireOnWait'in options){assert.equal(refused.calls.filter(value=>value==='wait').length,1);assert.ok(refused.calls.includes('hittable'),'post-wait original count/hit precedes the existing action boundary')}
   }
  }
 })
@@ -818,19 +804,16 @@ test('705 input readiness restores exact preceding UI and helper for both source
   assert.throws(()=>previousInputReady705(kind,source+'\n'),{code:'ERR_ASSERTION'})
  }
  const canonical=ui.replace(/\r\n/g,'\n'),start=canonical.indexOf('  uiStage=7;'),end=canonical.indexOf('  let choose=first.buttons.matching(',start),fragment=canonical.slice(start,end)
- assert.ok(start>=0&&end>start);assert.equal(fragment.match(/waitForExistence\(/g)?.length,5)
- assert.equal(fragment.match(/waitForExistence\(timeout:try remaining\(\)\)/g)?.length,2)
- assert.equal(fragment.match(/waitForExistence\(timeout:1\)/g)?.length,3)
- assert.ok(fragment.indexOf('first.descendants(matching:.any)')<fragment.indexOf('first.comboBoxes.element(boundBy:0).waitForExistence(timeout:1)'))
- assert.ok(fragment.indexOf('first.comboBoxes.element(boundBy:1).waitForExistence(timeout:1)')<fragment.indexOf('inputs.element(boundBy:0).waitForExistence(timeout:try remaining())'))
- assert.ok(fragment.includes('let inputs=(comboOne && !comboExtra) ? first.comboBoxes:first.textFields'))
- assert.ok(fragment.includes('guard !inputExtra else{throw OwnedUI705Error.refused}'))
+ assert.ok(start>=0&&end>start);assert.equal(fragment.match(/waitForExistence\(/g)?.length,1)
+ assert.ok(fragment.indexOf('first.descendants(matching:.any)')<fragment.indexOf('let comboCount=first.comboBoxes.count'))
+ assert.ok(fragment.includes('let inputs=comboCount==1 ? first.comboBoxes:first.textFields'))
+ assert.ok(fragment.includes('guard inputCount==1 else{throw OwnedUI705Error.refused}'))
  assert.ok(fragment.includes('guard inputHittable else{throw OwnedUI705Error.refused}'))
  assert.doesNotMatch(fragment,/Timer|sleep|Dispatch|Task\.|app\.|\.activate\(|\.launch\(|\.terminate\(|\.count\s*>=|doubleClick|coordinate/)
  assert.ok(canonical.includes('guard r>0,r<=45 else'))
  assert.ok(canonical.includes('first.typeKey("g",modifierFlags:[.command,.shift])'))
  assert.ok(canonical.includes('cancel=second.buttons.matching(identifier:"Cancel")'))
- for(const [current,mutation]of [['guard !inputExtra else','guard inputExtra else'],['guard inputHittable else','guard true else'],['inputs.element.click()','inputs.element.doubleClick()'],['guard r>0,r<=45 else','guard r>0,r<=46 else']]as const){assert.equal(canonical.split(current).length,2);assert.throws(()=>previousInputReady705('ui',canonical.replace(current,mutation)),{code:'ERR_ASSERTION'})}
+ for(const [current,mutation]of [['guard inputCount==1 else','guard inputCount>=1 else'],['guard inputHittable else','guard true else'],['inputs.element.click()','inputs.element.doubleClick()'],['guard r>0,r<=45 else','guard r>0,r<=46 else']]as const){assert.equal(canonical.split(current).length,2);assert.throws(()=>previousInputReady705('ui',canonical.replace(current,mutation)),{code:'ERR_ASSERTION'})}
 })
 
 // Source text only: undo the exact #772 passive observation before existing authorities.

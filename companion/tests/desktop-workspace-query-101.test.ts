@@ -62,7 +62,7 @@ const SHEET_BOTH = 'uiStage=stage+2;uiDetail=0;observeUIStage();let sheetExtra=w
 const UI_RESTORED = '2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8';
 const HELPER_RESTORED = '56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5';
 const PRIOR_UI_COMMENT = 'fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076';
-const CURRENT_UI = 'b2884ab51d4087d14c31eae948fb05a0a2b9019ebc44f58ffda0c9c45debfd00';
+const CURRENT_UI = 'd6d4ae50774d564d7c9c8cde78f762ebddf127e64aef4002af70896f032db476';
 test('stage 15 still refuses a second sheet', () => {
   const second = sheetQuery({stage: 15, sheets: 2});
   assert.throws(second.run, /REFUSED/);

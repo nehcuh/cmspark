@@ -68,8 +68,8 @@ final class WorkspacePicker705:XCTestCase {
   uiStage=7;uiDetail=0;observeUIStage()
   let inputCandidates=first.descendants(matching:.any).matching(NSPredicate(format:"elementType IN %@",[XCUIElement.ElementType.comboBox.rawValue,XCUIElement.ElementType.textField.rawValue]))
   guard inputCandidates.firstMatch.waitForExistence(timeout:try remaining()) else{throw OwnedUI705Error.refused}
-  let comboOne=first.comboBoxes.element(boundBy:0).waitForExistence(timeout:1);let comboExtra=first.comboBoxes.element(boundBy:1).waitForExistence(timeout:1);uiDetail=(comboOne && !comboExtra) ? 2:1;observeUIStage();let inputs=(comboOne && !comboExtra) ? first.comboBoxes:first.textFields
-  uiStage=8;uiDetail=0;observeUIStage();let inputOne=inputs.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=inputOne ? 2:1;observeUIStage();guard inputOne else{throw OwnedUI705Error.refused};let inputExtra=inputs.element(boundBy:1).waitForExistence(timeout:1);uiDetail=inputExtra ? 3:2;observeUIStage();guard !inputExtra else{throw OwnedUI705Error.refused}
+  let comboCount=first.comboBoxes.count;uiDetail=min(comboCount,2)+1;observeUIStage();let inputs=comboCount==1 ? first.comboBoxes:first.textFields
+  uiStage=8;uiDetail=0;observeUIStage();let inputCount=inputs.count;uiDetail=min(inputCount,2)+1;observeUIStage();guard inputCount==1 else{throw OwnedUI705Error.refused}
   uiStage=9;uiDetail=0;observeUIStage();let inputHittable=inputs.element.isHittable;uiDetail=inputHittable ? 2:1;observeUIStage();guard inputHittable else{throw OwnedUI705Error.refused}
   uiStage=10;uiDetail=0;observeUIStage();_ = try remaining();inputs.element.click();_ = try remaining();inputs.element.typeText(scene.selection.path);_ = try remaining();inputs.element.typeKey("\r",modifierFlags:[])
   let choose=first.buttons.matching(NSPredicate(format:"label IN %@ OR title IN %@",["Choose","Open"],["Choose","Open"]))
@@ -93,7 +93,7 @@ final class WorkspacePicker705:XCTestCase {
    // No receipt if any synchronous framework call does not return; missing is UNKNOWN.
    try? scene.write(.uiChooseCensus,["schema":1,"nonce":scene.nonce,"status":"OBSERVED","sheetLabelCount":min(sheetLabelCount,2),"sheetButtonCount":min(sheetButtonCount,2),"ownerLabelCount":min(ownerLabelCount,2),"buttonCount":min(sheetButtonCount,8),"buttonsMore":sheetButtonCount>8,"buttonIdentityRows":buttonIdentityRows])
   }
-  uiStage=11;uiDetail=0;observeUIStage();let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout);uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseExtra=choose.element(boundBy:1).waitForExistence(timeout:1);uiDetail=chooseExtra ? 3:2;observeUIStage();guard !chooseExtra else{throw OwnedUI705Error.refused}
+  uiStage=11;uiDetail=0;observeUIStage();let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout);uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}
   uiStage=12;uiDetail=0;observeUIStage();let chooseHittable=choose.element.isHittable;uiDetail=chooseHittable ? 2:1;observeUIStage();guard chooseHittable else{throw OwnedUI705Error.refused}
   uiStage=13;uiDetail=0;observeUIStage();_ = try remaining();choose.element.click()
   uiStage=14;uiDetail=0;observeUIStage();try ready(.second,2);let second=try sheet(15),cancel=second.buttons.matching(identifier:"Cancel")
