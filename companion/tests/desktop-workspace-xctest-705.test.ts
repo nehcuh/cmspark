@@ -717,7 +717,7 @@ test('705 live Choose path omits the synchronous auxiliary census and restores e
 
 // Actual Swift statements with explicit inert XCUI/clock seams. This neither
 // executes Swift nor simulates the observed macOS AX hierarchy.
-function inputReadyProjection705(source:string,options:{initial?:boolean;appears?:boolean;kind?:'combo'|'text';count?:number;hittable?:boolean;cancelled?:boolean;expired?:boolean;cancelOnWait?:boolean;expireOnWait?:boolean}={}){
+function inputReadyProjection705(source:string,options:{initial?:boolean;appears?:boolean;comboCount?:number;textCount?:number;hittable?:boolean;cancelled?:boolean;expired?:boolean;cancelOnWait?:boolean;expireOnWait?:boolean}={}){
  const ui=source.replace(/\r\n/g,'\n'),start=ui.indexOf('  uiStage=7;'),end=ui.indexOf('  let choose=first.buttons.matching(',start)
  assert.ok(start>=0&&end>start);let body=ui.slice(start,end)
  const remainingLine=ui.split('\n').find(line=>line.includes('func remaining() throws ->TimeInterval {'));assert.ok(remainingLine)
@@ -745,9 +745,10 @@ function inputReadyProjection705(source:string,options:{initial?:boolean;appears
  ]as const){assert.equal(body.split(current).length,2,current);body=body.replace(current,replacement)}
  body=body.replaceAll('_ = try remaining()','remaining()').replaceAll('try remaining()','remaining()').replaceAll('let ','const ')
  assert.doesNotMatch(body+'\n'+remaining,/\bguard\b|\btry\b|OwnedUI705Error|NSPredicate|XCUIElement|matching:\.any|_ =|\blet\b|Date\(\)/)
- let available=options.initial??true,cancelled=options.cancelled??false,expired=options.expired??false;const kind=options.kind??'combo',count=options.count??1,calls:string[]=[]
+ let available=options.initial??true,cancelled=options.cancelled??false,expired=options.expired??false
+ const counts={combo:options.comboCount??1,text:options.textCount??0},calls:string[]=[]
  const element={get isHittable(){calls.push('hittable');return options.hittable??true},click(){calls.push('click')},typeText(value:string){assert.equal(value,'/owned/selection705');calls.push('text')},typeKey(key:string,flags:{modifierFlags:unknown[]}){assert.equal(key,'\r');assert.equal(flags.modifierFlags.length,0);calls.push('return')}}
- const query=(name:'combo'|'text')=>({get count(){calls.push(name+'Count');return available&&name===kind?count:0},get element(){calls.push(name+'Element');return element}})
+ const query=(name:'combo'|'text')=>({get count(){calls.push(name+'Count');return available?counts[name]:0},get element(){calls.push(name+'Element');return element}})
  const combo=query('combo'),text=query('text')
  const candidateQuery={get firstMatch(){
   calls.push('firstMatch')
@@ -779,17 +780,18 @@ test('705 actual input readiness waits in the owned sheet before original count 
  const actual=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8')
  for(const eol of ['\n','\r\n']){
   const source=actual.replace(/\r\n/g,'\n').replace(/\n/g,eol),prior=previousInputReady705('ui',source)
-  for(const kind of ['combo','text']as const)for(const initial of [true,false]){
-   const current=inputReadyProjection705(source,{kind,initial});assert.doesNotThrow(current.run)
+  for(const choice of [{comboCount:1,textCount:1},{comboCount:0,textCount:1},{comboCount:2,textCount:1}])for(const initial of [true,false]){
+   const current=inputReadyProjection705(source,{...choice,initial});assert.doesNotThrow(current.run)
+   assert.ok(current.calls.includes(choice.comboCount===1?'comboElement':'textElement'))
    assert.deepEqual(current.calls.filter(value=>['click','text','return'].includes(value)),['click','text','return'])
    assert.equal(current.calls.filter(value=>value==='wait').length,1)
    assert.ok(current.calls.indexOf('wait')<current.calls.indexOf('comboCount'))
    assert.ok(current.calls.indexOf('hittable')<current.calls.indexOf('click'))
-   const old=inputReadyProjection705(prior,{kind,initial})
+   const old=inputReadyProjection705(prior,{...choice,initial})
    if(initial){assert.doesNotThrow(old.run);assert.deepEqual(old.calls,current.calls.filter(value=>!['descendants','predicate','matching','firstMatch','wait'].includes(value)).slice(2))}
    else{assert.throws(old.run,/OWNED_UI_REFUSED/);assert.equal(old.calls.some(value=>['click','text','return'].includes(value)),false)}
   }
-  for(const options of [{initial:false,appears:false},{cancelled:true},{expired:true},{count:0},{kind:'text' as const,count:2},{kind:'combo' as const,count:2},{hittable:false},{cancelOnWait:true},{expireOnWait:true}]){
+  for(const options of [{initial:false,appears:false},{cancelled:true},{expired:true},{comboCount:0},{comboCount:0,textCount:2},{comboCount:2,textCount:0},{hittable:false},{cancelOnWait:true},{expireOnWait:true}]){
    const refused=inputReadyProjection705(source,options);assert.throws(refused.run,/OWNED_UI_(?:REFUSED|CANCELLED)/)
    assert.equal(refused.calls.some(value=>['click','text','return'].includes(value)),false)
    if('cancelOnWait'in options||'expireOnWait'in options){assert.equal(refused.calls.filter(value=>value==='wait').length,1);assert.ok(refused.calls.includes('hittable'),'post-wait original count/hit precedes the existing action boundary')}
