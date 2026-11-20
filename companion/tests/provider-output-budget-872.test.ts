@@ -4,6 +4,9 @@ import { chatOutputBudget, isChatOutputLimit } from "../src/llm/output-budget"
 import { classifyGenerationLimit } from "../src/llm/overflow"
 import { applyContextBudget } from "../src/llm/context-budget"
 import type { CanonicalChatMessage } from "../src/llm/provider"
+import * as fs from "node:fs/promises"
+import * as os from "node:os"
+import * as path from "node:path"
 import * as dns from "node:dns"
 import { OpenAIProvider } from "../src/llm/providers/openai"
 import { AnthropicProvider } from "../src/llm/providers/anthropic"
@@ -107,6 +110,28 @@ test("budget and wire semantics survive actual provider parsers with in-memory H
   assert.equal(requests[1].max_tokens, 128000)
   assert.deepEqual(requests[1].output_config, { effort: "high" })
   assert.equal("temperature" in requests[1], false)
+})
+
+test("settings get normalizes legacy numeric budgets to the same explicit runtime setting", async (t) => {
+  const { getConfig, clearConfigCache } = await import("../src/config")
+  const { handleConfigFamily } = await import("../src/message-router/handlers/config")
+  const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "cmspark-872-legacy-config-"))
+  const originalConfigDir = process.env.CMSPARK_DATA_DIR
+  process.env.CMSPARK_DATA_DIR = configDir
+  t.after(async () => {
+    if (originalConfigDir === undefined) delete process.env.CMSPARK_DATA_DIR
+    else process.env.CMSPARK_DATA_DIR = originalConfigDir
+    clearConfigCache()
+    await fs.rm(configDir, { recursive: true, force: true })
+  })
+  for (const [saved, editable, effective] of [[500000, 393216, 128000], [1000.5, 1000, 1000]]) {
+    await fs.writeFile(path.join(configDir, "config.json"), JSON.stringify({
+      llm: { ...known, max_tokens: saved },
+    }))
+    clearConfigCache()
+    assert.equal((await handleConfigFamily("config.get", {})).config.llm.max_tokens, editable)
+    assert.equal(chatOutputBudget(500000, getConfig().llm).preferred, effective)
+  }
 })
 
 test("settings router persists an explicit budget and resets it to automatic", async () => {

@@ -270,6 +270,9 @@ test("normalizeConfig carries an explicit or automatic chat output budget", () =
   assert.equal(normalizeConfig({ llm: { max_tokens: 64000 } }).max_tokens, 64000)
   assert.equal(normalizeConfig({ llm: { max_tokens: 0 } }).max_tokens, 0)
   assert.equal(normalizeConfig({ llm: { max_tokens: "64000" } }).max_tokens, undefined)
+  assert.equal(normalizeConfig({ llm: { max_tokens: 0.5 } }).max_tokens, undefined)
+  assert.equal(normalizeConfig({ llm: { max_tokens: 500000 } }).max_tokens, 393216)
+  assert.equal(normalizeConfig({ llm: { max_tokens: 1000.5 } }).max_tokens, 1000)
 })
 
 test("normalizeConfig flattens thread_digest (Wave B)", () => {

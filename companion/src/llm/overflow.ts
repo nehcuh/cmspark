@@ -2,7 +2,7 @@
 
 export function isContextOverflowError(msg: string): boolean {
   const s = String(msg || "")
-  return /context.?length|maximum context|prompt is too long|input is too long|context_length_exceeded|request_too_large|(?:input|prompt) token count exceeds|context[ _-]window|exceeds? the (model'?s? )?context/i.test(
+  return /context.?length|maximum context|prompt is too long|input is too long|context_length_exceeded|(?:input|prompt) token count exceeds|context[ _-]window|exceeds? the (model'?s? )?context/i.test(
     s,
   )
 }

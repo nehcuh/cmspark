@@ -1142,8 +1142,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   async function runContextBudgetPass(
     phase: "pre_loop" | "mid_loop",
     windowOverride?: number,
-  ): Promise<void> {
-    if (compactionSetting === "off") return
+  ): Promise<boolean> {
+    if (compactionSetting === "off") return false
     const compact = applyContextBudget(messages, windowOverride ?? contextWindow, tools, {
       phase,
       outputTokens: outputBudget.documented ? outputMaxTokens : undefined,
@@ -1178,11 +1178,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           /* non-fatal */
         }
       }
-      return
+      return false
     }
 
     // auto
-    if (!compact.compacted) return
+    if (!compact.compacted) return false
 
     messages = compact.messages
     let mode: "m1" | "m2" | "h1" = "m1"
@@ -1381,6 +1381,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     } catch {
       /* non-fatal */
     }
+    return true
   }
 
   function persistInterruptedRemainder(savedAssistantId: string | undefined, reason: string): void {
@@ -2802,6 +2803,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
 
       const errorMsg = e.message || String(e)
+      if (e.status === 413 || e.code === "request_too_large") {
+        logger.warn("llm.request_too_large", { thread_id: threadId })
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: "服务商拒绝了过大的请求体。请缩小附件或本次请求后重试。",
+        })
+        if (runStats) runStats.terminal = "error"
+        return
+      }
       if (!savedAssistantId && (
         classifyGenerationLimit(e?.code) === "context_window" || isContextOverflowError(errorMsg)
       )) {
@@ -2835,32 +2846,28 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           runStats.terminal = "error"
           return
         }
-        // Byte-level retry only makes sense in auto mode (see truncated-batch path).
         if (!overflowRecoveryUsed && compactionSetting === "auto") {
-          overflowRecoveryUsed = true
-          logger.warn("llm.overflow_retry", { thread_id: threadId, error: errorMsg.slice(0, 200) })
-          round--
-          // The provider's real window may be smaller than the configured one:
-          // retrying with the same window would resend a byte-identical request.
-          // Halve the effective window (per-turn only; config/disk untouched) so
-          // the budget pass actually compacts.
+          // The provider's window may be smaller than configured. Apply a
+          // tighter per-request budget with the current turn still pinned.
           const adjustedWindow = Math.max(CONTEXT_WINDOW_TINY, Math.floor(contextWindow / 2))
-          // Mid-loop retry must compact with the live round pinned (mid_loop
-          // shrink); pre_loop could drop this round's rows instead.
-          await runContextBudgetPass("mid_loop", adjustedWindow)
-          continue
+          if (await runContextBudgetPass("mid_loop", adjustedWindow)) {
+            overflowRecoveryUsed = true
+            logger.warn("llm.overflow_retry", { thread_id: threadId, error: errorMsg.slice(0, 200) })
+            round--
+            continue
+          }
         }
         if (compactionSetting === "prompt") {
           // Notify-only pass (thread.context_compact_prompt); messages untouched.
           await runContextBudgetPass("mid_loop")
         }
-        sendToExtension({
-          type: "chat.error",
-          thread_id: threadId,
-          error: compactionSetting === "auto"
-            ? "上下文溢出，压缩重试后仍失败，已停止。"
-            : "上下文溢出，已停止（当前上下文压缩模式不会自动压缩请求）。",
-        })
+        let overflowMessage = "上下文溢出，已停止（当前上下文压缩模式不会自动压缩请求）。"
+        if (overflowRecoveryUsed) {
+          overflowMessage = "上下文溢出，压缩重试后仍失败，已停止。"
+        } else if (compactionSetting === "auto") {
+          overflowMessage = "上下文溢出，当前请求已无法进一步压缩，已停止。"
+        }
+        sendToExtension({ type: "chat.error", thread_id: threadId, error: overflowMessage })
         if (runStats) runStats.terminal = "error"
         return
       }

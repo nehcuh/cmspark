@@ -15,7 +15,7 @@ import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
 import { endpointsMatch, isPlaceholderVisionKey, resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
 import { effectiveReasoningEffort, isReasoningEffort } from "./llm/reasoning-effort"
-import { isChatOutputLimit } from "./llm/output-budget"
+import { isChatOutputLimit, normalizeSavedChatOutputLimit } from "./llm/output-budget"
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
 import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-provision"
 import { defaultVoiceExternal, type VoiceExternalConfig } from "./voice/external-asr-config"
@@ -846,6 +846,7 @@ function loadConfigFile(configPath: string): CompanionConfig {
     console.warn("[cmspark-agent] invalid saved reasoning effort; using medium")
     merged.llm.reasoning_effort = "medium"
   }
+  merged.llm.max_tokens = normalizeSavedChatOutputLimit(merged.llm.max_tokens) ?? 0
   // mcp.servers is a named map (same idea as replaceMcpServers): if the key exists on disk,
   // the file is the full map — deepMerge must NOT resurrect default "filesystem" after the
   // user deletes it or clears the map. Product default FS@home only applies when:

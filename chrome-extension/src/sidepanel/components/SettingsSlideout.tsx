@@ -1179,7 +1179,9 @@ export function SettingsSlideout() {
               placeholder="自动"
               value={config.max_tokens || ""}
               onChange={e => {
-                const value = e.target.value === "" ? 0 : e.target.valueAsNumber
+                const input = e.currentTarget
+                if (input.validity.badInput) return
+                const value = input.value === "" ? 0 : input.valueAsNumber
                 if (isChatOutputLimit(value)) dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { max_tokens: value } })
               }}
             />
