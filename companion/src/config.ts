@@ -15,6 +15,7 @@ import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
 import { endpointsMatch, isPlaceholderVisionKey, resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
 import { effectiveReasoningEffort, isReasoningEffort } from "./llm/reasoning-effort"
+import { isChatOutputLimit } from "./llm/output-budget"
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
 import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-provision"
 import { defaultVoiceExternal, type VoiceExternalConfig } from "./voice/external-asr-config"
@@ -245,8 +246,9 @@ export interface LlmConfig {
   context_window: number
   /**
    * Chat output cap (Anthropic always sends; OpenAI when streamChat passes it).
-   * Default 32768. Distinct from vision.max_tokens (VLM caption budget).
-   * Ceiling: min(this, 32768, max(256, floor(context_window / 2))).
+   * Zero or unset selects the model-aware chat default. Positive values
+   * bound one response within the effective model and context limits.
+   * Vision calls have their own cap.
    */
   max_tokens?: number
   /**
@@ -474,8 +476,8 @@ const defaultConfig: CompanionConfig = {
     reasoning_effort: "medium",
     // Factory default 512k is an Agent working budget; auto-compact triggers later; fill the model's real window.
     context_window: CONTEXT_WINDOW_DEFAULT,
-    // Chat output cap — glm-5.x thinking burns a hardcoded 8192 Anthropic cap.
-    max_tokens: 32768,
+    // Model-aware automatic chat output budget.
+    max_tokens: 0,
     context_compaction: "auto",
     // M2 on by default under auto; still fails closed to M1 omit if summary fails.
     context_compaction_m2: true,
@@ -1423,6 +1425,8 @@ function saveConfigInternal(config: Partial<CompanionConfig>, intent?: { llmKey?
 }
 
 function saveConfigInternalBody(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string, captureReceipt = false): CompanionConfig {
+  if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "max_tokens") &&
+      !isChatOutputLimit(config.llm.max_tokens)) throw new Error("INVALID_CHAT_OUTPUT_LIMIT")
   if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "reasoning_effort")) {
     const { isReasoningEffort } = require("./llm/reasoning-effort") as typeof import("./llm/reasoning-effort")
     if (!isReasoningEffort(config.llm.reasoning_effort)) throw new Error("INVALID_REASONING_EFFORT")

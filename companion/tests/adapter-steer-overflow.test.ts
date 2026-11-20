@@ -409,17 +409,16 @@ test("overflow with compaction=off skips the byte-level retry", async () => {
   assert.ok(err && /上下文溢出/.test(err.error))
 })
 
-test("length-truncated tool batch retries once in auto mode", async () => {
+test("ambiguous tool truncation with no possible request change stops in auto mode", async () => {
   resetState()
   const params = buildMockParams("test-sn-len-auto")
-  createHandlers = [
-    toolCallStreamHandler("call_A", "list_tabs", "{}", "length"),
-    textStreamHandler("ok", "stop"),
-  ]
+  createHandlers = [toolCallStreamHandler("call_A", "list_tabs", "{}", "length")]
   await chatCreate(params)
 
-  assert.equal(streamParams.length, 2, "truncated tool batch retried once")
-  assert.ok(params.getSentMessages().find((m) => m.type === "chat.done"))
+  assert.equal(streamParams.length, 1, "does not repeat a byte-identical request")
+  const done = params.getSentMessages().find((m) => m.type === "chat.done")
+  assert.equal(done.generation_limit, "length")
+  assert.equal(done.incomplete_tools, true)
 })
 
 test("length-truncated tool batch in prompt mode errors without retry", async () => {
@@ -475,25 +474,83 @@ test("truncated tool batch (prompt) persists one assistant + interrupted tool, z
   assert.equal(liveErr.length, 1, "live chat.error stays ephemeral")
 })
 
-test("truncated-tool-batch retry raises output cap once (T-cap-2)", async () => {
+test("automatic retry raises a known model's request cap within the model ceiling", async () => {
   resetState()
-  const params = buildMockParams("test-sn-len-h2", {
-    contextWindow: 1e6,
-    maxTokens: 4096,
-  })
+  const params = buildMockParams("test-sn-len-h2", { contextWindow: 1e6 })
+  params.config.base_url = "https://api.openai.com/v1"
+  params.config.model_name = "gpt-5.2"
   createHandlers = [
-    toolCallStreamHandler("call_A", "list_tabs", "{}", "length"),
+    toolCallStreamHandler("call_A", "list_tabs", "{", "length"),
     textStreamHandler("ok", "stop"),
   ]
   await chatCreate(params)
-
-  assert.equal(streamParams.length, 2, "truncated tool batch retried once")
-  const first = streamParams[0].max_tokens
-  const second = streamParams[1].max_tokens
-  assert.equal(first, 4096)
-  assert.equal(second, 8192, "H2 must raise output cap ×2; input-only compact with same cap is not a pass")
-  assert.ok(second! > first!, "retry output cap must be strictly higher")
+  assert.deepEqual(streamParams.map(p => p.max_tokens), [32768, 65536])
   assert.ok(params.getSentMessages().find((m) => m.type === "chat.done"))
+})
+
+test("a configured output limit applies to recovery attempts", async () => {
+  resetState()
+  const params = buildMockParams("test-sn-len-explicit", { contextWindow: 1e6, maxTokens: 4096 })
+  createHandlers = [toolCallStreamHandler("call_A", "list_tabs", "{", "max_tokens")]
+  await chatCreate(params)
+  assert.deepEqual(streamParams.map(p => p.max_tokens), [4096])
+  const done = params.getSentMessages().find((m) => m.type === "chat.done")
+  assert.equal(done.generation_limit, "output_budget")
+})
+
+test("reasoning without visible text retains a precise generation limit in live and persisted chat", async () => {
+  resetState()
+  const params = buildMockParams("test-sn-reason-limit")
+  createHandlers = [async function* () {
+    yield { type: "reasoning", text: "思考片段" }
+    yield { type: "done", finish_reason: "max_tokens" }
+  }]
+  await chatCreate(params)
+  assert.equal(streamParams.length, 1)
+  const done = params.getSentMessages().find((m) => m.type === "chat.done")
+  assert.equal(done.generation_limit, "output_budget")
+  assert.equal(done.reasoning_content, "思考片段")
+  const saved = params.threadManager.getMessages(params.threadId).find(m => m.id === done.message_id)
+  assert.equal(saved?.generation_limit, "output_budget")
+  assert.equal(saved?.reasoning_content, "思考片段")
+})
+
+test("a streamed context limit preserves partial text and tool history without executing the truncated batch", async () => {
+  resetState()
+  const calls: string[] = []
+  const params = buildMockParams("test-sn-context-stop", {
+    executeTool: async (id) => { calls.push(id); return { success: true, data: { tabs: [] } } },
+  })
+  createHandlers = [
+    toolCallStreamHandler("call_A", "list_tabs", "{}"),
+    async function* () {
+      yield { type: "token", text: "保留正文" }
+      yield { type: "tool_call_delta", index: 0, id: "call_B", name: "list_tabs", arguments: "{" }
+      yield { type: "done", finish_reason: "model_context_window_exceeded" }
+    },
+  ]
+  await chatCreate(params)
+  assert.deepEqual(calls, ["call_A"])
+  assert.equal(streamParams.length, 2)
+  const done = params.getSentMessages().find((m) => m.type === "chat.done")
+  assert.equal(done.generation_limit, "context_window")
+  const saved = params.threadManager.getMessages(params.threadId).find(m => m.id === done.message_id)
+  assert.equal(saved?.content, "保留正文")
+  assert.equal(saved?.incomplete_tools, true)
+})
+
+test("context failure thrown after partial stream output keeps the partial text without retry", async () => {
+  resetState()
+  const params = buildMockParams("test-sn-late-context-error")
+  createHandlers = [async function* () {
+    yield { type: "token", text: "已收到的部分" }
+    throw Object.assign(new Error("provider refused"), { code: "context_length_exceeded" })
+  }]
+  await chatCreate(params)
+  assert.equal(streamParams.length, 1)
+  const done = params.getSentMessages().find((m) => m.type === "chat.done")
+  assert.equal(done.generation_limit, "context_window")
+  assert.equal(params.threadManager.getMessages(params.threadId).find(m => m.id === done.message_id)?.content, "已收到的部分")
 })
 
 test("abort empty content + reasoning persists one assistant via draft helper (T-abort-1)", async () => {

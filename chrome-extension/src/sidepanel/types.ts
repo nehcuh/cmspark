@@ -239,6 +239,7 @@ export interface LLMConfig {
   api_key_set?: boolean
   model_name: string
   reasoning_effort?: "low" | "medium" | "high" | "xhigh"
+  max_tokens?: number
   temperature: number
   context_window: number
   /**
@@ -355,6 +356,7 @@ export interface Message {
   truncated?: boolean
   incomplete_tools?: boolean
   finish_reason?: string | null
+  generation_limit?: "output_budget" | "context_window" | "length"
   /** Present only for the two shell-enable gate errors. Buttons navigate; they do not send. */
   shellEnableNavigation?: { packs: true; settingsSection: "integrations" }
 }

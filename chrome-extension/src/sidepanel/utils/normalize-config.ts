@@ -14,6 +14,12 @@ function isMaskedApiKey(key: string | undefined | null): boolean {
   return false
 }
 
+export const CHAT_OUTPUT_LIMIT_MAX = 393216
+
+export function isChatOutputLimit(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= CHAT_OUTPUT_LIMIT_MAX
+}
+
 export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (!config) return {}
   const llm = config.llm || config
@@ -27,6 +33,7 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     api_key_set: llmKeyMasked ? true : (llm.api_key ? true : false),
     model_name: llm.model_name,
     reasoning_effort: effectiveReasoningEffort(llm.reasoning_effort),
+    ...(isChatOutputLimit(llm.max_tokens) ? { max_tokens: llm.max_tokens } : {}),
     temperature: llm.temperature,
     context_window: llm.context_window,
     context_compaction:

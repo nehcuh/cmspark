@@ -1,25 +1,32 @@
-/**
- * Hydrate + live chat.done truncation honesty (P1-2 / #295).
- * A thinking-then-tool intermediate round is not a reply — never annotate it.
- * Empty reply + reasoning only claims the output limit with length evidence;
- * "额度" (billing quota) wording is banned for max_tokens truncation.
- */
+import type { Message } from "./types"
+
+export function parseGenerationLimit(value: unknown): Message["generation_limit"] {
+  return value === "output_budget" || value === "context_window" || value === "length" ? value : undefined
+}
+
 export function truncationHonestyChip(msg: {
   content?: string
   reasoning_content?: string
   truncated?: boolean
+  incomplete_tools?: boolean
   finish_reason?: string | null
+  generation_limit?: Message["generation_limit"]
   tool_calls?: unknown[]
 }): string | null {
-  if (msg.tool_calls && msg.tool_calls.length > 0) return null
+  if (msg.tool_calls?.length && !msg.incomplete_tools) return null
   const content = String(msg.content || "").trim()
   const reasoning = String(msg.reasoning_content || "").trim()
   const reason = String(msg.finish_reason || "").toLowerCase()
   if (reason === "aborted" || reason === "abort") return "已停止生成"
-  if (!content && reasoning) {
-    return reason === "length" || msg.truncated ? "思考用尽输出上限" : "模型未返回内容"
+  const limit = parseGenerationLimit(msg.generation_limit)
+  if (limit === "context_window" || reason === "model_context_window_exceeded" || reason === "context_length_exceeded") {
+    return "已到上下文上限"
   }
-  if (msg.truncated) return "输出被截断"
+  if (limit === "output_budget" || reason === "max_tokens" || reason === "max_output_tokens") {
+    return !content && reasoning ? "思考用尽输出上限" : "单次输出预算用尽"
+  }
+  if (limit === "length" || reason === "length" || msg.truncated) return "达到长度限制"
+  if (!content && reasoning) return "模型未返回内容"
   return null
 }
 
