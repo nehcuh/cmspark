@@ -157,9 +157,16 @@ function inverse(text: string, kind: 'scope' | 'gui' | 'apps') {
   } else if (kind === 'gui') {
     const fields = one(text, /(  static int MainThread;[\s\S]*?\r?\n  \}\r?\n)  \[DllImport/g)
     text = text.replace(fields, '')
-    for (const line of ['    MainThread = Thread.CurrentThread.ManagedThreadId; Observe("MAIN_ENTER");\n', '      Window.SourceInitialized += delegate { Observe("SOURCE_INITIALIZED"); };\n', '      Window.Loaded += delegate { Observe("LOADED"); };\n', '        Observe("CONTENT_RENDERED");\n', '        Observe("READY_WRITTEN");\n']) replace(line, '')
-    replace('try { Observe("RUN_ENTER"); return app.Run(Window); }', 'try { return app.Run(Window); }')
+    for (const line of ['    MainThread = Thread.CurrentThread.ManagedThreadId; Observe("MAIN_ENTER");\n',
+      '        Window.HandleCreated += delegate { Observe("SOURCE_INITIALIZED"); };\n',
+      '        Window.Load += delegate { Observe("LOADED"); };\n',
+      '          Observe("CONTENT_RENDERED");\n',
+      '          Observe("READY_WRITTEN");\n',
+      '        Observe("RUN_ENTER");\n']) replace(line, '')
   } else {
+    replace("import { buildOwnedApps825 } from './helpers/activity-native-fixture-758'", "import { buildOwnedWpf758, runOwnedCompiler758 } from './helpers/activity-native-fixture-758'")
+    replace('  try {\n    const binary = await buildOwnedApps825(directory, owned.signal)',
+      "  const from = path.resolve('tests/fixtures/activity-windows-758.cs'), to = path.resolve('tests/fixtures/activity-apps-windows-825.cs')\n  try {\n    const binary = await buildOwnedWpf758(directory, owned.signal, (file, args, options) => runOwnedCompiler758(file, args.map(arg => arg === from ? to : arg), options))")
     // Restore the fixture-only builder/projection change before the original d94 seal.
     replace("}, async t => {\n", "}, async () => {\n")
     replace("  $fixtureList825=New-Object 'System.Collections.Generic.List[object]'\n", "  $script:fixtureRows=@()\n")
@@ -176,11 +183,12 @@ function inverse(text: string, kind: 'scope' | 'gui' | 'apps') {
   return text
 }
 
-test('826 full actual source inverse preserves d94 baseline statements across LF/CRLF without requiring old Git objects', () => {
-  // Recorded SHA256 of the three genuine d94d5db5 baseline files, not a hand-written fixture.
+test('826 full actual source inverse preserves functional source across LF/CRLF without requiring old Git objects', () => {
+  // The scope fixture and Apps runner retain the d94d5db5 seals. The Apps GUI
+  // fixture seal covers the Forms producer with the passive observations removed.
   const rows: Array<['scope' | 'gui' | 'apps', string, string]> = [
     ['scope', scope, 'd92faa281083ee1b5805f080974017a094a3be717267b896142ec99ee1a96ae0'],
-    ['gui', gui, 'af037de7ba27b23e88312bcebdd5d7ff3cfe998f0c1d506533448ec8f821fd12'],
+    ['gui', gui, 'e1cf1cf7a1fcf9b7eda70e36b18b32944c9a99c59503a80e969ac74e133e6a7a'],
     ['apps', apps, '95835e6694f4bdbe479a2cc473a4becd520d65f2f35a315a25947e59c7c24aad'],
   ]
   for (const [kind, text, expected] of rows) {

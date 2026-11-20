@@ -13,19 +13,31 @@ export async function runOwnedCompiler758(file:string,args:string[],options:Opti
   const closed=new Promise<void>(resolve=>pending.child.once('close',()=>resolve()))
   try{await pending}finally{await closed}
 }
-export async function buildOwnedWpf758(root:string,signal:AbortSignal,compile:Compiler=runOwnedCompiler758,systemRoot=process.env.SystemRoot||'C:\\Windows'):Promise<string>{
+export function buildOwnedWpf758(root:string,signal:AbortSignal,compile:Compiler=runOwnedCompiler758,systemRoot?:string):Promise<string>{
+  return buildOwnedWindowsActivityFixture(root,signal,compile,systemRoot,'activity-windows-758.cs',
+    ['System.Xaml.dll','PresentationFramework.dll','PresentationCore.dll','WindowsBase.dll'])
+}
+
+export function buildOwnedApps825(root:string,signal:AbortSignal,compile:Compiler=runOwnedCompiler758,systemRoot?:string):Promise<string>{
+  return buildOwnedWindowsActivityFixture(root,signal,compile,systemRoot,'activity-apps-windows-825.cs',
+    ['System.Drawing.dll','System.Windows.Forms.dll'])
+}
+
+async function buildOwnedWindowsActivityFixture(
+  root:string,signal:AbortSignal,compile:Compiler,systemRoot:string|undefined,source:string,uiReferences:string[],
+):Promise<string>{
   signal.throwIfAborted()
-  const framework=path.join(systemRoot,'Microsoft.NET','Framework64','v4.0.30319')
+  const framework=path.join(systemRoot ?? (process.env.SystemRoot || 'C:\\Windows'),'Microsoft.NET','Framework64','v4.0.30319')
   const compiler=path.join(framework,'csc.exe'),output=path.join(root,'activity-fixture.exe')
   if(fs.existsSync(output))throw Error('OWNED_ACTIVITY_BUILD_REUSE_REFUSED')
   if(!fs.statSync(compiler).isFile())throw Error('OWNED_ACTIVITY_COMPILER_UNAVAILABLE')
-  const references=['System.dll','System.Core.dll','System.Web.Extensions.dll','System.Xaml.dll','PresentationFramework.dll','PresentationCore.dll','WindowsBase.dll'].map(name=>{
+  const references=['System.dll','System.Core.dll','System.Web.Extensions.dll',...uiReferences].map(name=>{
     const file=[path.join(framework,'WPF',name),path.join(framework,name)].find(file=>fs.existsSync(file)&&fs.statSync(file).isFile())
     if(!file)throw Error('OWNED_ACTIVITY_REFERENCE_MISSING '+name)
     return '/reference:'+file
   })
   try{
-    await compile(compiler,['/noconfig','/nologo','/utf8output','/target:winexe','/platform:anycpu','/out:'+output,...references,path.resolve('tests/fixtures/activity-windows-758.cs')],{signal,timeout:10_000,maxBuffer:4096,windowsHide:true})
+    await compile(compiler,['/noconfig','/nologo','/utf8output','/target:winexe','/platform:anycpu','/out:'+output,...references,path.resolve('tests/fixtures',source)],{signal,timeout:10_000,maxBuffer:4096,windowsHide:true})
     signal.throwIfAborted()
     if(!fs.statSync(output).isFile()||fs.statSync(output).size===0)throw Error('OWNED_ACTIVITY_BINARY_MISSING')
     return output

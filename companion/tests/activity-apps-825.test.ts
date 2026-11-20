@@ -6,7 +6,7 @@ import path from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { decodeWindowsActivityApps, WINDOWS_ACTIVITY_APP_LIMIT } from '../src/activity/windows-apps'
-import { buildOwnedWpf758, runOwnedCompiler758 } from './helpers/activity-native-fixture-758'
+import { buildOwnedApps825 } from './helpers/activity-native-fixture-758'
 import { withSurface650 } from './fixtures/native-surface-650'
 import { resolveWinScript, runPs } from '../src/host-use/win/powershell'
 
@@ -161,9 +161,8 @@ test('#825 Windows native process remains discoverable when minimized, hidden or
   assert.equal(process.env.RUNNER_OS, 'Windows')
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-apps825-owned-'))
   let child: ChildProcess | undefined, ended = true, closed: Promise<void> = Promise.resolve(), sequence = 0
-  const from = path.resolve('tests/fixtures/activity-windows-758.cs'), to = path.resolve('tests/fixtures/activity-apps-windows-825.cs')
   try {
-    const binary = await buildOwnedWpf758(directory, owned.signal, (file, args, options) => runOwnedCompiler758(file, args.map(arg => arg === from ? to : arg), options))
+    const binary = await buildOwnedApps825(directory, owned.signal)
     const rawApps = async () => JSON.parse(await runPs(resolveWinScript('activity-windows.ps1'), ['-Mode', 'Apps']))
     const probe = async () => JSON.parse(await runPs(resolveWinScript('activity-windows.ps1'), ['-Mode', 'Probe'])).window
     const launch = async (mode: 'gui' | 'headless') => {
