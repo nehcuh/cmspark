@@ -47,6 +47,8 @@ export function requestProject(type: string, data: Record<string, any>, signal: 
   })
 }
 
+export class ThreadCreateNotSentError extends Error {}
+
 /** Existing thread.create, then a separate explicit project.set; no fake cross-store transaction. */
 export function requestProjectThread(signal: AbortSignal, onCreated?: (thread: Thread) => void,
   { alias = "新项目对话", id = crypto.randomUUID() }: { alias?: string; id?: string } = {},
@@ -64,7 +66,8 @@ export function requestProjectThread(signal: AbortSignal, onCreated?: (thread: T
     chrome.runtime.onMessage.addListener(receive); signal.addEventListener("abort", cancel, { once: true })
     timer = setTimeout(() => finish(new Error("创建对话结果请刷新核实。")), 15_000)
     try { Promise.resolve(chrome.runtime.sendMessage({ type: "thread.create", alias, id, user_gesture: true })).then(ack => {
-      if (ack?.ok === false) finish(new Error("新对话尚未确认创建，请刷新核实。"))
+      if (ack?.sent === false) finish(new ThreadCreateNotSentError("连接中断，新对话尚未发送。"))
+      else if (ack?.ok === false) finish(new Error("新对话尚未确认创建，请刷新核实。"))
     }).catch(cancel) } catch { cancel() }
   })
 }

@@ -65,7 +65,7 @@ import { useComposerVoice } from "./hooks/useComposerVoice"
 import { useComposerIngest } from "./hooks/useComposerIngest"
 import { useComposerMentions } from "./hooks/useComposerMentions"
 import { extractHostname, resolveNativeVision } from "./components/vision-reuse-logic"
-import { requestProjectThread } from "./utils/project-request"
+import { requestProjectThread, ThreadCreateNotSentError } from "./utils/project-request"
 import { buildOptimisticUploadBubble, nextComposerText, sendComposerUpload, uploadSendFailureOps, uploadSendOutcome } from "./utils/upload-send"
 import { newTempUserMessageId } from "../utils/temp-message-id"
 import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
@@ -593,8 +593,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     setFirstThreadError("")
     try {
       await requestProjectThread(request.signal, undefined, { alias: "", id })
-    } catch {
-      if (!request.signal.aborted) setFirstThreadError("新对话尚未确认创建，输入已保留。")
+    } catch (error) {
+      if (request.signal.aborted) return
+      if (error instanceof ThreadCreateNotSentError) {
+        setFirstThreadId(null)
+        setFirstThreadError("创建请求未发送，输入已保留，可以重试。")
+      } else {
+        setFirstThreadError("新对话尚未确认创建，输入已保留。")
+      }
     } finally {
       if (firstThreadRequest.current === request) firstThreadRequest.current = null
     }
@@ -927,7 +933,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       <ComposerDock
         chips={<ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />}
       >
-        {needsThread && !needsConnection && !overlayStandby && <button type="button" className="cm-icon-button cm-first-conversation" onClick={() => void startFirstThread()}>{firstThreadError ? "查询创建结果" : "开始第一则对话"}</button>}
+        {needsThread && !needsConnection && !overlayStandby && <button type="button" className="cm-icon-button cm-first-conversation" onClick={() => void startFirstThread()}>{firstThreadId && firstThreadError ? "查询创建结果" : "开始第一则对话"}</button>}
         {needsThread && firstThreadError && <div role="alert">{firstThreadError}</div>}
         <div
           className="cm-composer-capsule"

@@ -27,7 +27,7 @@ function nodes(source: ts.SourceFile, predicate: (node: ts.Node) => boolean): ts
   const visit = (node: ts.Node) => { if (predicate(node)) found.push(node); ts.forEachChild(node, visit) }
   visit(source); return found
 }
-function actualBlankCreation() {
+function actualBlankCreation(sentToSocket = true) {
   const parse = (file: string) => ts.createSourceFile(file, readFileSync(join(process.cwd(), "src", file), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   const list = parse("sidepanel/components/ThreadList.tsx"), rail = parse("sidepanel/components/StatusRail.tsx"), background = parse("background/index.ts")
   const fn = (source: ts.SourceFile, name: string) => unique(nodes(source, n => ts.isFunctionDeclaration(n) && n.name?.text === name)).getText(source)
@@ -43,7 +43,7 @@ function actualBlankCreation() {
   class FixedDate extends Date { constructor() { super(clock) } static override now() { return clock } }
   const math = Object.create(Math); math.random = () => (++random % 35) / 36
   const sent: any[] = [], responses: any[] = [], produced: any[] = [], added: any[] = []
-  const sw = { Date: FixedDate, wsClient: { send(message: unknown) { sent.push(JSON.parse(JSON.stringify(message))); return true } } }
+  const sw = { Date: FixedDate, wsClient: { send(message: unknown) { sent.push(JSON.parse(JSON.stringify(message))); return sentToSocket } } }
   const actualReceive = vm.runInNewContext(receive + "; receive", sw, { timeout: 2000 })
   const deliver = (message: unknown) => { produced.push(JSON.parse(JSON.stringify(message))); return actualReceive(message, (value: unknown) => responses.push(JSON.parse(JSON.stringify(value)))) }
   const page = () => {
@@ -98,4 +98,12 @@ test("#735 only strict true bypasses dedup and no internal hint enters the WS me
   const s = actualBlankCreation(); s.deliver({ type: "thread.create", alias: "", id: "blank-a" }); s.page().click()
   assert.equal(s.sent.length, 2)
   assert.equal(s.sent.some(m => Object.hasOwn(m, "user_gesture")), false)
+})
+
+
+test("thread.create reports when the runtime has sent nothing to Companion", () => {
+  const receiver = actualBlankCreation(false)
+  receiver.deliver({ type: "thread.create", alias: "", id: "draft-owner", user_gesture: true })
+  assert.equal(receiver.sent.length, 1)
+  assert.deepEqual(receiver.responses, [{ ok: false, sent: false }])
 })

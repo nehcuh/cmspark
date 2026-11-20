@@ -8,6 +8,7 @@ const page = window as Window & {
   emitRuntime: (message: unknown) => void
   companionStore: { externalKey: string; config?: Record<string, unknown> }
   __connection: string
+  __rejectCreate: boolean
   chrome: typeof chrome
 }
 page.sent = sent
@@ -20,6 +21,11 @@ page.chrome = {
       sent.push(msg)
       if (msg?.type === "config.set" && msg.config) {
         page.companionStore.config = { ...(page.companionStore.config || {}), ...msg.config }
+      }
+      if (msg?.type === "thread.create" && page.__rejectCreate) {
+        const reply = { ok: false, sent: false }
+        cb?.(reply)
+        return Promise.resolve(reply)
       }
       const status = page.__connection || "disconnected"
       if (msg?.type === "getStatus") cb?.({ connectionState: status })
