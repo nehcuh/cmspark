@@ -134,7 +134,7 @@ test("summary sends confirmed material to the chosen profile and rejects stale o
       res.end(JSON.stringify({ error: { message: `Provider reflected ${req.headers.authorization}` } }))
       return
     }
-    res.end(JSON.stringify({ choices: [{ message: { content: "### TL;DR\nminutes fixture" }, finish_reason: "stop" }] }))
+    res.end(JSON.stringify({ choices: [{ message: { content: `### TL;DR\n${body.messages[1].content}` }, finish_reason: "stop" }] }))
   })
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   const addr = server.address() as { port: number }

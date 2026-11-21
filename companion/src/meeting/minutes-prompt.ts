@@ -13,6 +13,7 @@ INPUT: a meeting transcript or notes supplied by the user (possibly incomplete, 
 
 RULES:
 1. Use ONLY information present in the transcript. Do NOT invent attendees, decisions, action owners, dates, or quotes.
+   A count without named details supports only the count. Missing details do not create tasks. Distinguish proposals, agreed decisions, explicit commitments and unresolved questions.
 2. If information is missing, say so under Risks / Open questions (or the equivalent open-questions section) — never fabricate.
 3. Do NOT invent speaker labels or real names. If the transcript already has labels (e.g. 发言人1 / 张三:), you MAY use those labels as-is; never invent additional people.
 4. Do NOT call tools. Do NOT output tool_call / function_call markup.
@@ -30,6 +31,8 @@ Optional:
 ### 附录：转写要点
 
 Under 待办, use "- [ ] " checklist items. Owner only if explicit in transcript; else "未指定".`
+
+export const MEETING_MINUTES_CITATION_RULE = `For the default Markdown minutes, write one brief claim per line. Under 决议 include only choices actually agreed or adopted during the meeting. Put descriptions of an existing brief, process or plan in TL;DR. Under 待办 include only an explicit future commitment. At the end of each claim, cite a short exact passage copied from the transcript in its original language inside 〔〕. Cite enough to support every detail. Do not translate the quoted text, rewrite it or join fragments with ellipses. Use separate bullets for separate facts. Empty sections say 无明确记录. Do not output an appendix.`
 
 /**
  * Build the system prompt for the meeting_minutes job.

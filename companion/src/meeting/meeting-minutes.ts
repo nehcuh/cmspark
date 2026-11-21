@@ -7,6 +7,7 @@ import { logger } from "../logger"
 import {
   buildMinutesSystemPrompt,
   buildReferenceMinutesSystemPrompt,
+  MEETING_MINUTES_CITATION_RULE,
   MEETING_MINUTES_MAX_INPUT_CHARS,
   MEETING_MINUTES_MAX_TEMPLATE_CHARS,
   MEETING_MINUTES_TEMP_CAP,
@@ -15,6 +16,7 @@ import {
 import { meetingSourceFingerprint, type MeetingMinutes } from "./meeting-store"
 import { MEETING_REFERENCE_MAX_CHARS, parseReferenceMinutes } from "./meeting-reference"
 import { estimateTokens } from "../file-chunker"
+import { groundDefaultMinutes } from "./minutes-evidence"
 
 export type GenerateMinutesResult =
   | { ok: true; minutes: MeetingMinutes }
@@ -29,7 +31,7 @@ function parseLooseSections(md: string): Partial<MeetingMinutes> {
     (block || "")
       .split("\n")
       .map((l) => l.replace(/^\s*[-*]\s*(\[[ xX]\]\s*)?/, "").trim())
-      .filter(Boolean)
+      .filter(line => line && line !== "无可核对的条目。")
   return {
     tldr,
     decisions: bullets(decisionsBlock),
@@ -68,7 +70,8 @@ export async function generateMeetingMinutes(params: {
     return { ok: false, code: "aborted", message: "aborted" }
   }
 
-  const systemPrompt = referenceNotes ? buildReferenceMinutesSystemPrompt(tmpl || undefined) : buildMinutesSystemPrompt(tmpl || undefined)
+  const systemPrompt = referenceNotes ? buildReferenceMinutesSystemPrompt(tmpl || undefined)
+    : tmpl ? buildMinutesSystemPrompt(tmpl) : `${buildMinutesSystemPrompt()}\n\n${MEETING_MINUTES_CITATION_RULE}`
   const userContent = referenceNotes ? JSON.stringify({ transcript: raw, reference_notes: referenceNotes, reference_name: referenceName }) : raw
   if (referenceNotes) {
     const contextWindow = params.config.context_window ?? 100_000
@@ -109,9 +112,13 @@ export async function generateMeetingMinutes(params: {
   if (referenceNotes && !referenceResult) {
     return { ok: false, code: "invalid_reference_result", message: "纪要校正结果缺少有效的原文或参考依据，请重试；原始转写已保留" }
   }
-  const md = referenceResult?.raw_md || (out || "").trim()
-  if (!md) {
+  const responseMd = referenceResult?.raw_md || (out || "").trim()
+  if (!responseMd) {
     return { ok: false, code: "empty_output", message: "empty minutes" }
+  }
+  const md = referenceNotes || tmpl ? responseMd : groundDefaultMinutes(responseMd, raw)
+  if (!md) {
+    return { ok: false, code: "invalid_minutes_evidence", message: "模型未提供可核对的逐字稿依据，请重试或更换纪要模型。未写入本次结果。" }
   }
   // Soft structure check — require at least TL;DR heading
   if (!/###\s*TL;DR/i.test(md)) {
