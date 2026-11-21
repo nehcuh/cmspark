@@ -71,7 +71,9 @@ const dependencies = {
     record({ phase: 'llm', userContent: options.userContent, systemPrompt: options.systemPrompt });
     if (controls.failLlm) throw new Error('合成模型不可用');
     const minutes_md = '### TL;DR\n讨论 Python 发布。\n### 决议\n待核对日期。\n### 待办\n- [ ] 确认发布日期。\n### 风险 / 开放问题\n录音与笔记存在分歧。';
-    if (!params.referenceNotes?.trim()) return minutes_md;
+    if (!params.referenceNotes?.trim()) {
+      return '### TL;DR\n- 配森计划周五发布。〔配森将在周五发布。〕\n### 决议\n无明确记录。\n### 待办\n无明确记录。\n### 风险 / 开放问题\n无明确记录。';
+    }
     return JSON.stringify({ minutes_md,
       corrections: params.transcriptText.includes('配森') && params.referenceNotes.includes('Python')
         ? [{ original: '配森', replacement: 'Python', reference_excerpt: 'Python', reason: '笔记中明确的项目术语' }] : [],

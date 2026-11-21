@@ -133,7 +133,8 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
                 no_model()
                 page.locator("#meetingMinutesBtn").click()
                 confirm_minutes(page, after=prepared["n"])
-                expect(page.locator("#meetingMinutes")).to_contain_text("Python")
+                expect(page.locator("#meetingMinutes")).to_contain_text("配森计划周五发布。〔配森将在周五发布。〕")
+                expect(page.locator("#meetingMinutes")).not_to_contain_text("Python")
                 assert len(events("meeting.generate_minutes")) == 1
                 assert not errors, errors
                 browser.close()
