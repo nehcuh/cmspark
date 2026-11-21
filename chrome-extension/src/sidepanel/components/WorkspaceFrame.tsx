@@ -89,10 +89,17 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   }
   useEffect(() => {
     if (!full) return
-    const select = (page: unknown) => {
-      if (isWorkbenchPage(page) && !forceChat) navigate(page)
+    const select = (page: unknown): boolean => {
+      if (!isWorkbenchPage(page)) return false
+      if (destinationOwnerRef.current.blocked) {
+        window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "请先处理待确认操作或结束电脑执行。" }))
+        return false
+      }
+      if (destinationOwnerRef.current.settingsOpen) dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+      setView(page)
+      return true
     }
-    const onPage = (event: Event) => select((event as CustomEvent).detail)
+    const onPage = (event: Event) => { if (select((event as CustomEvent).detail)) event.preventDefault() }
     const onHash = () => select(window.location.hash.slice(1).split("/")[0])
     window.addEventListener("cmspark:workbench-page", onPage)
     window.addEventListener("hashchange", onHash)
@@ -100,7 +107,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
       window.removeEventListener("cmspark:workbench-page", onPage)
       window.removeEventListener("hashchange", onHash)
     }
-  }, [full, forceChat])
+  }, [full, dispatch])
   useEffect(() => { if (forceChat) setView("chat") }, [forceChat])
   useEffect(() => {
     const showChat = (event: Event) => {
@@ -207,14 +214,14 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
       {openingError && <p role="alert" className="cm-personal-fieldnote">{openingError}</p>}
       {full && <nav className="cm-personal-mobile-nav" aria-label="工作中心页面">{WORKSPACE_DESTINATIONS.map(item => <button type="button" key={item.id} aria-current={visibleView === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}<button type="button" disabled={state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)} onClick={() => { navigate("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>设置</button></nav>}
       {screenCaptureActive && visibleView !== "recording" && <div className="cm-personal-banner" role="status"><span>正在录屏</span><button className="cm-p-link" type="button" onClick={() => navigate("recording")}>返回录屏</button></div>}
-      {full && !["chat", "meeting", "transcribe"].includes(visibleView) && state.meetingCaptureActive && <div className="cm-personal-banner" role="status"><span>会议录制中</span><button className="cm-icon-button" type="button" onClick={() => openResource("meeting")}>返回会议</button></div>}
+      {full && !["chat", "meeting", "transcribe"].includes(visibleView) && state.meetingCaptureActive && <div className="cm-personal-banner" role="status"><span>会议录制中</span><button className="cm-p-link" type="button" onClick={() => navigate("meeting")}>返回会议</button></div>}
       {visibleView === "meeting" || visibleView === "transcribe" || visibleView === "recording" || visibleView === "translation" ? <nav className="cm-workbench-actions" aria-label="会议工具">
         <button type="button" className="cm-p-link" onClick={() => navigate("today")}>返回个人工作台</button>
         {workbenchActions.filter(([page]) => page !== visibleView).map(([page, label]) => <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{label}</button>)}
       </nav> : null}
       <div className="cm-shell-layers">
         {(opened.has("meeting") || opened.has("transcribe")) && <div className="cm-workbench-tool" hidden={visibleView !== "meeting" && visibleView !== "transcribe"}>
-          <MeetingPanel meetingId={recent.id} meetingSelectionRevision={recent.revision} purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
+          <MeetingPanel active={visibleView === "meeting" || visibleView === "transcribe"} meetingId={recent.id} meetingSelectionRevision={recent.revision} purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
             navigate("chat")
             window.dispatchEvent(new CustomEvent("cmspark:fill-composer", { detail: { text } }))
           }} />

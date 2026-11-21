@@ -3,8 +3,9 @@ export type WorkbenchPage = "today" | "meeting" | "transcribe" | "recording" | "
 
 export async function openWorkbench(page: WorkbenchPage): Promise<boolean> {
   if (window.location.pathname === "/tabs/workspace.html") {
-    window.dispatchEvent(new CustomEvent("cmspark:workbench-page", { detail: page }))
-    return true
+    const event = new CustomEvent("cmspark:workbench-page", { detail: page, cancelable: true })
+    window.dispatchEvent(event)
+    return event.defaultPrevented
   }
   const base = chrome.runtime.getURL("tabs/workspace.html")
   try {
