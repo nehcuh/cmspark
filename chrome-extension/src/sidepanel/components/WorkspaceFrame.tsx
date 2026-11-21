@@ -53,7 +53,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
     return "today"
   })
   const [screenCaptureActive, setScreenCaptureActive] = useState(false)
-  const [recentMeetingId, setRecentMeetingId] = useState<string>()
+  const [recent, setRecent] = useState<{ id?: string; revision: number }>({ revision: 0 })
   const [opened, setOpened] = useState(() => new Set([view]))
   useEffect(() => {
     setOpened(previous => previous.has(view) ? previous : new Set([...previous, view]))
@@ -214,7 +214,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
       </nav> : null}
       <div className="cm-shell-layers">
         {(opened.has("meeting") || opened.has("transcribe")) && <div className="cm-workbench-tool" hidden={visibleView !== "meeting" && visibleView !== "transcribe"}>
-          <MeetingPanel meetingId={recentMeetingId} purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
+          <MeetingPanel meetingId={recent.id} meetingSelectionRevision={recent.revision} purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
             navigate("chat")
             window.dispatchEvent(new CustomEvent("cmspark:fill-composer", { detail: { text } }))
           }} />
@@ -226,7 +226,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
           actions={destination === "today" ? <nav className="cm-workbench-actions" aria-label="常用操作">{workbenchActions.map(([page, label]) =>
         <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{label}</button>)}</nav> : undefined}
           recent={destination === "today" && visibleView === "today" ? <RecentWorkbenchMeetings connected={state.connectionState === "connected"} recording={state.meetingCaptureActive} onSelect={id => {
-          setRecentMeetingId(id)
+          setRecent(old => ({ id, revision: old.revision + 1 }))
           navigate("meeting")
         }} /> : undefined}
         /></div>)}
