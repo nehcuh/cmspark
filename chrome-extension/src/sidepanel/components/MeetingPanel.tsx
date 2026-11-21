@@ -554,8 +554,10 @@ export function MeetingPanel(props: {
       }
       const savedText = await saveMeetingMaterials({ id: owner, text: snapshot.text, referenceNotes: snapshot.notes,
         referenceName: snapshot.name, persistence: persistenceRef.current, silenceCut })
+      if (!mountedRef.current || meetingIdRef.current !== owner) return
       if (transcriptRef.current === snapshot.text) {
         transcriptRef.current = savedText
+        transcriptDirtyRef.current = false
         setTranscript(savedText)
       }
       snapshot.text = savedText
