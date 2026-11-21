@@ -5,6 +5,7 @@
 ## 1.3.1 发布准备
 
 - 本版恢复 Chrome 扩展窄栏与弹出对话框的紧凑导航布局。发布内容见 [CHANGELOG](../CHANGELOG.md) 与 [#867](https://github.com/nehcuh/cmspark/pull/867)。
+- 合并候选同时包含外部模型输出预算、自动知识注入，以及 Windows Apps 与 macOS 选择框的验收夹具修复。[#875](https://github.com/nehcuh/cmspark/pull/875) · [#874](https://github.com/nehcuh/cmspark/pull/874) · [#871](https://github.com/nehcuh/cmspark/pull/871)
 
 ## 1.3.0
 
