@@ -722,6 +722,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "settings.assistant.apply":
       case "model.center.get":
       case "model.center.save":
+      case "meeting.translation.list":
+      case "meeting.translation.prepare":
+      case "meeting.translation.run":
+      case "meeting.translation.cancel":
         sendResponse(forwardWorkspaceRequest(message, sender, chrome.runtime.id, wsClient))
         return false
       case "getStatus":
@@ -1784,10 +1788,6 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "meeting.diarize.upload_start":
       case "meeting.diarize.upload_chunk":
       case "meeting.diarize.upload_end":
-      case "meeting.translation.list":
-      case "meeting.translation.prepare":
-      case "meeting.translation.run":
-      case "meeting.translation.cancel":
       case "meeting.prepare_minutes":
       case "meeting.generate_minutes":
       case "meeting.set_status":
