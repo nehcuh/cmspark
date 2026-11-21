@@ -210,6 +210,17 @@ function toolchain() {
   if (!fs.existsSync(cl)) throw new Error("DESKTOP_WINDOWS_TOOLCHAIN_MISSING")
   return { cl, env }
 }
+export async function buildDesktopWebview2ColdDiagnostic(root) {
+  if (process.platform !== "win32" || process.arch !== "x64") throw new Error("DIAGNOSTIC_WINDOWS_X64_REQUIRED")
+  const { cl, env } = toolchain()
+  const dest = path.join(root, "dist", "desktop-native")
+  const cache = ownedDirectory(dest)
+  const sdk = extractDesktopSdk("webview", await download("webview", cache), cache, "x64")
+  const output = fs.mkdtempSync(path.join(cache, "cold-diagnostic-"))
+  const binary = path.join(output, "webview2-minimal-cold.exe")
+  checked(cl, ["/nologo", "/std:c++20", "/W4", "/WX", "/EHsc", `/I${path.join(sdk, "build/native/include")}`, path.join(root, "tests/fixtures/desktop-480/webview2-minimal-cold.cpp"), "/link", path.join(sdk, "build/native/x64/WebView2LoaderStatic.lib"), "runtimeobject.lib", "ole32.lib", "user32.lib", "shlwapi.lib", "version.lib", "advapi32.lib", `/OUT:${binary}`], { env, cwd: output, buildDiagnostic: true })
+  publish(binary, path.join(dest, "webview2-minimal-cold.exe"))
+}
 export async function buildDesktopWindows({ root, dest, generated, testFixtures = false }) {
   if (process.platform !== "win32" || !["x64", "arm64"].includes(process.arch)) throw new Error("DESKTOP_WINDOWS_BUILD_ARCH_UNSUPPORTED")
   const arch = process.arch

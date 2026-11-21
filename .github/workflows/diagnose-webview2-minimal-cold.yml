@@ -1,0 +1,36 @@
+name: Minimal cold WebView2 diagnostic
+on:
+  push:
+    branches: [codex/webview2-minimal-first-host]
+permissions:
+  contents: read
+jobs:
+  probe:
+    name: Minimal ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows 2025 OS-only
+            runner: windows-2025
+            mode: os-only
+          - label: Windows 2025 with known local app data
+            runner: windows-2025
+            mode: known-local-app-data
+          - label: Windows 2022 OS-only
+            runner: windows-2022
+            mode: os-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Build the diagnostic with the repository-pinned loader
+        working-directory: companion
+        shell: bash
+        run: node --input-type=module -e 'import { buildDesktopWebview2ColdDiagnostic } from "./scripts/build-desktop-windows.mjs"; await buildDesktopWebview2ColdDiagnostic(process.cwd())'
+      - name: Observe one cold controller request under the same deadline
+        run: ./scripts/diagnostics/webview2-minimal-cold.ps1 -Mode '${{ matrix.mode }}'
