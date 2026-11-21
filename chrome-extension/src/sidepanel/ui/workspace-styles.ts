@@ -59,6 +59,8 @@ export const workspaceCSS = `
 .cm-settings-body{padding:8px 24px 24px!important}
 .cm-context-panel{max-height:min(36dvh,360px)!important;margin:0 16px;border:1px solid ${tokens.border};border-radius:${tokens.radiusLg}px;box-shadow:${tokens.shadowSm}}
 .cm-history-group{flex:1;border:0;background:transparent;color:inherit;font:inherit;text-align:left;min-height:32px;cursor:pointer;padding:4px 0}
+.cm-workbench-launch{font-size:12px;white-space:nowrap;padding:0 4px}
+@media(max-width:380px){.cm-workbench-prefix,.cm-navigation-toggle span{display:none}.cm-status-rail{column-gap:3px!important;padding-inline:6px!important}}
 .cm-navigation-toggle{gap:4px;flex-shrink:0}
 .cm-history-panel{max-width:720px;margin:0 auto}
 .cm-history-panel button:focus-visible,.cm-history-panel [role="button"]:focus-visible{outline:2px solid ${tokens.accent};outline-offset:-2px}
