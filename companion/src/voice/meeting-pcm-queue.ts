@@ -43,7 +43,10 @@ export class MeetingPcmQueue {
     const meanSquare = energy / block.frames
     if (meanSquare >= 320 * 320) this.openingSpeech = true
     this.openingQuietFrames = meanSquare < 128 * 128 ? this.openingQuietFrames + block.frames : 0
-    if (this.openingSpeech && block.end >= C.rate && this.openingQuietFrames >= C.rate * 0.32) {
+    // Prefer a complete pause early. After 1.6 s an inter-word gap can
+    // safely finish the opening batch before the 64-block ceiling (2.56 s).
+    const pauseFrames = C.rate * (block.end >= C.rate * 1.6 ? 0.16 : 0.32)
+    if (this.openingSpeech && block.end >= C.rate && this.openingQuietFrames >= pauseFrames) {
       this.openingPauseEnd = block.end
     }
   }

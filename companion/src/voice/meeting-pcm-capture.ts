@@ -38,7 +38,7 @@ export class MeetingPcmCapture {
 
   constructor(readonly identity: CaptureIdentity, readonly peerId: string, private readonly deps: MeetingPcmCaptureDeps, readonly speaker?: string,
     readonly liveTarget?: string, segmentFrames: number = C.segmentFrames) {
-    this.queue = new MeetingPcmQueue(segmentFrames, liveTarget ? Math.min(25600, segmentFrames) : segmentFrames)
+    this.queue = new MeetingPcmQueue(segmentFrames, liveTarget ? Math.min(C.blockFrames * 64, segmentFrames) : segmentFrames)
     this.now = deps.now ?? Date.now
     this.timer = this.later(() => this.fail("startup_timeout"), C.startupMs)
   }
