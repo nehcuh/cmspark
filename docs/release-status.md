@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-> 本次发布准备版本为 **1.4.0**。已发布基线为 [v1.3.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.3.1)。
+> 源码开发版本 **1.4.0（尚未正式发布）**。已发布基线为 [v1.3.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.3.1)。
 
 ## 1.4.0 发布准备
 
