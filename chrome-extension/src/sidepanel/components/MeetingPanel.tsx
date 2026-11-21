@@ -260,7 +260,7 @@ export function MeetingPanel(props: {
   const activeModelId = state.voiceModel?.localModelId || "medium"
   const localModelReady = state.voiceModel?.models?.[activeModelId]?.status === "ready"
   const localBinaryReady = state.voiceModel?.binary?.status === "ready"
-  const localEngineReady = state.voiceModel?.sttEngine === "local"
+  const localEngineReady = (props.purpose && liveTarget?.mode === "local") || state.voiceModel?.sttEngine === "local"
   /** #260: speaker-embedding diarize model (未就绪必须显式引导下载，不静默落回). */
   const diarizeModelReady = state.voiceModel?.diarizeModel?.status === "ready"
   /** P1: near-rt defaults on; honor global voiceRealtimeStreaming toggle. */
@@ -1714,12 +1714,13 @@ export function MeetingPanel(props: {
   return (
     <div
       data-testid="meeting-panel"
+      className={props.purpose ? "cm-workbench-meeting" : undefined}
       style={{
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        padding: 12,
-        height: "100%",
+        padding: props.purpose ? "clamp(16px, 3vw, 32px)" : 12,
+        height: props.purpose ? "auto" : "100%",
         overflow: "auto",
         background: tokens.bgElevated,
         color: tokens.text,
@@ -1728,10 +1729,8 @@ export function MeetingPanel(props: {
     >
       <fieldset disabled={closing} style={{ display: "contents" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <strong style={{ flex: 1, fontSize: 15 }}>{props.purpose === "transcribe" ? "实时转写" : "会议记录"}</strong>
-        <span style={{ fontSize: 11, color: tokens.textSecondary }}>
-          实验可标发言人N · 非身份识别
-        </span>
+        {props.purpose ? <h1 style={{ margin: 0, flex: 1, fontSize: 22 }}>{props.purpose === "transcribe" ? "实时转写" : "会议记录"}</h1>
+          : <strong style={{ flex: 1, fontSize: 15 }}>会议记录</strong>}
         <button
           type="button"
           onClick={() => {
@@ -1755,11 +1754,9 @@ export function MeetingPanel(props: {
       </div>
       {closing && <div role="status" aria-live="polite">正在保存最后一段转写，完成后收起…</div>}
 
-      <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
-        录制或导入录音后的原始转写会显示在下方。参考笔记独立保存，用于生成纪要时的纠错与核对。
-        持续收音，首段约 1.6 秒送识别，后续按段显示。停止后会排空已采集音频，接近 60 秒积压上限时会提前停采。
-        仅录麦克风，不含系统声音；录音与听写互斥。AI 建议和校正稿不会覆盖原始转写。
-      </div>
+      <p style={{ margin: 0, color: tokens.textSecondary }}>
+        {props.purpose === "transcribe" ? "选择字幕语言并开启麦克风，识别结果会逐段显示在下方。" : "开启麦克风或导入已有录音。核对逐字稿后即可生成会议纪要。"}
+      </p>
 
       {/* Live capture and local imports require voice_privacy_ack_v2.
           Previously only reachable via Settings → 启用本机转写 (easy to miss). */}
@@ -1775,18 +1772,14 @@ export function MeetingPanel(props: {
             color: tokens.textSecondary,
           }}
         >
-          <div style={{ marginBottom: 6, color: tokens.text, fontWeight: 500 }}>
-            本机语音隐私说明
-          </div>
-          <p style={{ margin: "0 0 6px", fontSize: 10 }}>
-            会议录音或在本机转写导入音频前须确认。也可在：侧栏 ⋯ → 设置 → 输入与交互 →
-            「启用本机转写」。
-          </p>
+          <details open={props.purpose ? undefined : true}>
+          <summary>本机语音隐私说明 · 麦克风音频由本机识别</summary>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {VOICE_PRIVACY_ACK_V2_CLAUSES.map((c) => (
               <li key={c.slice(0, 24)}>{c}</li>
             ))}
           </ul>
+          </details>
           <button
             type="button"
             data-testid="meeting-voice-privacy-v2-accept"
@@ -1794,7 +1787,7 @@ export function MeetingPanel(props: {
               dispatch({ type: "SET_VOICE_PRIVACY_ACK_V2", ack: true })
               setError(null)
               // Companion refuses voice.stt.* unless sttEngine=local — flip if model ready.
-              if (localModelReady && localBinaryReady) {
+              if (!props.purpose && localModelReady && localBinaryReady) {
                 // Companion validate requires source:"settings" for set_engine (settings dual fence).
                 sendViaRuntime({
                   type: "voice.model.set_engine",
@@ -1807,7 +1800,7 @@ export function MeetingPanel(props: {
             style={{ ...btnStyle(true), marginTop: 8, padding: "4px 10px", fontSize: 12 }}
           >
             同意本机语音隐私说明
-            {localModelReady && localBinaryReady ? "并启用本机转写" : ""}
+            {!props.purpose && localModelReady && localBinaryReady ? "并启用本机转写" : ""}
           </button>
           {!localModelReady || !localBinaryReady ? (
             <div style={{ marginTop: 6, fontSize: 10, color: tokens.warning }}>
@@ -1828,16 +1821,16 @@ export function MeetingPanel(props: {
             color: tokens.textSecondary,
           }}
         >
-          <div style={{ marginBottom: 6, color: tokens.text, fontWeight: 500 }}>
-            会议隐私说明
-          </div>
+          <details open={props.purpose ? undefined : true}>
+          <summary>会议隐私说明 · 转写保存在本机，生成纪要时向所选模型发送文字</summary>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             <li>会创建本地会话产物（转写 ± 可选音频）。</li>
             <li>默认结束录制后删除会议目录下音频（当前 UI 不提供保留选项）。</li>
             <li>生成纪要将把转写文本发给你已配置的 LLM。</li>
-            <li>会议录音在本机转写；不会自动开始录音。导入音频使用外部服务时会逐次确认接收地址。</li>
+            <li>点击开始后才采集麦克风。使用外部转写时，每次录制或导入前都需要确认模型与音频接收地址。</li>
             <li>多方录音法律合规由你负责。</li>
           </ul>
+          </details>
           <button
             type="button"
             onClick={acceptAck}

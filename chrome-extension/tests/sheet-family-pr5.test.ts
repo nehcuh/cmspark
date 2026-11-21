@@ -137,7 +137,8 @@ test("PR-5: Host header is the one panel header — 15px title + 「收起」 cl
   // renamed to「结束并收起」so the two no longer read as a duplicate close (the
   // panel one also ends capture via finalizeCapture).
   const meeting = src("src/sidepanel/components/MeetingPanel.tsx")
-  assert.match(meeting, /fontSize: 15 \}\}>\{props\.purpose === "transcribe" \? "实时转写" : "会议记录"\}<\/strong>/)
+  assert.match(meeting, /<strong[^>]*>会议记录<\/strong>/)
+  assert.match(meeting, /<h1[^>]*>\{props\.purpose === "transcribe" \? "实时转写" : "会议记录"\}<\/h1>/)
   assert.doesNotMatch(meeting, />\s*关闭\s*<\/button>/)
 })
 
