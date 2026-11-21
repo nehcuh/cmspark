@@ -19,6 +19,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+      - name: Install the locked NSIS extraction dependency
+        working-directory: companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: npm ci
       - name: Resolve the same NSIS toolchain as CI
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe") -and -not (Get-Command makensis -ErrorAction SilentlyContinue)) {
