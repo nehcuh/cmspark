@@ -64,3 +64,32 @@ test("tail flush admits pending blocks only to announced end; unknown/future cre
   q.dispose()
   assert.throws(() => q.append(a.credit_id, 0, 1, Buffer.alloc(2)), MeetingPcmProtocolError)
 })
+
+test("first live window ends at a speech pause, preserves the complete tail and leaves silence or sustained speech intact", () => {
+  for (const pattern of ["pause", "latePause", "quiet", "continuous"] as const) {
+    const ceiling = C.blockFrames * 64
+    const q = new MeetingPcmQueue(C.segmentFrames, ceiling)
+    const source = Buffer.alloc(3 * C.rate * 2)
+    for (let frame = 0; frame < C.rate * 3; frame++) {
+      if (pattern === "continuous" || (pattern === "pause" && (frame < C.rate / 2 || frame >= 1.4 * C.rate)) ||
+          (pattern === "latePause" && (frame < 2 * C.rate || frame >= 2.24 * C.rate))) {
+        source.writeInt16LE(frame % 2 ? 4096 : -4096, frame * 2)
+      }
+    }
+    const segments: Buffer[] = []
+    let firstEnd = 0
+    while (q.receivedEnd < source.length / 2) {
+      const grant = q.credits()[0] ?? q.reserve()[0]!
+      const { credit_id, sample_offset, max_frames } = grant
+      q.append(credit_id, sample_offset, max_frames, source.subarray(sample_offset * 2, (sample_offset + max_frames) * 2))
+      const segment = q.take()
+      if (segment) { firstEnd = segment.end; segments.push(Buffer.from(segment.pcm)); q.commit(segment) }
+    }
+    assert.equal(firstEnd, pattern === "pause" ? C.rate : pattern === "latePause" ? C.rate * 2.16 : ceiling)
+    q.seal(source.length / 2)
+    const tail = q.take()!
+    segments.push(Buffer.from(tail.pcm))
+    q.commit(tail)
+    assert.deepEqual(Buffer.concat(segments), source)
+  }
+})

@@ -470,7 +470,7 @@ export function createLocalSttAdapter(
         format: "wav",
         sampleRate: LOCAL_STT_SAMPLE_RATE,
         channels: LOCAL_STT_CHANNELS,
-        lang: lang.startsWith("zh") ? "zh" : lang,
+        lang,
         privacy_ack_external_v1: true,
       })
       return
@@ -484,7 +484,7 @@ export function createLocalSttAdapter(
       format: "wav",
       sampleRate: LOCAL_STT_SAMPLE_RATE,
       channels: LOCAL_STT_CHANNELS,
-      lang: lang.startsWith("zh") ? "zh" : lang,
+      lang,
       maxMs,
       // P1: server-enforced privacy ack (chrome.storage alone is not enough)
       privacy_ack_v2: true,
@@ -594,6 +594,22 @@ export function createLocalSttAdapter(
         streamPrevHypothesis = ""
         partialPollMs = STREAM_PARTIAL_POLL_DEFAULT_MS
         let sessionStarted = false
+        const startupPcm = new Uint8Array(LOCAL_STT_SAMPLE_RATE * 2 * 2)
+        let startupBytes = 0, startupFull = false
+        const captureController = new AbortController()
+        const sendPcm = (pcm: Uint8Array) => {
+          const chunks = splitIntoChunks(pcm, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
+          for (const c of chunks) {
+            deps.send({
+              type: "voice.stt.chunk",
+              v: 1,
+              sessionId: segSid,
+              seq: streamSeq,
+              data: uint8ToBase64(c),
+            })
+            streamSeq += 1
+          }
+        }
 
         // N3: soft-stop may arrive while we await gUM — honor after resolve
         if (pendingSoftStop || !wantListening) {
@@ -607,25 +623,27 @@ export function createLocalSttAdapter(
 
         // F7: open mic first, then voice.stt.start (avoid idle abort during gUM)
         try {
-          pcmStream = await beginPcmStream({
+          const handle = await beginPcmStream({
+            signal: captureController.signal,
             maxMs: windowMs,
             onLevel: handlers.onLevel,
             onPcmChunk: (pcm) => {
               if (dead || aborted || gen !== loopGen || sessionId !== segSid) return
-              if (!sessionStarted || pcm.length === 0) return
-              const chunks = splitIntoChunks(pcm, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
-              for (const c of chunks) {
-                deps.send({
-                  type: "voice.stt.chunk",
-                  v: 1,
-                  sessionId: segSid,
-                  seq: streamSeq,
-                  data: uint8ToBase64(c),
-                })
-                streamSeq += 1
+              if (startupFull || pcm.length === 0) return
+              if (sessionStarted) sendPcm(pcm)
+              else {
+                const keep = Math.min(pcm.length, startupPcm.length - startupBytes)
+                startupPcm.set(pcm.subarray(0, keep), startupBytes)
+                startupBytes += keep
+                if (keep !== pcm.length) {
+                  startupFull = true
+                  captureController.abort()
+                }
               }
             },
           })
+          if (dead || gen !== loopGen) { handle.abort(); return }
+          pcmStream = handle
         } catch (e: any) {
           if (dead || gen !== loopGen) return
           handlers.onError(e?.code === "aborted" ? "aborted" : "audio-capture")
@@ -671,15 +689,22 @@ export function createLocalSttAdapter(
           format: "pcm_s16le",
           sampleRate: LOCAL_STT_SAMPLE_RATE,
           channels: LOCAL_STT_CHANNELS,
-          lang: lang.startsWith("zh") ? "zh" : lang,
+          lang,
           maxMs: windowMs,
           // P1: same wire gate as classic WAV start — continuous/hold path must not omit
           privacy_ack_v2: true,
         })
         sessionStarted = true
+        if (startupBytes) sendPcm(startupPcm.subarray(0, startupBytes))
+        startupPcm.fill(0)
+        if (startupFull) {
+          wantListening = false
+          pendingSoftStop = true
+          handlers.onError("startup_timeout")
+        }
         // Permission/capture acquisition is still "starting". Report listening
         // only once capture is ready; later windows use onSegmentContinue.
-        if (!reportedStart) {
+        if (!reportedStart && !startupFull) {
           reportedStart = true
           handlers.onStart()
         }
@@ -1033,6 +1058,8 @@ export function createLocalSttAdapter(
         return
       }
 
+      // Whisper and OpenAI-compatible ASR take a primary language. SAPI takes a culture.
+      if (deps.engineKind !== "system") lang = lang.split("-")[0].toLowerCase()
       parentSessionId = sid
       sessionId = sid
       modelId = mid || deps.modelId || ""

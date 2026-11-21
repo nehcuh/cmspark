@@ -22,10 +22,12 @@ if (adapterStart < 0 || adapterEnd < 0) throw new Error('production tray adapter
 const trayAdapter = traySource.slice(adapterStart, adapterEnd);
 const compiled = require('esbuild').buildSync({
   stdin: { contents: `export * from './summoner-web';
+    import {checkedMeetingPcmReply} from './voice/meeting-pcm-contract';
     import {summonerVoiceRequestTimeout} from './summoner/voice-input';
     export {handleMeetingMessage} from './meeting/meeting-handlers';
     export {generateMeetingMinutes} from './meeting/meeting-minutes';
     export {loadMeeting, isSafeMeetingId} from './meeting/meeting-store';
+    export {SttSessionService} from './voice/stt-session-service';
     export {handleVoiceSttMessage} from './voice/stt-handlers';
     ${trayAdapter}
     export {dispatchSummonerWeb};`,
@@ -44,7 +46,7 @@ let serial = 0;
 function record(event) {
   traces.push({ n: ++serial, at: Date.now(), ...event });
   fs.mkdirSync(path.dirname(evidenceFile), { recursive: true });
-  fs.writeFileSync(evidenceFile, JSON.stringify(traces, null, 2));
+  if (event.type !== 'voice.stt.chunk') fs.writeFileSync(evidenceFile, JSON.stringify(traces, null, 2));
 }
 async function gate(type) {
   if (controls.hold.includes(type)) {
@@ -52,26 +54,35 @@ async function gate(type) {
     await new Promise(resolve => pending.set(type, resolve));
   }
 }
-const service = {
-  start() { return { ok: true }; },
-  chunk() { return { ok: true }; },
-  abort() { return { ok: true }; },
-  async partial() { return { ok: true, text: '配森将在', ms: 1, modelId: 'medium' }; },
-  async end() {
-    if (controls.failStt) return { ok: false, code: 'infer_timeout', message: '合成识别超时' };
-    return { ok: true, text: controls.text, ms: 1, modelId: 'medium' };
+const modelRoot = path.join(dataDir, 'fixture-model');
+const sttService = new production.SttSessionService({
+  dataDir, whisperRoot: modelRoot, probeModel: () => ({ status: 'ready' }),
+  resolveModelPath: () => path.join(modelRoot, 'synthetic.bin'),
+  resolveBinary: () => ({ ok: true, path: 'fixture-only', arch: `${process.platform}-${process.arch}`, pinned: true, sha256: 'synthetic' }),
+  runWhisper: async () => {
+    const result = sttService.getMeetingCapture() ? controls.liveResults?.shift() : (controls.failStt ? null : controls.text);
+    if (result === null) throw new Error('synthetic recognition failure');
+    return { text: result || '', ms: 1 };
   },
-};
+});
 const context = { origin: 'cmspark-tray://local', surface: 'summoner', peerId: 'isolated-native-fixture',
-  send: frame => production.pushSummonerWebEvent(frame) };
+  send: frame => {
+    if (frame.type === 'meeting.capture.status' && (frame.phase === 'finished' || frame.phase === 'failed')) {
+      record({ phase: 'terminal', type: frame.type, response: frame });
+    }
+    production.pushSummonerWebEvent(frame);
+  } };
 const dependencies = {
+  sttService,
   clearSttSessions() {},
   getLlmConfig: () => ({ api_key: 'synthetic-unused', base_url: 'https://unused.invalid', model_name: 'synthetic' }),
   generate: params => production.generateMeetingMinutes({ ...params, extract: async options => {
     record({ phase: 'llm', userContent: options.userContent, systemPrompt: options.systemPrompt });
     if (controls.failLlm) throw new Error('合成模型不可用');
     const minutes_md = '### TL;DR\n讨论 Python 发布。\n### 决议\n待核对日期。\n### 待办\n- [ ] 确认发布日期。\n### 风险 / 开放问题\n录音与笔记存在分歧。';
-    if (!params.referenceNotes?.trim()) return minutes_md;
+    if (!params.referenceNotes?.trim()) {
+      return '### TL;DR\n- 配森计划周五发布。〔配森将在周五发布。〕\n### 决议\n无明确记录。\n### 待办\n无明确记录。\n### 风险 / 开放问题\n无明确记录。';
+    }
     return JSON.stringify({ minutes_md,
       corrections: params.transcriptText.includes('配森') && params.referenceNotes.includes('Python')
         ? [{ original: '配森', replacement: 'Python', reference_excerpt: 'Python', reason: '笔记中明确的项目术语' }] : [],
@@ -106,9 +117,9 @@ async function dispatch(message) {
     }
   }
   else if (message.type.startsWith('voice.stt.')) {
-    result = await production.handleVoiceSttMessage(message, context, { service });
+    result = await production.handleVoiceSttMessage(message, context, { service: sttService });
     // Production service traffic can arrive through both SSE and the HTTP reply.
-    if (result) production.pushSummonerWebEvent(result);
+    if (result && !message.queue_contract) production.pushSummonerWebEvent(result);
   } else if (message.type === 'thread.list') result = { type: 'thread.list', threads: [] };
   else if (message.type === 'thread.select') result = { type: 'thread.selected', messages: [], run_status: 'idle' };
   else result = { type: 'ok' };
@@ -132,6 +143,10 @@ const controlServer = http.createServer(async (req, res) => {
 });
 (async () => {
   const client = {
+    sendMeetingPcmRequest: (type, params, observed) => {
+      if (observed !== client) throw new Error('stale fixture connection');
+      return dispatch({ ...params, type });
+    },
     sendAppRequest: (type, params) => dispatch({ ...params, type }),
     sendAppMessage: (type, params) => {
       void dispatch({ ...params, type }).catch(error => record({ phase: 'transport-error', message: error.message }));
@@ -139,9 +154,9 @@ const controlServer = http.createServer(async (req, res) => {
     },
   };
   const server = await production.startSummonerWebServer({ preferredPort: 23791,
-    dispatch: message => production.dispatchSummonerWeb(client, message),
+    dispatch: (message, observed) => production.dispatchSummonerWeb(client, message, observed),
     attachChrome: () => { throw new Error('fixture must never launch normal Chrome'); },
-    hasExtensionPeer: () => false });
+    observeMeetingPcm: async () => 1, meetingPcmConnection: () => client, hasExtensionPeer: () => false });
   await new Promise(resolve => controlServer.listen(0, '127.0.0.1', resolve));
   console.log(JSON.stringify({ port: server.port, controlPort: controlServer.address().port }));
 })().catch(error => { console.error(error); process.exitCode = 1; });

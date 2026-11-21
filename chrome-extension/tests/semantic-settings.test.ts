@@ -105,7 +105,7 @@ test("transport ACK and wrong correlation never resolve save; matching backend r
  * ports. Only unrelated leaf UI bodies and activity transport are replaced. The
  * real store defaults/reducer, parser, component callbacks and host lifecycle run.
  */
-function settingsNavigationHarness(full = true, sourceOverrides: Record<string, string> = {}) {
+function settingsNavigationHarness(full = true, sourceOverrides: Record<string, string> = {}, meetingWorkspace = false) {
   const root = path.resolve(process.cwd(), "src/sidepanel"), at = (relative: string) => path.resolve(root, relative)
   const modules = new Map<string, any>()
   const listeners = new Map<string, Set<(event: any) => void>>()
@@ -140,7 +140,12 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
     },
   }
   const runtime = { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }), Fragment: "fragment" }
-  class CustomEventValue { type: string; detail: any; constructor(type: string, options?: any) { this.type = type; this.detail = options?.detail } }
+  class CustomEventValue {
+    defaultPrevented = false
+    constructor(public type: string, private options?: any) {}
+    get detail() { return this.options?.detail }
+    preventDefault() { if (this.options?.cancelable) this.defaultPrevented = true }
+  }
   const windowValue = {
     location: { pathname: full ? "/tabs/workspace.html" : "/sidepanel.html", search: "" },
     matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
@@ -206,7 +211,8 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
     if (!passiveEffectsDeferred) flushEffects()
     return ui
   }
-  const renderHost = () => render("host", hostModule.ContextPanelHostProvider, { capabilityLevel: "computer", children: null })
+  const renderHost = () => render("host", hostModule.ContextPanelHostProvider, { capabilityLevel: "computer", children: null,
+    openMeetingWorkspace: meetingWorkspace ? load(at("navigation/open-workbench.ts")).openWorkbench : undefined })
   const renderWorkspace = () => render("workspace", workspace.WorkspaceFrame, { children: null })
   const renderSlideout = () => render("slideout", slideout.SettingsSlideout)
   const find = (ui: any, predicate: (node: any) => boolean) => { const found = rows(ui).filter(predicate); assert.equal(found.length, 1); return found[0] }
@@ -336,6 +342,25 @@ test("#756 actual settings destination callback retains settings on security tas
       if (outcome === "failure") assert.match(f.toasts.at(-1)!, /无法打开工作中心/)
     } finally { f.close() }
   }
+})
+
+test("the full workbench opens the meeting from settings and keeps pending security confirmations visible", async () => {
+  const f = settingsNavigationHarness(true, {}, true)
+  try {
+    f.setState({ pendingSecurityConfirmations: [{ id: "pending" }] })
+    assert.equal(await f.host().openPanelForce("meeting"), false)
+    assert.equal(f.state().settingsOpen, true)
+    f.setState({ pendingSecurityConfirmations: [] })
+    assert.equal(await f.assistant().onIntent({ type: "open_meeting" }, () => true), "已打开会议工作台")
+    assert.equal(f.state().settingsOpen, false)
+    f.renderWorkspace()
+    const tools = f.rows(f.renderWorkspace()).filter(n => n.props?.className === "cm-workbench-tool" && !n.props.hidden)
+    assert.equal(tools.length, 1)
+    assert.equal(tools[0].props.children.props.purpose, "meeting")
+    f.setSettingsOpen(true)
+    f.setSettingsOpen(false)
+    assert.ok(f.rows(f.renderWorkspace()).some(n => n.props?.className === "cm-workbench-tool" && !n.props.hidden && n.props.children.props.purpose === "meeting"))
+  } finally { f.close() }
 })
 
 test("#756 actual settings rule navigation awaits guarded host and refuses superseded or unavailable destinations", async () => {

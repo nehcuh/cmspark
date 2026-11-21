@@ -1,3 +1,4 @@
+import type { openWorkbench } from "../navigation/open-workbench"
 // ContextPanelHost — single owner of context panel state, loaders, mounts,
 // and cmspark:open-context-panel (UIUX v2 §4.7 M1). Host is SoT for panels.
 // #321 PR-1: legacy permanent BottomBar tab strip deleted (was PR5-gated off).
@@ -149,9 +150,11 @@ export function useContextPanelHostOptional(): ContextPanelHostApi | null {
 
 export function ContextPanelHostProvider({
   capabilityLevel,
+  openMeetingWorkspace,
   children,
 }: {
   capabilityLevel: CapabilityLevel
+  openMeetingWorkspace?: typeof openWorkbench
   children: ReactNode
 }) {
   const [activePanel, setActivePanel] = useState<ContextPanelId | null>(null)
@@ -168,6 +171,8 @@ export function ContextPanelHostProvider({
   activeThreadRef.current = activeThreadId
   const activeThreadSelectionRef = useRef(state.activeThreadSelectionRevision)
   activeThreadSelectionRef.current = state.activeThreadSelectionRevision
+  const navigationBlocked = useRef(false)
+  navigationBlocked.current = state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)
 
   const allowedIds = useMemo(
     () => new Set(contextBarTabsForLevel(capabilityLevel)),
@@ -224,18 +229,25 @@ export function ContextPanelHostProvider({
   const openPanelForce = useCallback(
     (id: ContextPanelId): Promise<boolean> => {
       const thread = activeThreadRef.current, selectionRevision = activeThreadSelectionRef.current
-      const pending = requestPanelChange(id)
+      const workbench = id === "meeting" && openMeetingWorkspace
+      if (workbench && navigationBlocked.current) return Promise.resolve(false)
+      const pending = requestPanelChange(workbench ? null : id)
       const version = transitionVersion.current
-      return pending.then(allowed => allowed && version === transitionVersion.current && activeThreadRef.current === thread && activeThreadSelectionRef.current === selectionRevision && activePanelRef.current === id)
+      return pending.then(allowed => {
+        if (!allowed || version !== transitionVersion.current || activeThreadRef.current !== thread || activeThreadSelectionRef.current !== selectionRevision) return false
+        if (workbench) return !navigationBlocked.current && workbench("meeting")
+        return activePanelRef.current === id
+      })
     },
-    [requestPanelChange],
+    [requestPanelChange, openMeetingWorkspace],
   )
 
   const openPanel = useCallback(
     (id: ContextPanelId) => {
+      if (id === "meeting" && openMeetingWorkspace) { void openPanelForce(id); return }
       void requestPanelChange(activePanelRef.current === id ? null : id)
     },
-    [requestPanelChange],
+    [requestPanelChange, openMeetingWorkspace, openPanelForce],
   )
 
   // Close open panel if it is no longer primary or overflow for this level

@@ -137,6 +137,7 @@ export function useComposerVoice({
     !state.meetingCaptureActive
 
   const voice = useVoiceInput({
+    language: state.chatDictationLanguage,
     getBaseText: () => textRef.current,
     realtimeStreaming: state.voiceRealtimeStreaming !== false,
     onLevel: (level) => setVoiceLevel(level),

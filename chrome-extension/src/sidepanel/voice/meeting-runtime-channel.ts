@@ -11,6 +11,8 @@ export function createMeetingRuntimeChannel(onStatus: (message: any) => void, on
     }
     if (typeof message.id === "string" && pending.has(message.id)) {
       const item = pending.get(message.id)!; pending.delete(message.id); clearTimeout(item.timer); item.resolve(message)
+      // The awaiting controller owns correlated replies, including credit grants.
+      return false
     }
     if (message.type === "meeting.capture.status" || (message.type === "voice.stt.partial" && message.queue_contract === 1)) onStatus(message)
     return false

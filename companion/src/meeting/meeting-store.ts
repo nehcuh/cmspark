@@ -69,7 +69,7 @@ export type MeetingMeta = {
   ended_at?: string | null
   status: MeetingStatus
   privacy: {
-    stt_engine: "local" | "none"
+    stt_engine: "local" | "external" | "none"
     audio_retained: boolean
     retain_until?: string | null
   }
@@ -310,13 +310,14 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
 }
 
 /** Begin metadata is one atomic meta write after the original global slot was reserved. */
-export function beginMeetingCapture(id: string, captureId: string, expectedEpoch: number, dataDir = DATA_DIR): MeetingSession | null {
+export function beginMeetingCapture(id: string, captureId: string, expectedEpoch: number, dataDir = DATA_DIR, liveEngine?: "local" | "external"): MeetingSession | null {
   const s = loadMeeting(id, dataDir)
   if (!s || (s.capture_epoch ?? 0) !== expectedEpoch || s.status === "recording") return null
   const dir = resolveContained(id, dataDir)
   if (!dir) return null
   const { transcript: _transcript, original_transcript: _original, reference_notes: _notes,
     reference_name: _name, minutes: _minutes, ...meta } = s
+  if (liveEngine) meta.privacy = { ...meta.privacy, stt_engine: liveEngine }
   meta.capture_epoch = expectedEpoch + 1
   meta.capture_summary = { capture_epoch: meta.capture_epoch, last_capture_id: captureId,
     phase: "starting", outcome: null, server_received_end: 0, committed_end: 0,
@@ -649,4 +650,19 @@ export function transcriptToText(lines: TranscriptLine[]): string {
     })
     .join("\n")
     .trim()
+}
+
+export type SavedTranslation = { id: string; version: string; language: string; text: string; model: string }
+
+export function readMeetingTranslations(id: string, dataDir = DATA_DIR): SavedTranslation[] {
+  const dir = resolveContained(id, dataDir)
+  const saved = dir && readJson<SavedTranslation[]>(path.join(dir, "translations.json"))
+  return Array.isArray(saved) ? saved.filter(item => item && typeof item.id === "string" &&
+    typeof item.version === "string" && typeof item.text === "string" && typeof item.language === "string") : []
+}
+
+export function writeMeetingTranslations(id: string, entries: SavedTranslation[], dataDir = DATA_DIR): void {
+  const dir = resolveContained(id, dataDir)
+  if (!dir || !fs.existsSync(path.join(dir, "meta.json"))) throw new Error("meeting not found")
+  writeJsonAtomic(path.join(dir, "translations.json"), entries)
 }

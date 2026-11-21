@@ -3775,6 +3775,10 @@ async function dispatchMessage(
     case "meeting.diarize.upload_chunk":
     case "meeting.diarize.upload_end":
     case "meeting.auto_diarize":
+    case "meeting.translation.list":
+    case "meeting.translation.prepare":
+    case "meeting.translation.run":
+    case "meeting.translation.cancel":
     case "meeting.prepare_minutes":
     case "meeting.generate_minutes":
     case "meeting.set_status":

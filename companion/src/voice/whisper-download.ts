@@ -245,8 +245,22 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest("hex")
 }
 
+// A live session previously re-read and hashed the entire multi-GB model on
+// every segment, blocking PCM credit acknowledgements on the event loop.
+const pinnedDigests = new Map<string, { identity: string; digest: string }>()
+function fileIdentity(filePath: string): string {
+  const s = statSync(filePath, { bigint: true })
+  return [s.dev, s.ino, s.size, s.ctimeNs, s.mtimeNs].join(":")
+}
 function sha256FileSync(filePath: string): string {
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex")
+  const before = fileIdentity(filePath)
+  const cached = pinnedDigests.get(filePath)
+  if (cached?.identity === before) return cached.digest
+  const digest = createHash("sha256").update(readFileSync(filePath)).digest("hex")
+  if (fileIdentity(filePath) !== before) throw new Error("model changed while verifying")
+  if (pinnedDigests.size >= 32) pinnedDigests.clear()
+  pinnedDigests.set(filePath, { identity: before, digest })
+  return digest
 }
 
 // --- .part meta ---------------------------------------------------------------

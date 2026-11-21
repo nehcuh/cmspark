@@ -149,13 +149,15 @@ export async function fileToWavSegments(
 
   const segments: AudioSegmentWav[] = []
   let index = 0
-  for (let off = 0; off < resampled.length; off += samplesPerSeg) {
-    const end = Math.min(off + samplesPerSeg, resampled.length)
+  for (let off = 0; off < resampled.length;) {
+    const remaining = resampled.length - off
+    const tail = remaining - samplesPerSeg
+    // For local inference, share a very short final remainder between two windows.
+    // Both sides retain speech context and the last sample is always submitted.
+    const count = !opts.keepShortTail && tail > 0 && tail < LOCAL_STT_SAMPLE_RATE * 0.2
+      ? Math.ceil(remaining / 2) : Math.min(samplesPerSeg, remaining)
+    const end = off + count
     const slice = resampled.subarray(off, end)
-    if (!opts.keepShortTail && slice.length < LOCAL_STT_SAMPLE_RATE * 0.2) {
-      // drop trailing <200ms
-      if (segments.length > 0) break
-    }
     const t0Sec = off / LOCAL_STT_SAMPLE_RATE
     const t1Sec = end / LOCAL_STT_SAMPLE_RATE
     const encode = () => wrapPcmS16leAsWav(float32ToS16lePcm(slice), LOCAL_STT_SAMPLE_RATE, LOCAL_STT_CHANNELS)
@@ -163,6 +165,7 @@ export async function fileToWavSegments(
       ? { index, get wav() { return encode() }, t0Sec, t1Sec }
       : { index, wav: encode(), t0Sec, t1Sec })
     index += 1
+    off = end
   }
 
   if (segments.length === 0) {

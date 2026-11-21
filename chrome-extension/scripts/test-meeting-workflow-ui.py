@@ -1,7 +1,7 @@
 """Real meeting UI/adapter/handler/store, isolated Chrome and data, fake STT/LLM.
 
-WAV import uses real Web Audio decoding. --real-mic uses Chrome's fake device
-through the unmodified production PCM capture implementation. No user audio.
+Live capture feeds Chrome's fake device through the production PCM controller
+and local queue. WAV import uses real Web Audio decoding. No user audio.
 """
 import argparse
 import io
@@ -64,7 +64,19 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
             def open_page():
                 page.goto(f'http://127.0.0.1:{port}/')
                 page.get_by_test_id('meeting-start-capture').wait_for()
-                page.wait_for_function('!document.querySelector("[data-testid=meeting-start-capture]").disabled')
+                if not args.baseline:
+                    page.wait_for_function('window.responses.some(m=>m.type==="meeting.asr.state")')
+            def new_live_meeting(texts):
+                page.get_by_role('button',name='新建会议会话',exact=True).click()
+                page.wait_for_function('window.responses.some(m=>m.type==="meeting.created")')
+                response=page.request.post(f'http://127.0.0.1:{port}/recognizer',data=texts)
+                assert response.ok
+            def begin_live():
+                page.get_by_test_id('meeting-start-capture').click()
+                page.wait_for_function('window.responses.some(m=>m.type==="voice.stt.partial" && m.queue_contract===1 && m.credits.length>0)')
+            def wait_live_text(text):
+                page.wait_for_function('text=>document.querySelector("[data-testid=meeting-transcript]").value.includes(text)',arg=text,timeout=22000)
+
             def final(text):
                 page.wait_for_function('window.sent.some(m=>m.type==="voice.stt.end")')
                 page.evaluate("text=>window.emit({type:'voice.stt.result',sessionId:window.sent.findLast(m=>m.type==='voice.stt.end').sessionId,text})", text)
@@ -174,20 +186,26 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 browser.close()
                 raise SystemExit(0)
             open_page()
-            page.get_by_test_id('meeting-asr-refine').check()
-            page.get_by_test_id('meeting-start-capture').click()
-            page.wait_for_function('window.sent.some(m=>m.type==="voice.stt.start")')
-            if not args.real_mic:
+            if args.baseline:
+                # The historical negative control predates credit-based capture.
+                # Drive its actual PCM adapter and preserve the failing UI/frames.
+                page.get_by_test_id('meeting-asr-refine').check()
+                page.get_by_test_id('meeting-start-capture').click()
+                page.wait_for_function('window.sent.some(m=>m.type==="voice.stt.start")')
                 page.evaluate('window.capture.onPcmChunk(new Uint8Array(32000))')
-            else:
-                page.wait_for_function('window.sent.some(m=>m.type==="voice.stt.chunk")')
-            final('讨论配森发布')
-            try:
-                page.wait_for_function('(document.querySelector("[data-testid=meeting-transcript]")||document.querySelector("textarea[placeholder^=粘贴会议转写]"))?.value.includes("讨论配森发布")', timeout=3000)
-            except Exception:
-                page.screenshot(path=str(args.artifacts/'live-before-failure.png'),full_page=True)
-                (args.artifacts/'live-before-failure.json').write_text(json.dumps(page.evaluate('({sent:window.sent,responses:window.responses,textareas:[...document.querySelectorAll("textarea")].map(e=>e.value)})'),ensure_ascii=False,indent=2))
-                raise
+                final('讨论配森发布')
+                try:
+                    page.wait_for_function('Array.from(document.querySelectorAll("textarea")).some(t=>t.value.includes("讨论配森发布"))',timeout=3000)
+                except Exception:
+                    page.screenshot(path=str(args.artifacts/'live-before-failure.png'),full_page=True)
+                    (args.artifacts/'live-before-failure.json').write_text(json.dumps(page.evaluate('({sent:window.sent,responses:window.responses,textareas:[...document.querySelectorAll("textarea")].map(e=>e.value)})'),ensure_ascii=False,indent=2),encoding='utf-8')
+                    raise
+                raise AssertionError('Expected the pinned pre-fix panel to miss the live raw final')
+            new_live_meeting(['讨论配森发布'])
+            page.get_by_test_id('meeting-asr-refine').check()
+            begin_live()
+            wait_live_text('讨论配森发布')
+            assert page.evaluate('window.sent.some(m=>m.type==="voice.stt.chunk" && m.frame_count>0 && m.credit_id>0)')
             assert page.get_by_test_id('meeting-stop-capture').is_visible()
             assert not page.evaluate('window.responses.some(m=>m.type==="voice.refine.result")')
             print('PASS raw STT final visible while recording and AI correction still pending', flush=True)
@@ -197,14 +215,17 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 browser.close()
             else:
                 page.get_by_test_id('meeting-stop-and-generate').click()
-                # A new window may already be active. Finish its final when present.
-                page.wait_for_timeout(100)
-                if page.evaluate('window.sent.filter(m=>m.type==="voice.stt.end").length>1'):
-                    final('确认测试范围')
+                confirmation=page.get_by_role('region',name='确认纪要发送范围')
+                confirmation.get_by_text('synthetic · https://unused.invalid/',exact=True).wait_for()
+                assert page.evaluate('window.sent.some(m=>m.type==="voice.stt.end" && m.final_sample_end>0)')
+                assert not page.evaluate('window.sent.some(m=>m.type==="meeting.generate_minutes")')
+                confirmation.get_by_role('button',name='确认发送并生成',exact=True).click()
                 page.wait_for_function('window.responses.some(m=>m.type==="meeting.minutes_result")', timeout=12000)
                 frames = page.evaluate('window.responses')
                 result = next(m for m in reversed(frames) if m['type']=='meeting.minutes_result')
                 assert '讨论配森发布' in result['minutes']['source_transcript']
+                assert '讨论配森发布' in result['minutes']['raw_md']
+                assert result['minutes']['actions']==[]
                 assert 'voice.refine.result' not in [m['type'] for m in frames]
                 print('PASS stop-and-generate completes with saved final text without waiting for optional live AI', flush=True)
                 # Hold real handler responses, not fabricated payloads. The new
@@ -212,7 +233,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 # cross any save/end receipt boundary on a forwarding ACK alone.
                 open_page()
                 held = {}
-                gate_types = {'meeting.append_transcript', 'meeting.end', 'meeting.set_transcript', 'meeting.set_reference'}
+                gate_types = {'voice.stt.end', 'meeting.end', 'meeting.set_transcript', 'meeting.set_reference'}
                 def hold_material_receipt(route):
                     message = route.request.post_data_json['message']
                     response = route.fetch()
@@ -237,15 +258,15 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 assert page.get_by_label('结束时智能分段', exact=False).is_checked()
                 raw = ' '.join(f'第{i}项讨论核对版本依赖、部署流程、回滚条件和测试覆盖，所有结论均需负责人确认。' for i in range(1, 13))
                 assert len(raw) > 280 and '\n' not in raw
-                page.get_by_test_id('meeting-start-capture').click()
-                page.wait_for_function('window.sent.some(m=>m.type==="voice.stt.start")')
-                page.evaluate('window.capture.onPcmChunk(new Uint8Array(32000))')
+                new_live_meeting([raw])
+                begin_live()
+                wait_live_text(raw)
                 page.get_by_test_id('meeting-stop-and-generate').click()
-                final(raw)
-                wait_gate('meeting.append_transcript')
+                wait_gate('voice.stt.end')
+                assert held['voice.stt.end'][2]['final_sample_end'] > 0
                 assert transcript().input_value() == f'张三: {raw}'
-                assert not page.evaluate('window.sent.some(m=>m.type==="meeting.end"||m.type==="meeting.generate_minutes")')
-                release_gate('meeting.append_transcript')
+                assert not page.evaluate('window.sent.some(m=>m.type==="meeting.generate_minutes")')
+                release_gate('voice.stt.end')
                 wait_gate('meeting.end')
                 assert not page.evaluate('window.sent.some(m=>m.type==="meeting.set_transcript"||m.type==="meeting.generate_minutes")')
                 release_gate('meeting.end')
@@ -268,18 +289,20 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 page.wait_for_function('window.responses.some(m=>m.type==="meeting.minutes_result")')
                 generated = page.evaluate('window.responses.findLast(m=>m.type==="meeting.minutes_result")')
                 assert generated['minutes']['source_transcript'] == canonical
+                assert '第1项讨论核对版本依赖、部署流程、回滚条件和测试覆盖' in generated['minutes']['raw_md']
+                assert generated['minutes']['actions']==[]
                 assert transcript().input_value() == canonical
                 assert [line['text'] for line in generated['meeting']['original_transcript']] == [raw]
                 assert page.evaluate('window.sent.findLast(m=>m.type==="meeting.generate_minutes").text') == canonical
                 page.unroute('**/rpc', hold_material_receipt)
-                print('PASS default stop-and-generate preserves >280-char sentence segmentation and speaker labels; append/end/transcript/reference real receipts all gate generation; immutable raw remains uncut', flush=True)
+                print('PASS default stop-and-generate preserves >280-char sentence segmentation and speaker labels; seal/end/transcript/reference real receipts precede generation; immutable raw remains uncut', flush=True)
                 # A fresh meeting owns a fresh raw archive even before an idle
                 # updated push happens to arrive for that new owner.
                 archive = page.get_by_test_id('meeting-original-transcript')
                 archive.locator('summary').click()
                 assert raw in archive.locator('pre').inner_text()
                 page.get_by_role('button',name='新建会议会话',exact=True).click()
-                page.wait_for_function('window.responses.some(m=>m.type==="meeting.created")')
+                page.wait_for_function('previous=>window.responses.some(m=>m.type==="meeting.created" && m.meeting.id!==previous)',arg=generated['meeting']['id'])
                 archive.wait_for(state='detached')
                 fresh = page.evaluate('window.responses.findLast(m=>m.type==="meeting.created").meeting')
                 assert fresh['id'] != generated['meeting']['id']
@@ -332,53 +355,67 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 assert transcript().input_value() == retained
                 assert not page.evaluate('window.sent.some(m=>m.type==="meeting.generate_minutes")')
                 print('PASS failed audio-import append explains 保存转写 recovery; explicit save restores editable and independent raw archive without generation',flush=True)
-                # Lose only the first real append response AFTER the server has
-                # committed it. Two local finals then exercise ordered recovery
-                # and stable segment ids without forging a server payload.
+                # The importer still uses explicit append receipts. Drop its second
+                # ACK after commit and ensure Save replays the same segment ID.
                 open_page()
-                page.evaluate('''() => {
-                    const originalEmit = window.emit;
-                    window.lostAppendAck = null;
-                    window.emit = message => {
-                        const request = window.sent.find(m => m.type === 'meeting.append_transcript');
-                        if (!window.lostAppendAck && request && message.id === request.id && message.type === 'meeting.updated') {
-                            window.lostAppendAck = message;
-                            return;
-                        }
-                        originalEmit(message);
+                page.evaluate("""() => {
+                    const emit=window.emit;window.lostAppendAck=null;
+                    window.emit=m=>{
+                      const appends=window.sent.filter(req=>req.type==='meeting.append_transcript');
+                      if(!window.lostAppendAck && appends.length===2 && m.id===appends[1].id && m.type==='meeting.updated'){
+                        window.lostAppendAck=m;return;
+                      }
+                      emit(m);
                     };
-                    const timer = window.setTimeout.bind(window);
-                    window.restoreReceiptTimer = () => { window.setTimeout = timer; };
-                    window.setTimeout = (f, ms, ...rest) => timer(f, ms === 10000 ? 180 : ms, ...rest);
-                }''')
-                page.get_by_test_id('meeting-start-capture').click()
-                page.wait_for_function('window.sent.some(m=>m.type==="voice.stt.start")')
-                page.evaluate('window.capture.onPcmChunk(new Uint8Array(32000))')
-                final('第一段提交成功但回执丢失')
-                page.wait_for_function('window.lostAppendAck && window.sent.filter(m=>m.type==="voice.stt.start").length>=2')
-                committed = page.evaluate('window.lostAppendAck.meeting')
-                assert [line['text'] for line in committed['original_transcript']] == ['第一段提交成功但回执丢失']
-                page.evaluate('window.capture.onPcmChunk(new Uint8Array(32000))')
-                page.get_by_test_id('meeting-stop-capture').click()
-                page.wait_for_function('window.sent.filter(m=>m.type==="voice.stt.end").length>=2')
-                final('第二段保留并按顺序补存')
+                    const timer=window.setTimeout.bind(window);
+                    window.setTimeout=(fn,ms,...rest)=>timer(fn,ms===10000?300:ms,...rest);
+                }""")
+                audio_input=page.locator('input[type=file][accept^="audio/"]')
+                audio_input.set_input_files({'name':'two-windows.wav','mimeType':'audio/wav','buffer':wav_bytes(47)})
+                final('第一段提交成功')
+                page.wait_for_function('window.sent.filter(m=>m.type==="voice.stt.end").length===2')
+                final('第二段提交成功但回执丢失')
                 page.get_by_role('alert').filter(has_text='保存转写').wait_for()
-                assert transcript().input_value().splitlines() == ['第一段提交成功但回执丢失', '', '第二段保留并按顺序补存']
-                assert page.evaluate('window.sent.filter(m=>m.type==="meeting.append_transcript").length') == 1
-                page.evaluate('window.restoreReceiptTimer()')
+                expected=['第一段提交成功','第二段提交成功但回执丢失']
+                assert [line['text'] for line in page.evaluate('window.lostAppendAck.meeting.original_transcript')]==expected
                 page.get_by_role('button',name='保存转写',exact=True).click()
                 page.get_by_test_id('meeting-save-status').filter(has_text='已保存转写').wait_for()
-                recovered = page.evaluate('window.responses.findLast(m=>m.type==="meeting.updated").meeting')
-                expected_raw = ['第一段提交成功但回执丢失', '第二段保留并按顺序补存']
-                assert [line['text'] for line in recovered['original_transcript']] == expected_raw
-                assert [line['text'] for line in recovered['transcript']] == expected_raw
-                assert len({line['segment_id'] for line in recovered['original_transcript']}) == 2
-                appends = page.evaluate('window.sent.filter(m=>m.type==="meeting.append_transcript")')
-                assert len(appends) == 3
-                assert appends[0]['segment_id'] == appends[1]['segment_id'] != appends[2]['segment_id']
-                assert appends[0]['id'] != appends[1]['id']
+                recovered=page.evaluate('window.responses.findLast(m=>m.type==="meeting.updated").meeting')
+                assert [line['text'] for line in recovered['original_transcript']]==expected
+                assert [line['text'] for line in recovered['transcript']]==expected
+                requests=page.evaluate('window.sent.filter(m=>m.type==="meeting.append_transcript")')
+                assert len(requests)==3
+                assert requests[0]['segment_id']!=requests[1]['segment_id']==requests[2]['segment_id']
+                assert requests[1]['id']!=requests[2]['id']
+                print('PASS lost real append ACK: explicit Save retries the stable ID and preserves both finals exactly once',flush=True)
+                # The queue commits its own raw finals. Drop the notification for the
+                # first committed range, then verify the next sync recovers both in order.
+                open_page()
+                new_live_meeting(['第一段提交成功但回执丢失','第二段保留并按顺序补存'])
+                page.evaluate("""() => {
+                    const emit=window.emit;window.lostCommit=0;
+                    window.emit=m=>{
+                      if(m.type==='meeting.capture.status' && !m.id && m.committed_end>0){
+                        window.lostCommit ||= m.committed_end;
+                        if(m.committed_end===window.lostCommit)return;
+                      }
+                      emit(m);
+                    }
+                }""")
+                begin_live()
+                wait_live_text('第二段保留并按顺序补存')
+                assert page.evaluate('window.lostCommit>0')
+                page.get_by_test_id('meeting-stop-capture').click()
+                page.wait_for_function('window.responses.some(m=>m.type==="meeting.ended")')
+                page.get_by_role('button',name='保存转写',exact=True).click()
+                page.get_by_test_id('meeting-save-status').filter(has_text='已保存转写').wait_for()
+                recovered=page.evaluate('window.responses.findLast(m=>m.type==="meeting.updated").meeting')
+                expected_raw=['第一段提交成功但回执丢失','第二段保留并按顺序补存']
+                assert [line['text'] for line in recovered['original_transcript']]==expected_raw
+                assert [line['text'] for line in recovered['transcript']]==expected_raw
+                assert len({line['segment_id'] for line in recovered['original_transcript']})==2
                 assert not page.evaluate('window.sent.some(m=>m.type==="meeting.generate_minutes")')
-                print('PASS append committed/ACK lost: explicit Save retries stable segment_id, preserves two raw finals in order, and duplicates neither original nor edited transcript',flush=True)
+                print('PASS lost first committed status: later sync and explicit Save preserve two finalized segments in order without duplicates',flush=True)
                 open_page();transcript().fill('原始文字不被笔记导入覆盖')
                 page.get_by_test_id('meeting-reference-file').set_input_files({'name':'会议笔记.docx','mimeType':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','buffer':docx_bytes()})
                 page.wait_for_function('document.querySelector("[data-testid=meeting-reference-input]").value.includes("Python")')

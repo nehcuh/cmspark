@@ -11,6 +11,8 @@ export type PcmSegment = { index: number; start: number; end: number; pcm: Buffe
 /** One bounded ring. Reservations, received/infer/persist-pending share its capacity.
  * No per-block history except eight reorder slots and sixteen hashes. */
 export class MeetingPcmQueue {
+  constructor(private readonly segmentFrames: number = C.segmentFrames,
+    private readonly firstFrames: number = segmentFrames) {}
   private readonly ring = Buffer.alloc(C.capacityFrames * C.sampleBytes)
   private readonly grants = new Map<number, PcmCredit>()
   private readonly reorder = new Map<number, Accepted>()
@@ -24,13 +26,37 @@ export class MeetingPcmQueue {
   private inflight: PcmSegment | null = null
   private nextSegmentIndex = 0
   private disposed = false
+  private openingSpeech = false
+  private openingQuietFrames = 0
+  private openingPauseEnd: number | null = null
+
+  // Inspect only the ordered first live window. A pause after speech can close
+  // a batch early without removing quiet samples or changing the next offset.
+  private observeOpeningBlock(block: Accepted): void {
+    if (this.firstFrames >= this.segmentFrames || this.nextSegmentIndex !== 0 ||
+        this.openingPauseEnd !== null || block.end > this.firstFrames) return
+    let energy = 0
+    for (let frame = block.offset; frame < block.end; frame++) {
+      const sample = this.ring.readInt16LE(frame * C.sampleBytes)
+      energy += sample * sample
+    }
+    const meanSquare = energy / block.frames
+    if (meanSquare >= 320 * 320) this.openingSpeech = true
+    this.openingQuietFrames = meanSquare < 128 * 128 ? this.openingQuietFrames + block.frames : 0
+    // Prefer a complete pause early. After 1.6 s an inter-word gap can
+    // safely finish the opening batch before the 64-block ceiling (2.56 s).
+    const pauseFrames = C.rate * (block.end >= C.rate * 1.6 ? 0.16 : 0.32)
+    if (this.openingSpeech && block.end >= C.rate && this.openingQuietFrames >= pauseFrames) {
+      this.openingPauseEnd = block.end
+    }
+  }
 
   get receivedEnd() { return this.contiguousEnd }
   get committedEnd() { return this.releasedEnd }
   get finalEnd() { return this.targetEnd }
   get residentFrames() { return this.disposed ? 0 : this.allocatedEnd - this.releasedEnd }
   get atCapacity() { return this.residentFrames >= C.capacityFrames }
-  get pendingSegments() { return this.disposed ? 0 : Math.ceil((this.contiguousEnd - this.releasedEnd) / C.segmentFrames) }
+  get pendingSegments() { return this.disposed ? 0 : Math.ceil((this.contiguousEnd - this.releasedEnd) / this.segmentFrames) }
   get inflightIndex() { return this.inflight?.index ?? null }
   get complete() { return this.targetEnd !== null && this.releasedEnd === this.targetEnd && !this.inflight }
 
@@ -86,6 +112,7 @@ export class MeetingPcmQueue {
     while (this.reorder.has(this.contiguousEnd)) {
       const item = this.reorder.get(this.contiguousEnd)!
       this.reorder.delete(this.contiguousEnd)
+      this.observeOpeningBlock(item)
       this.contiguousEnd = item.end
     }
     return { duplicate: false, stale: false }
@@ -104,8 +131,9 @@ export class MeetingPcmQueue {
 
   take(): PcmSegment | null {
     if (this.disposed || this.inflight) return null
-    const length = Math.min(C.segmentFrames, this.contiguousEnd - this.releasedEnd)
-    if (!length || (length < C.segmentFrames && (this.targetEnd === null || this.contiguousEnd !== this.targetEnd))) return null
+    const target = this.nextSegmentIndex === 0 ? (this.openingPauseEnd ?? this.firstFrames) : this.segmentFrames
+    const length = Math.min(target, this.contiguousEnd - this.releasedEnd)
+    if (!length || (length < target && (this.targetEnd === null || this.contiguousEnd !== this.targetEnd))) return null
     // The sole immutable worker allocation includes its WAV header. pcm is a
     // view, not a second segment copy; the existing runner can consume wav as-is.
     const wav = Buffer.alloc(44 + length * C.sampleBytes)

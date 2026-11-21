@@ -86,7 +86,7 @@ test("#492 original STT archive survives edits and repeated utterances", async (
   assert.equal(response.meeting.transcript[0].text, "整稿编辑")
   const same = meeting()
   store.setTranscript(same.id, [{ text: raw, source: "stt" }])
-  await generateFixtureMinutes({ type: "meeting.generate_minutes", id: same.id, text: raw }, origin, { getLlmConfig: () => llm, generate: params => generateMeetingMinutes({ ...params, extract: async () => "### TL;DR\n原文" }) })
+  await generateFixtureMinutes({ type: "meeting.generate_minutes", id: same.id, text: raw }, origin, { getLlmConfig: () => llm, generate: params => generateMeetingMinutes({ ...params, extract: async () => `### TL;DR\n${raw}` }) })
   assert.equal(store.loadMeeting(same.id)!.transcript[0].source, "stt", "unchanged explicit snapshot retains STT provenance")
 })
 
@@ -189,7 +189,7 @@ test("#492 no-reference generation keeps Markdown path and explicit empty text d
   const seen: string[] = []
   const deps = { getLlmConfig: () => llm, generate: async (params: Parameters<typeof generateMeetingMinutes>[0]) => {
     seen.push(params.transcriptText)
-    return generateMeetingMinutes({ ...params, extract: async () => "### TL;DR\nCurrent material" })
+    return generateMeetingMinutes({ ...params, extract: async () => `### TL;DR\n${params.transcriptText}` })
   } }
   const current = await generateFixtureMinutes({ type: "meeting.generate_minutes", id: m.id, text: "current snapshot", reference_notes: "" }, origin, deps)
   assert.equal(current.type, "meeting.minutes_result")

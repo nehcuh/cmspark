@@ -1,7 +1,9 @@
+import "./meeting-test-data-dir"
 import { test } from "node:test"
 import * as assert from "node:assert/strict"
 import * as path from "node:path"
-import { DATA_DIR, setVoiceFields } from "../src/config"
+import { DATA_DIR, getConfig, setVoiceFields } from "../src/config"
+import { defaultVoiceExternal } from "../src/voice/external-asr-config"
 import { createMeeting, loadMeeting, deleteMeeting } from "../src/meeting/meeting-store"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
 import { generateFixtureMinutes } from "./meeting-minutes-test-helper"
@@ -10,7 +12,8 @@ import { SttSessionService } from "../src/voice/stt-session-service"
 import { validateWsMessage } from "../src/ws/validate"
 
 for (const delayedRunner of [false, true]) test(`actual q1 validators/meeting handler/STT handler/service/store protect owner and persist a short tail${delayedRunner ? " after delayed runner settlement" : ""}`, { timeout: 20000 }, async () => {
-  setVoiceFields({ sttEngine: "local", localModelId: "medium" })
+  const chatEngine = delayedRunner ? "browser" : "local"
+  setVoiceFields({ sttEngine: chatEngine, localModelId: "medium", meetingAsr: { mode: "local", external: defaultVoiceExternal() } })
   const meeting = createMeeting({ title: "owned synthetic 494" })
   const other = createMeeting({ title: "legacy control" })
   const root = path.join(DATA_DIR, "models", "owned")
@@ -31,7 +34,7 @@ for (const delayedRunner of [false, true]) test(`actual q1 validators/meeting ha
   } }
   const captureId = "00000000-0000-4000-8000-000000000494"
   const begin = { type: "meeting.start", v: 1, id: meeting.id, queue_contract: 1, capture_id: captureId,
-    expected_capture_epoch: 0, privacy_ack_v1: true, privacy_ack_v2: true, audio_retained: false, speaker: "张三" }
+    ...(delayedRunner ? { live_asr: "local" } : {}), expected_capture_epoch: 0, privacy_ack_v1: true, privacy_ack_v2: true, audio_retained: false, speaker: "张三" }
   const deps = { sttService: service, clearSttSessions() { clears++ } }
   try {
     for (const type of ["__proto__", "constructor", "not_a_method"]) assert.equal(validateWsMessage({ ...begin, type }).valid, false)
@@ -46,6 +49,7 @@ for (const delayedRunner of [false, true]) test(`actual q1 validators/meeting ha
     const started = await handleMeetingMessage(begin, ctx, deps)
     assert.equal(started.type, "meeting.started"); assert.equal(clears, 0)
     assert.equal(started.meeting.capture_epoch, 1)
+    if (delayedRunner) assert.equal(started.meeting.privacy.stt_engine, "local")
     assert.equal((await handleMeetingMessage(begin, ctx, deps)).meeting.capture_epoch, 1, "same live operation is idempotent")
     assert.equal((await handleMeetingMessage({ ...begin, expected_capture_epoch: 5 }, ctx, deps)).code, "stale_capture")
     const lease = service.getMeetingCapture()
@@ -60,7 +64,9 @@ for (const delayedRunner of [false, true]) test(`actual q1 validators/meeting ha
     const start = { type: "voice.stt.start", v: 1, sessionId: captureId, queue_contract: 1, capture_epoch: 1,
       modelId: "medium", format: "pcm_s16le", sampleRate: 16000, channels: 1, privacy_ack_v2: true }
     assert.equal(validateWsMessage(start).valid, true)
+    if (delayedRunner) assert.equal((await handleVoiceSttMessage({ ...start, engine: "system" }, ctx, { service })).code, "stale_capture")
     const receiving = await handleVoiceSttMessage(start, ctx, { service })
+    assert.equal(getConfig().voice?.sttEngine, chatEngine, "starting a meeting preserves chat engine preference")
     assert.equal(receiving.type, "voice.stt.partial"); assert.equal(receiving.credits.length, 8)
     const credit = receiving.credits[0]
     const chunk = { type: "voice.stt.chunk", v: 1, sessionId: captureId, queue_contract: 1, capture_epoch: 1,

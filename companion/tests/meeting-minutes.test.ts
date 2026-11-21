@@ -24,6 +24,7 @@ import {
   deleteMeetingAudio,
 } from "../src/meeting/meeting-store"
 import { generateMeetingMinutes } from "../src/meeting/meeting-minutes"
+import { groundDefaultMinutes } from "../src/meeting/minutes-evidence"
 import {
   buildMinutesSystemPrompt,
   MEETING_MINUTES_MAX_TEMPLATE_CHARS,
@@ -41,6 +42,22 @@ assert.equal(
   "DATA_DIR must match CMSPARK_DATA_DIR bootstrap (import order)",
 )
 const EXT = "chrome-extension://abcdefghijklmnopqrstuvwxyz"
+
+test("default minutes keep grounded synthesis and omit invented or uncited claims", () => {
+  const raw = "There are three stages. Morgan will review the drawings."
+  const md = groundDefaultMinutes("### TL;DR\n- 共三个阶段〔There are three stages.〕\n### 决议\n- 分为草案、原型、测试。\n### 待办\n- [ ] Morgan 审图〔Morgan will review the drawings.〕\n- [ ] 明天完成〔tomorrow〕\n### 风险 / 开放问题\n无明确记录", raw)
+  assert.ok(md)
+  assert.match(md, /共三个阶段/)
+  assert.match(md, /Morgan 审图/)
+  assert.doesNotMatch(md, /原型|明天完成/)
+  assert.match(md, /2 条概括/)
+  const legacy = groundDefaultMinutes("### TL;DR\nThere are three stages.", raw)
+  assert.ok(legacy)
+  assert.match(legacy, /- There are three stages\./)
+  assert.doesNotMatch(legacy, /未返回/)
+  assert.match(groundDefaultMinutes('### TL;DR\n- 概括〔"There are three stages."〕', raw) ?? "", /- 概括/)
+  assert.equal(groundDefaultMinutes("### TL;DR\n- fabricated summary", raw), undefined)
+})
 
 test("MEETING_MINUTES_SYSTEM_PROMPT is distinct job and forbids invention", () => {
   assert.match(MEETING_MINUTES_SYSTEM_PROMPT, /meeting_minutes/)
@@ -122,7 +139,7 @@ test("setTranscript + generateMeetingMinutes mock", async () => {
 - 下周发布
 
 ### 待办
-- [ ] 写文档（张三）
+- [ ] 写文档（张三）〔张三负责写文档〕
 
 ### 风险 / 开放问题
 - 无
@@ -145,6 +162,20 @@ test("handler origin denied", async () => {
     { origin: "cmspark-tray://local" },
   )
   assert.equal(res.code, "origin_denied")
+})
+
+test("unsupported regeneration returns a recoverable error and preserves the previous minutes", async () => {
+  const meeting = createMeeting({ title: "证据核对", dataDir: DATA })
+  const original = "本周完成文档。"
+  setTranscript(meeting.id, [{ text: original, source: "paste" }], DATA)
+  setMinutes(meeting.id, { raw_md: "### TL;DR\n本周完成文档。", generated_at: new Date().toISOString() }, DATA)
+  const previous = loadMeeting(meeting.id, DATA)?.minutes
+  const response = await generateFixtureMinutes({ type: "meeting.generate_minutes", id: meeting.id }, { origin: EXT }, {
+    getLlmConfig: () => ({ base_url: "https://fixture.invalid", api_key: "key", model_name: "test", temperature: 0 }),
+    generate: params => generateMeetingMinutes({ ...params, extract: async () => "### 待办\n- [ ] 下周交付原型。〔下周交付〕" }),
+  })
+  assert.equal(response.code, "invalid_minutes_evidence")
+  assert.deepEqual(loadMeeting(meeting.id, DATA)?.minutes, previous)
 })
 
 test("handler generate ephemeral paste", async () => {

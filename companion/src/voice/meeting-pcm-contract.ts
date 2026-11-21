@@ -8,7 +8,7 @@ export const MEETING_PCM = Object.freeze({
   idleMs: 10_000, jobMs: 330_000, drainMs: 3_600_000, cleanupMs: 5_000,
 })
 export type CaptureStopReason = "user_stop" | "capacity" | "hard_limit" | "input_gap" |
-  "permission_revoked" | "suspended" | "transport_backpressure" | "unload"
+  "permission_revoked" | "suspended" | "transport_backpressure" | "startup_timeout" | "unload"
 export type CapturePhase = "starting" | "capturing" | "draining" | "canceling" | "retiring" | "finished" | "failed"
 export type CaptureOutcome = "complete" | "limited" | "cancelled" | "failed" | "interrupted"
 export type PcmCredit = { credit_id: number; sample_offset: number; max_frames: number }
@@ -26,7 +26,9 @@ export const isCaptureId = (id: unknown): id is string =>
   typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
 export const isCaptureEpoch = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0
 const CAPTURE_ERRORS = new Set(["contract_unavailable", "stale_capture", "queue_protocol_error", "startup_timeout", "capture_flush_timeout", "network_unknown", "save_failed", "drain_timeout", "cleanup_pending",
-  "session_busy", "invalid_model", "invalid_format", "seq_gap", "seq_duplicate", "payload_too_large", "session_unknown", "already_ended", "aborted", "total_seq_mismatch", "model_missing", "binary_missing", "hash_fail", "infer_timeout", "empty_result", "peer_mismatch", "resource_conflict", "infer_failed", "binary_broken", "oom", "invalid_session_id", "partial_skipped", "partial_busy", "system_engine_failed", "system_unavailable", "system_lang_unsupported", "segment_id_conflict"])
+  "session_busy", "invalid_model", "invalid_format", "seq_gap", "seq_duplicate", "payload_too_large", "session_unknown", "already_ended", "aborted", "total_seq_mismatch", "model_missing", "binary_missing", "hash_fail", "infer_timeout", "empty_result", "peer_mismatch", "resource_conflict", "infer_failed", "binary_broken", "oom", "invalid_session_id", "partial_skipped", "partial_busy", "system_engine_failed", "system_unavailable", "system_lang_unsupported", "segment_id_conflict", "external_configuration_changed",
+  "external_timeout", "external_redirect", "external_bad_response", "external_empty", "external_unreachable", "external_rejected",
+  "external_unauthorized", "external_endpoint", "external_too_large", "external_rate_limited", "external_unavailable"])
 
 /** Public owner-only DTO; explicitly drops extra backend fields before SSE/HTTP. */
 export function projectCaptureStatus(value: any): CaptureStatus | null {
@@ -35,12 +37,12 @@ export function projectCaptureStatus(value: any): CaptureStatus | null {
       !["starting", "capturing", "draining", "canceling", "retiring", "finished", "failed"].includes(value.phase) ||
       typeof value.input_open !== "boolean" || typeof value.high_water !== "boolean" ||
       !["server_received_end", "processed_end", "committed_end", "saved_text_segments", "sealed_segments"].every(k => Number.isSafeInteger(value[k]) && value[k] >= 0) ||
-      value.saved_text_segments > Math.ceil(MEETING_PCM.captureFrames / MEETING_PCM.segmentFrames) || value.sealed_segments > 8 ||
+      value.saved_text_segments > Math.ceil(MEETING_PCM.captureFrames / MEETING_PCM.rate) || value.sealed_segments > 60 ||
       value.server_received_end > MEETING_PCM.captureFrames || value.processed_end > value.server_received_end || value.committed_end > value.processed_end ||
       typeof value.resident_seconds !== "number" || !Number.isFinite(value.resident_seconds) || value.resident_seconds < 0 || value.resident_seconds > 60 ||
-      (value.inflight_segment !== null && (!Number.isSafeInteger(value.inflight_segment) || value.inflight_segment < 0 || value.inflight_segment >= Math.ceil(MEETING_PCM.captureFrames / MEETING_PCM.segmentFrames))) ||
+      (value.inflight_segment !== null && (!Number.isSafeInteger(value.inflight_segment) || value.inflight_segment < 0 || value.inflight_segment >= Math.ceil(MEETING_PCM.captureFrames / MEETING_PCM.rate))) ||
       (value.eta_seconds !== null && (typeof value.eta_seconds !== "number" || !Number.isFinite(value.eta_seconds) || value.eta_seconds < 0)) ||
-      ![null, "user_stop", "capacity", "hard_limit", "input_gap", "permission_revoked", "suspended", "transport_backpressure", "unload"].includes(value.stop_reason) ||
+      ![null, "user_stop", "capacity", "hard_limit", "input_gap", "permission_revoked", "suspended", "transport_backpressure", "startup_timeout", "unload"].includes(value.stop_reason) ||
       !value.completion || typeof value.completion.prefix_complete !== "boolean" ||
       ![null, "complete", "limited", "cancelled", "failed", "interrupted"].includes(value.completion.outcome) ||
       !Array.isArray(value.credits) || value.credits.length > MEETING_PCM.credits ||

@@ -264,12 +264,13 @@ test("stt.start engine=system: win32 + helper ok + ack → system session, no co
   resetVoiceConfig()
   const cap: { startReq?: any } = {}
   const r = await handleVoiceSttMessage(
-    { ...sttStartBase, engine: "system" },
+    { ...sttStartBase, engine: "system", lang: "en-US" },
     { origin: EXT_ORIGIN, peerId: "peer-1" },
     { service: fakeService(cap), platform: "win32", resolveSapi: () => helperOk },
   )
   assert.equal(r.type, "voice.stt.partial")
   assert.equal(cap.startReq.engine, "system")
+  assert.equal(cap.startReq.lang, "en-US")
   assert.equal(getConfig().voice?.sttEngine, "browser") // per-session, ZERO config write
 })
 

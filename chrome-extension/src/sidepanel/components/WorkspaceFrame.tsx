@@ -17,9 +17,18 @@ import { residentMinWidth, type NavigationSurface } from "../navigation/navigati
 import { toolGroups } from "../navigation/tool-groups"
 import type { CapabilityLevel } from "../types"
 import { PersonalWorkspace, WORKSPACE_DESTINATIONS, type WorkspaceDestination } from "./personal-workspace/PersonalWorkspace"
+import { RecentWorkbenchMeetings } from "./RecentWorkbenchMeetings"
+import { MeetingPanel } from "./MeetingPanel"
+import { WorkbenchRecording } from "./WorkbenchRecording"
+import { WorkbenchTranslation } from "./WorkbenchTranslation"
 import { useActivity } from "./personal-workspace/useActivity"
 import { dueToday } from "./personal-workspace/activity-request"
 import { personalWorkspaceCSS } from "./personal-workspace/styles"
+
+const workbenchActions = [["meeting", "开始会议"], ["recording", "录屏"], ["transcribe", "实时转写"], ["translation", "翻译"]] as const
+function isWorkbenchPage(page: unknown): page is "today" | typeof workbenchActions[number][0] {
+  return page === "today" || workbenchActions.some(([key]) => key === page)
+}
 
 /** Workspace destinations project one Companion state; chat stays mounted during navigation. */
 export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays }: {
@@ -36,11 +45,20 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   const surface: NavigationSurface = full ? "workspace" : new URLSearchParams(window.location.search).get("surface") === "popout" ? "popout" : "sidepanel"
   const [view, setView] = useState<WorkspaceDestination>(() => {
     if (!full) return "chat"
+    const initial = window.location.hash?.slice(1).split("/")[0]
+    if (isWorkbenchPage(initial)) return initial
     const requested = new URLSearchParams(window.location.search).get("view")
     if (WORKSPACE_DESTINATIONS.some(item => item.id === requested)) return requested as WorkspaceDestination
     try { const saved = localStorage.getItem("cmspark.workspace.destination"); if (WORKSPACE_DESTINATIONS.some(item => item.id === saved)) return saved as WorkspaceDestination } catch { /* View persistence is optional. */ }
     return "today"
   })
+  const [screenCaptureActive, setScreenCaptureActive] = useState(false)
+  const [hasSelectedMeeting, setHasSelectedMeeting] = useState(false)
+  const [recent, setRecent] = useState<{ id?: string; revision: number }>({ revision: 0 })
+  const [opened, setOpened] = useState(() => new Set([view]))
+  useEffect(() => {
+    setOpened(previous => previous.has(view) ? previous : new Set([...previous, view]))
+  }, [view])
   const minWidth = residentMinWidth(surface)
   const [wide, setWide] = useState(() => window.matchMedia(`(min-width: ${minWidth}px)`).matches)
   const [open, setOpen] = useState(false)
@@ -70,9 +88,33 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
     }
     if (full) try { localStorage.setItem("cmspark.workspace.destination", destination) } catch { /* Navigation still works without storage. */ }
   }
-  useEffect(() => { if (forceChat) setView("chat") }, [forceChat])
   useEffect(() => {
-    const showChat = () => setView("chat")
+    if (!full) return
+    const select = (page: unknown): boolean => {
+      if (!isWorkbenchPage(page)) return false
+      if (destinationOwnerRef.current.blocked) {
+        window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "请先处理待确认操作或结束电脑执行。" }))
+        return false
+      }
+      if (destinationOwnerRef.current.settingsOpen) dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+      setView(page)
+      return true
+    }
+    const onPage = (event: Event) => { if (select((event as CustomEvent).detail)) event.preventDefault() }
+    const onHash = () => select(window.location.hash.slice(1).split("/")[0])
+    window.addEventListener("cmspark:workbench-page", onPage)
+    window.addEventListener("hashchange", onHash)
+    return () => {
+      window.removeEventListener("cmspark:workbench-page", onPage)
+      window.removeEventListener("hashchange", onHash)
+    }
+  }, [full, dispatch])
+  useEffect(() => { if (destinationBlocked) setView("chat") }, [destinationBlocked])
+  useEffect(() => {
+    const showChat = (event: Event) => {
+      if (event.type === "cmspark:open-context-panel" && (event as CustomEvent).detail?.panel === "meeting") return
+      setView("chat")
+    }
     const events = ["cmspark:open-context-panel", "cmspark:open-coding-handoff", "cmspark:open-thread-manager", "cmspark:open-knowledge"]
     events.forEach(event => window.addEventListener(event, showChat))
     return () => events.forEach(event => window.removeEventListener(event, showChat))
@@ -167,18 +209,39 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   return <div className={shellClass} data-navigation-mode={mode} data-navigation-surface={surface}>
     <style>{personalWorkspaceCSS}</style>
     {wide && navigation()}
-    <main className="cm-workspace-main cm-shell-column" aria-label="个人工作中心">
+    <main className="cm-workspace-main cm-shell-column" aria-label="个人工作台">
       {top}
       {!wide && navigation()}
       {openingError && <p role="alert" className="cm-personal-fieldnote">{openingError}</p>}
       {full && <nav className="cm-personal-mobile-nav" aria-label="工作中心页面">{WORKSPACE_DESTINATIONS.map(item => <button type="button" key={item.id} aria-current={visibleView === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}<button type="button" disabled={state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)} onClick={() => { navigate("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>设置</button></nav>}
-      {full && visibleView !== "chat" && state.meetingCaptureActive && <div className="cm-personal-banner" role="status"><span>会议录制中</span><button className="cm-icon-button" type="button" onClick={() => openResource("meeting")}>返回会议</button></div>}
+      {screenCaptureActive && visibleView !== "recording" && <div className="cm-personal-banner" role="status"><span>正在录屏</span><button className="cm-p-link" type="button" onClick={() => navigate("recording")}>返回录屏</button></div>}
+      {full && !["chat", "meeting", "transcribe"].includes(visibleView) && state.meetingCaptureActive && <div className="cm-personal-banner" role="status"><span>会议录制中</span><button className="cm-p-link" type="button" onClick={() => navigate("meeting")}>返回会议</button></div>}
+      {visibleView === "meeting" || visibleView === "transcribe" || visibleView === "recording" || visibleView === "translation" ? <nav className="cm-workbench-actions" aria-label="会议工具">
+        <button type="button" className="cm-p-link" onClick={() => navigate("today")}>返回个人工作台</button>
+        {workbenchActions.filter(([page]) => page !== visibleView).map(([page, label]) => <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{label}</button>)}
+      </nav> : null}
       <div className="cm-shell-layers">
+        {(opened.has("meeting") || opened.has("transcribe")) && <div className="cm-workbench-tool" hidden={visibleView !== "meeting" && visibleView !== "transcribe"}>
+          <MeetingPanel active={visibleView === "meeting" || visibleView === "transcribe"} meetingId={recent.id} meetingSelectionRevision={recent.revision} onMeetingSelected={setHasSelectedMeeting} purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
+            navigate("chat")
+            window.dispatchEvent(new CustomEvent("cmspark:fill-composer", { detail: { text } }))
+          }} />
+        </div>}
+        {opened.has("recording") && <div className="cm-workbench-tool" hidden={visibleView !== "recording"}><WorkbenchRecording onActiveChange={setScreenCaptureActive} pendingContext={destinationOwner} visible={visibleView === "recording"} /></div>}
+        {opened.has("translation") && <div className="cm-workbench-tool" hidden={visibleView !== "translation"}><WorkbenchTranslation /></div>}
         <div className="cm-chat-mount" hidden={visibleView !== "chat"}>{children}</div>
-        {(["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource} /></div>)}
+        {(["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource}
+          actions={destination === "today" ? <nav className="cm-workbench-actions" aria-label="常用操作">{workbenchActions.map(([page, label]) =>
+        <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{page === "meeting" && hasSelectedMeeting ? "返回会议" : label}</button>)}</nav> : undefined}
+          recent={destination === "today" && visibleView === "today" ? <RecentWorkbenchMeetings connected={state.connectionState === "connected"} recording={state.meetingCaptureActive} onSelect={id => {
+          setRecent(old => ({ id, revision: old.revision + 1 }))
+          navigate("meeting")
+        }} /> : undefined}
+        /></div>)}
+
       </div>
       <div className="cm-thread-manager-mount" />
-      <div className="cm-shell-bottom">{bottom}</div>
+      <div className="cm-shell-bottom" hidden={visibleView !== "chat"}>{bottom}</div>
       {overlays}
     </main>
   </div>

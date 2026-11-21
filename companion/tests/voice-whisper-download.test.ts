@@ -10,6 +10,9 @@ import {
   readFileSync,
   existsSync,
   readdirSync,
+  renameSync,
+  statSync,
+  utimesSync,
   rmSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -503,6 +506,14 @@ test("probe: absent / incomplete / ready", async () => {
 
     writeFileSync(path.join(destDir, "ggml-medium.bin"), FILE_A)
     assert.equal(probeWhisperModelDir("medium", env.whisperRoot, manifest).status, "ready")
+    const verified = path.join(destDir, "ggml-medium.bin")
+    const original = statSync(verified)
+    const replacement = path.join(destDir, "replacement")
+    writeFileSync(replacement, contentOf(123, FILE_A.length))
+    utimesSync(replacement, original.atime, original.mtime)
+    renameSync(replacement, verified)
+    assert.notEqual(probeWhisperModelDir("medium", env.whisperRoot, manifest).status, "ready",
+      "same-sized replacement of a verified model invalidates its cached digest")
   } finally {
     env.cleanup()
   }

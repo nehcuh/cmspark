@@ -192,13 +192,14 @@ test("external adapter start omits the local 45s maxMs and privacy_ack_v2", asyn
       }),
     },
   )
-  adapter.start({ sessionId: "ext-ui", lang: "zh-CN", hardCapMs: 120_000 })
+  adapter.start({ sessionId: "ext-ui", lang: "en-US", hardCapMs: 120_000 })
   await new Promise((r) => setTimeout(r, 20))
   adapter.stop()
   await new Promise((r) => setTimeout(r, 20))
   const start = sent.find((m) => m.type === "voice.stt.start")
   assert.ok(start)
   assert.equal(start!.engine, "external")
+  assert.equal(start!.lang, "en")
   assert.equal(start!.privacy_ack_external_v1, true)
   assert.equal("maxMs" in start!, false)
   assert.equal("privacy_ack_v2" in start!, false)

@@ -154,6 +154,34 @@ export function createMeetingExternalAsr(deps: Pick<ExternalTranscribeRequest, "
   return {
     state,
     disconnect: cancel,
+    openLive(expected: string) {
+      const config = readConfig()
+      const target = meetingTarget(config)
+      if (identity(config) !== expected || config.mode !== "external" || !target.ready) return null
+      const controller = new AbortController()
+      const current = () => !controller.signal.aborted && identity(readConfig()) === expected
+      return {
+        segmentMs: Math.min(target.segmentMs, 8_000),
+        abort: () => controller.abort(),
+        async transcribe(wav: Buffer, language?: string) {
+          if (!current()) return { ok: false, code: "external_configuration_changed", message: "meeting ASR target changed" } as const
+          if (wav.length > target.segmentMs * 32 + 44) return { ok: false, code: "external_too_large", message: "meeting ASR audio limit" } as const
+          const result = await transcribeExternal({
+            style: target.style, url: target.normalizedUrl, apiKey: config.external.apiKey, wav,
+            ...(target.style === "openai" ? { model: target.model } : {}), language,
+            signal: controller.signal, timeoutMs: target.requestTimeoutMs,
+            lookup: deps.lookup, fetchImpl: deps.fetchImpl, beforeDispatch: current,
+          })
+          if (!current()) return { ok: false, code: "external_configuration_changed", message: "meeting ASR target changed" } as const
+          if (!result.ok) {
+            if (result.code === "external_empty") return { ok: true, text: "", modelId: target.model } as const
+            return { ...result, message: "meeting ASR segment failed" }
+          }
+          const text = result.text.replace(/^[ \t]*(?:>>[ \t]*)?\[BLANK_AUDIO\][ \t]*\r?$/gm, "").trim()
+          return { ...result, text, modelId: target.model }
+        },
+      }
+    },
     set(mode: MeetingAsrConfig["mode"], expected: string, external?: Partial<VoiceExternalConfig>) {
       const config = readConfig()
       if (identity(config) !== expected) return asrError("external_configuration_changed")

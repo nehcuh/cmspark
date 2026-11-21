@@ -326,7 +326,10 @@ test("handler rejects missing origin", async () => {
 test("happy path: start �?chunk �?end with injected service", async () => {
   const sent: any[] = []
   const svc = makeService({
-    runWhisper: async () => ({ text: "fixture 听写", ms: 12 }),
+    runWhisper: async (opts) => {
+      assert.equal(opts.lang, "en", "normal chat must pass the selected language to whisper")
+      return { text: "fixture 听写", ms: 12 }
+    },
   })
 
   const start = await handleVoiceSttMessage(
@@ -339,7 +342,7 @@ test("happy path: start �?chunk �?end with injected service", async () => {
       sampleRate: 16000,
       channels: 1,
       privacy_ack_v2: true,
-      lang: "zh",
+      lang: "en",
     },
     { ...extCtx("peer-A"), send: (m) => sent.push(m) },
     { service: svc },

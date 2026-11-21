@@ -32,9 +32,18 @@ export class MeetingPcmEncoder {
   private lastUsed = 0
   private ended = false
   private end = 0
+  // Only the initial handshake may spool PCM without a credit. Once caught up,
+  // the original steady-state credit/backpressure contract applies.
+  private prefix: Float32Array | null = null
+  private head = 0
+  private queued = 0
+  private sealAfterDrain: string | null = null
   rawFrames = 0
   constructor(private readonly block: (block: MeetingBlock) => void,
-    private readonly sealed: (end: number, reason: string) => void) {}
+    private readonly sealed: (end: number, reason: string) => void,
+    private readonly startupFull?: () => void) {
+    if (startupFull) this.prefix = new Float32Array(2 * 16000)
+  }
 
   get admittedEnd() { return this.end }
   get closed() { return this.ended }
@@ -51,30 +60,55 @@ export class MeetingPcmEncoder {
       if (!old && this.grants.size + (this.current ? 1 : 0) >= 8) throw new Error("queue_protocol_error")
       this.grants.set(c.credit_id, { ...c })
     }
+    if (this.prefix && credits.length) {
+      while (this.queued && (this.current || this.grants.has(this.lastUsed + 1))) {
+        const sample = this.prefix[this.head]
+        this.head = (this.head + 1) % this.prefix.length
+        this.queued--
+        this.encode(sample)
+      }
+      if (!this.queued) {
+        this.prefix = null
+        if (this.sealAfterDrain) this.seal(this.sealAfterDrain)
+      }
+    }
   }
 
   push(input: Float32Array, rate: number): void {
-    if (this.ended) return
+    if (this.ended || this.sealAfterDrain) return
     this.rawFrames += input.length
     this.resampler.push(input, rate, value => {
-      if (this.ended) return false
-      if (this.end >= 172800000) { this.seal("hard_limit"); return false }
-      if (!this.current) {
-        const next = [...this.grants.values()].find(c => c.sample_offset === this.end)
-        if (!next) { this.seal("transport_backpressure"); return false }
-        this.grants.delete(next.credit_id); this.current = next
-        this.bytes = new Uint8Array(next.max_frames * 2); this.frames = 0
+      if (!this.prefix) return this.encode(value)
+      if (this.queued === this.prefix.length) {
+        this.sealAfterDrain = "startup_timeout"
+        this.startupFull?.()
+        return false
       }
-      const clipped = Math.max(-1, Math.min(1, Number.isFinite(value) ? value : 0))
-      new DataView(this.bytes!.buffer).setInt16(this.frames * 2, Math.round(clipped < 0 ? clipped * 32768 : clipped * 32767), true)
-      this.frames++; this.end++
-      if (this.frames === this.current.max_frames) this.flush()
+      this.prefix[(this.head + this.queued) % this.prefix.length] = value
+      this.queued++
       return true
     })
   }
 
+  private encode(value: number): boolean {
+    if (this.ended) return false
+    if (this.end >= 172800000) { this.seal("hard_limit"); return false }
+    if (!this.current) {
+      const next = [...this.grants.values()].find(c => c.sample_offset === this.end)
+      if (!next) { this.seal("transport_backpressure"); return false }
+      this.grants.delete(next.credit_id); this.current = next
+      this.bytes = new Uint8Array(next.max_frames * 2); this.frames = 0
+    }
+    const clipped = Math.max(-1, Math.min(1, Number.isFinite(value) ? value : 0))
+    new DataView(this.bytes!.buffer).setInt16(this.frames * 2, Math.round(clipped < 0 ? clipped * 32768 : clipped * 32767), true)
+    this.frames++; this.end++
+    if (this.frames === this.current.max_frames) this.flush()
+    return true
+  }
+
   seal(reason: string): void {
     if (this.ended) return
+    if (this.queued) { this.sealAfterDrain ??= reason; return }
     this.ended = true
     this.flush()
     this.grants.clear()
@@ -104,6 +138,8 @@ export function meetingCaptureErrorMessage(code: string): string {
     network_unknown: "连接中断，未确认的音频范围不能视为完整；请重连查看已存原稿",
     stale_capture: "当前会议或录制已变化，请重新开始",
     queue_protocol_error: "音频排队信息不一致，录制已停止；已存原稿保留",
+    capture_busy: "另一个工作台正在采集，请返回正在录制的标签页",
+    permission_denied: "麦克风访问被拒绝，请检查浏览器设备权限后重试",
     startup_timeout: "麦克风或本机转写启动超时，请检查后重新开始",
     audio_retention_unsupported: "现有会议选择了保留原始音频，连续录制暂不支持此模式；原有选择未改变",
     capture_flush_timeout: "末尾音频未按时送达，不能视为完整转写",
@@ -115,5 +151,5 @@ export function meetingCaptureErrorMessage(code: string): string {
 }
 export function meetingCaptureStopLabel(reason: string): string {
   return ({ capacity: "积压达到上限", hard_limit: "录制达到时限", input_gap: "检测到输入断续", permission_revoked: "麦克风权限已撤销",
-    suspended: "音频采集已挂起", transport_backpressure: "音频发送积压", unload: "录制页面已关闭", user_stop: "已停止" } as Record<string, string>)[reason] || "录制已停止"
+    startup_timeout: "识别启动超时，已停止收音，请重试", suspended: "音频采集已挂起", transport_backpressure: "音频发送积压", unload: "录制页面已关闭", user_stop: "已停止" } as Record<string, string>)[reason] || "录制已停止"
 }

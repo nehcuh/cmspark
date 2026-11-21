@@ -1,3 +1,4 @@
+import { openWorkbench } from "../navigation/open-workbench"
 // StatusRail — Zone A (UIUX v2 PR1)
 // Mode badge + pin · connection (token colors) · thread switcher · ⋯ menu
 
@@ -222,6 +223,7 @@ export function StatusRail({
       }}
     >
       <button type="button" className="cm-icon-button cm-navigation-toggle" aria-label="打开工作区导航" aria-haspopup="dialog" onClick={() => window.dispatchEvent(new Event("cmspark:toggle-navigation"))}><IconList size={16} /><span style={{ fontSize: 12 }}>导航</span></button>
+      {window.location.pathname !== "/tabs/workspace.html" && <button type="button" className="cm-icon-button cm-workbench-launch" aria-label="个人工作台" title="打开个人工作台" disabled={state.pendingSecurityConfirmations.length > 0 || ["running", "paused"].includes(state.computerTask?.status ?? "")} onClick={() => void openWorkbench("today")}><span className="cm-workbench-prefix">个人</span>工作台</button>}
       <ModeBadge
         level={capabilityLevel}
         label={badgeLabel}

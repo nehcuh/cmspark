@@ -96,8 +96,12 @@ export const VOICE_CONTINUOUS_HARD_CAP_MS = 15 * 60_000
 /** Continuous hard stop absolute max configurable (ms). */
 export const VOICE_CONTINUOUS_HARD_CAP_MAX_MS = 30 * 60_000
 
-/** Default recognition language (M1 locked). */
 export const VOICE_DEFAULT_LANG = "zh-CN"
+export type ChatDictationLanguage = typeof VOICE_DEFAULT_LANG | "en-US"
+
+export function normalizeChatDictationLanguage(value: unknown): ChatDictationLanguage {
+  return value === "en-US" ? value : VOICE_DEFAULT_LANG
+}
 
 export function normalizeDictationMode(v: unknown): VoiceDictationMode {
   return v === "continuous" ? "continuous" : "classic"

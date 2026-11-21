@@ -214,6 +214,6 @@ test('705 generated Mac workspace fixes Choose before presentation and retains e
   assert.throws(()=>desktopWorkspaceFixture('swift',original.replace(anchor,'MISSING_PICKER_PRESENTATION'),fixture,form),/DESKTOP_WORKSPACE_FIXTURE_ANCHOR/)
   assert.throws(()=>desktopWorkspaceFixture('swift',original+'\n'+anchor,fixture,form),/DESKTOP_WORKSPACE_FIXTURE_ANCHOR/)
  }
- for(const exact of ['label IN %@','["Choose","Open"]','guard chooseCount==1 else','guard chooseHittable else','choose.element.click()','try ready(.second,2)','cancel.element.click()','guard r>0,r<=45 else'])assert.ok(ui.includes(exact),exact)
+ for(const exact of ['label IN %@','["Choose","Open"]','try requireUniqueAfterReady(choose,11,11)','guard count==1 else','guard chooseHittable else','choose.element.click()','try ready(.second,2)','cancel.element.click()','guard r>0,r<=45 else'])assert.ok(ui.includes(exact),exact)
  assert.doesNotMatch(ui,/\.prompt\s*=|\.launch\(|\.activate\(|\.terminate\(/)
 })

@@ -13,6 +13,7 @@ class MeetingPcmProcessor extends AudioWorkletProcessor {
     this.encoder = new MeetingPcmEncoder(
       block => this.port.postMessage({ type: "block", ...block }, [block.pcm.buffer as ArrayBuffer]),
       (end, reason) => this.port.postMessage({ type: "sealed", end, reason }),
+      () => this.port.postMessage({ type: "startup_full" }),
     )
     this.port.onmessage = event => {
       const m = event.data

@@ -113,7 +113,7 @@ import {
   externalPrivacyCopy,
   externalRefineCopy,
 } from "../voice/external-asr-ui"
-import { detectSpeechRecognition } from "../voice/detect"
+import { detectSpeechRecognition, normalizeChatDictationLanguage } from "../voice/detect"
 import {
   VISION_COPY,
   applyVisionReuseFromMain,
@@ -1705,6 +1705,18 @@ export function SettingsSlideout() {
           </SettingsPage>
 
           <SettingsPage id="input-dictation" active={activeDestination === "input-dictation"}>
+          <div style={styles.field}>
+            <label style={styles.label} htmlFor="chat-dictation-language">聊天听写语言</label>
+            <select id="chat-dictation-language" data-testid="chat-dictation-language" style={styles.select}
+              value={state.chatDictationLanguage}
+              onChange={e => dispatch({ type: "SET_CHAT_DICTATION_LANGUAGE", language: normalizeChatDictationLanguage(e.target.value) })}>
+              <option value="zh-CN">中文（普通话）</option>
+              <option value="en-US">English (US)</option>
+            </select>
+            {state.voiceModel?.sttEngine === "external" && state.voiceModel.external?.style === "deepseek" && (
+              <p className="cm-settings-note">当前 DeepSeek 转写服务自行识别录音语言。</p>
+            )}
+          </div>
           <div style={styles.field}>
             <label style={styles.label}>语音输入</label>
             <label

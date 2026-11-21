@@ -26,6 +26,7 @@ function harness() {
   const at = (relative: string) => path.resolve(root, relative)
   const modules = new Map<string, any>()
   const timers: Array<{ fn: () => void; ms: number }> = []
+  const browserLanguages: string[] = []
   const slots = new Map<string, { cells: any[]; effects: any[] }>()
   let frame: { cells: any[]; effects: any[] } | undefined
   let cursor = 0
@@ -78,6 +79,11 @@ function harness() {
     }
     vm.runInNewContext(code, {
       exports: output, require: loadDependency,
+      SpeechRecognition: class {
+        lang = ""
+        start() { browserLanguages.push(this.lang) }
+        abort() {}
+      },
       chrome: { runtime: { sendMessage() {}, onMessage: { addListener() {}, removeListener() {} } } },
       navigator: {
         mediaDevices: {
@@ -120,8 +126,17 @@ function harness() {
     flushEffects()
     return api
   }
-  return { render, timers }
+  return { render, timers, browserLanguages }
 }
+
+test("chat hook starts browser recognition in the selected locale and defaults older profiles to Mandarin", () => {
+  for (const language of [undefined, "en-US"]) {
+    const ui = harness()
+    const api = ui.render({ getBaseText: () => "", onDraft() {}, allowStart: true, enabled: true, privacyAck: true, language })
+    api.toggle()
+    assert.deepEqual(ui.browserLanguages, [language ?? "zh-CN"])
+  }
+})
 
 test("the listen timer shows both limit sentences when the stop reaches both caps", async () => {
   const ui = harness()

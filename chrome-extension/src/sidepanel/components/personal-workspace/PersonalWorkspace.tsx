@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { CONTEXT_PANEL_TABS, type ContextPanelId } from '../ContextPanelHost'
 import { datetimeInput, taskDatePatch, dueToday, formatTaskTime, requestActivity, taskComplete, type ActivityApp, type ActivityConfig, type ActivityReply, type PersonalTodo, type TaskEvidence, type TodoCandidate } from './activity-request'
 import type { ActivityBulkAction, ActivityBulkItem, ActivityBulkResult, ActivityController } from './useActivity'
@@ -15,14 +15,15 @@ export function matchesActivityAppSearch(app: ActivityApp, query: string): boole
 }
 const appWindowLabels = { visible: '有可见窗口', minimized: '窗口已最小化', hidden: '窗口已隐藏', none: '暂无窗口' }
 
-export type WorkspaceDestination = 'today' | 'todos' | 'chat' | 'materials' | 'activity'
+export type WorkspaceDestination = 'meeting' | 'recording' | 'translation' | 'transcribe' | 'today' | 'todos' | 'chat' | 'materials' | 'activity'
 export const WORKSPACE_DESTINATIONS: Array<{ id: WorkspaceDestination; label: string }> = [
-  { id: 'today', label: '今日' }, { id: 'todos', label: '待办' }, { id: 'chat', label: '对话' }, { id: 'materials', label: '资料' }, { id: 'activity', label: '活动记录' },
+  { id: 'today', label: '今日' }, { id: 'todos', label: '待办' }, { id: 'chat', label: '对话' }, { id: 'meeting', label: '会议' }, { id: 'materials', label: '资料' }, { id: 'activity', label: '活动记录' },
 ]
 const reminderLabels: Record<PersonalTodo['reminder']['status'], string> = { none: '未设置提醒', scheduled: '已排程', attempting: '正在提交系统通知', submitted: '已提交系统通知（不代表已读）', failed: '提醒提交失败', unknown: '提醒结果未知，请核实' }
 
-export function PersonalWorkspace({ destination, controller, connected, active, navigationOwner, navigate, openResource }: {
-  destination: Exclude<WorkspaceDestination, 'chat'>; controller: ActivityController; connected: boolean; active: boolean; navigationOwner: object; navigate: (view: WorkspaceDestination) => void; openResource: (panel: ContextPanelId) => void
+export function PersonalWorkspace({ destination, controller, connected, active, navigationOwner, navigate, openResource, actions, recent }: {
+  actions?: ReactNode; recent?: ReactNode
+  destination: 'today' | 'todos' | 'activity' | 'materials'; controller: ActivityController; connected: boolean; active: boolean; navigationOwner: object; navigate: (view: WorkspaceDestination) => void; openResource: (panel: ContextPanelId) => void
 }) {
   const { snapshot, loading, busy, error, notice, refresh } = controller
   const title = WORKSPACE_DESTINATIONS.find(item => item.id === destination)!.label
@@ -33,14 +34,16 @@ export function PersonalWorkspace({ destination, controller, connected, active, 
     activity: '只采集你指定的前台应用可见内容。先核对范围，再明确开启。',
   }
   return <section className="cm-personal" aria-label={`${title}工作区`}>
-    <header className="cm-personal-head"><div><p className="cm-personal-eyebrow">个人工作中心</p><h1>{title}</h1><p>{descriptions[destination]}</p></div>
+    <header className="cm-personal-head"><div><p className="cm-personal-eyebrow">个人工作台</p><h1>{title}</h1><p>{descriptions[destination]}</p></div>
       <div className="cm-personal-actions"><span className="cm-personal-count">{connected ? '本机 Companion 已连接' : '本机服务未连接'}</span><button className="cm-p-button" type="button" disabled={!connected || loading || busy} onClick={() => void refresh()}>{loading ? '刷新中…' : '刷新'}</button></div>
     </header>
+    {actions}
     {!connected && <div className="cm-personal-banner" role="alert">Companion 未连接。当前信息可能过期；连接恢复后才能保存或接收提醒。</div>}
     {error && <div className="cm-personal-banner" role="alert">{error}</div>}
     {notice && <div className="cm-personal-banner" role="status">{notice}</div>}
     <div className="cm-personal-body">
       {destination === 'materials' ? <MaterialsPanel openResource={openResource} /> : !snapshot ? <div className="cm-personal-empty"><h2>{loading ? '正在读取本机记录' : '还没有读取到工作记录'}</h2><p>{connected ? '点击刷新获取本机 Companion 的待办与采集状态。读取失败不会生成示例事项。' : '请先连接本机 Companion；待办与来源由同一后台服务保管。'}</p></div> : destination === 'activity' ? <ActivityPanel controller={controller} connected={connected} /> : <TodoPanel today={destination === 'today'} controller={controller} connected={connected} active={active} navigationOwner={navigationOwner} navigate={navigate} />}
+      {recent}
     </div>
   </section>
 }

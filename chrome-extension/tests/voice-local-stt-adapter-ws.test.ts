@@ -67,7 +67,7 @@ test("happy path: start → stop → voice.stt.start/chunk/end → result", asyn
     },
   )
 
-  adapter.start({ sessionId: "s-happy", modelId: "medium", lang: "zh-CN" })
+  adapter.start({ sessionId: "s-happy", modelId: "medium", lang: "en-US" })
   await new Promise((r) => setTimeout(r, 20))
   assert.ok(events.includes("start"), `expected start, got ${events.join(",")}`)
   // C1: recording must not open the Companion session (idle-safe).
@@ -84,6 +84,7 @@ test("happy path: start → stop → voice.stt.start/chunk/end → result", asyn
   assert.ok(startMsg, "voice.stt.start after stop")
   assert.equal(startMsg.sessionId, "s-happy")
   assert.equal(startMsg.modelId, "medium")
+  assert.equal(startMsg.lang, "en")
   assert.equal(startMsg.format, "wav")
   assert.equal(startMsg.sampleRate, 16000)
   assert.equal(startMsg.channels, 1)

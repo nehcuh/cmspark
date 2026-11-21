@@ -132,6 +132,27 @@ test("fileToWavSegments rejects oversize", async () => {
   if (!r.ok) assert.equal(r.code, "too_large")
 })
 
+test("local import keeps the last sample when a file barely exceeds the segment limit", async () => {
+  const channel = new Float32Array(LOCAL_STT_SAMPLE_RATE + 1)
+  channel[channel.length - 1] = -0.5
+  const r = await fileToWavSegments(new Blob(["fixture"]), {
+    segmentMs: 1000,
+    audioContextFactory: () => ({
+      decodeAudioData: async () => ({ length: channel.length, sampleRate: LOCAL_STT_SAMPLE_RATE,
+        numberOfChannels: 1, duration: channel.length / LOCAL_STT_SAMPLE_RATE, getChannelData: () => channel }),
+      close: async () => {},
+    } as unknown as AudioContext),
+  })
+  assert.ok(r.ok)
+  if (!r.ok) return
+  const [first, last] = r.segments
+  assert.equal(r.segments.length, 2)
+  assert.equal(first.t1Sec, last.t0Sec)
+  assert.equal(last.t1Sec, channel.length / LOCAL_STT_SAMPLE_RATE)
+  assert.ok(first.t1Sec > 0.49 && first.t1Sec < 0.51)
+  assert.equal(new DataView(last.wav.buffer as ArrayBuffer).getInt16(last.wav.byteLength - 2, true), -16384)
+})
+
 test("fileToWavSegments with mock AudioContext produces segments", async () => {
   // 2.0s of silence at 16k mono as fake decode
   const samples = LOCAL_STT_SAMPLE_RATE * 2

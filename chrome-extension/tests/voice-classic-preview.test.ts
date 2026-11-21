@@ -100,3 +100,23 @@ test("#482 cancel ordinary streaming dictation discards a late final", async () 
     assert.ok(sent.some((m) => m.type === "voice.stt.abort" && m.sessionId === end.sessionId))
   } finally { adapter.destroy() }
 })
+
+test("#878 forwards the first callback received during microphone startup once and in order", async () => {
+  const wire: any[] = []
+  let ready!: () => void
+  const adapter = createLocalSttAdapter({ onStart() {}, onError() {}, onEnd() {}, onResult() {} }, {
+    modelId: "medium", send: message => wire.push(message), onMessage: () => () => {},
+    startPcmStreamCapture: async opts => {
+      opts.onPcmChunk(Uint8Array.of(7, 8))
+      await new Promise<void>(resolve => { ready = resolve })
+      opts.onPcmChunk(Uint8Array.of(9, 10))
+      return { backend: "scriptprocessor", stop: async () => {}, abort() {} }
+    },
+  })
+  try {
+    adapter.start({ sessionId: "first", mode: "classic", streamPartial: true })
+    assert.equal(wire.length, 0)
+    ready(); await turn()
+    assert.deepEqual(wire.filter(m => m.type === "voice.stt.chunk").flatMap(m => Array.from(atob(m.data), c => c.charCodeAt(0))), [7, 8, 9, 10])
+  } finally { adapter.destroy() }
+})

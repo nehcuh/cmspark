@@ -12,6 +12,7 @@ import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "../voice/session-caps"
 import { validateProjectRequest } from "../threads/project-store"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import { validMeetingAsrMessage } from "../voice/external-asr-meeting"
+import { validTranslationRequest } from "../meeting/meeting-translation"
 import { validBinaryDriftMessage } from "../apps/binary-drift-state"
 import { validateActivityMessage } from "../activity"
 import { validateSettingsAssistantMessage } from "../settings-assistant"
@@ -51,6 +52,10 @@ function meetingAsrSchema(message: any): WsValidationResult {
   return validMeetingAsrMessage(message) ? { valid: true } : { valid: false, error: "Invalid meeting ASR request" }
 }
 
+function translationSchema(message: any): WsValidationResult {
+  return validTranslationRequest(message) ? { valid: true } : { valid: false, error: "Invalid translation request" }
+}
+
 function meetingMinutesSchema(m: any): WsValidationResult {
   if (m.v !== 1) return { valid: false, error: `${m.type} requires v:1` }
   if (m.reference_notes !== undefined && (typeof m.reference_notes !== "string" || m.reference_notes.length > 100_000)) {
@@ -82,7 +87,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
   }
   if (msg.queue_contract !== undefined || (hasMeetingPcmFields(msg) && (msg.type.startsWith("voice.stt.") || msg.type === "meeting.start" || msg.type === "meeting.end"))) {
     if (!validMeetingPcmMessage(msg)) return { valid: false, error: "Invalid continuous meeting PCM message" }
-    if (msg.type !== "voice.stt.start") return { valid: true }
+    if (msg.type !== "voice.stt.start" || msg.engine === "meeting-external") return { valid: true }
   }
 
   if (["chat.create", "chat.regenerate", "file.upload"].includes(msg.type) && msg.context_tab_id !== undefined) {
@@ -1122,6 +1127,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "meeting.translation.list": (m) => translationSchema(m),
+    "meeting.translation.prepare": (m) => translationSchema(m),
+    "meeting.translation.run": (m) => translationSchema(m),
+    "meeting.translation.cancel": (m) => translationSchema(m),
     "meeting.prepare_minutes": (m) => meetingMinutesSchema(m),
     "meeting.generate_minutes": (m) => meetingMinutesSchema(m),
     "meeting.set_status": (m) => {

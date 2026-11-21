@@ -1,3 +1,4 @@
+import { openWorkbench } from "./navigation/open-workbench"
 // #469: responsive conversation workspace; root DESIGN.md.
 // CMspark Browser Agent — Root App Component
 
@@ -216,7 +217,7 @@ function AppContent() {
   }, [isComputer])
 
   return (
-    <ContextPanelHostProvider capabilityLevel={level}>
+    <ContextPanelHostProvider capabilityLevel={level} openMeetingWorkspace={openWorkbench}>
     <WorkspaceFrame
       level={level}
       top={<>

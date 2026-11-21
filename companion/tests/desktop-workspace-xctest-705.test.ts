@@ -519,8 +519,8 @@ test('705 actual failure progress projection precedes cancel and isolates reader
 })
 
 
-test('705 Choose stage11 splits only original firstMatch remaining and wait boundaries with whole-source conservation',()=>{
- const actual=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8')
+test('705 preceding Choose stage11 splits only original firstMatch remaining and wait boundaries with whole-source conservation',()=>{
+ const actual=require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restoreChooseWait(fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8')) as string
  for(const eol of['\n','\r\n']){
   const source=actual.replace(/\r\n/g,'\n').replace(/\n/g,eol),prior=previousChoose705(source)
   // Git source-only LF digest binds all other actions, deadlines and assertions.
@@ -661,8 +661,8 @@ test('705 same owned sheet title or label query preserves one unique hittable ap
  assert.equal(matches([{label:'Open',title:''}]).length,1)
  assert.equal(matches([{label:'Go',title:'Go'},{label:'Cancel',title:'Cancel'}]).length,0)
  assert.equal(matches([{label:'Choose',title:''},{label:'',title:'Open'}]).length,2)
- const fragment=ui.slice(ui.indexOf('  uiStage=11;'),ui.indexOf('  uiStage=14;'))
- assert.ok(fragment.indexOf('guard chooseCount==1 else')<fragment.indexOf('let chooseHittable=choose.element.isHittable'))
+ const unique='  try requireUniqueAfterReady(choose,11,11)',start=ui.indexOf(unique),fragment=ui.slice(start,ui.indexOf('  uiStage=14;',start))
+ assert.ok(start>=0 && fragment.indexOf('let chooseHittable=choose.element.isHittable')>0)
  assert.ok(fragment.indexOf('guard chooseHittable else')<fragment.indexOf('choose.element.click()'))
  assert.ok(ui.includes('let sheetLabelCount=labelChoose.count'));assert.ok(ui.includes('buttonIdentityRows.append([label,title])'))
  assert.ok(ui.includes('guard r>0,r<=45 else'));assert.ok(ui.includes('cancel=second.buttons.matching(identifier:"Cancel")'))
@@ -682,8 +682,8 @@ test('705 actual POSIX snapshot model is independent of the host path namespace'
 })
 
 
-test('705 live Choose path omits the synchronous auxiliary census and restores entire dc9 authorities',()=>{
- const actual=fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8'),owner=fs.readFileSync(helper,'utf8')
+test('705 preceding Choose path omits the synchronous auxiliary census and restores entire dc9 authorities',()=>{
+ const actual=require(path.resolve('scripts/tests/picker-wait-inverse.cjs')).restoreChooseWait(fs.readFileSync(path.join(files,'WorkspacePickerUITests.swift'),'utf8')) as string,owner=fs.readFileSync(helper,'utf8')
  for(const eol of ['\n','\r\n']){
   const source=actual.replace(/\r\n/g,'\n').replace(/\n/g,eol),canonical=source.replace(/\r\n/g,'\n'),prior=previousCriticalCensus705('ui',source)
   assert.equal(canonical.split('observeChooseCensus();').length,1,'historical census definition is not invoked')
