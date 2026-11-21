@@ -1,3 +1,4 @@
+import type { openWorkbench } from "../navigation/open-workbench"
 // ContextPanelHost — single owner of context panel state, loaders, mounts,
 // and cmspark:open-context-panel (UIUX v2 §4.7 M1). Host is SoT for panels.
 // #321 PR-1: legacy permanent BottomBar tab strip deleted (was PR5-gated off).
@@ -149,9 +150,11 @@ export function useContextPanelHostOptional(): ContextPanelHostApi | null {
 
 export function ContextPanelHostProvider({
   capabilityLevel,
+  openMeetingWorkspace,
   children,
 }: {
   capabilityLevel: CapabilityLevel
+  openMeetingWorkspace?: typeof openWorkbench
   children: ReactNode
 }) {
   const [activePanel, setActivePanel] = useState<ContextPanelId | null>(null)
@@ -223,19 +226,21 @@ export function ContextPanelHostProvider({
 
   const openPanelForce = useCallback(
     (id: ContextPanelId): Promise<boolean> => {
+      if (id === "meeting" && openMeetingWorkspace) return openMeetingWorkspace("meeting")
       const thread = activeThreadRef.current, selectionRevision = activeThreadSelectionRef.current
       const pending = requestPanelChange(id)
       const version = transitionVersion.current
       return pending.then(allowed => allowed && version === transitionVersion.current && activeThreadRef.current === thread && activeThreadSelectionRef.current === selectionRevision && activePanelRef.current === id)
     },
-    [requestPanelChange],
+    [requestPanelChange, openMeetingWorkspace],
   )
 
   const openPanel = useCallback(
     (id: ContextPanelId) => {
+      if (id === "meeting" && openMeetingWorkspace) { void openMeetingWorkspace("meeting"); return }
       void requestPanelChange(activePanelRef.current === id ? null : id)
     },
-    [requestPanelChange],
+    [requestPanelChange, openMeetingWorkspace],
   )
 
   // Close open panel if it is no longer primary or overflow for this level

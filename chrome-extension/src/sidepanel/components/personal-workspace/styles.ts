@@ -1,6 +1,6 @@
 import { tokens as t } from '../../ui/tokens'
 export const personalWorkspaceCSS = `
-.cm-personal-mount{display:flex;flex:1;min-height:0}.cm-personal-mount[hidden]{display:none}.cm-chat-mount{display:flex;flex:1;min-height:0;flex-direction:column}.cm-chat-mount[hidden]{display:none}
+.cm-workbench-actions{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px}.cm-workbench-tool{flex:1;min-height:0;overflow:auto}.cm-workbench-tool[hidden]{display:none}.cm-personal-mount{display:flex;flex:1;min-height:0}.cm-personal-mount[hidden]{display:none}.cm-chat-mount{display:flex;flex:1;min-height:0;flex-direction:column}.cm-chat-mount[hidden]{display:none}
 .cm-personal{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto;background:${t.bg};font-family:${t.font};color:${t.text};font-size:14px}
 .cm-personal *{box-sizing:border-box}.cm-personal button,.cm-personal input,.cm-personal select,.cm-personal textarea{font:inherit;color:inherit}.cm-personal button{cursor:pointer}.cm-personal button:disabled{opacity:.55;cursor:not-allowed}
 .cm-personal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:32px 36px 24px;border-bottom:1px solid ${t.border};flex-shrink:0}.cm-personal-head h1{margin:0 0 8px;font-size:24px;line-height:1.3;font-weight:600;letter-spacing:-.035em}.cm-personal-head p{margin:0;color:${t.textSecondary};line-height:1.6;max-width:650px;font-size:13px}

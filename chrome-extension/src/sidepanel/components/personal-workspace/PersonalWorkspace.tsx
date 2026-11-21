@@ -15,14 +15,14 @@ export function matchesActivityAppSearch(app: ActivityApp, query: string): boole
 }
 const appWindowLabels = { visible: '有可见窗口', minimized: '窗口已最小化', hidden: '窗口已隐藏', none: '暂无窗口' }
 
-export type WorkspaceDestination = 'today' | 'todos' | 'chat' | 'materials' | 'activity'
+export type WorkspaceDestination = 'meeting' | 'recording' | 'translation' | 'transcribe' | 'today' | 'todos' | 'chat' | 'materials' | 'activity'
 export const WORKSPACE_DESTINATIONS: Array<{ id: WorkspaceDestination; label: string }> = [
-  { id: 'today', label: '今日' }, { id: 'todos', label: '待办' }, { id: 'chat', label: '对话' }, { id: 'materials', label: '资料' }, { id: 'activity', label: '活动记录' },
+  { id: 'today', label: '今日' }, { id: 'todos', label: '待办' }, { id: 'chat', label: '对话' }, { id: 'meeting', label: '会议' }, { id: 'materials', label: '资料' }, { id: 'activity', label: '活动记录' },
 ]
 const reminderLabels: Record<PersonalTodo['reminder']['status'], string> = { none: '未设置提醒', scheduled: '已排程', attempting: '正在提交系统通知', submitted: '已提交系统通知（不代表已读）', failed: '提醒提交失败', unknown: '提醒结果未知，请核实' }
 
 export function PersonalWorkspace({ destination, controller, connected, active, navigationOwner, navigate, openResource }: {
-  destination: Exclude<WorkspaceDestination, 'chat'>; controller: ActivityController; connected: boolean; active: boolean; navigationOwner: object; navigate: (view: WorkspaceDestination) => void; openResource: (panel: ContextPanelId) => void
+  destination: 'today' | 'todos' | 'activity' | 'materials'; controller: ActivityController; connected: boolean; active: boolean; navigationOwner: object; navigate: (view: WorkspaceDestination) => void; openResource: (panel: ContextPanelId) => void
 }) {
   const { snapshot, loading, busy, error, notice, refresh } = controller
   const title = WORKSPACE_DESTINATIONS.find(item => item.id === destination)!.label
@@ -33,7 +33,7 @@ export function PersonalWorkspace({ destination, controller, connected, active, 
     activity: '只采集你指定的前台应用可见内容。先核对范围，再明确开启。',
   }
   return <section className="cm-personal" aria-label={`${title}工作区`}>
-    <header className="cm-personal-head"><div><p className="cm-personal-eyebrow">个人工作中心</p><h1>{title}</h1><p>{descriptions[destination]}</p></div>
+    <header className="cm-personal-head"><div><p className="cm-personal-eyebrow">个人工作台</p><h1>{title}</h1><p>{descriptions[destination]}</p></div>
       <div className="cm-personal-actions"><span className="cm-personal-count">{connected ? '本机 Companion 已连接' : '本机服务未连接'}</span><button className="cm-p-button" type="button" disabled={!connected || loading || busy} onClick={() => void refresh()}>{loading ? '刷新中…' : '刷新'}</button></div>
     </header>
     {!connected && <div className="cm-personal-banner" role="alert">Companion 未连接。当前信息可能过期；连接恢复后才能保存或接收提醒。</div>}
