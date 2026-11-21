@@ -357,6 +357,9 @@ test("the full workbench opens the meeting from settings and keeps pending secur
     const tools = f.rows(f.renderWorkspace()).filter(n => n.props?.className === "cm-workbench-tool" && !n.props.hidden)
     assert.equal(tools.length, 1)
     assert.equal(tools[0].props.children.props.purpose, "meeting")
+    f.setSettingsOpen(true)
+    f.setSettingsOpen(false)
+    assert.ok(f.rows(f.renderWorkspace()).some(n => n.props?.className === "cm-workbench-tool" && !n.props.hidden && n.props.children.props.purpose === "meeting"))
   } finally { f.close() }
 })
 

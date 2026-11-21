@@ -1715,7 +1715,7 @@ export function MeetingPanel(props: {
     ? "Companion 未连接"
     : !localModelReady || !localBinaryReady
       ? "本机 STT 未就绪"
-      : !localEngineReady ? "本机模型已就绪，识别引擎未启用" : "本机 STT 就绪"
+      : !localEngineReady ? "本机模型已就绪，识别引擎未启用" : `本机 Whisper · ${activeModelId} · 按段转写`
 
   return (
     <div
@@ -1931,7 +1931,9 @@ export function MeetingPanel(props: {
         </span>
         <span style={{ fontSize: 11, color: tokens.textSecondary }}>{externalLive ? liveTarget?.model + " · 按段转写" : localReadyLabel}</span>
         <button type="button" data-testid="meeting-open-voice-settings" disabled={capturing || busy}
-          onClick={() => dispatch({ type: "SET_SETTINGS_OPEN", open: true })} style={linkBtn}>语音设置</button>
+          onClick={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model-meeting-transcribe" })} style={linkBtn}>会议转写设置</button>
+        {!externalLive && (!localModelReady || !localBinaryReady) && <button type="button" disabled={capturing || busy}
+          onClick={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "input-dictation-engine" })} style={linkBtn}>本机组件与模型</button>}
         {!externalLive && !localEngineReady && <button type="button" data-testid="meeting-enable-local-stt"
           disabled={enablingLocal || !companionConnected || !localModelReady || !localBinaryReady || !state.voicePrivacyAckV2}
           onClick={() => {

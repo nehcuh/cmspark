@@ -109,7 +109,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
       window.removeEventListener("hashchange", onHash)
     }
   }, [full, dispatch])
-  useEffect(() => { if (forceChat) setView("chat") }, [forceChat])
+  useEffect(() => { if (destinationBlocked) setView("chat") }, [destinationBlocked])
   useEffect(() => {
     const showChat = (event: Event) => {
       if (event.type === "cmspark:open-context-panel" && (event as CustomEvent).detail?.panel === "meeting") return
