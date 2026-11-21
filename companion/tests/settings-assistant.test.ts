@@ -82,6 +82,23 @@ test("explicit named meeting model switches with revision checks and a real rece
   assert.equal(bound, profile.id)
   assert.equal(writes, 1)
 })
+
+test("default model switch preview shows dependent uses and the meeting inheritance boundary", async () => {
+  const profile = { id: "7d2ea1a5-a560-4877-bc06-fb2bbfc67494", name: "快速", model_name: "chat", base_url: "https://provider.test/v1", has_key: true }
+  for (const independent of [false, true]) {
+    const service = new SettingsAssistant({
+      read: () => ({}), save: async () => assert.fail("proposal never saves"), extract: async () => assert.fail("explicit model name is resolved locally"),
+      models: () => ({ config_revision: "epoch:1", model_center: {
+        chat_profile_id: null, meeting_minutes_profile_id: independent ? profile.id : null, profiles: [profile],
+      } }),
+    })
+    const { proposal } = await service.handle({ type: "settings.assistant.propose", id: "default", text: "默认对话改用快速" }, "panel")
+    const summary = proposal.candidates[0].tradeoffs
+    assert.match(summary, /默认对话.*看图.*听写纠错.*活动提取.*后台摘要.*设置助手/)
+    if (independent) assert.match(summary, /会议纪要使用独立模型/)
+    else assert.match(summary, /会议纪要也继承/)
+  }
+})
 test("model receives only safe catalog values and redacted description, no provider, vision, header or MCP secrets", async () => {
   const f = fixture()
   await f.propose("provider-private-key vision-private-key configured-header-secret configured-mcp-secret bearer abcdefgh sk-123456789012")

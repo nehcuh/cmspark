@@ -102,7 +102,8 @@ function namedModelProposal(text: string, config: any, read: typeof readModelCen
   proposal.candidates = [{
     id: "candidate-1", title: `切换${label}`, reason: "使用已配置的模型服务",
     tradeoffs: scope === "chat"
-      ? "这会影响默认对话和所有继承它的用途。请求会改发到所选服务。"
+      ? "默认对话会改用所选服务，复用默认模型的看图、听写纠错、活动提取、后台摘要和设置助手也会受影响。" +
+        (center.meeting_minutes_profile_id ? "会议纪要使用独立模型。" : "会议纪要也继承默认模型，生成前会显示实际接收方。")
       : "只影响此后生成纪要时的模型选择。生成前另行确认接收方和文本范围。",
     changes: [{
       id: "change-1", settingId: scope === "chat" ? "model.chatProfile" : "model.meetingMinutesProfile",
