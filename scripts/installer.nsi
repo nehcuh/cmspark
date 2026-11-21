@@ -73,7 +73,12 @@ Var /GLOBAL START_MENU_FOLDER
   File /oname=$PLUGINSDIR\cmspark-stop.ps1 "${CMSPARK_STOP_SCRIPT}"
   StrCpy $0 "$INSTDIR"
   System::Call 'Kernel32::SetEnvironmentVariable(t "CMSPARK_INSTALL_STOP_ROOT", t r0) i.r1'
-  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\cmspark-stop.ps1"`
+  ; Sysnative selects the OS-native process view from the 32-bit installer.
+  StrCpy $0 "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${IfNot} ${FileExists} "$0"
+    StrCpy $0 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+  nsExec::ExecToLog `"$0" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\cmspark-stop.ps1"`
   Pop $1
   System::Call 'Kernel32::SetEnvironmentVariable(t "CMSPARK_INSTALL_STOP_ROOT", p 0)'
   ${If} $1 != 0
