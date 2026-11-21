@@ -67,7 +67,7 @@ function harness(initial?: MeetingAsrConfig, transport: Partial<ExternalTranscri
   const upload = (token: string, index: number, wav: Buffer, owner?: string) => request("segment", {
     token, index, data: wav.toString("base64"),
   }, owner)
-  return { request, authorize, upload, setConfig: (next?: MeetingAsrConfig) => { config = next } }
+  return { request, authorize, upload, service, setConfig: (next?: MeetingAsrConfig) => { config = next } }
 }
 
 test("old voice preferences default meeting import to local and meeting credentials are write-only", async () => {
@@ -233,4 +233,36 @@ test("local meeting import can use prepared Whisper when the separate chat engin
   setVoiceFields({ meetingAsr: { mode: "local", external: openAi } })
   assert.equal((await handleVoiceSttMessage(explicit, ctx, { service })).type, "voice.stt.partial")
   await handleVoiceSttMessage({ type: "voice.stt.abort", v: 1, sessionId: start.sessionId }, ctx, { service })
+})
+
+test("live microphone consent is capture-bound and cannot become chat consent", async () => {
+  const frame = { type: "voice.stt.start", v: 1, sessionId: "00000000-0000-4000-8000-000000000878", capture_epoch: 1, queue_contract: 1,
+    format: "pcm_s16le", sampleRate: 16000, channels: 1, engine: "meeting-external" }
+  assert.equal(validateWsMessage(frame).valid, true)
+  const { capture_epoch, queue_contract, ...legacy } = frame
+  assert.equal(validateWsMessage(legacy).valid, false)
+  assert.equal((await handleVoiceSttMessage(frame, { origin: "chrome-extension://owned", peerId })).code, "stale_capture")
+  const begin = { type: "meeting.start", v: 1, id: "fixture-live", queue_contract, capture_id: frame.sessionId,
+    expected_capture_epoch: capture_epoch - 1, privacy_ack_v1: true, live_asr: "1".repeat(64) }
+  assert.equal(validateWsMessage(begin).valid, false)
+  assert.equal(validateWsMessage({ ...begin, privacy_ack_v2: true }).valid, false)
+  assert.equal(validateWsMessage({ ...begin, privacy_ack_meeting_asr_v1: true }).valid, true)
+})
+
+test("live ASR stops before dispatch when the confirmed receiver changes during DNS", async () => {
+  let resolving!: () => void, ready!: (r: { address: string; family: number }[]) => void
+  const started = new Promise<void>(resolve => { resolving = resolve })
+  let requests = 0
+  const { service, setConfig } = harness({ mode: "external", external: openAi }, {
+    lookup: () => { resolving(); return new Promise(resolve => { ready = resolve }) },
+    fetchImpl: async () => { requests++; return { status: 200, json: async () => ({ text: "heard" }) } },
+  })
+  assert.equal(service.openLive("0".repeat(64)), null)
+  const lease = service.openLive(service.state().state.configIdentity)!
+  const result = lease.transcribe(wavFixture(3))
+  await started
+  setConfig({ mode: "external", external: { ...openAi, model: "different" } })
+  ready([{ address: "1.1.1.1", family: 4 }])
+  assert.deepEqual(await result, { ok: false, code: "external_configuration_changed", message: "meeting ASR target changed" })
+  assert.equal(requests, 0)
 })

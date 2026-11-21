@@ -97,7 +97,7 @@ export function MeetingExternalAsrSettings({ active = true }: { active?: boolean
   }
 
   return <div data-model-center="meeting-asr" style={styles.root}>
-    <p>会议录音在本机转写。导入录音时，可选择外部服务并逐次确认音频、模型和接收地址。</p>
+    <p>会议麦克风与导入录音共用此转写设置。使用外部服务前，每次核对接收地址、模型和音频范围。</p>
     {!connected && <p role="status">连接 Companion 后可管理导入音频的转写服务。</p>}
     {busy && <p role="status">正在核对转写设置…</p>}
     {error && <p role="alert">{error}</p>}
@@ -108,7 +108,7 @@ export function MeetingExternalAsrSettings({ active = true }: { active?: boolean
     </p>}
     {fields && <form onSubmit={onSubmit} data-testid="meeting-asr-settings">
       <fieldset disabled={!connected || busy} style={styles.group}>
-        <legend>导入录音</legend>
+        <legend>会议与导入录音</legend>
         <label style={styles.field}>转写方式
           <select data-testid="meeting-asr-mode" value={fields.mode}
             onChange={event => update({ mode: event.target.value as Draft["mode"] })}>

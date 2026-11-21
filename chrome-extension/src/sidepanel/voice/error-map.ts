@@ -99,6 +99,8 @@ export type LocalSttUserFacing = {
 export function mapLocalSttError(code: string): LocalSttUserFacing {
   const c = (code || "").toLowerCase()
   switch (c) {
+    case "startup_timeout":
+      return { severity: "banner", message: "识别启动超时，已停止收音。请检查服务后重试。" }
     case "empty_result":
       return { severity: "banner", message: "未识别到内容，请重试" }
     case "model_missing":

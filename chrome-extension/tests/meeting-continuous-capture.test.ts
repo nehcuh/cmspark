@@ -116,7 +116,7 @@ test("Cancel before permission resolution stops late tracks and never sends voic
   const capture = createMeetingContinuousCapture({ meetingId: identity.meeting_id, captureId: identity.capture_id, epoch: 1, modelId: "medium", env: audio.env,
     request: async m => { wire.push(m); return status("finished") } })
   const start = capture.start(); await capture.abort(); resolve(audio.stream); await start
-  assert.equal(audio.stops, 1); assert.equal(audio.closes, 0)
+  assert.equal(audio.stops, 1); assert.equal(audio.closes, 1)
   assert.deepEqual(wire.map(m => m.type), ["voice.stt.abort"])
 })
 
@@ -184,4 +184,69 @@ test("real track end/mute, context suspension and the original10s callback-idle 
       } finally { capture.destroy() }
     }
   } finally { globalThis.setTimeout = originalSet; globalThis.clearTimeout = originalClear }
+})
+
+for (const delay of [500, 1500]) {
+  test(`#878 microphone opens during ${delay}ms start ACK wait and forwards exact first samples`, async () => {
+    const audio = audioEnvironment(), sent: any[] = []
+    const capture = createMeetingContinuousCapture({ meetingId: identity.meeting_id, captureId: identity.capture_id, epoch: 1, modelId: "small", env: audio.env,
+      request: async m => {
+        sent.push(m)
+        if (m.type === "voice.stt.start") {
+          await new Promise(resolve => setTimeout(resolve, delay))
+          return status("capturing", { type: "voice.stt.partial", status: "receiving", credits: initial })
+        }
+        if (m.type === "voice.stt.chunk") return status("capturing", { credit_id: m.credit_id, accepted_through: Number(m.sample_offset) + Number(m.frame_count),
+          credits: [{ credit_id: Number(m.credit_id) + 8, sample_offset: (Number(m.credit_id) + 7) * 640, max_frames: 640 }] })
+        return status("finished")
+      } })
+    try {
+      const starting = capture.start()
+      await new Promise(resolve => setTimeout(resolve, 2))
+      const input = samples(delay * 16)
+      audio.push(input)
+      assert.equal(sent.filter(m => m.type === "voice.stt.chunk").length, 0)
+      await starting
+      await new Promise(resolve => setTimeout(resolve, 10))
+      await capture.stop()
+      const expected = new Uint8Array(input.length * 2)
+      input.forEach((s, i) => new DataView(expected.buffer).setInt16(2 * i, Math.round(s < 0 ? s * 32768 : s * 32767), true))
+      assert.deepEqual(joined(sent.filter(m => m.type === "voice.stt.chunk").map(m => Uint8Array.from(atob(m.data), c => c.charCodeAt(0)))), expected)
+    } finally { capture.destroy() }
+  })
+}
+
+test("#878 startup overflow drains exactly the two-second prefix and excludes all later samples", () => {
+  const received: Uint8Array[] = [], reasons: string[] = []
+  let stopped = 0
+  const encoder = new MeetingPcmEncoder(b => received.push(b.pcm), (_, reason) => reasons.push(reason), () => stopped++)
+  const input = samples(32127)
+  encoder.push(input, 16000)
+  assert.equal(stopped, 1)
+  assert.equal(received.length, 0)
+  encoder.push(samples(640), 16000)
+  for (let i = 0; i < 50; i++) encoder.grant([{ credit_id: i + 1, sample_offset: i * 640, max_frames: 640 }])
+  assert.deepEqual(reasons, ["startup_timeout"])
+  const reference = new Uint8Array(64000), view = new DataView(reference.buffer)
+  input.subarray(0, 32000).forEach((s, i) => view.setInt16(i * 2, Math.round(s < 0 ? s * 32768 : s * 32767), true))
+  assert.deepEqual(joined(received), reference)
+})
+
+test("#878 a late start ACK after cancellation cannot send buffered audio", async () => {
+  const audio = audioEnvironment(), wire: any[] = []
+  let ready!: (s: unknown) => void, cancelled!: (s: unknown) => void
+  const capture = createMeetingContinuousCapture({ meetingId: identity.meeting_id, captureId: identity.capture_id, epoch: 1, modelId: "small", env: audio.env,
+    request: async m => {
+      wire.push(m)
+      if (m.type === "voice.stt.start") return new Promise(r => { ready = r })
+      return new Promise(r => { cancelled = r })
+    } })
+  const starting = capture.start()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  audio.push(samples(640))
+  const aborting = capture.abort()
+  ready(status("capturing", { type: "voice.stt.partial", status: "receiving", credits: initial }))
+  await starting
+  assert.deepEqual(wire.map(m => m.type), ["voice.stt.start", "voice.stt.abort"])
+  cancelled(status("finished")); await aborting
 })

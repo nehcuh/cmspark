@@ -222,6 +222,15 @@ export async function handleVoiceSttMessage(
   }
   if (q1) {
     if (!capture?.owns(peerId, sessionId ?? "", rest.capture_epoch)) return sttError(sessionId, "stale_capture", "capture not owned")
+    if (type === "voice.stt.start") {
+      const external = capture.liveTarget && capture.liveTarget !== "local"
+      if ((rest.engine === "meeting-external") !== Boolean(external)) return sttError(sessionId, "stale_capture", "meeting ASR target changed")
+      if (external) {
+        const req = { sessionId: sessionId!, modelId: "", format: "pcm_s16le" as const, sampleRate: 16000, channels: 1, lang: rest.lang }
+        if (!capture.matchesRequest(req)) return sttError(sessionId, "stale_capture", "capture settings changed")
+        return { ...capture.activate(req), ...sttPartial(sessionId!, "receiving") }
+      }
+    }
     if (type === "voice.stt.chunk") {
       if (typeof rest.data !== "string" || rest.data.length > Math.ceil(MEETING_PCM.blockFrames * 2 / 3) * 4 ||
           !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(rest.data)) {
@@ -232,7 +241,7 @@ export async function handleVoiceSttMessage(
       catch (error) { return sttError(sessionId, error instanceof Error && error.message === "stale_capture" ? "stale_capture" : "queue_protocol_error", "invalid PCM credit or range") }
     }
     if (type === "voice.stt.end") {
-      const reasons: CaptureStopReason[] = ["user_stop", "capacity", "hard_limit", "input_gap", "permission_revoked", "suspended", "transport_backpressure", "unload"]
+      const reasons: CaptureStopReason[] = ["user_stop", "capacity", "hard_limit", "input_gap", "permission_revoked", "suspended", "transport_backpressure", "startup_timeout", "unload"]
       if (!Number.isSafeInteger(rest.final_sample_end) || rest.final_sample_end < 0 ||
           rest.last_credit_id !== Math.ceil(rest.final_sample_end / MEETING_PCM.blockFrames) || !reasons.includes(rest.stop_reason)) {
         capture.fail("queue_protocol_error"); return sttError(sessionId, "queue_protocol_error", "invalid seal barrier")
@@ -323,7 +332,8 @@ export async function handleVoiceSttMessage(
           sessionId,
           modelId: typeof modelId === "string" ? modelId : "",
           engine: "system" as const,
-          format: format as "pcm_s16le" | "wav",
+          ...(typeof lang === "string" && (q1 || meetingImport) ? { lang } : {}),
+        format: format as "pcm_s16le" | "wav",
           sampleRate: typeof sampleRate === "number" ? sampleRate : 0,
           channels: typeof channels === "number" ? channels : 0,
           ...(typeof maxMs === "number" ? { maxMs } : {}),
@@ -366,6 +376,7 @@ export async function handleVoiceSttMessage(
       const startReq = {
         sessionId,
         modelId: typeof modelId === "string" ? modelId : "",
+        ...(typeof lang === "string" && (q1 || meetingImport) ? { lang } : {}),
         format: format as "pcm_s16le" | "wav",
         sampleRate: typeof sampleRate === "number" ? sampleRate : 0,
         channels: typeof channels === "number" ? channels : 0,

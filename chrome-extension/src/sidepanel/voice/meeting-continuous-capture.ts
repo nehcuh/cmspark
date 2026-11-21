@@ -2,7 +2,7 @@ import { MeetingPcmEncoder, type MeetingBlock, type MeetingCredit } from "./meet
 import { MEETING_PCM_WORKLET_JS } from "./meeting-pcm-worklet-generated"
 
 export type MeetingCaptureOptions = {
-  meetingId: string; captureId: string; epoch: number; modelId: string; engine?: "system"; lang?: string;
+  meetingId: string; captureId: string; epoch: number; modelId: string; engine?: "system" | "meeting-external"; lang?: string;
   request: (message: Record<string, unknown>) => Promise<any>;
   onStart?: () => void; onStatus?: (status: any) => void; onStopped?: () => void;
   onError?: (code: string) => void; onEnd?: (status: any) => void;
@@ -29,7 +29,7 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
   let processor: ScriptProcessorNode | null = null, worklet: AudioWorkletNode | null = null
   let workletUrl: string | null = null, encoder: MeetingPcmEncoder | null = null
   let backend: "audioworklet" | "scriptprocessor" | null = null
-  let workletSealed = false
+  let workletSealed = false, startConfirmed = false, cancelled = false
   let stopping = false, ended = false, silent = false, started = false
   let cursor = 0, rpc = 0, stopReason = "user_stop"
   let sealedResolve: (() => void) | null = null
@@ -58,14 +58,14 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
     const old = context; context = null
     if (old) { old.onstatechange = null; void old.close().catch(() => {}) }
     if (workletUrl) { try { env.URL.revokeObjectURL(workletUrl) } catch { /* */ }; workletUrl = null }
-    processor = null; worklet = null; source = null; mute = null
+    processor = null; worklet = null; source = null; mute = null; encoder = null
   }
   function armIdle() {
     if (idle) clearTimeout(idle)
     if (!stopping) idle = setTimeout(() => { void stop("input_gap") }, 10000)
   }
   function credits(value: MeetingCredit[]) {
-    if (stopping) return
+    if (!startConfirmed) return
     if (worklet) worklet.port.postMessage({ type: "credits", credits: value })
     else encoder?.grant(value)
   }
@@ -86,10 +86,16 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
     const pending = request("voice.stt.chunk", { credit_id: value.credit_id, sample_offset: value.sample_offset,
       frame_count: value.frame_count, data: b64(value.pcm) }).then(ack => {
       if (!matches(ack) || ack.type !== "meeting.capture.status" || ack.credit_id !== value.credit_id || ack.accepted_through !== value.sample_offset + value.frame_count) throw new Error("queue_protocol_error")
+      inflight.delete(value.credit_id)
       handleStatus(ack)
     }).catch(() => { options.onError?.("network_unknown"); if (!stopping) void stop("transport_backpressure") })
       .finally(() => inflight.delete(value.credit_id))
     inflight.set(value.credit_id, pending)
+  }
+  function startupFull() {
+    tracksStop()
+    stopReason = "startup_timeout"
+    options.onStopped?.()
   }
   function sealed(end: number, reason: string) {
     workletSealed = true
@@ -104,9 +110,13 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
     stopPromise = (async () => {
       try {
         const startedAt = Date.now()
-        if (worklet && !workletSealed) {
-          await timeout(new Promise<void>(resolve => { sealedResolve = resolve; worklet!.port.postMessage({ type: "seal", reason }) }), 2000)
-        } else encoder?.seal(reason)
+        if (!workletSealed && (worklet || encoder)) {
+          await timeout(new Promise<void>(resolve => {
+            sealedResolve = resolve
+            if (worklet) worklet.port.postMessage({ type: "seal", reason })
+            else encoder!.seal(reason)
+          }), 2000)
+        }
         closeGraph()
         await timeout(Promise.all([...inflight.values()]).then(() => {}), 2000 - (Date.now() - startedAt))
         const ack = await request("voice.stt.end", { final_sample_end: cursor, last_credit_id: Math.ceil(cursor / 640), stop_reason: stopReason })
@@ -118,7 +128,7 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
   }
   async function abort() {
     if (ended) { closeGraph(); return }
-    stopping = true; stopReason = "user_stop"; tracksStop()
+    cancelled = true; stopping = true; stopReason = "user_stop"; tracksStop()
     // Cancel discards any local partial; it must not manufacture an end/drain.
     closeGraph()
     try { const ack = await request("voice.stt.abort"); if (!matches(ack)) throw new Error("stale_capture"); handleStatus(ack) }
@@ -127,22 +137,11 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
   async function start() {
     if (started || stopping || ended) return
     const startupEnd = Date.now() + 30000
-    const gum = env.navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }).then((s: MediaStream) => {
-      if (stopping || ended) stopStream(s)
-      return s
-    })
     try {
-      stream = await timeout(gum, startupEnd - Date.now())
-      if (stopping || ended) { tracksStop(); return }
-      const ack = await timeout(request("voice.stt.start", { format: "pcm_s16le", sampleRate: 16000, channels: 1,
-        modelId: options.modelId, ...(options.engine ? { engine: options.engine } : {}), privacy_ack_v2: true, lang: options.lang ?? "zh" }), startupEnd - Date.now())
-      if (!matches(ack) || ack.type !== "voice.stt.partial" || ack.status !== "receiving" || !Array.isArray(ack.credits)) throw new Error("stale_capture")
-      if (stopping || ended) { tracksStop(); return }
       const Ctx = env.AudioContext ?? env.webkitAudioContext
       context = new Ctx()
       if (context!.state === "suspended") await timeout(context!.resume(), startupEnd - Date.now())
       if (stopping || ended) { closeGraph(); return }
-      source = context!.createMediaStreamSource(stream!)
       mute = context!.createGain(); mute.gain.value = 0; mute.connect(context!.destination)
       if (typeof context!.audioWorklet?.addModule === "function" && env.AudioWorkletNode && env.Blob && env.URL?.createObjectURL) {
         try {
@@ -156,11 +155,12 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
               const m = event.data
               if (m?.type === "ready") resolve()
               else if (m?.type === "block" && m.pcm instanceof Uint8Array) { armIdle(); block(m) }
+              else if (m?.type === "startup_full") startupFull()
               else if (m?.type === "sealed") sealed(m.end, m.reason)
             }
-            node.port.postMessage({ type: "init", credits: ack.credits })
+            node.port.postMessage({ type: "init", credits: [] })
           }), startupEnd - Date.now())
-          backend = "audioworklet"; source!.connect(node); node.connect(mute!)
+          backend = "audioworklet"
         } catch {
           if (worklet) { worklet.port.onmessage = null; worklet.disconnect(); worklet = null }
           if (workletUrl) { env.URL.revokeObjectURL(workletUrl); workletUrl = null }
@@ -168,7 +168,7 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
       }
       if (stopping || ended) { closeGraph(); return }
       if (!worklet) {
-        encoder = new MeetingPcmEncoder(block, sealed); encoder.grant(ack.credits)
+        encoder = new MeetingPcmEncoder(block, sealed, startupFull)
         processor = context!.createScriptProcessor(1024, 1, 1)
         processor.onaudioprocess = event => {
           if (stopping) return
@@ -178,16 +178,40 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
           // report observable interruptions without claiming physical no-loss.
           armIdle(); encoder!.push(input, rate)
         }
-        source!.connect(processor); processor.connect(mute!); backend = "scriptprocessor"
+        backend = "scriptprocessor"
       }
+      // Build the graph before opening the device. Module compilation, the port
+      // handshake and AudioContext.resume cannot consume the first syllable.
+      const gum = env.navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }).then((s: MediaStream) => {
+        if (stopping || ended) stopStream(s)
+        return s
+      })
+      stream = await timeout(gum, startupEnd - Date.now())
+      if (stopping || ended) { closeGraph(); return }
+      source = context!.createMediaStreamSource(stream!)
+      const receiver = worklet ?? processor!
+      source.connect(receiver); receiver.connect(mute!)
       for (const track of stream!.getTracks()) {
         track.onended = () => { if (!stopping) void stop("permission_revoked") }
         track.onmute = () => { if (!stopping) void stop("input_gap") }
       }
       context!.onstatechange = () => { if (!stopping && context?.state === "suspended") void stop("suspended") }
+      const ack = await timeout(request("voice.stt.start", { format: "pcm_s16le", sampleRate: 16000, channels: 1,
+        ...(options.engine === "meeting-external" ? {} : { modelId: options.modelId }), ...(options.engine ? { engine: options.engine } : {}), ...(options.engine === "meeting-external" ? {} : { privacy_ack_v2: true }), lang: options.lang ?? "zh" }), startupEnd - Date.now())
+      if (!matches(ack) || ack.type !== "voice.stt.partial" || ack.status !== "receiving" || !Array.isArray(ack.credits)) throw new Error("stale_capture")
+      if (cancelled || ended || silent) return
+
+      startConfirmed = true
+      credits(ack.credits)
+      if (stopping || ended) return
       started = true; armIdle(); deadline = setTimeout(() => { void stop("hard_limit") }, Math.max(0, 10800000))
-      if (!silent) { options.onStart?.(); options.onStatus?.(ack) }
-    } catch { stopping = true; closeGraph(); options.onError?.("startup_timeout"); await abort() }
+      if (!silent) { if (stopReason !== "startup_timeout") options.onStart?.(); options.onStatus?.(ack) }
+    } catch (error) {
+      if (silent || ended) return
+      stopping = true; closeGraph()
+      const code = error instanceof Error && error.name === "NotAllowedError" ? "permission_denied" : "startup_timeout"
+      options.onError?.(code); await abort()
+    }
   }
   return { start, stop, abort, handleStatus, get backend() { return backend },
     destroy() { silent = true; void abort() }, get admittedEnd() { return cursor } }

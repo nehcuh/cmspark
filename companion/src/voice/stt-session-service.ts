@@ -71,6 +71,8 @@ export type SttServiceErrorCode =
   | "invalid_session_id"
   | "partial_skipped"
   | "partial_busy"
+  | import("./external-asr-client").ExternalTranscribeCode
+  | "external_configuration_changed"
   // #259 system engine (Windows SAPI)
   | "system_engine_failed"
   | "system_unavailable"
@@ -80,7 +82,7 @@ export type SttServiceResult =
   | { ok: true; text?: string; ms?: number; modelId?: string }
   | { ok: false; code: SttServiceErrorCode; message: string }
 
-export type SttStartRequest = SttSessionStart
+export type SttStartRequest = SttSessionStart & { lang?: string }
 
 export type WhisperRunnerFn = (opts: {
   binaryPath: string
@@ -125,6 +127,7 @@ export type SttSessionServiceDeps = {
 type BoundSession = {
   peerId: string
   sessionId: string
+  lang?: string
   /** "" for system sessions (no whisper model involved). */
   modelId: SttModelId | ""
   engine: "local" | "system"
@@ -167,18 +170,20 @@ export class SttSessionService {
   getMeetingCapture(): MeetingPcmCapture | null { return this.continuous }
 
   reserveMeetingCapture(identity: CaptureIdentity, peerId: string,
-    deps: Pick<MeetingPcmCaptureDeps, "persist" | "checkpoint" | "send">, speaker?: string): MeetingPcmCapture | null {
+    deps: Pick<MeetingPcmCaptureDeps, "persist" | "checkpoint" | "send">, speaker?: string,
+    live?: { target: string; segmentFrames: number; transcribe?: (wav: Buffer, lang?: string) => Promise<SttServiceResult>; abort?: () => void }): MeetingPcmCapture | null {
     if (!peerId || this.continuous || this.bound || this.core.getActive()) return null
     const capture: MeetingPcmCapture = new MeetingPcmCapture(identity, peerId, {
       ...deps, now: this.deps.now,
-      run: (segment, request) => this.runMeetingSegment(capture, segment, request),
+      run: (segment, request) => live?.transcribe ? live.transcribe(segment.wav, request.lang) : this.runMeetingSegment(capture, segment, request),
       abortRun: () => {
         if (this.continuous !== capture) return
         // Keep the bound and protected reservation until the actual runner settles.
+        live?.abort?.()
         this.bound?.abortController.abort()
       },
       retired: () => { if (this.continuous === capture) this.continuous = null },
-    }, speaker)
+    }, speaker, live?.target, live?.segmentFrames)
     this.continuous = capture
     return capture
   }
@@ -273,6 +278,7 @@ export class SttSessionService {
     this.clearTimersOnly()
     const ac = new AbortController()
     this.bound = {
+      lang: req.lang,
       peerId,
       sessionId: req.sessionId,
       modelId: engine === "system" ? "" : (req.modelId as SttModelId),
@@ -384,7 +390,7 @@ export class SttSessionService {
         binaryPath: binRes.path,
         modelPath,
         audioPath,
-        lang: this.deps.lang ?? "zh",
+        lang: bound.lang ?? this.deps.lang ?? "zh",
         timeoutMs: STT_PARTIAL_INFER_MAX_MS,
         signal: pac.signal,
       })
@@ -481,7 +487,7 @@ export class SttSessionService {
         const runSapi = this.deps.runSapi ?? runWinSapiTranscribe
         const result = await runSapi({
           wavPath: audioPath,
-          lang: this.deps.lang ?? "zh",
+          lang: bound.lang ?? this.deps.lang ?? "zh",
           timeoutMs: SAPI_HELPER_TIMEOUT_MS,
           signal: ac.signal,
         })
@@ -535,7 +541,7 @@ export class SttSessionService {
         binaryPath: binRes.path,
         modelPath,
         audioPath,
-        lang: this.deps.lang ?? "zh",
+        lang: bound.lang ?? this.deps.lang ?? "zh",
         timeoutMs,
         signal: ac.signal,
       })

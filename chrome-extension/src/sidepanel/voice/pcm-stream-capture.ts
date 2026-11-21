@@ -11,6 +11,7 @@ import {
 import { float32ToS16lePcm, resampleFloat32Mono } from "./pcm-encode"
 
 export type PcmStreamCaptureOpts = {
+  signal?: AbortSignal
   maxMs?: number
   /** Fired with non-empty 16 kHz mono s16le chunks. */
   onPcmChunk: (pcm: Uint8Array) => void
@@ -78,7 +79,7 @@ type GraphTeardown = () => void
 
 async function tryConnectWorklet(
   ctx: AudioContext,
-  source: MediaStreamAudioSourceNode,
+  source: AudioNode,
   onFloat: (samples: Float32Array) => void,
 ): Promise<{ teardown: GraphTeardown } | null> {
   if (typeof (ctx as any).audioWorklet?.addModule !== "function") return null
@@ -141,7 +142,7 @@ async function tryConnectWorklet(
 
 function connectScriptProcessor(
   ctx: AudioContext,
-  source: MediaStreamAudioSourceNode,
+  source: AudioNode,
   onFloat: (samples: Float32Array) => void,
 ): { teardown: GraphTeardown } {
   const bufferSize = 4096
@@ -192,15 +193,7 @@ export async function startPcmStreamCapture(
     throw Object.assign(new Error("AudioContext unavailable"), { code: "audio-capture" })
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-    },
-  })
-
-  const AC = AudioContext || (globalThis as any).webkitAudioContext
+  const AC = globalThis.AudioContext || (globalThis as any).webkitAudioContext
   const ctx: AudioContext = new AC()
   // F7: resume suspended contexts so process callbacks fire
   if (ctx.state === "suspended") {
@@ -211,23 +204,25 @@ export async function startPcmStreamCapture(
     }
   }
 
-  const source = ctx.createMediaStreamSource(stream)
+  const input = ctx.createGain()
+  let source: MediaStreamAudioSourceNode | null = null
+  let stream: MediaStream | null = null
   let settled = false
   let maxTimer: ReturnType<typeof setTimeout> | null = null
   let stopResolve: (() => void) | null = null
   let stopPromise: Promise<void> | null = null
 
   const onFloat = (samples: Float32Array) => {
-    if (settled) return
+    if (!source || settled) return
     processFloatChunk(samples, ctx.sampleRate || 48000, onPcmChunk, onLevel)
   }
 
   let backend: "audioworklet" | "scriptprocessor" = "scriptprocessor"
-  let graph: { teardown: GraphTeardown } | null = await tryConnectWorklet(ctx, source, onFloat)
+  let graph: { teardown: GraphTeardown } | null = await tryConnectWorklet(ctx, input, onFloat)
   if (graph) {
     backend = "audioworklet"
   } else {
-    graph = connectScriptProcessor(ctx, source, onFloat)
+    graph = connectScriptProcessor(ctx, input, onFloat)
     backend = "scriptprocessor"
   }
 
@@ -243,7 +238,7 @@ export async function startPcmStreamCapture(
     }
     graph = null
     try {
-      source.disconnect()
+      source?.disconnect(); input.disconnect()
     } catch {
       /* */
     }
@@ -253,6 +248,18 @@ export async function startPcmStreamCapture(
     } catch {
       /* */
     }
+  }
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    })
+
+    source = ctx.createMediaStreamSource(stream)
+    source.connect(input)
+  } catch (error) {
+    release()
+    throw error
   }
 
   const handleStop = async () => {
@@ -287,5 +294,7 @@ export async function startPcmStreamCapture(
     },
   }
 
+  opts.signal?.addEventListener("abort", handle.abort, { once: true })
+  if (opts.signal?.aborted) handle.abort()
   return handle
 }

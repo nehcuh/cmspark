@@ -206,26 +206,35 @@ export async function handleMeetingMessage(
       const id = resolveMeetingId(msg)
       const existing = id ? loadMeeting(id) : null
       if (msg.queue_contract !== 1 || !isCaptureId(msg.capture_id) || !isCaptureEpoch(msg.expected_capture_epoch) ||
-          msg.expected_capture_epoch >= Number.MAX_SAFE_INTEGER || !ctx.peerId || msg.privacy_ack_v2 !== true ||
+          msg.expected_capture_epoch >= Number.MAX_SAFE_INTEGER || !ctx.peerId ||
           msg.audio_retained === true || msg.retain_days !== undefined) return err("queue_protocol_error", "invalid continuous begin")
       if (!existing) return err("not_found", "existing meeting required")
       if (existing.privacy.audio_retained) return err("queue_protocol_error", "continuous capture does not support retained audio")
       const speaker = typeof msg.speaker === "string" && msg.speaker.trim() ? msg.speaker.slice(0, 32) : undefined
+      const wantsExternal = typeof msg.live_asr === "string" && msg.live_asr !== "local"
+      if (wantsExternal && !isChromeExtensionOrigin(ctx.origin)) return err("origin_denied", "external live ASR requires a browser confirmation")
       const previous = service.getMeetingCapture()
       if (previous?.owns(ctx.peerId, msg.capture_id, existing.capture_epoch ?? 0) && previous.identity.meeting_id === id) {
         if (previous.identity.capture_epoch !== msg.expected_capture_epoch + 1) return err("stale_capture", "capture operation epoch changed")
+        if (previous.liveTarget !== msg.live_asr) return err("stale_capture", "capture ASR target changed")
         if (previous.speaker !== speaker) return err("segment_id_conflict", "capture operation label changed")
         return { type: "meeting.started", v: 1, meeting: existing, continuous_capture: previous.status(), meeting_pcm_contract: 1, meeting_pcm_caps: meetingPcmCapsSnapshot() }
       }
       if ((existing.capture_epoch ?? 0) !== msg.expected_capture_epoch) return err("stale_capture", "capture epoch changed")
       const voice = getConfig().voice
-      const externalRefusal = meetingExternalRefusal(voice?.sttEngine)
-      if (externalRefusal) return err(externalRefusal.code, "会议转写仍只使用本机或系统识别。外部转写只用于聊天输入，不会发送会议音频。")
-      if (voice?.sttEngine !== "local" && voice?.sttEngine !== "system") return err("engine_not_local", "trusted STT engine required")
-      if (voice.sttEngine === "system" && (process.platform !== "win32" || !resolveWinSapiHelper().ok)) return err("system_unavailable", "system STT is unavailable")
-      const ready = service.checkMeetingModelReady({ sessionId: msg.capture_id, modelId: voice.localModelId ?? "medium",
-        ...(voice.sttEngine === "system" ? { engine: "system" as const } : {}), format: "pcm_s16le", sampleRate: 16000, channels: 1 })
-      if (!ready.ok) return err(ready.code, "model not ready")
+      const external = wantsExternal ? externalAsr.openLive(msg.live_asr) : null
+      if (wantsExternal && !external || msg.live_asr === "local" && voice?.meetingAsr?.mode === "external") {
+        return err("external_configuration_changed", "meeting ASR configuration changed")
+      }
+      if (!external) {
+        const externalRefusal = meetingExternalRefusal(voice?.sttEngine)
+        if (externalRefusal) return err(externalRefusal.code, "会议转写仍只使用本机或系统识别。外部转写只用于聊天输入，不会发送会议音频。")
+        if (voice?.sttEngine !== "local" && voice?.sttEngine !== "system") return err("engine_not_local", "trusted STT engine required")
+        if (voice.sttEngine === "system" && (process.platform !== "win32" || !resolveWinSapiHelper().ok)) return err("system_unavailable", "system STT is unavailable")
+        const ready = service.checkMeetingModelReady({ sessionId: msg.capture_id, modelId: voice.localModelId ?? "medium",
+          ...(voice.sttEngine === "system" ? { engine: "system" as const } : {}), format: "pcm_s16le", sampleRate: 16000, channels: 1 })
+        if (!ready.ok) return err(ready.code, "model not ready")
+      }
       let published = false
       const capture: MeetingPcmCapture | null = service.reserveMeetingCapture({ meeting_id: id, capture_id: msg.capture_id, capture_epoch: msg.expected_capture_epoch + 1 }, ctx.peerId, {
         persist: (segment, result) => {
@@ -245,7 +254,10 @@ export async function handleMeetingMessage(
         },
         checkpoint: status => { if (published) checkpointMeetingCapture(status) },
         send: status => { if (published) ctx.send?.(status) },
-      }, speaker)
+      }, speaker, msg.live_asr ? {
+        target: msg.live_asr, segmentFrames: external ? external.segmentMs * 16 : MEETING_PCM.segmentFrames,
+        transcribe: external?.transcribe, abort: external?.abort,
+      } : undefined)
       if (!capture) return err("resource_conflict", "STT slot is owned")
       try {
         const started = beginMeetingCapture(id, msg.capture_id, msg.expected_capture_epoch)

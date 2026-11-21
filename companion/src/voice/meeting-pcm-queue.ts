@@ -11,6 +11,8 @@ export type PcmSegment = { index: number; start: number; end: number; pcm: Buffe
 /** One bounded ring. Reservations, received/infer/persist-pending share its capacity.
  * No per-block history except eight reorder slots and sixteen hashes. */
 export class MeetingPcmQueue {
+  constructor(private readonly segmentFrames: number = C.segmentFrames,
+    private readonly firstFrames: number = segmentFrames) {}
   private readonly ring = Buffer.alloc(C.capacityFrames * C.sampleBytes)
   private readonly grants = new Map<number, PcmCredit>()
   private readonly reorder = new Map<number, Accepted>()
@@ -30,7 +32,7 @@ export class MeetingPcmQueue {
   get finalEnd() { return this.targetEnd }
   get residentFrames() { return this.disposed ? 0 : this.allocatedEnd - this.releasedEnd }
   get atCapacity() { return this.residentFrames >= C.capacityFrames }
-  get pendingSegments() { return this.disposed ? 0 : Math.ceil((this.contiguousEnd - this.releasedEnd) / C.segmentFrames) }
+  get pendingSegments() { return this.disposed ? 0 : Math.ceil((this.contiguousEnd - this.releasedEnd) / this.segmentFrames) }
   get inflightIndex() { return this.inflight?.index ?? null }
   get complete() { return this.targetEnd !== null && this.releasedEnd === this.targetEnd && !this.inflight }
 
@@ -104,8 +106,9 @@ export class MeetingPcmQueue {
 
   take(): PcmSegment | null {
     if (this.disposed || this.inflight) return null
-    const length = Math.min(C.segmentFrames, this.contiguousEnd - this.releasedEnd)
-    if (!length || (length < C.segmentFrames && (this.targetEnd === null || this.contiguousEnd !== this.targetEnd))) return null
+    const target = this.nextSegmentIndex === 0 ? this.firstFrames : this.segmentFrames
+    const length = Math.min(target, this.contiguousEnd - this.releasedEnd)
+    if (!length || (length < target && (this.targetEnd === null || this.contiguousEnd !== this.targetEnd))) return null
     // The sole immutable worker allocation includes its WAV header. pcm is a
     // view, not a second segment copy; the existing runner can consume wav as-is.
     const wav = Buffer.alloc(44 + length * C.sampleBytes)

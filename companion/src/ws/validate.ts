@@ -87,7 +87,7 @@ export function validateWsMessage(msg: any): WsValidationResult {
   }
   if (msg.queue_contract !== undefined || (hasMeetingPcmFields(msg) && (msg.type.startsWith("voice.stt.") || msg.type === "meeting.start" || msg.type === "meeting.end"))) {
     if (!validMeetingPcmMessage(msg)) return { valid: false, error: "Invalid continuous meeting PCM message" }
-    if (msg.type !== "voice.stt.start") return { valid: true }
+    if (msg.type !== "voice.stt.start" || msg.engine === "meeting-external") return { valid: true }
   }
 
   if (["chat.create", "chat.regenerate", "file.upload"].includes(msg.type) && msg.context_tab_id !== undefined) {

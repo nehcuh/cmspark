@@ -14,7 +14,7 @@ export type MeetingPcmCaptureDeps = {
 
 /** Resource owner through capture, infer, persistence and real runner retirement. */
 export class MeetingPcmCapture {
-  readonly queue = new MeetingPcmQueue()
+  readonly queue: MeetingPcmQueue
   private phase: CapturePhase = "starting"
   private outcome: CaptureOutcome | null = null
   private reason: CaptureStopReason | null = null
@@ -36,7 +36,9 @@ export class MeetingPcmCapture {
   private readonly now: () => number
   private readonly acks = new Map<number, CaptureStatus>()
 
-  constructor(readonly identity: CaptureIdentity, readonly peerId: string, private readonly deps: MeetingPcmCaptureDeps, readonly speaker?: string) {
+  constructor(readonly identity: CaptureIdentity, readonly peerId: string, private readonly deps: MeetingPcmCaptureDeps, readonly speaker?: string,
+    readonly liveTarget?: string, segmentFrames: number = C.segmentFrames) {
+    this.queue = new MeetingPcmQueue(segmentFrames, liveTarget ? Math.min(25600, segmentFrames) : segmentFrames)
     this.now = deps.now ?? Date.now
     this.timer = this.later(() => this.fail("startup_timeout"), C.startupMs)
   }
