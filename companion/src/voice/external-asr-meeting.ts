@@ -173,8 +173,12 @@ export function createMeetingExternalAsr(deps: Pick<ExternalTranscribeRequest, "
             lookup: deps.lookup, fetchImpl: deps.fetchImpl, beforeDispatch: current,
           })
           if (!current()) return { ok: false, code: "external_configuration_changed", message: "meeting ASR target changed" } as const
-          if (!result.ok) return { ...result, message: "meeting ASR segment failed" }
-          return { ...result, modelId: target.model }
+          if (!result.ok) {
+            if (result.code === "external_empty") return { ok: true, text: "", modelId: target.model } as const
+            return { ...result, message: "meeting ASR segment failed" }
+          }
+          const text = result.text.replace(/^[ \t]*(?:>>[ \t]*)?\[BLANK_AUDIO\][ \t]*\r?$/gm, "").trim()
+          return { ...result, text, modelId: target.model }
         },
       }
     },

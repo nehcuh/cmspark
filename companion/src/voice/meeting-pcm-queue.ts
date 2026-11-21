@@ -26,6 +26,27 @@ export class MeetingPcmQueue {
   private inflight: PcmSegment | null = null
   private nextSegmentIndex = 0
   private disposed = false
+  private openingSpeech = false
+  private openingQuietFrames = 0
+  private openingPauseEnd: number | null = null
+
+  // Inspect only the ordered first live window. A pause after speech can close
+  // a batch early without removing quiet samples or changing the next offset.
+  private observeOpeningBlock(block: Accepted): void {
+    if (this.firstFrames >= this.segmentFrames || this.nextSegmentIndex !== 0 ||
+        this.openingPauseEnd !== null || block.end > this.firstFrames) return
+    let energy = 0
+    for (let frame = block.offset; frame < block.end; frame++) {
+      const sample = this.ring.readInt16LE(frame * C.sampleBytes)
+      energy += sample * sample
+    }
+    const meanSquare = energy / block.frames
+    if (meanSquare >= 320 * 320) this.openingSpeech = true
+    this.openingQuietFrames = meanSquare < 128 * 128 ? this.openingQuietFrames + block.frames : 0
+    if (this.openingSpeech && block.end >= C.rate && this.openingQuietFrames >= C.rate * 0.32) {
+      this.openingPauseEnd = block.end
+    }
+  }
 
   get receivedEnd() { return this.contiguousEnd }
   get committedEnd() { return this.releasedEnd }
@@ -88,6 +109,7 @@ export class MeetingPcmQueue {
     while (this.reorder.has(this.contiguousEnd)) {
       const item = this.reorder.get(this.contiguousEnd)!
       this.reorder.delete(this.contiguousEnd)
+      this.observeOpeningBlock(item)
       this.contiguousEnd = item.end
     }
     return { duplicate: false, stale: false }
@@ -106,7 +128,7 @@ export class MeetingPcmQueue {
 
   take(): PcmSegment | null {
     if (this.disposed || this.inflight) return null
-    const target = this.nextSegmentIndex === 0 ? this.firstFrames : this.segmentFrames
+    const target = this.nextSegmentIndex === 0 ? (this.openingPauseEnd ?? this.firstFrames) : this.segmentFrames
     const length = Math.min(target, this.contiguousEnd - this.releasedEnd)
     if (!length || (length < target && (this.targetEnd === null || this.contiguousEnd !== this.targetEnd))) return null
     // The sole immutable worker allocation includes its WAV header. pcm is a

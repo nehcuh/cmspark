@@ -266,3 +266,13 @@ test("live ASR stops before dispatch when the confirmed receiver changes during 
   assert.deepEqual(await result, { ok: false, code: "external_configuration_changed", message: "meeting ASR target changed" })
   assert.equal(requests, 0)
 })
+
+test("live ASR checkpoints pauses and retains real words next to an explicit Whisper silence marker", async () => {
+  for (const [response, expected] of [["", ""], ["[BLANK_AUDIO]", ""], ["hello\n[BLANK_AUDIO]\nworld", "hello\n\nworld"]]) {
+    const { service } = harness({ mode: "external", external: openAi }, {
+      fetchImpl: async () => ({ status: 200, json: async () => ({ text: response }) }),
+    })
+    const live = service.openLive(service.state().state.configIdentity)!
+    assert.deepEqual(await live.transcribe(wavFixture(3)), { ok: true, text: expected, modelId: openAi.model })
+  }
+})
