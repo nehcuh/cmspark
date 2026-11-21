@@ -2,7 +2,7 @@
 'use strict'
 const assert = require('node:assert/strict')
 const {createHash} = require('node:crypto')
-const NEW_DIGEST = '356a8941b8333d40308c90af0223291e46dc0b3f16d501c8444503210f8244c5'
+const NEW_DIGEST = '571e2c7f0d7c61e3a830a695967014705268726466dd40627922bd27724dc8fa'
 const SECOND_READY_DIGEST = '33645c729edd5672abf72ed8ac322c7439be17f57a9360406ffee13f27bb319a'
 const OLD_DIGEST = '2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8'
 const HELPER_SUCCESS = '56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5'
@@ -48,7 +48,15 @@ const readyPairs = [
   uiStage=18;uiDetail=0;observeUIStage();let cancelOne=cancel.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=cancelOne ? 2:1;observeUIStage();guard cancelOne else{throw OwnedUI705Error.refused};let cancelCount=cancel.count;uiDetail=min(cancelCount,2)+1;observeUIStage();guard cancelCount==1 else{throw OwnedUI705Error.refused}
 `],
 ]
+function restoreChooseWait(raw) {
+  const current = '  try requireUniqueAfterReady(choose,11,11)'
+  if (!raw.includes(current)) return raw
+  assert.equal(raw.split(current).length, 2, 'PICKER_CHOOSE_QUERY_ONCE')
+  return raw.replace(current, '  uiStage=11;uiDetail=0;observeUIStage();let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout);uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}')
+}
+
 function restoreFirstReadyPickerUi(raw) {
+  raw = restoreChooseWait(raw)
   const eol = raw.includes('\r\n') ? '\r\n' : '\n'
   const value = raw.replace(/\r\n/g, '\n')
   if (!value.includes('let owners=app.windows') && !value.includes('try requireUniqueAfterReady(owners,')) return raw
@@ -105,4 +113,4 @@ function restorePickerWait(kind, raw, options = {}) {
   if (requireSuccessDigest) assert.equal(digest(value), OLD_DIGEST, 'PICKER_WAIT_UI_SUCCESS')
   return value.replace(/\n/g, eol)
 }
-module.exports = {restorePickerWait, restoreFirstReadyPickerUi, NEW_DIGEST, OLD_DIGEST}
+module.exports = {restorePickerWait, restoreFirstReadyPickerUi, restoreChooseWait, NEW_DIGEST, OLD_DIGEST}

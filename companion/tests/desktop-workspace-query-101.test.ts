@@ -58,7 +58,16 @@ const SHEET_BOTH = 'uiStage=stage+2;uiDetail=0;observeUIStage();let sheetCount=w
 const UI_RESTORED = '2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8';
 const HELPER_RESTORED = '56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5';
 const PRIOR_UI_COMMENT = 'fb446e0d2b32e5a55e05a03e369fa5635b98448513a59fe9ea91bd098590b076';
-const CURRENT_UI = '356a8941b8333d40308c90af0223291e46dc0b3f16d501c8444503210f8244c5';
+const CURRENT_UI = '571e2c7f0d7c61e3a830a695967014705268726466dd40627922bd27724dc8fa';
+test('the owned first-sheet Choose button checks uniqueness before its real hit test and click', () => {
+  const begin = ui.indexOf('  let choose=first.buttons.matching(');
+  const end = ui.indexOf('  uiStage=14;', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const source = ui.slice(begin, end);
+  assert.match(source, /let choose=first\.buttons\.matching\(NSPredicate\(format:"label IN %@ OR title IN %@"/);
+  assert.match(source, /try requireUniqueAfterReady\(choose,11,11\)\s+uiStage=12;[^\n]*guard chooseHittable else\{throw OwnedUI705Error.refused\}\s+uiStage=13;[^\n]*_ = try remaining\(\);choose\.element\.click\(\)/);
+  assert.equal(createHash('sha256').update(pickerWait.restoreChooseWait(ui)).digest('hex'), '356a8941b8333d40308c90af0223291e46dc0b3f16d501c8444503210f8244c5');
+});
 test('the first ready receipt uses the same unique-query path as the second panel', () => {
   const start = ui.indexOf('  func sheet(');
   const end = ui.indexOf('\n  }\n  uiStage=2;', start);
