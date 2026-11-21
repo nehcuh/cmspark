@@ -28,6 +28,7 @@ import {
 } from "../utils/knowledge-distribution"
 
 import { normalizeConfig } from "../utils/normalize-config"
+import { parseGenerationLimit } from "../chat-shell-copy"
 import { isSettingsSaveError } from "../utils/settings-draft"
 export { normalizeConfig }
 
@@ -259,13 +260,19 @@ export function sanitizeHydratedMessages(raw: unknown): Message[] {
   if (!Array.isArray(raw)) return []
   return raw.map((m) => {
     if (!m || typeof m !== "object") return m as Message
-    const msg = m as Message
+    let msg = m as Message
+    const generationLimit = parseGenerationLimit(msg.generation_limit)
+    if ("generation_limit" in msg && !generationLimit) {
+      const { generation_limit: _invalid, ...safe } = msg
+      msg = safe
+    }
     const truncated = (m as { truncated?: unknown }).truncated === true
     const incompleteTools = (m as { incomplete_tools?: unknown }).incomplete_tools === true
     const rawFinish = (m as { finish_reason?: unknown }).finish_reason
     const finishReason: string | null | undefined =
       typeof rawFinish === "string" ? rawFinish : rawFinish === null ? null : undefined
-    const honesty: Partial<Pick<Message, "truncated" | "incomplete_tools" | "finish_reason">> = {
+    const honesty: Partial<Pick<Message, "truncated" | "incomplete_tools" | "finish_reason" | "generation_limit">> = {
+      ...(generationLimit ? { generation_limit: generationLimit } : {}),
       ...(truncated ? { truncated: true } : {}),
       ...(incompleteTools ? { incomplete_tools: true } : {}),
       ...(finishReason !== undefined ? { finish_reason: finishReason } : {}),
@@ -555,6 +562,7 @@ export function useWebSocket() {
           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
           const truncated = msg.truncated === true
+          const generationLimit = parseGenerationLimit(msg.generation_limit)
           const incompleteTools = msg.incomplete_tools === true
           const finishReason: string | null | undefined =
             typeof msg.finish_reason === "string"
@@ -567,11 +575,13 @@ export function useWebSocket() {
             (content ||
               reasoning ||
               truncated ||
+              generationLimit ||
               incompleteTools ||
               finishReason !== undefined ||
               (Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0))
           ) {
-            const honesty: Partial<Pick<Message, "truncated" | "incomplete_tools" | "finish_reason">> = {
+            const honesty: Partial<Pick<Message, "truncated" | "incomplete_tools" | "finish_reason" | "generation_limit">> = {
+              ...(generationLimit ? { generation_limit: generationLimit } : {}),
               ...(truncated ? { truncated: true } : {}),
               ...(incompleteTools ? { incomplete_tools: true } : {}),
               ...(finishReason !== undefined ? { finish_reason: finishReason } : {}),

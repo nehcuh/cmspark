@@ -5,6 +5,8 @@
 
 > **开闸记录（2026-09-03）**：诚实门评测双栏通过（`node scripts/knowledge-route-eval.mjs` → `folder: pass` / `group: pass`，`--strict` 同过），两只分支常数 `KNOWLEDGE_ROUTE_FOLDER_BRANCH` / `KNOWLEDGE_ROUTE_GROUP_BRANCH` 按 spec §6.6 开闸为 `true`；用户侧「按堆选文」开关默认仍关（`knowledge_route_by_group` undefined=false），漂移扳机不变——路由输入面任何改动 ⇒ 回 false 重跑评测重证。
 
+[#873 聊天正文检索](../superpowers/specs/2026-11-20-grounded-knowledge-context.md) 启用后，严格评测另外核对 `chat-folder` 和 `chat-group`。每个聊天分支须按独立标注选中原文片段，至少一条认证查询实际交付扁平策略遗漏的相关候选，逐条查询的相关来源损失最多一篇。旧全文路径继续执行原两个分栏。
+
 ---
 
 ## 决策

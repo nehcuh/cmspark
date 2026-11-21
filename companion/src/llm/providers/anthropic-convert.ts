@@ -63,7 +63,7 @@ export const LLM_MAX_TOKENS_HARD_CAP = 32768
  * Note: openai path sends max_tokens only when StreamChatParams.max_tokens is set;
  * anthropic always requires an output cap.
  */
-export function computeMaxTokens(contextWindow: number, requested?: number): number {
+export function computeMaxTokens(contextWindow: number, requested?: number, ceiling = LLM_MAX_TOKENS_HARD_CAP): number {
   const cw =
     Number.isFinite(contextWindow) && contextWindow > 0
       ? contextWindow
@@ -72,7 +72,7 @@ export function computeMaxTokens(contextWindow: number, requested?: number): num
     Number.isFinite(requested) && (requested as number) > 0
       ? Math.floor(requested as number)
       : LLM_MAX_TOKENS_DEFAULT
-  return Math.min(req, LLM_MAX_TOKENS_HARD_CAP, Math.max(256, Math.floor(cw / 2)))
+  return Math.min(req, ceiling, Math.max(256, Math.floor(cw / 2)))
 }
 
 /**
@@ -292,11 +292,12 @@ export function buildAnthropicRequestBody(opts: {
   stream?: boolean
   /** config.llm.max_tokens or a per-call H2 bump; not vision.max_tokens. */
   maxTokens?: number
+  maxTokenCeiling?: number
 }): AnthropicRequestBody {
   const { system, messages } = convertMessagesToAnthropic(opts.messages)
   const body: AnthropicRequestBody = {
     model: opts.model,
-    max_tokens: computeMaxTokens(opts.contextWindow, opts.maxTokens),
+    max_tokens: computeMaxTokens(opts.contextWindow, opts.maxTokens, opts.maxTokenCeiling),
     messages,
     stream: opts.stream ?? false,
   }

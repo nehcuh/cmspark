@@ -7,7 +7,7 @@ test("isContextOverflowError matches common provider strings", () => {
   assert.equal(isContextOverflowError("This model's maximum context length is 128000 tokens"), true)
   assert.equal(isContextOverflowError("prompt is too long"), true)
   assert.equal(isContextOverflowError("input is too long"), true)
-  assert.equal(isContextOverflowError("request_too_large"), true)
+  assert.equal(isContextOverflowError("request_too_large"), false)
   assert.equal(isContextOverflowError("The input token count exceeds the limit"), true)
   assert.equal(isContextOverflowError("exceeds the model's context window"), true)
   assert.equal(isContextOverflowError("API Key 无效"), false)

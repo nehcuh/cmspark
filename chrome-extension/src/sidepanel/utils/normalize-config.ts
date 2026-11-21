@@ -14,10 +14,24 @@ function isMaskedApiKey(key: string | undefined | null): boolean {
   return false
 }
 
+export const CHAT_OUTPUT_LIMIT_MAX = 393216
+
+export function isChatOutputLimit(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= CHAT_OUTPUT_LIMIT_MAX
+}
+
+// Match Companion's read-side normalization for legacy values and cached snapshots.
+export function normalizeSavedChatOutputLimit(value: unknown): number | undefined {
+  if (value === 0) return 0
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return undefined
+  return Math.min(CHAT_OUTPUT_LIMIT_MAX, Math.floor(value))
+}
+
 export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (!config) return {}
   const llm = config.llm || config
   const llmKeyMasked = isMaskedApiKey(llm.api_key)
+  const outputLimit = normalizeSavedChatOutputLimit(llm.max_tokens)
   const normalized: Partial<LLMConfig> = {
     base_url: llm.base_url,
     // Drop the masked placeholder from the editable field — the user re-types
@@ -27,6 +41,7 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     api_key_set: llmKeyMasked ? true : (llm.api_key ? true : false),
     model_name: llm.model_name,
     reasoning_effort: effectiveReasoningEffort(llm.reasoning_effort),
+    ...(outputLimit !== undefined ? { max_tokens: outputLimit } : {}),
     temperature: llm.temperature,
     context_window: llm.context_window,
     context_compaction:

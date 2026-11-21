@@ -8,6 +8,27 @@ import { renderToStaticMarkup } from "react-dom/server"
 
 import { RetrievedSourcesChips } from "../src/sidepanel/components/RetrievedSourcesChips"
 
+test("shows expandable historical knowledge excerpts as inert text and labels selection", () => {
+  const sources = [
+    { id: "auto", title: "自动资料", selection: "automatic" as const, excerpt: "适用条件 <img src=x>" },
+    { id: "pinned", title: "手动资料", selection: "explicit" as const, excerpt: "已选内容" },
+    { id: "library", title: "全选资料", selection: "library" as const, excerpt: "全选内容" },
+  ]
+  const html = renderToStaticMarkup(createElement(RetrievedSourcesChips, { sources }))
+  assert.match(html, /<details/)
+  assert.match(html, /自动检索/)
+  assert.match(html, /手动选择/)
+  assert.match(html, /全库选择/)
+  assert.match(html, /适用条件 &lt;img src=x&gt;/)
+  assert.doesNotMatch(html, /<img/)
+  assert.match(html, /打开知识原文/)
+})
+
+test("distinguishes a recorded empty source list from an older omitted ledger", () => {
+  const html = renderToStaticMarkup(createElement(RetrievedSourcesChips, { sources: [], showEmpty: true }))
+  assert.match(html, /本轮未附带知识/)
+})
+
 const SOURCES = [
   { id: "fa1", title: "退款政策", group_label: "policy" },
   { id: "fa2", title: "退款 FAQ", group_label: "policy" },

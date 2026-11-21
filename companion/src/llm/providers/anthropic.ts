@@ -6,6 +6,7 @@
 import type { LlmConfig } from "../../config"
 import { logger } from "../../logger"
 import { reasoningSupport, reasoningWireEffort } from "../reasoning-effort"
+import { providerModelLimits } from "../output-budget"
 import { throwIfLlmEndpointBlocked } from "../../security"
 import type {
   CanonicalStreamEvent,
@@ -71,6 +72,7 @@ export class AnthropicProvider implements LlmProvider {
     this.logRequestMeta(url, headers)
 
     const streamMax = params.max_tokens ?? this.config.max_tokens
+    const support = reasoningSupport(this.config.protocol, this.config.base_url, model)
     const body = buildAnthropicRequestBody({
       model,
       // Prefer the already-computed output cap so a tiny *disk* context_window
@@ -81,12 +83,13 @@ export class AnthropicProvider implements LlmProvider {
           : this.config.context_window,
       messages: params.messages,
       tools: params.tools,
-      temperature,
+      temperature: support === "anthropic-47" ? undefined : temperature,
       stream: true,
       maxTokens: streamMax,
+      maxTokenCeiling: providerModelLimits(this.config, model)?.output,
     })
 
-    const effort = reasoningWireEffort(reasoningSupport(this.config.protocol, this.config.base_url, model), this.config.reasoning_effort)
+    const effort = reasoningWireEffort(support, this.config.reasoning_effort)
     if (effort) body.output_config = { effort }
 
     const response = await fetch(url, {
@@ -121,6 +124,7 @@ export class AnthropicProvider implements LlmProvider {
     this.logRequestMeta(url, headers)
 
     const completeMax = params.max_tokens ?? this.config.max_tokens
+    const support = reasoningSupport(this.config.protocol, this.config.base_url, model)
     // Same recap guard as streamChat (#268): a tiny *disk* context_window
     // must not recap max_tokens below the configured/requested output cap.
     // computeMaxTokens defaults a missing cap to LLM_MAX_TOKENS_DEFAULT — the
@@ -132,12 +136,12 @@ export class AnthropicProvider implements LlmProvider {
       model,
       contextWindow: Math.max(this.config.context_window, recapMax * 2),
       messages: params.messages,
-      temperature,
+      temperature: support === "anthropic-47" ? undefined : temperature,
       stream: false,
       maxTokens: completeMax,
     })
 
-    const effort = reasoningWireEffort(reasoningSupport(this.config.protocol, this.config.base_url, model), this.config.reasoning_effort)
+    const effort = reasoningWireEffort(support, this.config.reasoning_effort)
     if (effort) body.output_config = { effort }
 
     const response = await fetch(url, {

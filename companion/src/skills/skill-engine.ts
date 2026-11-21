@@ -14,7 +14,8 @@ import { fallbackThreadManager, type ThreadManager } from "../threads/thread-man
 import { matchSite } from "./site-matcher"
 import { isOwnedSiteExperience, isAutomaticSiteExperienceDocument } from "./site-experience-identity"
 import { parsePersistedSiteOpLine, isDurableSiteOpFailureCode } from "../tool/site-op-provenance"
-import { sanitizeKnowledgeContent, wrapKnowledgeBlock } from "./content-sanitizer"
+import { neutralizeKnowledgeBoundary, sanitizeKnowledgeContent, wrapKnowledgeBlock } from "./content-sanitizer"
+import { findGroundedKnowledgeHit, knowledgeQueryTerms, type GroundedKnowledgeHit } from "./grounded-knowledge"
 import { chunkFile, searchChunks, type FileChunk } from "../file-chunker"
 import {
   allocateDocIdentity,
@@ -47,7 +48,6 @@ import {
   writeKnowledgeIndexFile,
   KNOWLEDGE_INDEX_DEBOUNCE_MS,
   KNOWLEDGE_CLUSTER_MIN_DOCS,
-  type GroupmapSection,
   type KnowledgeDistributionChannel,
   type KnowledgeIndexDoc,
   type KnowledgeIndexFile,
@@ -157,6 +157,8 @@ export type RetrievedSource = {
   chars: number
   /** #273 Wave B (AC-18): 路由 ON 时来源分组标签（派生、可选、不进文档 SoT）。 */
   group_label?: string
+  selection?: "automatic" | "explicit" | "library"
+  excerpt?: string
 }
 
 /** The exact knowledge projection used in a prompt, without security/skill
@@ -186,6 +188,8 @@ export type KnowledgeRoutingMeta = {
 /** buildSystemPromptWithSources 的知识侧选项。 */
 export type BuildPromptKnowledgeOpts = {
   includeKnowledgeBlocks?: boolean
+  /** Authenticated chat only. Enables grounded auto selection and message excerpts. */
+  chatKnowledge?: boolean
   /** 空 query + 智能匹配开的 auto 退化：每篇只注入 description。 */
   knowledgeDescriptionOnly?: boolean
   /** Wave B 路由上下文（缺省从 thread 记录推导；测试/评测可显式覆盖）。 */
@@ -212,7 +216,7 @@ interface KnowledgeRoutingPlan {
   /** 第二趟完整候选 = pinned ∪ { 语料过阈 }（pinned 在前，其余按分）。 */
   candidates: Skill[]
   /** 分组概览小节（只列本轮实际使用的粗索引；组间序/组内序已按钉死键排好）。 */
-  sections: GroupmapSection[]
+  sections: Array<{ label: string; documents: Skill[] }>
   /** 粗索引零成员过阈 → 省略概览 + groupmap_omitted。 */
   zeroPassing: boolean
   /** doc name → 来源分组标签（真分组成员才有；「未分组」无标签）。 */
@@ -1465,6 +1469,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     hostname?: string,
     query?: string,
     smartMatch = true,
+    groundAutomatic = false,
   ): string[] {
     this.ensureFresh()
     const resolvedMode = mode || "auto"
@@ -1486,6 +1491,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     }
 
     const q = (query || "").trim()
+    const grounded = resolvedMode === "auto" && groundAutomatic
+    if (grounded && (!smartMatch || !q)) return this.activeKnowledgeFromSnapshot(threadId).map(s => s.name)
     if (!smartMatch || !q) return legacyResolve()
 
     try {
@@ -1499,12 +1506,34 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       )
       const scored = this.scoreKnowledgePool(pool, q, siteNames, pinnedNames)
       const topk = resolvedMode === "all" ? KNOWLEDGE_DOC_TOPK_ALL : KNOWLEDGE_DOC_TOPK_AUTO
+      if (grounded) {
+        const terms = knowledgeQueryTerms(q)
+        const supported = scored.flatMap(item => {
+          const { skill, raw } = item
+          if (skill.site && !siteNames.has(skill.name)) return []
+          const metadata = `${skill.title || skill.name} ${skill.description || ""} ${(skill.tags || []).join(" ")}`.normalize("NFKC").toLowerCase()
+          if (!siteNames.has(skill.name) && raw < KNOWLEDGE_SCORE_MIN && ![...terms].some(term => metadata.includes(term))) return []
+          const hit = this.groundedKnowledgeHit(skill, terms)
+          return hit ? [{ ...item, matches: hit.matches }] : []
+        })
+        supported.sort((a, b) => b.matches - a.matches || b.rank - a.rank ||
+          compareCodepoint(a.skill.id || a.skill.name, b.skill.id || b.skill.name))
+        return [...pinned.map(s => s.name), ...supported.slice(0, topk).map(x => x.skill.name)]
+      }
       const picked = scored.filter(x => x.raw >= KNOWLEDGE_SCORE_MIN).slice(0, topk)
       return [...pinned.map(s => s.name), ...picked.map(x => x.skill.name)]
     } catch (e) {
+      if (grounded) {
+        console.warn("[skills] automatic knowledge scoring failed")
+        return this.activeKnowledgeFromSnapshot(threadId).map(s => s.name)
+      }
       console.warn("[skills] knowledge scoring failed; falling back to legacy selection:", e)
       return legacyResolve()
     }
+  }
+
+  private groundedKnowledgeHit(skill: Skill, terms: ReadonlySet<string>): GroundedKnowledgeHit | undefined {
+    return findGroundedKnowledgeHit(this.projectAutomaticSiteExperienceBody(skill, skill.content || ""), terms)
   }
 
   /**
@@ -1577,6 +1606,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     mode: "auto" | "all" | "manual"
     smartMatch: boolean
     routeByGroup: boolean
+    allowAutomatic?: (skill: Skill) => boolean
   }): KnowledgeRoutingPlan | null {
     if (!args.routeByGroup) return null
     if (args.mode !== "auto") return null
@@ -1590,8 +1620,9 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       if (dist.status !== "ok") return null
 
       const pool = this.skillsCache.filter(s => this.isKnowledgeDoc(s))
+      const eligiblePool = args.allowAutomatic ? pool.filter(args.allowAutomatic) : pool
       const byId = new Map<string, Skill>()
-      for (const s of pool) byId.set(s.id || s.name, s)
+      for (const s of eligiblePool) byId.set(s.id || s.name, s)
 
       const pinnedAll = this.getActiveKnowledgeForThread(args.threadId)
       const pinnedNames = new Set(pinnedAll.map(s => s.name))
@@ -1619,9 +1650,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         if (rb !== ra) return rb - ra
         return compareCodepoint(a.id || a.name, b.id || b.name)
       }
-      picked.sort(byRankDesc)
-
-      const oneLine = (s: Skill) => String(s.title || s.name).replace(/\s+/g, " ").trim()
+      if (!args.allowAutomatic) picked.sort(byRankDesc)
 
       // 命中谓词 s(F)（§6.5 钉一条；桶根 folder="" 不是夹，不参与）
       const hitFolders = this.listKnowledgeFolders()
@@ -1642,7 +1671,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       }
 
       const folderMembers = (F: { bucket: "global" | "sites"; path: string }): Skill[] =>
-        pool.filter(s => {
+        eligiblePool.filter(s => {
           if (this.knowledgeBucketOf(s.source_file) !== F.bucket) return false
           const f = s.folder || ""
           return f === F.path || f.startsWith(F.path + "/")
@@ -1650,7 +1679,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
       // 按边计算：命中夹 → 夹边；无命中夹 → 组边（边关闭则不回落另一臂）
       let expansion: Skill[] = []
-      let sections: GroupmapSection[] = []
+      let sections: KnowledgeRoutingPlan["sections"] = []
       let zeroPassing = true
       if (hitFolders.length > 0) {
         if (!knowledgeRouteFolderBranchOn()) {
@@ -1660,16 +1689,16 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         for (const { F } of hitFolders) {
           for (const m of folderMembers(F)) memberNames.add(m.name)
         }
-        expansion = pool.filter(s => memberNames.has(s.name))
+        expansion = eligiblePool.filter(s => memberNames.has(s.name))
         zeroPassing = ![...memberNames].some(n => (rawByName.get(n) ?? 0) >= KNOWLEDGE_SCORE_MIN)
         // 概览行集 = 命中夹全部成员标题（含未过阈），组内按文档分降序；
         // 零成员命中夹（有说明但没文档）不占小节（Gate9 F2）
         sections = hitFolders
           .map(({ F }) => ({
             label: F.path,
-            lines: folderMembers(F).sort(byRankDesc).map(oneLine),
+            documents: folderMembers(F).sort(byRankDesc),
           }))
-          .filter((s) => s.lines.length > 0)
+          .filter((s) => s.documents.length > 0)
       } else {
         if (!knowledgeRouteGroupBranchOn()) {
           return this.closedRoutingPlan(pinnedDocs, picked, labelByName)
@@ -1696,16 +1725,15 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
             if (s) memberNames.add(s.name)
           }
         }
-        expansion = pool.filter(s => memberNames.has(s.name))
+        expansion = eligiblePool.filter(s => memberNames.has(s.name))
         zeroPassing = ![...memberNames].some(n => (rawByName.get(n) ?? 0) >= KNOWLEDGE_SCORE_MIN)
         // 组间序：组分降序、并列簇键字典序；行集 = top-1-2 组全部成员标题（含未过阈）
         sections = selected.map(({ g }) => ({
           label: g.label,
-          lines: g.ids
+          documents: g.ids
             .map(id => byId.get(id))
             .filter((s): s is Skill => !!s)
-            .sort(byRankDesc)
-            .map(oneLine),
+            .sort(byRankDesc),
         }))
       }
 
@@ -1715,10 +1743,10 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         const s = this.get(id)
         if (s && this.isKnowledgeDoc(s)) corpusNames.add(s.name)
       }
-      const passing = pool
-        .filter(s => corpusNames.has(s.name) && !pinnedNames.has(s.name) && (rawByName.get(s.name) ?? 0) >= KNOWLEDGE_SCORE_MIN)
-        .sort(byRankDesc)
       const inWaveA = new Set(picked.map(s => s.name))
+      const passing = eligiblePool.filter(s => corpusNames.has(s.name) && !pinnedNames.has(s.name) &&
+        ((rawByName.get(s.name) ?? 0) >= KNOWLEDGE_SCORE_MIN || (!!args.allowAutomatic && inWaveA.has(s.name))))
+        .sort(byRankDesc)
       const tail = passing.filter(s => !inWaveA.has(s.name))
       const candidates = [...pinnedDocs, ...passing]
       const sPre: string[] = []
@@ -1793,6 +1821,26 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const injectedNames = new Set<string>()
     const retrieved_sources: RetrievedSource[] = []
     const knowledgeBlocks: KnowledgeBlock[] = []
+    const chatKnowledge = opts?.chatKnowledge === true
+    const groundedAuto = chatKnowledge && opts.knowledgeMode === "auto"
+    const pinnedNames = new Set(chatKnowledge ? this.getActiveKnowledgeForThread(threadId).map(doc => doc.name) : [])
+    const terms = groundedAuto && opts.knowledgeSmartMatch !== false ? knowledgeQueryTerms(query || "") : new Set<string>()
+    const siteNames = new Set(groundedAuto && hostname ? this.getBySite(hostname).map(doc => doc.name) : [])
+    const autoHits = new Map<string, GroundedKnowledgeHit | undefined>()
+    const automaticHit = (doc: Skill): GroundedKnowledgeHit | undefined => {
+      if (!terms.size || (doc.site && !siteNames.has(doc.name))) return undefined
+      if (!autoHits.has(doc.name)) {
+        try {
+          autoHits.set(doc.name, this.groundedKnowledgeHit(doc, terms))
+        } catch {
+          autoHits.set(doc.name, undefined)
+        }
+      }
+      return autoHits.get(doc.name)
+    }
+    const summaryOf = (doc: Skill) => groundedAuto && !pinnedNames.has(doc.name)
+      ? automaticHit(doc)?.text || ""
+      : this.getKnowledgeSummaryForPrompt(doc, query)
 
     // 跨文档知识注入硬预算（#273 Wave A §2.3）：只记注入的 summary 正文字符，
     // 不含 wrapKnowledgeBlock 包装（包装上界 = KNOWLEDGE_WRAP_OVERHEAD_CHARS×篇数
@@ -1805,8 +1853,10 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       if (knowledgeBudgetStop) return
       const id = k.id || k.name
       const title = sanitizeKnowledgeContent(k.title || k.name)
+      const isGroundedAutomatic = groundedAuto && !pinnedNames.has(k.name)
       let body = summary
       if (body.length > knowledgeBudgetLeft) {
+        if (isGroundedAutomatic) return
         // 剩余 = 0 直接停；剩余 > 0 截断到剩余额度（末尾加截断标记）然后停止
         if (knowledgeBudgetLeft <= 0) {
           knowledgeBudgetStop = true
@@ -1817,21 +1867,30 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
           : body.slice(0, knowledgeBudgetLeft)
         knowledgeBudgetStop = true
       }
+      const excerpt = chatKnowledge ? neutralizeKnowledgeBoundary(body) : undefined
+      if (excerpt !== undefined && !excerpt.trim()) return
       knowledgeBudgetLeft -= body.length
       injectedNames.add(k.name)
+      const index = chunkIndex ?? (isGroundedAutomatic ? automaticHit(k)?.index : undefined)
+      const selection = opts?.knowledgeMode === "manual" || pinnedNames.has(k.name) ? "explicit" :
+        opts?.knowledgeMode === "all" ? "library" : "automatic"
       const source: RetrievedSource = {
         id,
         title,
-        chunk_index: chunkIndex,
-        chars: body.length,
+        ...(index === undefined ? {} : { chunk_index: index }),
+        chars: excerpt?.length ?? body.length,
         ...(groupLabel ? { group_label: groupLabel } : {}),
+        ...(chatKnowledge ? {
+          selection,
+          excerpt,
+        } : {}),
       }
       retrieved_sources.push(source)
       if (opts?.includeKnowledgeBlocks) {
         knowledgeBlocks.push({
           source,
           document_version: this.knowledgeVersion(k),
-          content: body,
+          content: excerpt ?? body,
           content_kind: "summary",
           truncated_by_budget: body.length < summary.length,
         })
@@ -1851,6 +1910,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
     // Experience skills: inject entry summaries directly (no use_skill needed)
     for (const s of experienceSkills) {
+      if (groundedAuto && !pinnedNames.has(s.name)) continue
       const summary = this.getEntriesSummary(s.name, true)
       if (summary) pushKnowledge(s, summary)
     }
@@ -1866,7 +1926,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       // #273 Wave B §6.5 簇路由：不适用返回 null（Wave A 扁平路径）；
       // 边关闭返回 edgeClosed 计划（不扩张、不灌概览，打 groupmap_omitted）。
       let routing: KnowledgeRoutingPlan | null = null
-      if (!opts?.knowledgeDescriptionOnly) {
+      if (!opts?.knowledgeDescriptionOnly && (!groundedAuto || knowledgeToInject.some(doc => !pinnedNames.has(doc.name)))) {
         let routingThread: {
           knowledge_selection_mode?: "auto" | "all" | "manual"
           knowledge_smart_match?: boolean
@@ -1885,6 +1945,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
           mode: opts?.knowledgeMode ?? routingThread?.knowledge_selection_mode ?? "auto",
           smartMatch: opts?.knowledgeSmartMatch ?? (routingThread?.knowledge_smart_match !== false),
           routeByGroup: opts?.knowledgeRouteByGroup ?? (routingThread?.knowledge_route_by_group === true),
+          allowAutomatic: groundedAuto ? doc => pinnedNames.has(doc.name) || !!automaticHit(doc) : undefined,
         })
       }
 
@@ -1903,7 +1964,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
             if (desc) pushKnowledge(k, desc)
             continue
           }
-          const summary = this.getKnowledgeSummaryForPrompt(k, query)
+          const summary = summaryOf(k)
           if (summary) pushKnowledge(k, summary, undefined, labelOf(k))
         }
         if (routing?.edgeClosed) {
@@ -1914,7 +1975,6 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         // 截断语义逐字节对齐），再按序实灌——recall 槽的「让位」因此只是
         // 计划层的末位移出，不需要实灌撤回。
         type PlannedDoc = { k: Skill; body: string; groupLabel?: string }
-        const summaryOf = (k: Skill) => this.getKnowledgeSummaryForPrompt(k, query)
         const labelOf = (k: Skill) => routing.labelByName.get(k.name)
         let left = knowledgeBudgetLeft
         let stop = false
@@ -1925,7 +1985,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
           if (stop || plannedNames.has(k.name) || injectedNames.has(k.name)) return
           let body = summary
           if (body.length > left) {
-            if (!allowTruncate) return
+            if (!allowTruncate || (groundedAuto && !pinnedNames.has(k.name))) return
             if (left <= 0) {
               stop = true
               return
@@ -1991,8 +2051,14 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         let groupmapChars = 0
         let groupmapWrapped: string | null = null
         let groupmapState: "injected" | "omitted" = "omitted"
-        if (!stop && !routing.zeroPassing && routing.sections.length > 0) {
-          const fitted = fitGroupmap(routing.sections, Math.min(left, KNOWLEDGE_GROUPMAP_CHARS))
+        const hasPlacedAutomatic = before.some(doc => !pinnedNames.has(doc.k.name))
+        if (!stop && !routing.zeroPassing && (!groundedAuto || hasPlacedAutomatic)) {
+          const sections = routing.sections.map(({ label, documents }) => ({
+            label,
+            lines: documents.filter(doc => !groundedAuto || plannedNames.has(doc.name))
+              .map(doc => String(doc.title || doc.name).replace(/\s+/g, " ").trim()),
+          }))
+          const fitted = fitGroupmap(sections, Math.min(left, KNOWLEDGE_GROUPMAP_CHARS))
           if (fitted) {
             groupmapChars = fitted.wrapped.length
             left -= fitted.wrapped.length

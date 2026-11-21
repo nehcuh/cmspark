@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events'
 import ts from 'typescript'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { buildOwnedWpf758, runOwnedCompiler758 } from './helpers/activity-native-fixture-758'
+import { buildOwnedApps825, buildOwnedWpf758, runOwnedCompiler758 } from './helpers/activity-native-fixture-758'
 import { compilerFailureObservation758 } from './helpers/activity-compiler-observation-758'
 
 const file=path.resolve('tests/activity-platform-native-758.test.ts')
@@ -92,6 +92,27 @@ test('#758 actual compiler producer refuses missing references, failed compile a
     await assert.rejects(buildOwnedWpf758(owned.output,abort.signal,compile,owned.system),/OWNED_CANCELLED/);assert.equal(calls,1)
     assert.equal(fs.existsSync(path.join(owned.output,'activity-fixture.exe')),false)
   }finally{fs.rmSync(owned.root,{recursive:true,force:true})}
+})
+
+test('#825 Apps fixture compiles without WPF inputs', async () => {
+  const owned = ownedCompiler()
+  try {
+    for (const name of ['System.Drawing.dll', 'System.Windows.Forms.dll']) {
+      fs.writeFileSync(path.join(owned.framework, name), 'INERT_OWNED_NOT_EXECUTED')
+    }
+    const binary = await buildOwnedApps825(owned.output, new AbortController().signal, async (file, args, options) => {
+      assert.equal(file, path.join(owned.framework, 'csc.exe'))
+      assert.equal(options.timeout, 10_000)
+      assert.equal(args.at(-1), path.resolve('tests/fixtures/activity-apps-windows-825.cs'))
+      assert.deepEqual(args.filter(arg => arg.startsWith('/reference:')), [
+        'System.dll', 'System.Core.dll', 'System.Web.Extensions.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll',
+      ].map(name => '/reference:' + path.join(owned.framework, name)))
+      fs.writeFileSync(path.join(owned.output, 'activity-fixture.exe'), 'INERT_OWNED_NOT_EXECUTED', { flag: 'wx' })
+    }, owned.system)
+    assert.equal(binary, path.join(owned.output, 'activity-fixture.exe'))
+  } finally {
+    fs.rmSync(owned.root, { recursive: true, force: true })
+  }
 })
 
 // Real child/execFile producer, no compiler or desktop claim. Three minimal controls.

@@ -15,7 +15,7 @@ import type { SiteTarget } from "../site-context/target"
 import { wrapKnowledgeBlock } from "../skills/content-sanitizer"
 import { siteExperienceIdentity, isOwnedSiteExperience, readSiteExperienceEntries } from "../skills/site-experience-identity"
 import type { ThreadManager } from "../threads/thread-manager"
-import type { SkillEngine } from "../skills/skill-engine"
+import type { RetrievedSource, SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
 import { getAllToolDefinitions, getToolDefinitions, getMcpMetaToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
 import { tryParseToolArgs } from "../bridge/tool-schemas"
@@ -69,10 +69,11 @@ import {
   replaceInterruptedFillerIfPresent,
 } from "./tool-batch-heal"
 import { redactAssistantToolCallsForPersistence } from "../security/tool-persistence-redact"
-import { isContentRiskError, isContextOverflowError, isLengthStop, isTruncatedToolBatch } from "./overflow"
+import { classifyGenerationLimit, isContentRiskError, isContextOverflowError, type GenerationLimit } from "./overflow"
+import { reasoningSupport } from "./reasoning-effort"
 import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
 import type { RunStats } from "../loop/loop-state"
-import { computeMaxTokens } from "./providers/anthropic-convert"
+import { chatOutputBudget } from "./output-budget"
 
 export { createToolResultMessage }
 import { aliasFromFirstUserText, classifyAlias, commitThreadAlias } from "../threads/alias-commit"
@@ -672,7 +673,10 @@ export async function chatCreate(params: ChatCreateParams) {
   if (cw.floored) {
     logger.warn("llm.context_window_too_small", { disk: cw.disk, effective: cw.effective })
   }
-  const contextWindow = cw.effective
+  const outputBudget = chatOutputBudget(cw.effective, config)
+  const contextWindow = outputBudget.contextWindow
+  const officialOpenAI = reasoningSupport(config.protocol, config.base_url, config.model_name) === "openai"
+  let outputMaxTokens = outputBudget.preferred
   const executeToolInner = params.executeTool
   let executeTool: ChatCreateParams["executeTool"] =
     params.surface === "summoner"
@@ -896,13 +900,17 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         knowledgeMode: currentThread?.knowledge_selection_mode || knowledgeMode,
         knowledgeSmartMatch: currentThread?.knowledge_smart_match ?? knowledgeSmartMatch,
         knowledgeRouteByGroup: currentThread?.knowledge_route_by_group ?? knowledgeRouteByGroup,
+        chatKnowledge: true,
       },
     })
     if (contextTarget) {
       const selectedIds = new Set(context.retrieved_sources.map(source => source.id))
+      // Exact-origin tool safeguards also apply when an automatic knowledge
+      // document has no passage relevant to the current user message.
+      const automaticSiteSafeguard = selection.kind === "thread" && selection.knowledgeMode === "auto"
       const entries = readSiteExperienceEntries(contextTarget.origin, id => {
         const doc = skillEngine.get(id)
-        return doc && selectedIds.has(doc.id || doc.name) ? doc : undefined
+        return doc && (automaticSiteSafeguard || selectedIds.has(doc.id || doc.name)) ? doc : undefined
       })
       refreshPersistedSiteOpExperience(threadId, contextTarget.origin, entries)
     }
@@ -1138,9 +1146,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   async function runContextBudgetPass(
     phase: "pre_loop" | "mid_loop",
     windowOverride?: number,
-  ): Promise<void> {
-    if (compactionSetting === "off") return
-    const compact = applyContextBudget(messages, windowOverride ?? contextWindow, tools, { phase })
+  ): Promise<boolean> {
+    if (compactionSetting === "off") return false
+    const compact = applyContextBudget(messages, windowOverride ?? contextWindow, tools, {
+      phase,
+      outputTokens: outputBudget.documented ? outputMaxTokens : undefined,
+    })
     if (compactionSetting === "prompt") {
       if (compact.compacted) {
         try {
@@ -1171,11 +1182,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           /* non-fatal */
         }
       }
-      return
+      return false
     }
 
     // auto
-    if (!compact.compacted) return
+    if (!compact.compacted) return false
 
     messages = compact.messages
     let mode: "m1" | "m2" | "h1" = "m1"
@@ -1374,6 +1385,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     } catch {
       /* non-fatal */
     }
+    return true
   }
 
   function persistInterruptedRemainder(savedAssistantId: string | undefined, reason: string): void {
@@ -1401,7 +1413,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     truncated?: boolean
     incomplete_tools?: boolean
     finish_reason?: string | null
-    retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number; group_label?: string }>
+    generation_limit?: GenerationLimit
+    retrieved_sources?: RetrievedSource[]
     /** #273 Wave B（AC-18）：路由元数据（groupmap 两态 + M=|S_pre|）。 */
     knowledge_routing?: { groupmap: "injected" | "omitted"; m: number }
   }) {
@@ -1417,7 +1430,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       truncated?: boolean
       incomplete_tools?: boolean
       finish_reason?: string | null
-      retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number; group_label?: string }>
+      generation_limit?: GenerationLimit
+      retrieved_sources?: RetrievedSource[]
       knowledge_routing?: { groupmap: "injected" | "omitted"; m: number }
     } = {
       thread_id: threadId,
@@ -1435,7 +1449,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     if (draft.truncated) savedMsg.truncated = true
     if (draft.incomplete_tools) savedMsg.incomplete_tools = true
     if (draft.finish_reason !== undefined) savedMsg.finish_reason = draft.finish_reason
-    if (assistantMsg.length === 0 && draft.retrieved_sources && draft.retrieved_sources.length > 0) {
+    if (draft.generation_limit) savedMsg.generation_limit = draft.generation_limit
+    if ((assistantMsg.length === 0 || draft.incomplete_tools) && draft.retrieved_sources &&
+        (params.contextSelection || draft.retrieved_sources.length > 0)) {
       savedMsg.retrieved_sources = draft.retrieved_sources
       if (draft.knowledge_routing) savedMsg.knowledge_routing = draft.knowledge_routing
     }
@@ -1471,7 +1487,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   let overflowRecoveryUsed = false
   let lengthRecoveryUsed = false
   let contentRiskRecoveryUsed = false
-  let outputMaxTokens = computeMaxTokens(contextWindow, config.max_tokens)
   const recoverableFailureCounts = new Map<string, number>()
   const locatorPivotIssued = new Set<string>()
   // Context-keyed refusals do not spend the executed-failure threshold or
@@ -1775,26 +1790,29 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       // resets it too, but a text-only round never reaches that line.
       continuousFailures = 0
 
-      const truncatedToolBatch = isTruncatedToolBatch(
-        finishReason,
-        toolCalls.some((tc) => tc != null),
-      )
-      if (truncatedToolBatch) {
-        // Byte-level retry only makes sense in auto mode; prompt never rewrites the
-        // request and off skips budgeting, so the retry would resend an identical
-        // oversized request and fail again — skip straight to mode semantics.
-        if (!lengthRecoveryUsed && compactionSetting === "auto") {
+      const generationLimit = classifyGenerationLimit(finishReason, {
+        officialOpenAI,
+        sentTokens: outputMaxTokens,
+        completionTokens: finalUsage?.completion_tokens,
+      })
+      if (generationLimit && toolCalls.some((tc) => tc != null)) {
+        // This batch is incomplete and has never run. Keep visible partial replies
+        // and only retry an invisible batch if the next request is actually different.
+        if (!lengthRecoveryUsed && compactionSetting === "auto" && !assistantContent && !reasoningContent) {
           lengthRecoveryUsed = true
-          round--
-          // H2: truncated-tool-batch is an OUTPUT cap hit. Raising max_tokens once
-          // ×2 (capped) is required — input-only compact with the same cap is a no-op
-          // when the prompt was not over budget. May exceed llm.max_tokens toward
-          // min(32768, floor(cw/2)); never above that ceiling.
-          outputMaxTokens = computeMaxTokens(contextWindow, outputMaxTokens * 2)
-          // Mid-loop retry must compact with the live round pinned (mid_loop
-          // shrink); pre_loop could drop this round's rows instead.
-          await runContextBudgetPass("mid_loop")
-          continue
+          const priorMessages = messages
+          const priorCap = outputMaxTokens
+          if (generationLimit !== "context_window") {
+            outputMaxTokens = Math.min(outputBudget.ceiling, outputMaxTokens * 2)
+          }
+          const compactWindow = generationLimit === "output_budget"
+            ? contextWindow
+            : Math.max(CONTEXT_WINDOW_TINY, Math.floor(contextWindow / 2))
+          await runContextBudgetPass("mid_loop", compactWindow)
+          if (priorMessages !== messages || priorCap !== outputMaxTokens) {
+            round--
+            continue
+          }
         }
         if (compactionSetting === "prompt") {
           // Notify-only pass (thread.context_compact_prompt); messages untouched.
@@ -1824,6 +1842,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           truncated: true,
           incomplete_tools: true,
           finish_reason: finishReason ?? null,
+          generation_limit: generationLimit,
+          retrieved_sources: retrievedSources,
+          knowledge_routing: knowledgeRoutingWire,
         })
         savedAssistantId = savedTruncated.id
         persistInterruptedRemainder(savedAssistantId, "interrupted")
@@ -1833,13 +1854,18 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           message_id: savedTruncated.id,
           truncated: true,
           incomplete_tools: true,
-          finish_reason: finishReason ?? "max_tokens",
+          finish_reason: finishReason,
+          generation_limit: generationLimit,
           ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+          ...(params.contextSelection || retrievedSources.length > 0 ? { retrieved_sources: retrievedSources } : {}),
+          ...(knowledgeRoutingWire ? { knowledge_routing: knowledgeRoutingWire } : {}),
         })
         sendToExtension({
           type: "chat.error",
           thread_id: threadId,
-          error: "输出被截断（工具调用不完整），已停止。",
+          error: generationLimit === "context_window"
+            ? "已到上下文上限，工具调用不完整，已停止。"
+            : "输出被截断（工具调用不完整），已停止。",
         })
         if (runStats) runStats.terminal = "error"
         return
@@ -1871,8 +1897,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         content: assistantContent,
         reasoning: reasoningContent,
         tool_calls: assistantMsg,
-        truncated: isLengthStop(finishReason) || undefined,
+        truncated: generationLimit !== undefined || undefined,
         finish_reason: finishReason,
+        generation_limit: generationLimit,
         retrieved_sources: retrievedSources,
         knowledge_routing: knowledgeRoutingWire,
       })
@@ -1900,12 +1927,14 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
 
       // If no tool calls, we're done — unless the model role-played tools in text (DSML etc.).
       if (assistantMsg.length === 0) {
-        const fleetOutcome = await superviseFleetResults()
-        if (fleetOutcome === "stopped") return
-        if (fleetOutcome === "collected") continue
+        if (!generationLimit) {
+          const fleetOutcome = await superviseFleetResults()
+          if (fleetOutcome === "stopped") return
+          if (fleetOutcome === "collected") continue
+        }
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { detectTextToolIntentLeak, TOOL_FORMAT_LEAK_USER_HINT_ZH } = require("./tool-format-leak") as typeof import("./tool-format-leak")
-        const leak = detectTextToolIntentLeak(assistantContent)
+        const leak = !generationLimit && detectTextToolIntentLeak(assistantContent)
         if (leak) {
           logger.warn("llm.tool_format_leak", {
             thread_id: threadId,
@@ -1948,13 +1977,17 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           message_id: savedAssistant.id,
           ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
           ...(leak ? { tool_format_leak: true } : {}),
-          ...(retrievedSources.length > 0 ? { retrieved_sources: retrievedSources } : {}),
+          ...(params.contextSelection || retrievedSources.length > 0 ? { retrieved_sources: retrievedSources } : {}),
           ...(knowledgeRoutingWire ? { knowledge_routing: knowledgeRoutingWire } : {}),
           // Length-stop with no tool_call deltas = pure-text truncation. The reply
           // is kept as-is but flagged (optional, backward-compatible) so the UI can
           // hint the answer was cut off instead of looking complete.
-          ...(isLengthStop(finishReason) ? { truncated: true } : {}),
+          ...(generationLimit ? { truncated: true, generation_limit: generationLimit, finish_reason: finishReason } : {}),
         })
+        if (generationLimit) {
+          runStats.terminal = "error"
+          return
+        }
         // Best-effort auto-alias: generate a short title if thread has no alias yet
         params.assertCurrentRun?.()
         generateThreadTitle({ threadId, threadManager, config, sendToExtension })
@@ -2779,33 +2812,71 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
 
       const errorMsg = e.message || String(e)
-      if (isContextOverflowError(errorMsg)) {
-        // Byte-level retry only makes sense in auto mode (see truncated-batch path).
+      if (e.status === 413 || e.code === "request_too_large") {
+        logger.warn("llm.request_too_large", { thread_id: threadId })
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: "服务商拒绝了过大的请求体。请缩小附件或本次请求后重试。",
+        })
+        if (runStats) runStats.terminal = "error"
+        return
+      }
+      if (!savedAssistantId && (
+        classifyGenerationLimit(e?.code) === "context_window" || isContextOverflowError(errorMsg)
+      )) {
+        if (assistantContent || reasoningContent || toolCalls.some((tc) => tc != null)) {
+          const incomplete = toolCalls.some((tc) => tc != null)
+          const saved = persistAssistantDraft({
+            content: assistantContent,
+            reasoning: reasoningContent,
+            tool_calls: toolCalls,
+            truncated: true,
+            incomplete_tools: incomplete,
+            finish_reason: "context_length_exceeded",
+            generation_limit: "context_window",
+            retrieved_sources: retrievedSources,
+            knowledge_routing: knowledgeRoutingWire,
+          })
+          savedAssistantId = saved.id
+          if (incomplete) persistInterruptedRemainder(savedAssistantId, "interrupted")
+          sendToExtension({
+            type: "chat.done",
+            thread_id: threadId,
+            message_id: savedAssistantId,
+            truncated: true,
+            ...(incomplete ? { incomplete_tools: true } : {}),
+            finish_reason: "context_length_exceeded",
+            generation_limit: "context_window",
+            ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+            ...(params.contextSelection || retrievedSources.length > 0 ? { retrieved_sources: retrievedSources } : {}),
+            ...(knowledgeRoutingWire ? { knowledge_routing: knowledgeRoutingWire } : {}),
+          })
+          runStats.terminal = "error"
+          return
+        }
         if (!overflowRecoveryUsed && compactionSetting === "auto") {
-          overflowRecoveryUsed = true
-          logger.warn("llm.overflow_retry", { thread_id: threadId, error: errorMsg.slice(0, 200) })
-          round--
-          // The provider's real window may be smaller than the configured one:
-          // retrying with the same window would resend a byte-identical request.
-          // Halve the effective window (per-turn only; config/disk untouched) so
-          // the budget pass actually compacts.
+          // The provider's window may be smaller than configured. Apply a
+          // tighter per-request budget with the current turn still pinned.
           const adjustedWindow = Math.max(CONTEXT_WINDOW_TINY, Math.floor(contextWindow / 2))
-          // Mid-loop retry must compact with the live round pinned (mid_loop
-          // shrink); pre_loop could drop this round's rows instead.
-          await runContextBudgetPass("mid_loop", adjustedWindow)
-          continue
+          if (await runContextBudgetPass("mid_loop", adjustedWindow)) {
+            overflowRecoveryUsed = true
+            logger.warn("llm.overflow_retry", { thread_id: threadId, error: errorMsg.slice(0, 200) })
+            round--
+            continue
+          }
         }
         if (compactionSetting === "prompt") {
           // Notify-only pass (thread.context_compact_prompt); messages untouched.
           await runContextBudgetPass("mid_loop")
         }
-        sendToExtension({
-          type: "chat.error",
-          thread_id: threadId,
-          error: compactionSetting === "auto"
-            ? "上下文溢出，压缩重试后仍失败，已停止。"
-            : "上下文溢出，已停止（当前上下文压缩模式不会自动压缩请求）。",
-        })
+        let overflowMessage = "上下文溢出，已停止（当前上下文压缩模式不会自动压缩请求）。"
+        if (overflowRecoveryUsed) {
+          overflowMessage = "上下文溢出，压缩重试后仍失败，已停止。"
+        } else if (compactionSetting === "auto") {
+          overflowMessage = "上下文溢出，当前请求已无法进一步压缩，已停止。"
+        }
+        sendToExtension({ type: "chat.error", thread_id: threadId, error: overflowMessage })
         if (runStats) runStats.terminal = "error"
         return
       }

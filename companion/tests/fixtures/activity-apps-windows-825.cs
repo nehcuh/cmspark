@@ -2,21 +2,19 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Interop;
-using System.Windows.Threading;
+using System.Windows.Forms;
 
 static class ActivityApps825Fixture {
   static readonly UTF8Encoding Encoding = new UTF8Encoding(false);
   static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
   static string Root;
-  static Window Window;
+  static Form Window;
   static int MainThread;
   static readonly HashSet<string> Observed = new HashSet<string>();
   // Positive history only: a missing point is unknown, never readiness.
@@ -42,10 +40,10 @@ static class ActivityApps825Fixture {
     if (control.Count != 2 || !control.ContainsKey("sequence") || !control.ContainsKey("command") || !(control["command"] is string)) throw new InvalidDataException("OWNED_CONTROL_INVALID");
     int sequence = Convert.ToInt32(control["sequence"]);
     string command = (string)control["command"];
-    if (command == "minimize" && Window != null) Window.WindowState = WindowState.Minimized;
-    else if (command == "hide" && Window != null) { Window.WindowState = WindowState.Normal; Window.Hide(); }
+    if (command == "minimize" && Window != null) Window.WindowState = FormWindowState.Minimized;
+    else if (command == "hide" && Window != null) { Window.WindowState = FormWindowState.Normal; Window.Hide(); }
     else if (command != "snapshot" && command != "quit") throw new InvalidDataException("OWNED_CONTROL_INVALID");
-    Record("response-" + sequence + ".json", new { sequence = sequence, command = command, pid = Process.GetCurrentProcess().Id, foreground = GetForegroundWindow().ToInt64(), visible = Window != null && Window.IsVisible, minimized = Window != null && Window.WindowState == WindowState.Minimized });
+    Record("response-" + sequence + ".json", new { sequence = sequence, command = command, pid = Process.GetCurrentProcess().Id, foreground = GetForegroundWindow().ToInt64(), visible = Window != null && Window.Visible, minimized = Window != null && Window.WindowState == FormWindowState.Minimized });
     return command != "quit";
   }
   [STAThread] static int Main(string[] args) {
@@ -59,27 +57,31 @@ static class ActivityApps825Fixture {
         return 0;
       }
       if (args[1] != "gui") return 1;
-      var app = new Application();
-      Window = new Window { Title = "CMspark Owned Apps 825", Width = 600, Height = 240, Left = 80, Top = 80 };
-      var text = new TextBox { Text = "OWNED APPLICATION DISCOVERY", IsReadOnly = true, FontSize = 24 };
-      Window.Content = text;
-      Window.SourceInitialized += delegate { Observe("SOURCE_INITIALIZED"); };
-      Window.Loaded += delegate { Observe("LOADED"); };
-      Window.ContentRendered += delegate {
-        Observe("CONTENT_RENDERED");
-        if (File.Exists(Path.Combine(Root, "ready.json"))) return;
-        Window.Activate(); text.Focus();
-        var hwnd = new WindowInteropHelper(Window).Handle;
-        var windowClass = new StringBuilder(257);
-        GetClassName(hwnd, windowClass, windowClass.Capacity);
-        Record("ready.json", new { pid = Process.GetCurrentProcess().Id, hwnd = hwnd.ToInt64(), window_class = windowClass.ToString() });
-        Observe("READY_WRITTEN");
-      };
-      var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
-      timer.Tick += delegate { try { if (!Control()) app.Shutdown(0); } catch (Exception error) { Failure(error); app.Shutdown(1); } };
-      app.DispatcherUnhandledException += delegate(object sender, DispatcherUnhandledExceptionEventArgs value) { Failure(value.Exception); value.Handled = true; app.Shutdown(1); };
-      timer.Start();
-      try { Observe("RUN_ENTER"); return app.Run(Window); } finally { timer.Stop(); }
+      Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+      using (var form = new Form { Text = "CMspark Owned Apps 825", StartPosition = FormStartPosition.Manual, Width = 600, Height = 240, Left = 80, Top = 80 })
+      using (var font = new Font(SystemFonts.DefaultFont.FontFamily, 24))
+      using (var timer = new System.Windows.Forms.Timer { Interval = 50 }) {
+        Window = form;
+        var text = new TextBox { Text = "OWNED APPLICATION DISCOVERY", ReadOnly = true, Font = font, Dock = DockStyle.Top };
+        Window.Controls.Add(text);
+        Window.HandleCreated += delegate { Observe("SOURCE_INITIALIZED"); };
+        Window.Load += delegate { Observe("LOADED"); };
+        Window.Shown += delegate {
+          Window.Refresh();
+          Observe("CONTENT_RENDERED");
+          Window.Activate(); text.Focus();
+          var hwnd = Window.Handle;
+          var windowClass = new StringBuilder(257);
+          if (GetClassName(hwnd, windowClass, windowClass.Capacity) == 0) throw new InvalidOperationException("OWNED_APPS_WINDOW_CLASS_MISSING");
+          Record("ready.json", new { pid = Process.GetCurrentProcess().Id, hwnd = hwnd.ToInt64(), window_class = windowClass.ToString() });
+          Observe("READY_WRITTEN");
+        };
+        timer.Tick += delegate { if (!Control()) Window.Close(); };
+        timer.Start();
+        Observe("RUN_ENTER");
+        Application.Run(Window);
+        return 0;
+      }
     } catch (Exception error) { Failure(error); return 1; }
   }
   static void Failure(Exception error) {

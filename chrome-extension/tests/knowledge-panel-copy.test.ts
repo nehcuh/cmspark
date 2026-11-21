@@ -36,13 +36,13 @@ test("AC-6: dishonest '注入全部/所有知识索引' copy is gone from the wh
 })
 
 test("AC-6: three mode hints use the honest spec wording", () => {
-  assert.ok(src.includes("按这轮问题选相关知识；已钉的优先。当前站点加权。"), "auto modeHint")
+  assert.ok(src.includes("按这轮问题核对正文片段，已钉资料优先。"), "auto modeHint")
   assert.ok(src.includes("在全库里检索，仍受条数/长度上限。"), "all modeHint")
   assert.ok(src.includes("只注入勾选的；超预算时从末尾截断并在芯片上可见。"), "manual modeHint")
 })
 
 test("AC-6: mode button tooltips are honest", () => {
-  assert.ok(src.includes("按这轮问题选相关知识，当前站点加权"), "auto title")
+  assert.ok(src.includes("按这轮问题从正文确认相关知识"), "auto title")
   assert.ok(src.includes("在全库里检索，有总量上限"), "all title")
 })
 

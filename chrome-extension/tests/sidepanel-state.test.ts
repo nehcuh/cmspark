@@ -266,6 +266,15 @@ test("normalizeConfig maps anthropic protocol and coding-plan profile", () => {
   assert.equal(n.base_url, "https://gateway.example/v1")
 })
 
+test("normalizeConfig carries an explicit or automatic chat output budget", () => {
+  assert.equal(normalizeConfig({ llm: { max_tokens: 64000 } }).max_tokens, 64000)
+  assert.equal(normalizeConfig({ llm: { max_tokens: 0 } }).max_tokens, 0)
+  assert.equal(normalizeConfig({ llm: { max_tokens: "64000" } }).max_tokens, undefined)
+  assert.equal(normalizeConfig({ llm: { max_tokens: 0.5 } }).max_tokens, undefined)
+  assert.equal(normalizeConfig({ llm: { max_tokens: 500000 } }).max_tokens, 393216)
+  assert.equal(normalizeConfig({ llm: { max_tokens: 1000.5 } }).max_tokens, 1000)
+})
+
 test("normalizeConfig flattens thread_digest (Wave B)", () => {
   const n = normalizeConfig({
     llm: { base_url: "x", model_name: "m", temperature: 0, context_window: 1, api_key: "" },
@@ -772,15 +781,21 @@ test("T-ui-1: hydrate keeps truncated / incomplete_tools / finish_reason", () =>
       truncated: true,
       incomplete_tools: true,
       finish_reason: "max_tokens",
+      generation_limit: "output_budget",
+    },
+    {
+      id: "m2", thread_id: "t", role: "assistant", content: "text", generation_limit: "unknown",
     },
   ])
+  assert.equal(out[0]?.generation_limit, "output_budget")
+  assert.equal(out[1]?.generation_limit, undefined)
   assert.equal(out[0]?.truncated, true)
   assert.equal(out[0]?.incomplete_tools, true)
   assert.equal(out[0]?.finish_reason, "max_tokens")
   assert.equal(truncationHonestyChip(out[0]!), "思考用尽输出上限")
   assert.equal(
     truncationHonestyChip({ content: "partial answer", truncated: true }),
-    "输出被截断",
+    "达到长度限制",
   )
   assert.equal(truncationHonestyChip({ content: "ok" }), null)
 })

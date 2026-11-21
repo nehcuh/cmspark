@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { prepareSettingsSubmission } from "../utils/settings-draft"
+import { CHAT_OUTPUT_LIMIT_MAX, isChatOutputLimit } from "../utils/normalize-config"
 import type { LLMConfig, SecurityAuditEntry } from "../types"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
@@ -1164,6 +1165,27 @@ export function SettingsSlideout() {
               value={config.temperature}
               onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { temperature: parseFloat(e.target.value) } })}
             />
+          </div>
+
+          <div style={styles.field}>
+            <label htmlFor="chat-output-limit" style={styles.label}>单次输出上限（Token）</label>
+            <input
+              id="chat-output-limit"
+              style={styles.input}
+              type="number"
+              min={0}
+              max={CHAT_OUTPUT_LIMIT_MAX}
+              step={1}
+              placeholder="自动"
+              value={config.max_tokens || ""}
+              onChange={e => {
+                const input = e.currentTarget
+                if (input.validity.badInput) return
+                const value = input.value === "" ? 0 : input.valueAsNumber
+                if (isChatOutputLimit(value)) dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { max_tokens: value } })
+              }}
+            />
+            <div style={styles.helpText}>留空按模型和思考强度选择。模型能力和上下文窗口也会限制实际输出。</div>
           </div>
 
           <div style={styles.field}>
