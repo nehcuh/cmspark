@@ -470,7 +470,7 @@ export function createLocalSttAdapter(
         format: "wav",
         sampleRate: LOCAL_STT_SAMPLE_RATE,
         channels: LOCAL_STT_CHANNELS,
-        lang: lang.startsWith("zh") ? "zh" : lang,
+        lang,
         privacy_ack_external_v1: true,
       })
       return
@@ -484,7 +484,7 @@ export function createLocalSttAdapter(
       format: "wav",
       sampleRate: LOCAL_STT_SAMPLE_RATE,
       channels: LOCAL_STT_CHANNELS,
-      lang: lang.startsWith("zh") ? "zh" : lang,
+      lang,
       maxMs,
       // P1: server-enforced privacy ack (chrome.storage alone is not enough)
       privacy_ack_v2: true,
@@ -689,7 +689,7 @@ export function createLocalSttAdapter(
           format: "pcm_s16le",
           sampleRate: LOCAL_STT_SAMPLE_RATE,
           channels: LOCAL_STT_CHANNELS,
-          lang: lang.startsWith("zh") ? "zh" : lang,
+          lang,
           maxMs: windowMs,
           // P1: same wire gate as classic WAV start — continuous/hold path must not omit
           privacy_ack_v2: true,
@@ -1058,6 +1058,8 @@ export function createLocalSttAdapter(
         return
       }
 
+      // Whisper and OpenAI-compatible ASR take a primary language. SAPI takes a culture.
+      if (deps.engineKind !== "system") lang = lang.split("-")[0].toLowerCase()
       parentSessionId = sid
       sessionId = sid
       modelId = mid || deps.modelId || ""

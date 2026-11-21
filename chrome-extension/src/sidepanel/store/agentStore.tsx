@@ -1,4 +1,5 @@
 import type { WorkspaceHintView } from "../coding-handoff/workspace-hints"
+import { VOICE_DEFAULT_LANG, type ChatDictationLanguage } from "../voice/detect"
 import { registrySummaryFromMessage, type RegistryDiscoverySummary } from "../utils/apps-discovery"
 // Global state store for the agent
 
@@ -230,6 +231,7 @@ export interface AgentState {
   voicePrivacyAckV3: boolean
   /** classic = M1 45s; continuous = opt-in long browser listen (SoT Dictation+). */
   voiceDictationMode: "classic" | "continuous"
+  chatDictationLanguage: ChatDictationLanguage
   /** ASR Refiner after stop (default false). Requires privacy ack v3 + Companion LLM. */
   asrRefinerEnabled: boolean
   /**
@@ -566,6 +568,7 @@ export type AgentAction =
   | { type: "SET_VOICE_PRIVACY_ACK_V2"; ack: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
   | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
+  | { type: "SET_CHAT_DICTATION_LANGUAGE"; language: ChatDictationLanguage; persist?: boolean }
   | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
   | { type: "SET_DICTATION_HOTKEY_ENABLED"; enabled: boolean }
   | { type: "SET_DICTATION_HOTKEY_CHORD"; chord: string }
@@ -829,6 +832,7 @@ export const initialState: AgentState = {
   voicePrivacyAckV2: false,
   voicePrivacyAckV3: false,
   voiceDictationMode: "classic",
+  chatDictationLanguage: VOICE_DEFAULT_LANG,
   asrRefinerEnabled: false,
   dictationHotkeyEnabled: false,
   dictationHotkeyChord: "Control+Shift+Space",
@@ -1997,6 +2001,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       chrome.storage.local.set({ dictationHotkeyChord: chord })
       return { ...state, dictationHotkeyChord: chord }
     }
+    case "SET_CHAT_DICTATION_LANGUAGE":
+      if (action.persist !== false) chrome.storage.local.set({ chatDictationLanguage: action.language })
+      return { ...state, chatDictationLanguage: action.language }
     case "SET_VOICE_REALTIME_STREAMING": {
       const enabled = action.enabled === true
       chrome.storage.local.set({ voiceRealtimeStreaming: enabled })

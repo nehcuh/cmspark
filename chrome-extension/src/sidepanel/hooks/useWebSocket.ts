@@ -5,6 +5,7 @@ import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
 // WebSocket hook for Side Panel — communicates with background service worker
 
 import { useEffect, useRef } from "react"
+import { normalizeChatDictationLanguage } from "../voice/detect"
 import { confirmationPreviewFromMessage } from "../utils/confirmation-preview"
 import { overlayStandbyFromError, useAgentStore, type AgentAction } from "../store/agentStore"
 import { decideActiveThreadList } from "../navigation/startup-destination"
@@ -341,6 +342,13 @@ export function useWebSocket() {
       chrome.runtime.sendMessage(message)
     }, initializedRef)
     // Restore send shortcut preference
+    let languageChanged = false
+    const syncLanguage = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== "local" || !changes.chatDictationLanguage) return
+      languageChanged = true
+      dispatch({ type: "SET_CHAT_DICTATION_LANGUAGE", language: normalizeChatDictationLanguage(changes.chatDictationLanguage.newValue), persist: false })
+    }
+    chrome.storage.onChanged?.addListener(syncLanguage)
     chrome.storage.local.get(
       [
         "sendShortcut",
@@ -349,6 +357,7 @@ export function useWebSocket() {
         "voice_privacy_ack_v2",
         "voice_privacy_ack_v3",
         "voiceDictationMode",
+        "chatDictationLanguage",
         "asrRefinerEnabled",
         "dictationHotkeyEnabled",
         "dictationHotkeyChord",
@@ -385,6 +394,9 @@ export function useWebSocket() {
         }
         if (result.voiceDictationMode === "continuous" || result.voiceDictationMode === "classic") {
           dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: result.voiceDictationMode })
+        }
+        if (!languageChanged && result.chatDictationLanguage !== undefined) {
+          dispatch({ type: "SET_CHAT_DICTATION_LANGUAGE", language: normalizeChatDictationLanguage(result.chatDictationLanguage), persist: false })
         }
         if (typeof result.asrRefinerEnabled === "boolean") {
           dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: result.asrRefinerEnabled })
@@ -2551,6 +2563,7 @@ export function useWebSocket() {
     const port = chrome.runtime.connect({ name: "cmspark-sidepanel" })
 
     return () => {
+      chrome.storage.onChanged?.removeListener(syncLanguage)
       clearCodingOperationFeedback()
       clearInterval(interval)
       chrome.runtime.onMessage.removeListener(messageListener)

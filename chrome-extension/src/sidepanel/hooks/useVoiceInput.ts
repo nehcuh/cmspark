@@ -15,6 +15,7 @@ import {
   VOICE_DEFAULT_LANG,
   VOICE_MAX_LISTEN_MS,
   type VoiceDictationMode,
+  type ChatDictationLanguage,
 } from "../voice/detect"
 import {
   detectLocalMediaCapture,
@@ -104,6 +105,7 @@ export function resolveLocalFallbackActive(args: {
 
 export type UseVoiceInputOpts = {  /** Composer text at listen start (snapshot). */
   getBaseText: () => string
+  language?: ChatDictationLanguage
   /** Apply merged draft (never auto-send). meta.postprocessed → 「已后处理」微标. */
   onDraft: (text: string, meta?: { postprocessed?: boolean }) => void
   /** Local capture RMS 0–1. */
@@ -815,6 +817,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         }
 
         const sid = newSessionId()
+        const lang = o.language ?? VOICE_DEFAULT_LANG
         const base = o.getBaseText()
         const modeNow = modeRef.current
         const externalCap = externalRecordCap(o.externalMaxDurationMs, o.externalMaxBytes)
@@ -850,7 +853,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
           if (eng === "local") {
             const nearRt = o.realtimeStreaming === true
             adapterRef.current.start({
-              lang: VOICE_DEFAULT_LANG,
+              lang,
               sessionId: sid,
               modelId: o.modelId || "medium",
               mode: modeNow,
@@ -864,7 +867,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             // #259: same capture mechanics as local; adapter stamps
             // engine:"system" on the wire and forces batch segments.
             adapterRef.current.start({
-              lang: VOICE_DEFAULT_LANG,
+              lang,
               sessionId: sid,
               mode: modeNow,
               hardCapMs: maxMs,
@@ -872,7 +875,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             })
           } else if (eng === "external") {
             adapterRef.current.start({
-              lang: VOICE_DEFAULT_LANG,
+              lang,
               sessionId: sid,
               mode: "classic",
               hardCapMs: maxMs,
@@ -880,7 +883,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             })
           } else {
             adapterRef.current.start({
-              lang: VOICE_DEFAULT_LANG,
+              lang,
               mode: modeNow,
             })
           }

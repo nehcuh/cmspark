@@ -7,6 +7,25 @@ import assert from "node:assert/strict"
 import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
 import type { AgentAction } from "../src/sidepanel/store/agentStore"
 import type { VoiceModelState } from "../src/sidepanel/types"
+import { normalizeChatDictationLanguage } from "../src/sidepanel/voice/detect"
+
+test("chat language uses Mandarin for legacy profiles and restores the saved English preference", () => {
+  assert.equal(initialState.chatDictationLanguage, "zh-CN")
+  assert.equal(normalizeChatDictationLanguage(undefined), "zh-CN")
+  assert.equal(normalizeChatDictationLanguage("invalid"), "zh-CN")
+  const previous = globalThis.chrome
+  const saved: Record<string, unknown> = {}
+  Object.assign(globalThis, { chrome: { storage: { local: { set: (values: object) => Object.assign(saved, values) } } } })
+  try {
+    const selected = agentReducer(initialState, { type: "SET_CHAT_DICTATION_LANGUAGE", language: "en-US" })
+    assert.equal(selected.chatDictationLanguage, "en-US")
+    assert.equal(saved.chatDictationLanguage, "en-US")
+    const restored = agentReducer(initialState, { type: "SET_CHAT_DICTATION_LANGUAGE", language: normalizeChatDictationLanguage(saved.chatDictationLanguage), persist: false })
+    assert.equal(restored.chatDictationLanguage, "en-US")
+  } finally {
+    Object.assign(globalThis, { chrome: previous })
+  }
+})
 
 function voiceState(over: Partial<VoiceModelState> = {}): VoiceModelState {
   return {
