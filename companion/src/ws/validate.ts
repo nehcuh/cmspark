@@ -12,6 +12,7 @@ import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "../voice/session-caps"
 import { validateProjectRequest } from "../threads/project-store"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import { validMeetingAsrMessage } from "../voice/external-asr-meeting"
+import { validTranslationRequest } from "../meeting/meeting-translation"
 import { validBinaryDriftMessage } from "../apps/binary-drift-state"
 import { validateActivityMessage } from "../activity"
 import { validateSettingsAssistantMessage } from "../settings-assistant"
@@ -49,6 +50,10 @@ export interface WsValidationResult {
 
 function meetingAsrSchema(message: any): WsValidationResult {
   return validMeetingAsrMessage(message) ? { valid: true } : { valid: false, error: "Invalid meeting ASR request" }
+}
+
+function translationSchema(message: any): WsValidationResult {
+  return validTranslationRequest(message) ? { valid: true } : { valid: false, error: "Invalid translation request" }
 }
 
 function meetingMinutesSchema(m: any): WsValidationResult {
@@ -1122,6 +1127,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "meeting.translation.list": (m) => translationSchema(m),
+    "meeting.translation.prepare": (m) => translationSchema(m),
+    "meeting.translation.run": (m) => translationSchema(m),
+    "meeting.translation.cancel": (m) => translationSchema(m),
     "meeting.prepare_minutes": (m) => meetingMinutesSchema(m),
     "meeting.generate_minutes": (m) => meetingMinutesSchema(m),
     "meeting.set_status": (m) => {

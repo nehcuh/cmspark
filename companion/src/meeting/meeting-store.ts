@@ -650,3 +650,18 @@ export function transcriptToText(lines: TranscriptLine[]): string {
     .join("\n")
     .trim()
 }
+
+export type SavedTranslation = { id: string; version: string; language: string; text: string; model: string }
+
+export function readMeetingTranslations(id: string, dataDir = DATA_DIR): SavedTranslation[] {
+  const dir = resolveContained(id, dataDir)
+  const saved = dir && readJson<SavedTranslation[]>(path.join(dir, "translations.json"))
+  return Array.isArray(saved) ? saved.filter(item => item && typeof item.id === "string" &&
+    typeof item.version === "string" && typeof item.text === "string" && typeof item.language === "string") : []
+}
+
+export function writeMeetingTranslations(id: string, entries: SavedTranslation[], dataDir = DATA_DIR): void {
+  const dir = resolveContained(id, dataDir)
+  if (!dir || !fs.existsSync(path.join(dir, "meta.json"))) throw new Error("meeting not found")
+  writeJsonAtomic(path.join(dir, "translations.json"), entries)
+}

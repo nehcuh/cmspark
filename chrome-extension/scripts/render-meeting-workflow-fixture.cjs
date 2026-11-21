@@ -8,6 +8,7 @@ const source = `
 import React from 'react';import{createRoot}from'react-dom/client';
 import{AgentStoreProvider,initialState,useAgentStore}from'./src/sidepanel/store/agentStore';
 import{MeetingPanel}from'./src/sidepanel/components/MeetingPanel';
+import{WorkbenchTranslation,MeetingTranslation}from'./src/sidepanel/components/WorkbenchTranslation';
 import{MeetingExternalAsrSettings}from'./src/sidepanel/components/MeetingExternalAsrSettings';
 const listeners=new Set();window.sent=[];window.responses=[];window.failWrite=false;window.deferRefine=true;
 window.emit=m=>{window.responses.push(m);for(const fn of [...listeners])fn(m)};
@@ -17,7 +18,9 @@ window.sent.push(m);cb?.({ok:true});
 if(m.type.startsWith('meeting.'))fetch('/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m,failWrite:window.failWrite,failLlm:window.failLlm})}).then(r=>r.json()).then(window.emit);
 if(m.type==='voice.refine.request'&&!window.deferRefine)queueMicrotask(()=>window.emit({type:'voice.refine.result',sessionId:m.sessionId,refineGen:m.refineGen,text:m.text}));
 return Promise.resolve({ok:true})}},storage:{local:{get:(k,cb)=>{const r={meeting_privacy_ack_v1:true};cb?.(r);return Promise.resolve(r)},set:(v,cb)=>{cb?.();return Promise.resolve()}},onChanged:event},tabs:{query:(q,cb)=>{cb?.([]);return Promise.resolve([])}}};
-function Harness(){const{dispatch}=useAgentStore();window.dispatchUI=dispatch;return <>{${process.argv.includes('--external-asr')}&&<MeetingExternalAsrSettings/>}<MeetingPanel onClose={()=>{window.closed=true}} onSendToDraft={text=>window.draft=text}/></>}
+function Harness(){const{dispatch}=useAgentStore();window.dispatchUI=dispatch;
+if(${process.argv.includes('--translation')}){const meetingId=location.hash.slice(1);return meetingId?<MeetingTranslation meetingId={meetingId}/>:<WorkbenchTranslation/>}
+return <>{${process.argv.includes('--external-asr')}&&<MeetingExternalAsrSettings/>}<MeetingPanel onClose={()=>{window.closed=true}} onSendToDraft={text=>window.draft=text}/></>}
 createRoot(document.getElementById('root')).render(<AgentStoreProvider initialState={{...initialState,connectionState:'connected',activeThreadId:'thread-fixture',voicePrivacyAckV2:true,voiceRealtimeStreaming:true,voiceModel:{sttEngine:'local',localModelId:'medium',binary:{status:'ready'},models:{medium:{status:'ready'}}}}}><Harness/></AgentStoreProvider>);
 `;
 const capture = `export async function startPcmStreamCapture(opts){window.capture=opts;window.captureStops=0;return{backend:'scriptprocessor',stop:async()=>{window.captureStops++},abort:()=>{}}}`;

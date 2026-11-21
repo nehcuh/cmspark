@@ -18,6 +18,7 @@ import type { LlmExtractConfig } from "../llm/llm-extract"
 import { displayModelEndpoint, resolveMeetingTextModel } from "../model-center"
 import { assertLlmEndpointUrlAllowed } from "../security"
 import { generateMeetingMinutes } from "./meeting-minutes"
+import { createTranslationService } from "./meeting-translation"
 import { consumeMinutesConsent, minutesConsentFingerprint, prepareMinutesConsent } from "./minutes-consent"
 import { importMeetingReference, MEETING_REFERENCE_MAX_CHARS, MEETING_REFERENCE_MAX_NAME_CHARS } from "./meeting-reference"
 import { MEETING_MINUTES_MAX_INPUT_CHARS, MEETING_MINUTES_MAX_TEMPLATE_CHARS } from "./minutes-prompt"
@@ -110,6 +111,7 @@ function err(code: string, message: string, extra?: Record<string, unknown>) {
 }
 
 const minutesInFlight = new Set<string>()
+const translations = createTranslationService()
 const externalAsr = createMeetingExternalAsr({
   config: () => getConfig().voice?.meetingAsr,
   save: meetingAsr => { setVoiceFields({ meetingAsr }) },
@@ -117,6 +119,7 @@ const externalAsr = createMeetingExternalAsr({
 
 export function disconnectMeetingAsr(peerId: string) {
   externalAsr.disconnect(peerId)
+  translations.disconnect(peerId)
 }
 
 function transcriptWriteError(cause: unknown, id: string) {
@@ -175,6 +178,7 @@ export async function handleMeetingMessage(
     })
     return err("origin_denied", "chrome-extension origin required")
   }
+  if (typeof type === "string" && type.startsWith("meeting.translation.")) return translations.handle(msg, ctx.peerId)
   if (typeof type === "string" && type.startsWith("meeting.asr.")) {
     return handleMeetingAsrMessage(msg, ctx.peerId, externalAsr)
   }
