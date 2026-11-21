@@ -152,42 +152,52 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             if page.locator("#meetingPrivacyAck").is_visible():
                 page.locator("#meetingPrivacyAck").click()
             expect(page.locator("#meetingDesk")).to_be_visible()
-            control(hold=["meeting.append_transcript", "meeting.end"])
+            page.locator("#meetingNew").click()
+            wait_event(page,"meeting.create","ack")
+            page.locator("#meetingReferenceSection > summary").click()
+            page.locator("#meetingReferenceNotes").fill("Python 周四发布，负责人小王。")
+            page.locator("#meetingReferenceSave").click()
+            wait_event(page,"meeting.set_reference","ack")
+            control(hold=["voice.stt.end", "meeting.end"], liveResults=["配森将在周五发布。"])
+            page.locator("#meetingRec").click()
+            if page.locator("#meetingPrivacyAck").is_visible():
+                page.locator("#meetingPrivacyAck").click()
             expect(page.locator("#meetingRec")).to_have_attribute("aria-pressed", "true")
-            wait_event(page, "voice.stt.start")
-            # Live raw text must be visible while its persistence ACK is deliberately pending.
-            first_append = wait_event(page, "meeting.append_transcript", "held", timeout=22000)
-            expect(page.locator("#meetingLive")).to_contain_text("配森")
+            started = wait_event(page, "meeting.start", "ack")["response"]["meeting"]
+            owner = started["id"]
+            receiving = wait_event(page, "voice.stt.start", "ack")["response"]
+            assert receiving["credits"] and receiving["queue_contract"] == 1
+            expect(page.locator("#meetingLive")).to_contain_text("配森", timeout=22000)
             page.screenshot(path=str(ARTIFACTS / "native-live-390.png"), full_page=True)
             no_model()
             assert not events("meeting.end")
-            page.locator("#meetingReferenceSection > summary").click()
-            page.locator("#meetingReferenceNotes").fill("Python 周四发布，负责人小王。")
-            page.locator("#meetingMinutesBtn").click()
-            page.wait_for_timeout(250)
-            assert not events("meeting.end"), "end ran before the raw append ACK"
+            expect(page.locator("#meetingMinutesBtn")).to_be_disabled()
+            page.locator("#meetingRec").click()
+            wait_event(page, "voice.stt.end", "held")
             no_model()
-            control(release="meeting.append_transcript")
+            assert not events("meeting.end"), "end ran before the real PCM seal"
+            control(release="voice.stt.end")
             end_held = wait_event(page, "meeting.end", "held")
             no_model()
             control(release="meeting.end")
+            wait_event(page,"meeting.end","ack")
+            no_model()
+            page.locator("#meetingMinutesBtn").click()
             confirm_minutes(page)
             generated = wait_event(page, "meeting.generate_minutes", "ack")
             assert generated["response"]["type"] == "meeting.minutes_result", generated
-            append_acks = events("meeting.append_transcript", "ack")
-            end_ack = events("meeting.end", "ack")[-1]
-            generate_request = events("meeting.generate_minutes")[-1]
-            assert all(event["n"] < end_held["n"] for event in append_acks)
-            assert end_ack["n"] < generate_request["n"]
+            terminal = wait_event(page,"meeting.capture.status","terminal")["response"]
+            assert terminal["completion"]["outcome"] == "complete"
+            assert terminal["committed_end"] == terminal["server_received_end"] > 0
+            end_ack = events("meeting.end","ack")[-1]
+            assert end_ack["n"] < events("meeting.generate_minutes")[-1]["n"]
+            assert [line["text"] for line in end_ack["response"]["meeting"]["original_transcript"]] == ["配森将在周五发布。"]
             expect(page.locator("#meetingMinutes")).to_contain_text("Python")
             expect(page.locator("#meetingEvidence")).to_contain_text("周四")
             expect(page.locator("#meetingEvidence")).to_contain_text("负责人小王")
             expect(page.locator("#meetingLive")).to_contain_text("配森")
             page.screenshot(path=str(ARTIFACTS / "native-correction-390.png"), full_page=True)
-            # HTTP and SSE duplicate delivery must append each STT session exactly once.
-            finalized = events("voice.stt.end", "ack")
-            assert len(append_acks) == len(finalized), (append_acks, finalized)
-            print("PASS native raw immediate, SSE/HTTP dedup, append ACK → end ACK → explicit minutes", flush=True)
+            print("PASS native live final, real PCM seal and end receipts, one durable source and explicit minutes", flush=True)
 
             # A failed model call preserves the current transcript/reference and completed draft.
             before_text = page.locator("#meetingLive").inner_text()
@@ -283,13 +293,13 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
                         assert actual.json()["type"] == "meeting.updated"
                     route.abort("failed")
                 page.route("**/api/meeting/append", lose_append, times=1)
-                page.locator("#meetingRec").click()
-                started = wait_event(page, "meeting.start", "ack", after=marker)
-                existing = started["response"]["meeting"]
+                existing = page.evaluate("""async id=>(await (await fetch('/api/meeting?id='+encodeURIComponent(id))).json()).meeting""",owner)
                 assert existing["reference_name"] == "notes.docx"
                 assert existing["reference_notes"] == notes_before
+                with page.expect_file_chooser() as chooser:
+                    page.locator("#meetingAudioImport").click()
+                chooser.value.set_files({"name":"retry.wav","mimeType":"audio/wav","buffer":wav_bytes()})
                 wait_event(page, "voice.stt.chunk", after=marker)
-                page.locator("#meetingMinutesBtn").click()
                 expect(page.locator("#meetingRetry")).to_be_visible()
                 expect(page.locator("#meetingMinutesBtn")).to_be_enabled()
                 expect(page.locator("#meetingLive")).to_contain_text(f"恢复追加不重复 {mode}")
@@ -305,7 +315,9 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
                     assert fault["after"]["transcript"][-1]["segment_id"] == fault["segment_id"]
                     assert len(fault["after"]["transcript"]) == len(existing["transcript"]) + 1
                 page.locator("#meetingRetry").click()
-                recovered = wait_event(page, "meeting.end", "ack", after=marker)["response"]["meeting"]
+                expect(page.locator("#meetingRetry")).to_be_hidden()
+                recovered = events("meeting.append_transcript","ack",after=marker)[-1]["response"]["meeting"]
+                assert not events("meeting.start",after=marker)
                 assert len(recovered["transcript"]) == len(existing["transcript"]) + 1, recovered
                 assert len(recovered["original_transcript"]) == len(existing["original_transcript"]) + 1
                 assert recovered["transcript"][:-1] == existing["transcript"]
@@ -323,7 +335,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
                 regenerated = wait_event(page, "meeting.generate_minutes", "ack", after=marker)
                 assert regenerated["response"]["type"] == "meeting.minutes_result", regenerated
                 expect(page.locator("#meetingMinutesBtn")).to_be_enabled()
-                print(f"PASS native {mode} append failure → retry → end → generation; no duplicate or lost materials", flush=True)
+                print(f"PASS native {mode} file append failure → same-ID retry → generation; no duplicate or lost materials", flush=True)
 
             # Import-first users need no recording session. A new document requires its own consent.
             marker = control()["traces"][-1]["n"]
@@ -362,6 +374,53 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             assert imported_minutes["response"]["type"] == "meeting.minutes_result", imported_minutes
             expect(imported_page.locator("#meetingEvidence")).to_contain_text("Python")
             print("PASS native import-first materials preserve notes, require explicit audio consent, and generate only on click", flush=True)
+            # Exercise current live failure at the inference boundary. The store
+            # should retain the first commit and report the received uncommitted suffix.
+            failed_page = context.new_page()
+            failed_page.on("pageerror", lambda error: errors.append(str(error)))
+            failed_page.on("request", lambda request: requests.append(request.url))
+            failed_page.goto(origin)
+            failed_page.locator("#meetingOpen").click()
+            marker = control()["traces"][-1]["n"]
+            failed_page.locator("#meetingNew").click()
+            failure_owner = wait_event(failed_page,"meeting.create","ack",after=marker)["response"]["meeting"]["id"]
+            control(liveResults=["先保存的实时原稿。",None])
+            failed_page.locator("#meetingRec").click()
+            if failed_page.locator("#meetingPrivacyAck").is_visible():
+                failed_page.locator("#meetingPrivacyAck").click()
+            expect(failed_page.locator("#meetingLive")).to_contain_text("先保存的实时原稿。",timeout=22000)
+            stopped = wait_event(failed_page,"meeting.capture.status","terminal",after=marker,timeout=30000)["response"]
+            assert stopped["phase"] == "failed" and stopped["code"] == "infer_failed", stopped
+            assert stopped["completion"]["outcome"] == "failed" and not stopped["completion"]["prefix_complete"]
+            assert stopped["saved_text_segments"] == 1
+            assert 0 < stopped["committed_end"] < stopped["server_received_end"]
+            expect(failed_page.locator("#meetingSourceRange")).to_contain_text("不完整")
+            expect(failed_page.locator("#meetingQueue")).to_contain_text("已保存部分前缀")
+            expect(failed_page.locator("#meetingRec")).to_have_attribute("aria-pressed","false")
+            def load_failure_owner():
+                return failed_page.evaluate("""async id=>(await (await fetch('/api/meeting?id='+encodeURIComponent(id))).json()).meeting""",failure_owner)
+            partial = load_failure_owner()
+            assert partial["capture_summary"]["sticky_incomplete"] is True
+            assert [line["text"] for line in partial["original_transcript"]]==["先保存的实时原稿。"]
+            assert partial["capture_summary"]["committed_end"]==stopped["committed_end"]
+            no_model(after=marker)
+            # Recovery is a new explicit Begin on the same meeting and a fresh epoch.
+            marker = control()["traces"][-1]["n"]
+            control(liveResults=["中断后新录制的原稿。"])
+            failed_page.locator("#meetingRec").click()
+            next_begin = wait_event(failed_page,"meeting.start","ack",after=marker)["response"]
+            assert next_begin["meeting"]["id"]==failure_owner
+            assert next_begin["continuous_capture"]["capture_epoch"]==stopped["capture_epoch"]+1
+            expect(failed_page.locator("#meetingLive")).to_contain_text("中断后新录制的原稿。",timeout=22000)
+            failed_page.locator("#meetingRec").click()
+            next_end = wait_event(failed_page,"meeting.capture.status","terminal",after=marker)["response"]
+            assert next_end["completion"]["outcome"]=="complete"
+            reopened = load_failure_owner()
+            assert [line["text"] for line in reopened["original_transcript"]]==["先保存的实时原稿。","中断后新录制的原稿。"]
+            assert reopened["capture_summary"]["sticky_incomplete"] is True
+            expect(failed_page.locator("#meetingSourceRange")).to_contain_text("不完整")
+            no_model(after=marker)
+            print("PASS native live inference failure preserves the committed prefix, reports incomplete range and accepts a new explicit recording",flush=True)
             assert not errors, errors
             assert all(url.startswith(origin) for url in requests), requests
             (ARTIFACTS / "browser-evidence.json").write_text(json.dumps({"errors": errors, "requests": requests, "layouts": layouts}, ensure_ascii=False, indent=2))
