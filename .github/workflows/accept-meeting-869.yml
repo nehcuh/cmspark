@@ -1,7 +1,7 @@
 name: Released Windows meeting acceptance
 on:
   push:
-    branches: [codex/meeting-v131-release-acceptance]
+    branches: [codex/meeting-v140-release-acceptance]
 permissions:
   contents: read
 jobs:
@@ -17,8 +17,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install Chromium in the disposable runner
         run: uv run --no-project --python 3.12 --with playwright==1.57.0 python -m playwright install chromium
-      - name: Import the public recording into the released extension and generate minutes
-        run: uv run --no-project --python 3.12 --with playwright==1.57.0 python .github/meeting-869/prepare_release_case.py v1.3.1
+      - name: Import the public recording and confirm minutes in the released extension
+        run: uv run --no-project --python 3.12 --with playwright==1.57.0 python .github/meeting-869/prepare_release_case.py v1.4.0
       - uses: actions/upload-artifact@v4
         with:
           name: released-meeting-acceptance

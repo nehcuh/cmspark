@@ -118,7 +118,12 @@ try:
     daemon = subprocess.Popen([node,bundle,"start"], cwd=node.parent, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     children.append(daemon)
     wait_healthy(daemon,"http://127.0.0.1:23401/healthz")
-    subprocess.run([sys.executable, Path(__file__).with_name("released_meeting_ui.py"), "--version", tag[1:], "--extension", manifest.parent, "--data",data,"--audio",clip,"--profile",base / "profile","--output",public], check=True)
+    subprocess.run([
+        sys.executable, Path(__file__).with_name("released_meeting_ui.py"),
+        "--version", tag[1:], "--extension", manifest.parent, "--data", data,
+        "--audio", clip, "--profile", base / "profile", "--output", public,
+        "--minutes-model", config["llm"]["model_name"], "--minutes-endpoint", config["llm"]["base_url"],
+    ], check=True)
     receipt_path = public / "receipt.json"
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     receipt.update({
