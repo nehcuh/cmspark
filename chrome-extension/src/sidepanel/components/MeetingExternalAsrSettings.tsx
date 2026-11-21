@@ -103,7 +103,7 @@ export function MeetingExternalAsrSettings({ active = true }: { active?: boolean
     {error && <p role="alert">{error}</p>}
     {saved && <p role="status">已保存并核对会议转写设置。</p>}
     {snapshot && <p data-testid="meeting-asr-current" style={styles.target}>
-      当前导入方式 · {snapshot.mode === "local" ? "本机转写" : snapshot.ready ? snapshot.model : "外部转写服务未就绪"}
+      当前会议转写方式 · {snapshot.mode === "local" ? "本机转写" : snapshot.ready ? snapshot.model : "外部转写服务未就绪"}
       {snapshot.mode === "external" && snapshot.normalizedUrl && <><br />{snapshot.normalizedUrl}</>}
     </p>}
     {fields && <form onSubmit={onSubmit} data-testid="meeting-asr-settings">
