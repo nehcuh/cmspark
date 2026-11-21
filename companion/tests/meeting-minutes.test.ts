@@ -30,6 +30,7 @@ import {
   MEETING_MINUTES_SYSTEM_PROMPT,
 } from "../src/meeting/minutes-prompt"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
+import { generateFixtureMinutes } from "./meeting-minutes-test-helper"
 import { MEETING_TEST_DATA_DIR } from "./meeting-test-data-dir"
 
 /** Same root handlers use (config.DATA_DIR after env bootstrap). */
@@ -147,7 +148,7 @@ test("handler origin denied", async () => {
 })
 
 test("handler generate ephemeral paste", async () => {
-  const res = await handleMeetingMessage(
+  const res = await generateFixtureMinutes(
     {
       type: "meeting.generate_minutes",
       v: 1,
@@ -196,7 +197,7 @@ test("handler create + set_transcript + generate", async () => {
     },
     { origin: EXT },
   )
-  const gen = await handleMeetingMessage(
+  const gen = await generateFixtureMinutes(
     { type: "meeting.generate_minutes", v: 1, id },
     { origin: EXT },
     {

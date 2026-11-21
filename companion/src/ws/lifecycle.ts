@@ -37,6 +37,7 @@ import {
   getPidFilePath,
 } from "../config"
 import { handleMessage, redactMcpServersForBroadcast, listLlmActiveThreadIds } from "../message-router"
+import { disconnectMeetingAsr } from "../meeting/meeting-handlers"
 import { projectThreadActivity } from "../message-router/handlers/projects"
 import { isModuleEnabled } from "../capability/modules"
 import { redactConfigForWire } from "../config-redact"
@@ -1596,6 +1597,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     })
 
     ws.on("close", (code) => {
+      disconnectMeetingAsr(panelId)
       fileUploadParts.close(ws)
       cockpitNativeBridge.close(ws)
       clearInterval(pingInterval)

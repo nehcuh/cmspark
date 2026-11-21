@@ -153,6 +153,7 @@ export class OpenAIProvider implements LlmProvider {
 
     const response = await this.client.chat.completions.create(createParams, {
       signal: params.signal,
+      ...(params.rejectRedirects ? { fetchOptions: { redirect: "error" } } : {}),
     })
 
     if (!Array.isArray(response.choices)) {

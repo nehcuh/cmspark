@@ -4,22 +4,39 @@ type MeetingTransport = {
   timeoutMs?: number
 }
 
+export type PreparedMinutes = {
+  consent_token: string
+  target: { model_name: string; base_url: string; profile_name?: string | null }
+  material: { transcript_chars: number; reference_chars: number; reference_name: string; template_chars: number }
+}
+
+function preparedMinutes(message: any): PreparedMinutes {
+  const { consent_token, target, material } = message
+  const count = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0
+  if (typeof consent_token !== "string" || !consent_token || typeof target?.base_url !== "string" ||
+      typeof target?.model_name !== "string" || !count(material?.transcript_chars) ||
+      !count(material?.reference_chars) || !count(material?.template_chars) || typeof material?.reference_name !== "string") {
+    throw new Error("无法核对纪要接收方和发送范围，未生成纪要。")
+  }
+  return { consent_token, target, material }
+}
+
 /** Existing WS contract: id correlates the request; meeting_id owns the data. */
 export function createMeetingPersistence({ send, subscribe, timeoutMs = 10_000 }: MeetingTransport) {
   let sequence = 0
   const replacements = new Map<string, number>()
   const writes: { meetingId: string; sequence: number; done: Promise<boolean>; confirmed: boolean; error?: Error; retryOriginal?: () => Promise<void> }[] = []
 
-  const request = (meetingId: string, type: string, responseType: string, fields: Record<string, unknown> = {}) => new Promise<any>((resolve, reject) => {
+  const requestFrame = <T,>(meetingId: string, type: string, responseType: string, fields: Record<string, unknown>, read: (message: any) => T) => new Promise<T>((resolve, reject) => {
     const requestId = `meeting-rpc-${crypto.randomUUID()}`
     let settled = false
     let unsubscribe = () => {}
-    const finish = (error?: Error, value?: any) => {
+    const finish = (error?: Error, value?: T) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       unsubscribe()
-      error ? reject(error) : resolve(value)
+      error ? reject(error) : resolve(value!)
     }
     const timer = setTimeout(() => finish(new Error("保存确认超时，请保持面板并重试")), timeoutMs)
     unsubscribe = subscribe(message => {
@@ -27,9 +44,9 @@ export function createMeetingPersistence({ send, subscribe, timeoutMs = 10_000 }
       if (message.type === "meeting.error" || message.type === "error") {
         finish(new Error(message.message || message.error || "会议保存失败"))
       } else if (message.type === responseType) {
-        if (!message.meeting?.id || (meetingId && message.meeting.id !== meetingId) || !Array.isArray(message.meeting.transcript)) {
-          finish(new Error("会议保存回执与当前会议不匹配"))
-        } else finish(undefined, message.meeting)
+        try { finish(undefined, read(message)) } catch (cause) {
+          finish(cause instanceof Error ? cause : new Error("无法核对会议回执"))
+        }
       }
     })
     try {
@@ -41,8 +58,19 @@ export function createMeetingPersistence({ send, subscribe, timeoutMs = 10_000 }
     }
   })
 
+  const request = (meetingId: string, type: string, responseType: string, fields: Record<string, unknown> = {}) =>
+    requestFrame(meetingId, type, responseType, fields, message => {
+      if (!message.meeting?.id || (meetingId && message.meeting.id !== meetingId) || !Array.isArray(message.meeting.transcript)) {
+        throw new Error("会议保存回执与当前会议不匹配")
+      }
+      return message.meeting
+    })
+
   return {
     request,
+    prepareMinutes(meetingId: string, fields: Record<string, unknown>) {
+      return requestFrame(meetingId, "meeting.prepare_minutes", "meeting.minutes_prepared", fields, preparedMinutes)
+    },
     create(fields: Record<string, unknown> = {}) {
       return request("", "meeting.create", "meeting.created", fields)
     },

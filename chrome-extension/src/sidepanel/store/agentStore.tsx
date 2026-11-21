@@ -558,6 +558,7 @@ export type AgentAction =
   | {
       type: "SET_SHOW_REASONING_MODE"
       mode: "always_collapsed" | "auto_live" | "always_open"
+      persist?: boolean
     }
   | { type: "SET_EXPORT_INCLUDE_REASONING"; enabled: boolean }
   | { type: "SET_VOICE_INPUT_ENABLED"; enabled: boolean }
@@ -1952,7 +1953,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, sendShortcut: action.shortcut }
     case "SET_SHOW_REASONING_MODE": {
       const mode = action.mode
-      chrome.storage.local.set({ "cmspark.ui.show_reasoning": mode })
+      if (action.persist !== false) chrome.storage.local.set({ "cmspark.ui.show_reasoning": mode })
       return { ...state, showReasoningMode: mode }
     }
     case "SET_EXPORT_INCLUDE_REASONING":

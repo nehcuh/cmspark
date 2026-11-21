@@ -2,6 +2,7 @@
 export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
   var meetingEnding=null,meetingWorkBusy=false,meetingFailure=null,meetingContinuous=null;
   var meetingReferenceName="",meetingCapture=null,meetingConsentResume=null,pendingMeetingSegment=null,meetingViewRev=0;
+  var cancelMeetingMinutesConfirmation=null;
   function continuousMeetingRequest(message){
     var route={"voice.stt.start":"/api/stt/start","voice.stt.chunk":"/api/stt/chunk","voice.stt.end":"/api/stt/end","voice.stt.abort":"/api/stt/abort"}[message.type];
     if(!route)return Promise.reject(new Error("连续录制消息无效"));
@@ -246,6 +247,22 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     if(!d.meeting || d.meeting.id!==id || d.meeting.reference_notes!==notes || d.meeting.reference_name!==name)throw new Error("参考笔记保存回执不匹配");
     renderMeetingEvidence(d.meeting.minutes);return d.meeting;
   }
+  function confirmMeetingMinutes(prepared){
+    if(prepared.type!=="meeting.minutes_prepared" || !prepared.consent_token || !prepared.target || !prepared.material)throw new Error("纪要确认回执无效");
+    var target=prepared.target,material=prepared.material;
+    var sheet=$("meetingMinutesConfirm"),cancel=$("meetingMinutesCancel"),send=$("meetingMinutesSend");
+    $("meetingMinutesDestination").textContent=(target.profile_name?target.profile_name+" · ":"")+target.model_name+" · "+target.base_url;
+    $("meetingMinutesMaterial").textContent="将发送转写 "+material.transcript_chars+" 字"+(material.reference_chars?"、参考笔记 "+material.reference_chars+" 字"+(material.reference_name?"（"+material.reference_name+"）":""):"");
+    sheet.hidden=false;
+    return new Promise(function(resolve){
+      function finish(confirmed){
+        sheet.hidden=true;send.onclick=null;cancel.onclick=null;cancelMeetingMinutesConfirmation=null;resolve(confirmed);
+      }
+      send.onclick=function(){finish(true)};
+      cancelMeetingMinutesConfirmation=cancel.onclick=function(){finish(false)};
+      cancel.focus();
+    });
+  }
   async function requestMeetingMinutes(){
     if(meetingWorkBusy)return;
     if(!meetingAck || !voiceAck){requestMeetingConsent(requestMeetingMinutes);return}
@@ -253,9 +270,12 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     try{
       await endMeetingCapture();
       var id=lastMeetingId;if(!id)throw new Error("请先录制或导入录音");
-      await saveMeetingReference(id);
+      var saved=await saveMeetingReference(id);
+      var prepared=await meetingPost("/api/meeting/minutes/prepare",{id:id,privacy_ack_v1:true});
+      if(!await confirmMeetingMinutes(prepared)){meetingSay("已取消发送会议材料");$("meetingHint").textContent="会议材料已保存";return}
+      if($("meetingReferenceNotes").value!==saved.reference_notes || meetingReferenceName!==saved.reference_name)throw new Error("参考笔记已修改，请重新核对并确认");
       meetingSay("正在生成纪要…");$("meetingHint").textContent="正在生成纪要…";
-      var d=await meetingPost("/api/meeting/minutes",{id:id,privacy_ack_v1:true});
+      var d=await meetingPost("/api/meeting/minutes",{id:id,privacy_ack_v1:true,consent_token:prepared.consent_token});
       var md=d.minutes&&(d.minutes.raw_md||d.minutes.md);
       if(!md)throw new Error("纪要生成失败：未返回正文");
       $("meetingMinutes").hidden=false;$("meetingMinutes").innerHTML="<p>会议纪要 · AI 草稿，请核对</p>"+renderMd(md);renderMeetingEvidence(d.minutes);

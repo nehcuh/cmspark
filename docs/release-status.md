@@ -1,8 +1,14 @@
 # 版本与交付状态
 
-> 源码开发版本 **1.3.1（尚未正式发布）**。本次准备的已发布基线是 [v1.3.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.3.0)。
+> 本次发布准备版本为 **1.4.0**。已发布基线为 [v1.3.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.3.1)。
 
-## 1.3.1 发布准备
+## 1.4.0 发布准备
+
+- 设置、模型配置、会议导入转写和生成确认范围见 [设置与模型中心](superpowers/specs/2026-11-21-settings-model-center-design.md) 与 [变更记录](../CHANGELOG.md)。
+
+## 1.3.1
+
+- 正式标签 `v1.3.1` 指向 `79a5af9829c014f0281c604c709e2f7f0eac0477`。2026-11-21 发布，公开资产共 19 项。 [正式发行](https://github.com/nehcuh/cmspark/releases/tag/v1.3.1) · [安装器校验清单](https://github.com/nehcuh/cmspark/releases/download/v1.3.1/SHA256SUMS-INSTALLERS.txt)
 
 - 本版恢复 Chrome 扩展窄栏与弹出对话框的紧凑导航布局。发布内容见 [CHANGELOG](../CHANGELOG.md) 与 [#867](https://github.com/nehcuh/cmspark/pull/867)。
 - 合并候选同时包含外部模型输出预算、自动知识注入，以及 Windows Apps 与 macOS 选择框的验收夹具修复。[#875](https://github.com/nehcuh/cmspark/pull/875) · [#874](https://github.com/nehcuh/cmspark/pull/874) · [#871](https://github.com/nehcuh/cmspark/pull/871)

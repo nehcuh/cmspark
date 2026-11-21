@@ -303,6 +303,9 @@ export class WSClient {
 
   send(data: object): boolean {
     if ((data as any)?.queue_contract !== undefined) return this.sendMeetingPcm(data)
+    const type = (data as { type?: unknown }).type
+    if (typeof type === "string" && type.startsWith("meeting.asr.") &&
+        (!this.authenticated || this.ws?.readyState !== WebSocket.OPEN)) return false
     // Not paired yet — don't open a connection just to have it rejected; the
     // WSClient stays parked until setSecret() supplies a secret.
     if (this.unpaired) return false

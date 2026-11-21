@@ -53,6 +53,10 @@ export interface ExternalTranscribeRequest {
   signal: AbortSignal
   fetchImpl?: (url: string, init: ExternalFetchInit) => Promise<ExternalFetchResponse>
   lookup?: (hostname: string) => Promise<ExternalLookupAnswer[]>
+  /** Recheck operation authority after DNS, immediately before dispatch. */
+  beforeDispatch?: () => boolean
+  /** An HTTP response establishes delivery more strongly than starting fetch. */
+  onResponse?: () => void
 }
 
 const UNREACHABLE: ExternalTranscribeResult = { ok: false, code: "external_unreachable" }
@@ -71,6 +75,17 @@ async function defaultLookup(hostname: string): Promise<ExternalLookupAnswer[]> 
     address: row.address,
     family: row.family === 6 ? 6 : 4,
   }))
+}
+
+function lookupWithinDeadline(lookup: typeof defaultLookup, host: string, signal: AbortSignal) {
+  return new Promise<ExternalLookupAnswer[]>((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener("abort", abort, { once: true })
+    void Promise.resolve()
+      .then(() => { signal.throwIfAborted(); return lookup(host) })
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort))
+  })
 }
 
 function linkDeadline(parent: AbortSignal, timeoutMs: number) {
@@ -113,34 +128,27 @@ export async function transcribeExternal(req: ExternalTranscribeRequest): Promis
   if (req.signal.aborted) return { ok: false, code: "aborted" }
   const host = hostOf(req.url)
   if (!host) return UNREACHABLE
-  if (isLiteralAddress(host)) {
-    if (isBlockedResolvedAddress(host)) return UNREACHABLE
-  } else {
-    let answers: ExternalLookupAnswer[]
-    try {
-      answers = await (req.lookup ?? defaultLookup)(host)
-    } catch {
-      return UNREACHABLE
-    }
-    if (req.signal.aborted) return { ok: false, code: "aborted" }
-    if (answers.length === 0 || answers.some((row) => isBlockedResolvedAddress(row.address))) {
-      return UNREACHABLE
-    }
-  }
-  if (req.signal.aborted) return { ok: false, code: "aborted" }
-
   const deadline = linkDeadline(req.signal, req.timeoutMs)
-  const form = new FormData()
-  const bytes = new Uint8Array(req.wav.byteLength)
-  bytes.set(req.wav)
-  form.append("file", new Blob([bytes], { type: "audio/wav" }), "audio.wav")
-  if (req.style === "openai") {
-    form.append("model", req.model ?? "")
-    if (req.language) form.append("language", req.language)
-    form.append("response_format", "json")
-  }
-  const doFetch = req.fetchImpl ?? ((url: string, init: ExternalFetchInit) => fetch(url, init))
   try {
+    if (isLiteralAddress(host)) {
+      if (isBlockedResolvedAddress(host)) return UNREACHABLE
+    } else {
+      const answers = await lookupWithinDeadline(req.lookup ?? defaultLookup, host, deadline.signal)
+      if (answers.length === 0 || answers.some((row) => isBlockedResolvedAddress(row.address))) return UNREACHABLE
+    }
+    if (deadline.signal.aborted) return failureCode(req.signal, deadline.timedOut())
+
+    const form = new FormData()
+    const bytes = new Uint8Array(req.wav.byteLength)
+    bytes.set(req.wav)
+    form.append("file", new Blob([bytes], { type: "audio/wav" }), "audio.wav")
+    if (req.style === "openai") {
+      form.append("model", req.model ?? "")
+      if (req.language) form.append("language", req.language)
+      form.append("response_format", "json")
+    }
+    const doFetch = req.fetchImpl ?? ((url: string, init: ExternalFetchInit) => fetch(url, init))
+    if (req.beforeDispatch?.() === false) return { ok: false, code: "aborted" }
     const res = await doFetch(req.url, {
       method: "POST",
       redirect: "error",
@@ -148,6 +156,7 @@ export async function transcribeExternal(req: ExternalTranscribeRequest): Promis
       body: form,
       signal: deadline.signal,
     })
+    req.onResponse?.()
     if (req.signal.aborted || deadline.timedOut()) return failureCode(req.signal, deadline.timedOut())
     if (typeof res.status === "number" && res.status >= 300 && res.status < 400) {
       return { ok: false, code: "external_redirect" }
@@ -160,6 +169,7 @@ export async function transcribeExternal(req: ExternalTranscribeRequest): Promis
     try {
       body = await res.json()
     } catch {
+      if (req.signal.aborted || deadline.timedOut()) return failureCode(req.signal, deadline.timedOut())
       return { ok: false, code: "external_bad_response" }
     }
     if (req.signal.aborted || deadline.timedOut()) return failureCode(req.signal, deadline.timedOut())

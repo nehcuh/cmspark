@@ -102,7 +102,7 @@ test("#244 MeetingPanel 五条隐私原文不动（overlay lockstep）", () => {
   }
 })
 
-test("#244 overlay ACL #492 仅增两个参考动词；auto_diarize 被拒（#244 NEVER）", async () => {
+test("#244 overlay ACL includes reference and minutes preparation while refusing auto_diarize", async () => {
   const meeting = [...SUMMONER_WEB_DISPATCH_ALLOW].filter((t) => t.startsWith("meeting.")).sort()
   assert.deepEqual(meeting, [
     "meeting.append_transcript",
@@ -112,10 +112,12 @@ test("#244 overlay ACL #492 仅增两个参考动词；auto_diarize 被拒（#24
     "meeting.get",
     "meeting.import_reference",
     "meeting.list",
+    "meeting.prepare_minutes",
     "meeting.set_reference",
     "meeting.start",
   ])
   assert.equal(assertSummonerAllowed("summoner", "meeting.append_transcript").ok, true)
+  assert.equal(assertSummonerAllowed("summoner", "meeting.prepare_minutes").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.generate_minutes").ok, true)
   assert.equal(assertSummonerAllowed("summoner", "meeting.auto_diarize").ok, false)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("meeting.auto_diarize"), false)
@@ -124,6 +126,7 @@ test("#244 overlay ACL #492 仅增两个参考动词；auto_diarize 被拒（#24
   assert.equal(assertSummonerAllowed("summoner", "ui.open_sidepanel").ok, false)
   assert.equal(SUMMONER_WEB_DISPATCH_ALLOW.has("ui.open_sidepanel"), false)
   assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.minutes_result"), true)
+  assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("meeting.minutes_prepared"), false)
   assert.doesNotMatch(overlayHtml, />允许<|>拒绝</)
   assert.doesNotMatch(overlayHtml, /Allow\/Deny/)
   assert.doesNotMatch(overlayHtml, /id="meetingDiarize"/)
@@ -146,6 +149,7 @@ test("#244 #230 freeze: overlay HTML dispatch meeting set is a snapshot (not a t
     "meeting.get",
     "meeting.import_reference",
     "meeting.list",
+    "meeting.prepare_minutes",
     "meeting.set_reference",
     "meeting.start",
   ])

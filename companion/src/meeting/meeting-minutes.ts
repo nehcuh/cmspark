@@ -83,7 +83,7 @@ export async function generateMeetingMinutes(params: {
     out = await extract({
       systemPrompt,
       userContent,
-      config: params.config,
+      config: { ...params.config, rejectRedirects: true },
       temperatureCap: MEETING_MINUTES_TEMP_CAP,
       timeout: MEETING_MINUTES_TIMEOUT_MS,
       signal: params.signal,
@@ -92,14 +92,15 @@ export async function generateMeetingMinutes(params: {
     if (params.signal?.aborted || e?.name === "AbortError") {
       return { ok: false, code: "aborted", message: "aborted" }
     }
-    logger.warn("meeting.minutes.llm_failed", {
-      err: e instanceof Error ? e.message : String(e),
-      input_len: raw.length,
-    })
+    // A service can reflect credentials or source material in its error body.
+    const status = typeof e?.status === "number" && Number.isInteger(e.status) && e.status >= 400 && e.status <= 599 ? e.status : undefined
+    logger.warn("meeting.minutes.llm_failed", { status, input_len: raw.length })
     return {
       ok: false,
       code: "llm_error",
-      message: e instanceof Error ? e.message : "llm failed",
+      message: status === 401 || status === 403
+        ? "纪要模型拒绝了请求，请检查服务密钥和模型权限后重试"
+        : "纪要模型请求失败，请检查模型设置或稍后重试",
     }
   }
 

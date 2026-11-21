@@ -57,14 +57,19 @@ test("#492 native HTTP deadline aborts pending requests with an explicit recover
   const context = workflowContext(async (_path, options) => new Promise((_resolve, reject) => {
     options.signal.addEventListener("abort", () => { const error = new Error("aborted"); error.name = "AbortError"; reject(error) })
   }), true)
-  await assert.rejects(vm.runInContext('meetingPost("/api/meeting/append", {})', context), /请求超时/)
+  for (const route of ["/api/meeting/append", "/api/meeting/minutes/prepare", "/api/meeting/minutes"]) {
+    await assert.rejects(vm.runInContext(`meetingPost(${JSON.stringify(route)}, {})`, context), /请求超时/)
+  }
 })
 
 test("#492 native reference HTTP uses actual handlers, bounded files and exact ACL", async () => {
   const dispatched: Record<string, unknown>[] = []
   const { port, token } = await startSummonerWebServer({ preferredPort: 23580, dispatch: async msg => {
     dispatched.push(msg)
-    return handleMeetingMessage(msg, { origin: "cmspark-tray://local", surface: "summoner" }, { getLlmConfig: () => null })
+    return handleMeetingMessage(msg, { origin: "cmspark-tray://local", surface: "summoner" }, {
+      getLlmConfig: () => ({ base_url: "https://owned.invalid/v1", model_name: "minutes-fixture", api_key: "owned-fixture-key", temperature: 0.2 }),
+      generate: async ({ transcriptText }) => ({ ok: true, minutes: { raw_md: `### TL;DR\n${transcriptText}`, generated_at: "2026-11-21T00:00:00Z" } }),
+    })
   } })
   let id = ""
   async function post(route: string, body: unknown, authenticated = true) {
@@ -116,6 +121,17 @@ test("#492 native reference HTTP uses actual handlers, bounded files and exact A
     }
     const noConsent = await post("/api/meeting/minutes", { id })
     assert.equal(noConsent.data.code, "need_privacy_ack")
+    const unauthenticated = await post("/api/meeting/minutes/prepare", { id, privacy_ack_v1: true }, false)
+    assert.equal(unauthenticated.status, 403)
+    const missingToken = await post("/api/meeting/minutes", { id, privacy_ack_v1: true })
+    assert.equal(missingToken.data.code, "minutes_consent_required")
+    const prepared = await post("/api/meeting/minutes/prepare", { id, privacy_ack_v1: true })
+    assert.equal(prepared.data.type, "meeting.minutes_prepared")
+    assert.equal(prepared.data.target.model_name, "minutes-fixture")
+    assert.equal(prepared.data.target.base_url, "https://owned.invalid/v1")
+    const generated = await post("/api/meeting/minutes", { id, privacy_ack_v1: true, consent_token: prepared.data.consent_token })
+    assert.equal(generated.data.type, "meeting.minutes_result")
+    assert.match(generated.data.minutes.raw_md, /原生末段/)
     const saved = await post("/api/meeting/reference", { id, reference_notes: imported.data.reference.text, reference_name: "notes.md", tool: "not-allowed" })
     assert.equal(saved.data.type, "meeting.updated")
     assert.equal(loadMeeting(id)?.reference_notes, "Python 用于本项目")

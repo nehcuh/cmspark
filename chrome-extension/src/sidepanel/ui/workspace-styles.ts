@@ -105,28 +105,45 @@ export const workspaceCSS = `
 .cm-settings-content{display:flex;flex-direction:column;flex:1;min-height:0}
 .cm-settings-save-scope{font-size:11px;color:${tokens.textSecondary};line-height:1.5}
 .cm-settings-panel button{min-height:36px}
-.cm-settings-page-heading h3:focus-visible,.cm-settings-panel select:focus-visible,.cm-settings-panel summary:focus-visible{outline:2px solid ${tokens.accent};outline-offset:3px}
+.cm-settings-page-heading h3:focus-visible,.cm-settings-panel button:focus-visible,.cm-settings-panel select:focus-visible,.cm-settings-panel summary:focus-visible{outline:2px solid ${tokens.accent};outline-offset:3px}
 .cm-settings-layout{display:flex;flex:1;min-height:0;overflow:hidden}
 .cm-settings-nav{box-sizing:border-box;width:172px;flex-shrink:0;padding:16px 10px;background:${tokens.bgMuted};border-right:1px solid ${tokens.border};overflow-y:auto}
 .cm-settings-nav button{display:block;width:100%;min-height:40px;padding:10px 12px;margin:2px 0;border:0;border-radius:8px;background:transparent;color:${tokens.textSecondary};font:inherit;font-size:13px;text-align:left;cursor:pointer}
 .cm-settings-nav button[aria-current="page"]{background:${tokens.navSelected};color:${tokens.text};font-weight:600}
 .cm-settings-nav button:hover{background:${tokens.bgHover}}
 .cm-settings-layout .cm-settings-body{flex:1;min-width:0;padding:20px 28px 28px!important;overflow:auto}
-.cm-settings-page-heading{padding:0 0 20px;margin-bottom:16px;border-bottom:1px solid ${tokens.border}}
+.cm-settings-page-heading{padding:0 0 14px;margin-bottom:16px;border-bottom:1px solid ${tokens.border}}
 .cm-settings-page-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .cm-settings-page-heading h3{font-size:20px;font-weight:600;letter-spacing:-.03em;margin:0 0 8px}
 .cm-settings-page-heading p{font-size:12px;line-height:1.7;color:${tokens.textSecondary};margin:8px 0 0}
 .cm-settings-status{display:flex;gap:8px;flex-wrap:wrap;padding:0 24px 8px}
-.cm-settings-status:not(:has(button)){padding:0}
+.cm-settings-status:has(> .cm-sr-only:only-child){padding:0}
 .cm-settings-status button{background:${tokens.warningSoft};color:${tokens.text};border:1px solid ${tokens.border};border-radius:8px;padding:6px 10px;min-height:36px;font:inherit;font-size:12px;cursor:pointer}
-.cm-settings-assistant{margin-bottom:20px;font-size:12px;color:${tokens.textSecondary}}
-.cm-settings-assistant summary{cursor:pointer;min-height:36px}
-.cm-settings-mobile-category{display:none}
+.cm-settings-home{max-width:760px;margin-inline:auto}
+.cm-settings-home h3{margin:0 0 14px;font-size:22px;font-weight:600;letter-spacing:-.03em}
+.cm-settings-home-status{padding:0 0 12px}
+.cm-settings-connection-status,.cm-settings-note,.cm-settings-connection-details{font-size:12px;line-height:1.6;color:${tokens.textSecondary}}
+.cm-settings-note{overflow-wrap:anywhere}
+.cm-settings-connection-details{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0}
+.cm-settings-connection-details dd{margin:0;color:${tokens.text}}
+.cm-settings-categories,.cm-settings-nav-list{display:grid;gap:8px}
+.cm-settings-categories{grid-template-columns:repeat(2,minmax(0,1fr))}
+.cm-settings-nav-row{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px;min-height:56px!important;padding:10px 12px;border:1px solid ${tokens.border};border-radius:8px;background:${tokens.bg};color:${tokens.text};text-align:left;font:inherit;cursor:pointer;overflow-wrap:anywhere}
+.cm-settings-nav-row:hover{background:${tokens.bgHover}}
+.cm-settings-nav-row strong{font-size:13px;font-weight:600}
+.cm-settings-nav-current,.cm-settings-nav-description{display:block;font-size:12px;line-height:1.5;margin-top:3px}
+.cm-settings-nav-description{color:${tokens.textSecondary}}
+.cm-settings-nav-current{color:${tokens.accentText}}
+.cm-settings-arrow{color:${tokens.textMuted};font-size:18px}
+.cm-settings-back,.cm-settings-text-link{background:transparent;color:${tokens.accentText};border:0;padding:4px 0;font:inherit;font-size:12px;cursor:pointer;text-align:left}
+.cm-settings-back{margin:0 0 10px}
+.cm-settings-back span{font-size:17px;margin-inline-end:4px}
+.cm-settings-body [hidden],.cm-settings-nav[hidden]{display:none}
 .cm-settings-footer{flex-wrap:wrap;padding:12px 24px!important;gap:8px!important}
 .cm-settings-footer button{min-height:36px}
 .cm-settings-footer .cm-settings-save{background:${tokens.actionPrimary}!important}
 .cm-settings-body input,.cm-settings-body select,.cm-settings-body textarea{max-width:100%;box-sizing:border-box}
-@media(max-width:759px){.cm-settings-panel{height:94dvh;max-height:94dvh!important;width:100%!important}.cm-settings-layout{flex-direction:column}.cm-settings-nav{display:none}.cm-settings-mobile-category{display:flex;align-items:center;gap:12px;padding:10px 16px;background:${tokens.bgMuted};border-bottom:1px solid ${tokens.border};font-size:12px;color:${tokens.textSecondary}}.cm-settings-mobile-category select{flex:1;min-width:0;min-height:36px;border:1px solid ${tokens.border};border-radius:8px;padding:6px 10px;background:${tokens.bg};color:${tokens.text};font:inherit}.cm-settings-layout .cm-settings-body{padding:16px!important}.cm-settings-status{padding:0 16px 8px}.cm-settings-page-heading h3{font-size:18px}.cm-settings-footer{padding:10px 16px!important}}
+@media(max-width:759px){.cm-settings-panel{height:94dvh;max-height:94dvh!important;width:100%!important}.cm-settings-layout{flex-direction:column}.cm-settings-nav{display:none}.cm-settings-categories{grid-template-columns:minmax(0,1fr)}.cm-settings-layout .cm-settings-body{padding:16px!important}.cm-settings-status{padding:0 16px 8px}.cm-settings-home-status{padding:0 0 12px}.cm-settings-page-heading h3{font-size:18px}.cm-settings-footer{padding:10px 16px!important}}
 .cm-settings-body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),.cm-settings-body select{min-height:36px}
 
 .cm-header-new{display:none;font-size:24px}

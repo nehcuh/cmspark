@@ -4,6 +4,7 @@ import * as path from "node:path"
 import { DATA_DIR, setVoiceFields } from "../src/config"
 import { createMeeting, loadMeeting, deleteMeeting } from "../src/meeting/meeting-store"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
+import { generateFixtureMinutes } from "./meeting-minutes-test-helper"
 import { handleVoiceSttMessage } from "../src/voice/stt-handlers"
 import { SttSessionService } from "../src/voice/stt-session-service"
 import { validateWsMessage } from "../src/ws/validate"
@@ -89,7 +90,7 @@ for (const delayedRunner of [false, true]) test(`actual q1 validators/meeting ha
     assert.equal(saved.capture_summary!.committed_end, 96)
     assert.equal(saved.capture_summary!.outcome, "complete")
     assert.equal(saved.status, "ready")
-    const generated = await handleMeetingMessage({ type: "meeting.generate_minutes", v: 1, id: meeting.id }, ctx, {
+    const generated = await generateFixtureMinutes({ type: "meeting.generate_minutes", v: 1, id: meeting.id }, ctx, {
       ...deps, getLlmConfig: () => ({ base_url: "https://owned.invalid", api_key: "OWNED_NOT_VALID", model_name: "owned", temperature: 0.2 }),
       generate: async () => ({ ok: true, minutes: { raw_md: "### TL;DR\n原文纪要", generated_at: "2026-10-15T00:00:00.000Z" } }),
     })
@@ -121,10 +122,10 @@ for (const delayedRunner of [false, true]) test(`actual q1 validators/meeting ha
     await handleMeetingMessage({ ...begin, capture_id: cancelledId, expected_capture_epoch: 3, speaker: "" }, ctx, deps)
     await handleVoiceSttMessage({ type: "voice.stt.abort", v: 1, queue_contract: 1, sessionId: cancelledId, capture_epoch: 4 }, ctx, { service })
     assert.equal(loadMeeting(meeting.id)!.capture_summary!.sticky_incomplete, true)
-    const incompleteMinutes = await handleMeetingMessage({ type: "meeting.generate_minutes", v: 1, id: meeting.id }, ctx, minutesDeps)
+    const incompleteMinutes = await generateFixtureMinutes({ type: "meeting.generate_minutes", v: 1, id: meeting.id }, ctx, minutesDeps)
     assert.match(incompleteMinutes.minutes.raw_md, /范围不完整/)
     await handleMeetingMessage({ type: "meeting.append_transcript", v: 1, id: other.id, text: "owned imported history", source: "stt" }, ctx, deps)
-    const unknownMinutes = await handleMeetingMessage({ type: "meeting.generate_minutes", v: 1, id: other.id }, ctx, minutesDeps)
+    const unknownMinutes = await generateFixtureMinutes({ type: "meeting.generate_minutes", v: 1, id: other.id }, ctx, minutesDeps)
     assert.match(unknownMinutes.minutes.raw_md, /采集范围未知/)
 
 

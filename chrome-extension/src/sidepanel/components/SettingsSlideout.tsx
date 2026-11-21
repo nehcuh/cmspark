@@ -6,7 +6,7 @@ import { prepareSettingsSubmission } from "../utils/settings-draft"
 import { CHAT_OUTPUT_LIMIT_MAX, isChatOutputLimit } from "../utils/normalize-config"
 import type { LLMConfig, SecurityAuditEntry } from "../types"
 import { Modal } from "./ui/Modal"
-import { tokens } from "../ui/tokens"
+import { connectionLabel, tokens } from "../ui/tokens"
 import { effectiveReasoningEffort, reasoningSupport, type ReasoningEffort } from "../utils/reasoning-effort"
 import { UserEnvSection } from "./UserEnvSection"
 import { SiteCounterSettingsSection } from "./SiteCounterSettingsSection"
@@ -15,17 +15,23 @@ import { CapabilityProfileSection } from "./CapabilityProfileSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
 import { CodingHandoffSettingsSection } from "./CodingHandoffSettingsSection"
 import { LcuSettingsSection } from "./LcuSettingsSection"
-import { SettingsPage, SETTINGS_PAGES } from "./SettingsPage"
+import { SettingsNavRow, SettingsPage } from "./SettingsPage"
+import { SettingsModelUses } from "./SettingsModelUses"
+import { ModelCenterControls } from "./ModelCenterControls"
+import { MeetingExternalAsrSettings } from "./MeetingExternalAsrSettings"
+import {
+  resolveSettingsDestination,
+  SETTINGS_CATEGORIES,
+  SETTINGS_DESTINATIONS,
+  type SettingsCategoryId,
+  type SettingsDestinationId,
+} from "../utils/settings-navigation"
 import { SettingsIntentBar } from "./SettingsIntentBar"
 import { HotkeyCaptureField } from "./HotkeyCaptureField"
 import { useContextPanelHostOptional } from "./ContextPanelHost"
 import type { SettingsIntent } from "../utils/settings-intent"
 import { DICTATION_HOTKEY_DEFAULT_CHORD } from "../voice/hotkey-chord"
-import {
-  isElevatedTrust,
-  SETTINGS_SECTION_IDS,
-  type SettingsSectionId,
-} from "../utils/settings-sections"
+import { isElevatedTrust } from "../utils/settings-sections"
 import {
   contextWindowHelpText,
   settingsSaveDisabled,
@@ -141,6 +147,14 @@ function immediatePatchApplied(config: any, patch: any): boolean {
   })
 }
 
+type SettingsRoute =
+  | { view: "home" }
+  | { view: "category"; category: SettingsCategoryId }
+  | { view: "destination"; category: SettingsCategoryId; destination: SettingsDestinationId }
+
+const settingsCategories = Object.keys(SETTINGS_CATEGORIES) as SettingsCategoryId[]
+const settingsDestinations = Object.keys(SETTINGS_DESTINATIONS) as SettingsDestinationId[]
+
 export function SettingsSlideout() {
   const { state, dispatch } = useAgentStore()
   const host = useContextPanelHostOptional()
@@ -197,8 +211,14 @@ export function SettingsSlideout() {
   voicePendingDownloadRef.current = voicePendingDownload
   /** 模型下载源输入草稿；null = 未编辑，跟随 voiceModel 镜像。 */
   const [voiceEndpointDraft, setVoiceEndpointDraft] = useState<string | null>(null)
-  const [settingsAssistantOpen, setSettingsAssistantOpen] = useState(false)
-  const [activeSettingsPage, setActiveSettingsPage] = useState<SettingsSectionId>("model")
+  const [settingsRoute, setSettingsRoute] = useState<SettingsRoute>({ view: "home" })
+  const activeCategory = settingsRoute.view === "home" ? undefined : settingsRoute.category
+  const activeDestination = settingsRoute.view === "destination" ? settingsRoute.destination : undefined
+  const settingsInteractive = state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)
+  const knowledgeRoute = useRef<SettingsRoute | null>(null)
+  knowledgeRoute.current = settingsInteractive && activeDestination === "data-knowledge" ? settingsRoute : null
+  const settingsBody = useRef<HTMLDivElement>(null)
+  const focusTarget = useRef<string | null>(null)
   const lastSettingsFocus = useRef<HTMLElement | null>(null)
   const licenseWasOpen = useRef(false)
   useEffect(() => {
@@ -209,16 +229,47 @@ export function SettingsSlideout() {
     const frame = requestAnimationFrame(() => lastSettingsFocus.current?.focus())
     return () => cancelAnimationFrame(frame)
   }, [state.computerModelLicenseDoor, state.settingsOpen, state.settingsFocusSection])
-  const settingsPageChosen = useRef(false)
-  const selectSettingsPage = useCallback((id: SettingsSectionId, focus = false) => {
-    settingsPageChosen.current = true
-    setActiveSettingsPage(id)
-    requestAnimationFrame(() => {
-      const body = document.querySelector<HTMLElement>(".cm-settings-body")
-      if (body) body.scrollTop = 0
-      if (focus) document.querySelector<HTMLElement>(`[data-settings-page="${id}"] h3`)?.focus()
-    })
+  const selectSettingsPage = useCallback((id: string, category?: SettingsCategoryId) => {
+    const destination = resolveSettingsDestination(id)
+    if (!destination) return
+    focusTarget.current = `[data-settings-destination="${destination}"] h3`
+    setSettingsRoute({ view: "destination", category: category ?? SETTINGS_DESTINATIONS[destination].category, destination })
   }, [])
+  const selectSettingsCategory = (category: SettingsCategoryId) => {
+    focusTarget.current = "#settings-category-heading"
+    setSettingsRoute({ view: "category", category })
+  }
+  const goBackInSettings = () => {
+    if (settingsRoute.view === "destination") {
+      focusTarget.current = `[data-settings-open-destination="${settingsRoute.destination}"]`
+      setSettingsRoute({ view: "category", category: settingsRoute.category })
+    } else if (settingsRoute.view === "category") {
+      focusTarget.current = `[data-settings-open-category="${settingsRoute.category}"]`
+      setSettingsRoute({ view: "home" })
+    }
+  }
+  useEffect(() => {
+    if (!state.settingsOpen) {
+      focusTarget.current = null
+      setSettingsRoute({ view: "home" })
+      return
+    }
+    if (!settingsInteractive || !focusTarget.current) return
+    const frame = requestAnimationFrame(() => {
+      const body = settingsBody.current
+      if (!body || !focusTarget.current) return
+      body.scrollTop = 0
+      const target = body.querySelector<HTMLElement>(focusTarget.current)
+      const heading = body.querySelector<HTMLElement>("#settings-category-heading")
+      const element = target ?? heading
+      element?.focus()
+      focusTarget.current = null
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [settingsInteractive, settingsRoute, state.settingsOpen])
+  const openWorkspaceDestination = (destination: "activity" | "todos") => {
+    window.dispatchEvent(new CustomEvent("cmspark:open-workspace-destination", { detail: destination }))
+  }
 
   const elevatedTrust = isElevatedTrust({
     auto_approve_dangerous: state.config.auto_approve_dangerous,
@@ -276,7 +327,6 @@ export function SettingsSlideout() {
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
       const paired = !!resp?.paired
       setWsPaired(paired)
-      if (!settingsPageChosen.current) setActiveSettingsPage(paired ? "model" : "connection")
     })
     // Coding agents: list even when acp.enabled=false (discovery ≠ feature gate)
     chrome.runtime.sendMessage({ type: "acp.list" }, () => {
@@ -362,17 +412,11 @@ export function SettingsSlideout() {
     state.unattended?.armed,
   ])
 
-  // F-UX7 deep-link: open target accordion section once settings opens.
   useEffect(() => {
-    if (!state.settingsOpen || !state.settingsFocusSection || licenseDoorShouldOpen(state.computerModelLicenseDoor)) return
-    const id = state.settingsFocusSection as SettingsSectionId
-    if (!(SETTINGS_SECTION_IDS as readonly string[]).includes(id)) {
-      dispatch({ type: "CLEAR_SETTINGS_FOCUS" })
-      return
-    }
-    selectSettingsPage(id, true)
+    if (!settingsInteractive || !state.settingsFocusSection) return
+    selectSettingsPage(state.settingsFocusSection)
     dispatch({ type: "CLEAR_SETTINGS_FOCUS" })
-  }, [state.settingsOpen, state.settingsFocusSection, state.computerModelLicenseDoor, dispatch, selectSettingsPage])
+  }, [settingsInteractive, state.settingsFocusSection, dispatch, selectSettingsPage])
 
   /**
    * Text / voice commands for configuring this extension (D2+ UX).
@@ -816,6 +860,24 @@ export function SettingsSlideout() {
     }
   }
 
+  const openKnowledgeSettings = async () => {
+    if (!host || knowledgeRoute.current !== settingsRoute) return
+    try {
+      const opened = await host.openPanelForce("knowledge")
+      if (knowledgeRoute.current !== settingsRoute) return
+      if (opened) dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+      else setImmediateNotice("知识面板尚未打开，请完成当前操作后重试。")
+    } catch {
+      if (knowledgeRoute.current === settingsRoute) setImmediateNotice("无法打开知识面板，请重试。")
+    }
+  }
+
+  const pairingLabel = wsPaired === null ? "正在检测连接" : wsPaired === false ? "尚未配对 · 前往连接设置"
+    : state.connectionState !== "connected" ? "Companion 未连接 · 前往连接设置" : null
+  const pairingControl = pairingLabel && (wsPaired === null
+    ? <span className="cm-settings-connection-status">{pairingLabel}</span>
+    : <button type="button" onClick={() => selectSettingsPage("connection-pairing")}>{pairingLabel}</button>)
+
   return (
     <Modal
       open={state.settingsOpen}
@@ -834,26 +896,41 @@ export function SettingsSlideout() {
         <div className="cm-settings-status">
           <span className="cm-sr-only" role="status" aria-live="polite">{[wsPaired === null ? "正在检测连接" : wsPaired === false ? "尚未配对" : "", elevatedTrust ? "有高权限开关已开启" : "", state.immediateSave?.status === "unknown" ? state.immediateSave.error : "", immediateNotice].filter(Boolean).join("；")}</span>
           {(state.immediateSave?.status === "unknown" && state.immediateSave.error) || immediateNotice ? <div role="status">{state.immediateSave?.status === "unknown" && state.immediateSave.error ? state.immediateSave.error : immediateNotice}</div> : null}
-          {wsPaired !== true && <button type="button" onClick={() => selectSettingsPage("connection", true)}>{wsPaired === null ? "正在检测连接" : "尚未配对 · 前往连接设置"}</button>}
-          {elevatedTrust && <button type="button" onClick={() => selectSettingsPage("security", true)}>有高权限开关已开启 · 查看安全设置</button>}
+          {settingsRoute.view !== "home" && activeDestination !== "connection-pairing" && pairingControl}
+          {elevatedTrust && <button type="button" onClick={() => selectSettingsPage("privacy-autonomy")}>有高权限开关已开启 · 查看安全设置</button>}
         </div>
         <div className="cm-settings-layout">
-          <nav aria-label="设置分类" className="cm-settings-nav">
-            {SETTINGS_PAGES.map(page => <button type="button" key={page.id} aria-current={activeSettingsPage === page.id ? "page" : undefined} onClick={() => selectSettingsPage(page.id, true)}>{page.title}</button>)}
+          <nav aria-label="设置分类" className="cm-settings-nav" hidden={!activeCategory}>
+            {settingsCategories.map(category => <button type="button" key={category} aria-current={activeCategory === category ? "page" : undefined}
+              onClick={() => selectSettingsCategory(category)}>{SETTINGS_CATEGORIES[category].title}</button>)}
           </nav>
-          <label className="cm-settings-mobile-category">设置分类
-            <select aria-label="设置分类" value={activeSettingsPage} onChange={event => selectSettingsPage(event.target.value as SettingsSectionId)}>{SETTINGS_PAGES.map(page => <option value={page.id} key={page.id}>{page.title}</option>)}</select>
-          </label>
-          <div className="cm-settings-body" style={styles.body}>
-            <details className="cm-settings-assistant" onToggle={event => setSettingsAssistantOpen(event.currentTarget.open)}><summary>用一句话调整设置</summary><SettingsIntentBar onIntent={applySettingsIntent} onOpenSection={section => selectSettingsPage(section, true)} onOpenDestination={destination => {
-              window.dispatchEvent(new CustomEvent("cmspark:open-workspace-destination", { detail: destination }))
-            }} active={settingsAssistantOpen && state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)} /></details>
-
-          <div data-settings-page="connection" hidden={activeSettingsPage !== "connection"}>
-            <SettingsPage
-              title="连接与配对"
-              id="connection"
-              badge={wsPaired === false ? (
+          <div ref={settingsBody} className="cm-settings-body" style={styles.body}>
+            {settingsRoute.view !== "home" && <button type="button" className="cm-settings-back" onClick={goBackInSettings}>
+              <span aria-hidden="true">‹</span> {settingsRoute.view === "category" ? "返回设置首页" : `返回${SETTINGS_CATEGORIES[settingsRoute.category].title}`}
+            </button>}
+            <section hidden={settingsRoute.view !== "home"} className="cm-settings-home" aria-labelledby="settings-home-heading">
+              <h3 id="settings-home-heading">设置首页</h3>
+              {pairingControl && <div className="cm-settings-status cm-settings-home-status">{pairingControl}</div>}
+              <SettingsIntentBar onIntent={applySettingsIntent} onOpenSection={selectSettingsPage} onOpenDestination={openWorkspaceDestination}
+                active={settingsRoute.view === "home" && settingsInteractive} connected={state.connectionState === "connected" && wsPaired === true}
+                knowledgeScope={state.activeThreadId ? { id: state.activeThreadId, mode: state.knowledgeSelectionMode, selected: state.activeKnowledgeIds } : undefined}
+                reasoningDisplay={state.showReasoningMode} onReasoningDisplay={mode => dispatch({ type: "SET_SHOW_REASONING_MODE", mode, persist: false })} />
+              <div className="cm-settings-categories">
+                {settingsCategories.map(category => <SettingsNavRow key={category} {...SETTINGS_CATEGORIES[category]}
+                  category={category} onClick={() => selectSettingsCategory(category)} />)}
+              </div>
+            </section>
+            {settingsRoute.view === "category" && <section aria-labelledby="settings-category-heading">
+              <header className="cm-settings-page-heading">
+                <h3 id="settings-category-heading" tabIndex={-1}>{SETTINGS_CATEGORIES[settingsRoute.category].title}</h3>
+              </header>
+              {settingsRoute.category === "models" ? <SettingsModelUses active={settingsInteractive} onOpen={id => selectSettingsPage(id, "models")} />
+                : <div className="cm-settings-nav-list">
+                  {settingsDestinations.filter(id => SETTINGS_DESTINATIONS[id].category === settingsRoute.category).map(id => <SettingsNavRow key={id}
+                    title={SETTINGS_DESTINATIONS[id].title} description={SETTINGS_DESTINATIONS[id].description} destination={id} onClick={() => selectSettingsPage(id)} />)}
+                </div>}
+            </section>}
+          <SettingsPage id="connection-pairing" active={activeDestination === "connection-pairing"} badge={wsPaired === false ? (
                 <span style={{
                   fontSize: 10,
                   fontWeight: 600,
@@ -871,8 +948,7 @@ export function SettingsSlideout() {
                   color: tokens.success,
                   background: tokens.successSoft,
                 }}>已配对</span>
-              ) : null}
-            >
+              ) : null}>
           {/* --- Connection (P0-2B WS pairing) --- */}
           <div style={styles.field}>
             <label style={styles.label}>
@@ -909,18 +985,21 @@ export function SettingsSlideout() {
               </div>
             )}
           </div>
+          </SettingsPage>
 
+          <SettingsPage id="connection-maintenance" active={activeDestination === "connection-maintenance"}>
+            <dl className="cm-settings-connection-details">
+              <dt>Companion 连接</dt><dd>{connectionLabel(state.connectionState)}</dd>
+              <dt>配对状态</dt><dd>{wsPaired === null ? "检测中" : wsPaired ? "已配对" : "尚未配对"}</dd>
+              <dt>配置版本</dt><dd>{state.configRevision && !state.configEpochInvalid ? "已同步" : "暂无法确认"}</dd>
+            </dl>
+            <p className="cm-settings-note">升级 Companion 后重新打开应用，再核对连接和配置状态。</p>
+            <button type="button" className="cm-settings-text-link" onClick={() => selectSettingsPage("connection-pairing")}>打开配对设置</button>
+          </SettingsPage>
 
-            </SettingsPage>
-          </div>
-
-          <div data-settings-page="model" hidden={activeSettingsPage !== "model"}>
-            <SettingsPage
-              title="模型与推理"
-              id="model"
-            >
+          <SettingsPage id="model-chat" active={activeDestination === "model-chat"}>
           {/* --- LLM Settings --- */}
-          <div style={styles.sectionTitle}>对话模型</div>
+          <p className="cm-settings-note">默认连接适用于对话、听写纠错、继承默认模型的会议纪要、使用主模型的活动提取和后台任务。启用主模型看图时，附图也使用该连接。</p>
 
           <div style={styles.field}>
             <label style={styles.label}>API 协议</label>
@@ -1257,32 +1336,10 @@ export function SettingsSlideout() {
               </div>
             </div>
           )}
+          </SettingsPage>
 
-          <div style={styles.field}>
-            <label style={styles.label}>思考过程展示</label>
-            <select
-              style={styles.input}
-              value={state.showReasoningMode || "auto_live"}
-              onChange={(e) => {
-                const v = e.target.value
-                if (v === "always_collapsed" || v === "auto_live" || v === "always_open") {
-                  dispatch({ type: "SET_SHOW_REASONING_MODE", mode: v })
-                }
-              }}
-            >
-              <option value="auto_live">仅推理时展开（默认）</option>
-              <option value="always_collapsed">默认折叠</option>
-              <option value="always_open">始终展开</option>
-            </select>
-            <div style={styles.helpText}>
-              仅影响 Side Panel 显示。历史消息不会把思考回灌给模型（省 token / 兼容 Anthropic）。
-            </div>
-          </div>
-
-          <details className="cm-settings-extra">
-            <summary>其他能力</summary>
+          <SettingsPage id="model-vision" active={activeDestination === "model-vision"}>
                     {/* --- Vision Model Settings --- */}
-          <div style={styles.sectionTitle}>视觉模型（看图描述）</div>
 
           <div style={styles.field}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
@@ -1530,18 +1587,62 @@ export function SettingsSlideout() {
               </>
             )
           })()}
+          </SettingsPage>
 
-          </details>
+          <SettingsPage id="model-profiles" active={activeDestination === "model-profiles"}>
+            <ModelCenterControls active={activeDestination === "model-profiles" && settingsInteractive} />
+          </SettingsPage>
 
-            </SettingsPage>
-          </div>
+          <SettingsPage id="model-meeting-minutes" active={activeDestination === "model-meeting-minutes"}>
+            <ModelCenterControls active={activeDestination === "model-meeting-minutes" && settingsInteractive} mode="meeting" />
+          </SettingsPage>
 
-          <div data-settings-page="voice" hidden={activeSettingsPage !== "voice"}>
-            <SettingsPage id="voice" title="输入与语音">
+          <SettingsPage id="model-meeting-transcribe" active={activeDestination === "model-meeting-transcribe"}>
+            <MeetingExternalAsrSettings active={activeDestination === "model-meeting-transcribe" && settingsInteractive} />
+          </SettingsPage>
+
+          <SettingsPage id="model-activity" active={activeDestination === "model-activity"}>
+            <p className="cm-settings-note">在活动记录的采集设置中选择 OCR、视觉或本机模型。启用图像处理前会提示核对所选目标。</p>
+            <button type="button" className="cm-settings-text-link" onClick={() => openWorkspaceDestination("activity")}>打开活动记录</button>
+          </SettingsPage>
+
+          <SettingsPage id="model-background" active={activeDestination === "model-background"}>
+            <div className="cm-settings-nav-list">
+              <SettingsNavRow title="对话压缩与滚动摘要" description="使用对话模型处理较早的对话轮次。" onClick={() => selectSettingsPage("model-chat")} />
+              <SettingsNavRow title="会话要点与标签" description="按会话索引规则使用对话模型提取要点与标签。" onClick={() => selectSettingsPage("data-index", "models")} />
+            </div>
+          </SettingsPage>
+
+          <SettingsPage id="input-display" active={activeDestination === "input-display"}>
           <div style={styles.field}>
-            <label style={styles.label}>发送快捷键</label>
+            <label htmlFor="settings-reasoning-display" style={styles.label}>展开方式</label>
+            <select
+              style={styles.input}
+              id="settings-reasoning-display"
+              value={state.showReasoningMode || "auto_live"}
+              onChange={(e) => {
+                const v = e.target.value
+                if (v === "always_collapsed" || v === "auto_live" || v === "always_open") {
+                  dispatch({ type: "SET_SHOW_REASONING_MODE", mode: v })
+                }
+              }}
+            >
+              <option value="auto_live">仅推理时展开（默认）</option>
+              <option value="always_collapsed">默认折叠</option>
+              <option value="always_open">始终展开</option>
+            </select>
+            <div style={styles.helpText}>
+              仅影响 Side Panel 显示。历史消息不会把思考回灌给模型（省 token / 兼容 Anthropic）。
+            </div>
+          </div>
+          </SettingsPage>
+
+          <SettingsPage id="input-shortcuts" active={activeDestination === "input-shortcuts"}>
+          <div style={styles.field}>
+            <label htmlFor="settings-send-shortcut" style={styles.label}>发送快捷键</label>
             <select
               style={styles.select}
+              id="settings-send-shortcut"
               value={state.sendShortcut || "Enter"}
               onChange={handleShortcutChange}
             >
@@ -1550,7 +1651,60 @@ export function SettingsSlideout() {
               <option value="Ctrl+Enter">Ctrl+Enter</option>
             </select>
           </div>
+              <div style={{ marginTop: 12, fontSize: 12, color: tokens.textSecondary }}>
+                <div style={{ marginBottom: 4, fontWeight: 500 }}>按住热键听写（D2 · 默认关）</div>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    style={{ marginTop: 2 }}
+                    checked={state.dictationHotkeyEnabled === true}
+                    onChange={(e) =>
+                      dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: e.target.checked })
+                    }
+                  />
+                  <span>
+                    启用按住说话
+                    <br />
+                    <span style={{ color: tokens.textMuted, fontSize: 11 }}>
+                      按住 ≥300ms 松手转写；短按静默丢弃。300ms 内连按两次进入锁定（再按或 Esc 结束）。仅进草稿、不自动发送。需 Side Panel
+                      打开；页面可编辑框内同一热键会插入到该框。禁止 bare Fn / Win+V。会议录音中不可用。默认关。
+                    </span>
+                  </span>
+                </label>
+                <div style={{ marginTop: 8, fontSize: 11, color: tokens.textSecondary }}>
+                  <div style={{ marginBottom: 2 }}>组合键（按键盘录制或点预设）</div>
+                  <HotkeyCaptureField
+                    active={activeDestination === "input-shortcuts" && settingsInteractive}
+                    value={state.dictationHotkeyChord || DICTATION_HOTKEY_DEFAULT_CHORD}
+                    disabled={!state.dictationHotkeyEnabled}
+                    onChange={(chord) =>
+                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord })
+                    }
+                  />
+                </div>
+                <label style={{ display: "flex", gap: 8, marginTop: 8, fontSize: 12, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={state.voiceSoundEffects !== false}
+                    onChange={(e) =>
+                      dispatch({ type: "SET_VOICE_SOUND_EFFECTS", enabled: e.target.checked })
+                    }
+                  />
+                  听写状态音效（开始/停止/完成；误触静默）
+                </label>
+              </div>
+          </SettingsPage>
 
+          <SettingsPage id="input-dictation" active={activeDestination === "input-dictation"}>
           <div style={styles.field}>
             <label style={styles.label}>语音输入</label>
             <label
@@ -1652,6 +1806,15 @@ export function SettingsSlideout() {
                 浏览器：自动续听 + 字级 interim；本机：实时出字开时约 8 秒一段，否则约 45
                 秒一段。仅进草稿、不自动发送。首次连续听写需隐私 v3。
               </div>
+            </div>
+          </div>
+          <div className="cm-settings-nav-list">
+            <SettingsNavRow title="听写引擎" description="查看或更换语音转写模型。" onClick={() => selectSettingsPage("input-dictation-engine")} />
+            <SettingsNavRow title="听写纠错" description="管理转写文本的模型纠错。" onClick={() => selectSettingsPage("input-asr-refiner")} />
+          </div>
+          </SettingsPage>
+
+          <SettingsPage id="input-asr-refiner" active={activeDestination === "input-asr-refiner"}>
               <label
                 style={{
                   display: "flex",
@@ -1682,60 +1845,10 @@ export function SettingsSlideout() {
                   </span>
                 </span>
               </label>
+          </SettingsPage>
 
-              <div style={{ marginTop: 12, fontSize: 12, color: tokens.textSecondary }}>
-                <div style={{ marginBottom: 4, fontWeight: 500 }}>按住热键听写（D2 · 默认关）</div>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: 8,
-                    cursor: "pointer",
-                    fontSize: 12,
-                    lineHeight: 1.4,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    style={{ marginTop: 2 }}
-                    checked={state.dictationHotkeyEnabled === true}
-                    onChange={(e) =>
-                      dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: e.target.checked })
-                    }
-                  />
-                  <span>
-                    启用按住说话
-                    <br />
-                    <span style={{ color: tokens.textMuted, fontSize: 11 }}>
-                      按住 ≥300ms 松手转写；短按静默丢弃。300ms 内连按两次进入锁定（再按或 Esc 结束）。仅进草稿、不自动发送。需 Side Panel
-                      打开；页面可编辑框内同一热键会插入到该框。禁止 bare Fn / Win+V。会议录音中不可用。默认关。
-                    </span>
-                  </span>
-                </label>
-                <div style={{ marginTop: 8, fontSize: 11, color: tokens.textSecondary }}>
-                  <div style={{ marginBottom: 2 }}>组合键（按键盘录制或点预设）</div>
-                  <HotkeyCaptureField
-                    active={activeSettingsPage === "voice" && state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)}
-                    value={state.dictationHotkeyChord || DICTATION_HOTKEY_DEFAULT_CHORD}
-                    disabled={!state.dictationHotkeyEnabled}
-                    onChange={(chord) =>
-                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord })
-                    }
-                  />
-                </div>
-                <label style={{ display: "flex", gap: 8, marginTop: 8, fontSize: 12, cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={state.voiceSoundEffects !== false}
-                    onChange={(e) =>
-                      dispatch({ type: "SET_VOICE_SOUND_EFFECTS", enabled: e.target.checked })
-                    }
-                  />
-                  听写状态音效（开始/停止/完成；误触静默）
-                </label>
-              </div>
-            </div>
-
+          <SettingsPage id="input-dictation-engine" active={activeDestination === "input-dictation-engine"}>
+          <div style={styles.field}>
             {/* Path B M0: 听写方式 progressive disclosure (UI draft until ready + enable) */}
             {(() => {
               const voiceModel = state.voiceModel
@@ -2695,27 +2808,13 @@ export function SettingsSlideout() {
               </button>
             )}
           </div>
+          </SettingsPage>
 
-            </SettingsPage>
-          </div>
-
-          <div data-settings-page="secrets" hidden={activeSettingsPage !== "secrets"}>
-            <SettingsPage
-              title="密钥与环境"
-              id="secrets"
-            >
-          {/* --- User env / Secrets (ADR-019) — independent of bottom config Save --- */}
+          <SettingsPage id="privacy-secrets" active={activeDestination === "privacy-secrets"}>
           <UserEnvSection />
+          </SettingsPage>
 
-
-            </SettingsPage>
-          </div>
-
-          <div data-settings-page="security" hidden={activeSettingsPage !== "security"}>
-            <SettingsPage
-              title="安全与信任"
-              id="security"
-              badge={elevatedTrust ? (
+          <SettingsPage id="privacy-autonomy" active={activeDestination === "privacy-autonomy"} badge={elevatedTrust ? (
                 <span style={{
                   fontSize: 10,
                   fontWeight: 600,
@@ -2724,9 +2823,7 @@ export function SettingsSlideout() {
                   color: tokens.danger,
                   background: tokens.dangerSoft,
                 }}>有开关已开</span>
-              ) : null}
-            >
-          <SiteCounterSettingsSection visible={activeSettingsPage === "security" && state.settingsOpen} />
+              ) : null}>
           {/* --- 运行自主度 (Trust packaging / Autopilot + ADR-021 unattended) --- */}
           {(() => {
             const armFlags = {
@@ -2963,7 +3060,9 @@ export function SettingsSlideout() {
               </>
             )
           })()}
+          </SettingsPage>
 
+          <SettingsPage id="privacy-trust" active={activeDestination === "privacy-trust"}>
                     {/* --- Security Settings --- */}
           <div style={styles.sectionTitle}>安全设置</div>
 
@@ -3319,16 +3418,14 @@ export function SettingsSlideout() {
               </button>
             )}
           </div>
+          </SettingsPage>
 
+          <SettingsPage id="privacy-activity" active={activeDestination === "privacy-activity"}>
+            <button type="button" className="cm-settings-text-link" onClick={() => openWorkspaceDestination("activity")}>打开活动记录</button>
+            <SiteCounterSettingsSection visible={activeDestination === "privacy-activity" && settingsInteractive} />
+          </SettingsPage>
 
-            </SettingsPage>
-          </div>
-
-          <div data-settings-page="integrations" hidden={activeSettingsPage !== "integrations"}>
-            <SettingsPage
-              title="本机与工具"
-              id="integrations"
-            >
+          <SettingsPage id="tools-capabilities" active={activeDestination === "tools-capabilities"}>
           {/* --- How permissions work --- */}
           <div style={styles.field}>
             <div style={styles.helpText}>三道门互不替代，请勿混淆：</div>
@@ -3348,7 +3445,7 @@ export function SettingsSlideout() {
                 <strong>本机能力</strong>（场景页）：工作区 / 扫描 / 命令等电源是否启用。
               </li>
               <li>
-                <strong>运行自主度</strong>（「安全与信任」）：危险操作要不要每次确认；
+                <strong>运行自主度</strong>（隐私与权限 → 运行自主度）：危险操作要不要每次确认；
                 <em>不会</em>放开场景已关掉的工具，也<strong>不能</strong>代替选工作区。
               </li>
             </ul>
@@ -3360,18 +3457,22 @@ export function SettingsSlideout() {
           <div style={styles.divider} />
 
           <CapabilityProfileSection />
+          </SettingsPage>
 
-          <div style={styles.divider} />
-
+          <SettingsPage id="tools-network" active={activeDestination === "tools-network"}>
           <NetSecSettingsSection />
+          </SettingsPage>
 
+          <SettingsPage id="tools-mcp" active={activeDestination === "tools-mcp"}>
                     {/* --- Outbound MCP L4+ grants --- */}
           <OutboundMcpSettingsSection />
+          </SettingsPage>
 
-          <div style={styles.divider} />
+          <SettingsPage id="tools-lcu" active={activeDestination === "tools-lcu"}>
           <LcuSettingsSection />
+          </SettingsPage>
 
-          <div style={styles.divider} />
+          <SettingsPage id="tools-coding" active={activeDestination === "tools-coding"}>
           <CodingHandoffSettingsSection
             acpEnabled={!!(config as { acp?: { enabled?: boolean } }).acp?.enabled}
             maxConcurrentSessions={(config as { acp?: { max_concurrent_sessions?: 1 | 2 | 3 | 4 } }).acp?.max_concurrent_sessions ?? 1}
@@ -3415,18 +3516,15 @@ export function SettingsSlideout() {
               })
             }}
           />
+          </SettingsPage>
 
+          <SettingsPage id="data-knowledge" active={activeDestination === "data-knowledge"}>
+            <p className="cm-settings-note">使用知识面板核对当前对话的知识选择方式、勾选项和匹配规则。</p>
+            <button type="button" className="cm-settings-text-link" disabled={!host} onClick={() => void openKnowledgeSettings()}>打开知识面板</button>
+          </SettingsPage>
 
-            </SettingsPage>
-          </div>
-
-          <div data-settings-page="export" hidden={activeSettingsPage !== "export"}>
-            <SettingsPage
-              title="文件与知识"
-              id="export"
-            >
+          <SettingsPage id="data-files" active={activeDestination === "data-files"}>
                     {/* --- File Upload Settings --- */}
-          <div style={styles.sectionTitle}>文件上传</div>
 
           <div style={styles.field}>
             <label style={styles.label}>最大文件大小: {((config.file_upload_max_size ?? 10485760) / (1024 * 1024)).toFixed(0)} MB</label>
@@ -3473,7 +3571,9 @@ export function SettingsSlideout() {
               仅当主模型不能看图时，用户附图才走视觉轨。主模型能看图时此开关不影响粘贴/选/拖。
             </div>
           </div>
+          </SettingsPage>
 
+          <SettingsPage id="data-index" active={activeDestination === "data-index"}>
           {/* Thread History IA Wave B — session index (file and knowledge settings) */}
           <div style={styles.sectionTitle}>会话索引（标签 / 要点）</div>
           <div style={styles.field}>
@@ -3547,13 +3647,12 @@ export function SettingsSlideout() {
               含惰性自动批；单批仍 ≤20。点「保存」后写入 Companion 并生效。
             </div>
           </div>
+          </SettingsPage>
 
-          <div style={styles.divider} />
-
+          <SettingsPage id="data-archive" active={activeDestination === "data-archive"}>
           {/* #502 B — archive tier. Default off: durable thread JSON keeps tool
               rows as stubs so the chat log is not a full replay of every page
               read / form fill. Sensitive classes fold either way. */}
-          <div style={styles.sectionTitle}>对话归档</div>
           <div style={styles.field}>
             <label style={styles.label}>保存完整操作史</label>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -3576,11 +3675,10 @@ export function SettingsSlideout() {
               默认关。只留工具名、成败、内容指纹；失败步骤保留错误原因与少量机器字段。打开后仍脱敏 cookie / 本机命令 / 密钥。已经省略的正文不会因打开而恢复。只作用于对话 JSON；操作历史面板与日志不在此开关内。
             </div>
           </div>
+          </SettingsPage>
 
-          <div style={styles.divider} />
-
+          <SettingsPage id="data-notes" active={activeDestination === "data-notes"}>
           {/* --- Markdown export (optional note-folder conventions) --- */}
-          <div style={styles.sectionTitle}>笔记导出</div>
           <div style={styles.field}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
               <input
@@ -3643,19 +3741,10 @@ export function SettingsSlideout() {
               </div>
             )}
           </div>
+          </SettingsPage>
 
-            </SettingsPage>
-          </div>
-
-          <div data-settings-page="experimental" hidden={activeSettingsPage !== "experimental"}>
-            <SettingsPage
-              title="实验功能"
-              id="experimental"
-            >
-          <details className="cm-settings-extra">
-            <summary>本地视觉定位</summary>
+          <SettingsPage id="model-local" active={activeDestination === "model-local"}>
           {/* --- WP5-I4 实验功能(Qwen3-VL 本地模型定位层) --- */}
-          <div style={styles.sectionTitle}>实验功能</div>
           {(() => {
             // 纯渲染:一切文案/判定来自 logic 纯函数;发送固定 source:"settings";
             // 无乐观更新——UI 态由 companion state 广播/应答驱动。
@@ -4286,14 +4375,8 @@ export function SettingsSlideout() {
               </div>
             )
           })()}
-
-          </details>
-
-            </SettingsPage>
+          </SettingsPage>
           </div>
-
-        </div>
-
         </div>
 
         <div className="cm-settings-footer" style={styles.footer}>

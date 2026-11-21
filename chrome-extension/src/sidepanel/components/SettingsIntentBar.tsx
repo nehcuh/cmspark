@@ -1,20 +1,23 @@
 /** AI semantic proposals; speech recognition only fills a draft. Writes require explicit review. */
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
-import { parseSettingsIntent, type SettingsIntent } from "../utils/settings-intent"
-import type { SettingsSectionId } from "../utils/settings-sections"
-import { requestSemanticSettings, semanticValue, type SemanticProposal, type SemanticReceiptItem } from "../utils/semantic-settings"
+import { localSettingsIntent, parseSettingsIntent, REASONING_DISPLAY_NAMES, REASONING_DISPLAY_STORAGE_KEY, type ReasoningDisplay, type SettingsIntent } from "../utils/settings-intent"
+import { applyManualKnowledge, requestSemanticSettings, sameKnowledgeScope, semanticValue, type KnowledgeScopePreview, type SemanticProposal, type SemanticReceiptItem } from "../utils/semantic-settings"
 import { getSpeechRecognitionCtor, VOICE_DEFAULT_LANG } from "../voice/detect"
 import { tokens } from "../ui/tokens"
 
 export type SettingsIntentBarProps = {
   /** Existing explicit navigation only; semantic configuration never invokes regex mutations. */
   onIntent: (intent: SettingsIntent, isCurrent: () => boolean) => string | Promise<string>
-  onOpenSection?: (section: SettingsSectionId) => void
+  onOpenSection?: (section: string) => void
   onOpenDestination?: (destination: "activity" | "todos") => void
   disabled?: boolean
   active?: boolean
+  connected?: boolean
+  reasoningDisplay?: ReasoningDisplay
+  onReasoningDisplay?: (mode: ReasoningDisplay) => void
+  knowledgeScope?: KnowledgeScopePreview
 }
-export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, disabled, active = true }: SettingsIntentBarProps) {
+export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, disabled, active = true, connected = true, reasoningDisplay, onReasoningDisplay, knowledgeScope }: SettingsIntentBarProps) {
   const [text, setText] = useState("")
   const [status, setStatus] = useState<string | null>(null)
   const [listening, setListening] = useState(false)
@@ -25,6 +28,10 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
   const [receipt, setReceipt] = useState<SemanticReceiptItem[] | null>(null)
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState("")
+  const [displayChange, setDisplayChange] = useState<{ before: ReasoningDisplay; after: ReasoningDisplay } | null>(null)
+  const [knowledgeChange, setKnowledgeChange] = useState<KnowledgeScopePreview | null>(null)
+  const scopeRef = useRef(knowledgeScope)
+  scopeRef.current = knowledgeScope
   const recRef = useRef<{ stop: () => void; abort: () => void } | null>(null)
   const generationRef = useRef(0)
   const navigationOwnerRef = useRef({ active, disabled })
@@ -51,8 +58,29 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
 
   const propose = useCallback(async () => {
     if (!text.trim() || disabled || !active || busy) return
+    setError(""); setStatus(null); setProposal(null); setReceipt(null); setDisplayChange(null); setKnowledgeChange(null)
+    const local = localSettingsIntent(text)
+    if (local?.type === "search" && onOpenSection) {
+      onOpenSection(local.destination)
+      return
+    }
+    if (local?.type === "reasoning_display" && reasoningDisplay && onReasoningDisplay) {
+      if (reasoningDisplay === local.mode) setStatus("思考过程已使用该显示方式。")
+      else setDisplayChange({ before: reasoningDisplay, after: local.mode })
+      return
+    }
+    if (local?.type === "manual_knowledge") {
+      if (!knowledgeScope) setError("请先打开要修改知识范围的对话。")
+      else if (knowledgeScope.mode === "manual") setStatus("当前对话已设为仅使用勾选知识。")
+      else setKnowledgeChange({ ...knowledgeScope, selected: [...knowledgeScope.selected] })
+      return
+    }
+    if (!connected) {
+      setError("尚未连接 Companion。可搜索设置名或手动浏览。")
+      return
+    }
     const controller = new AbortController(); requestRef.current?.abort(); requestRef.current = controller
-    setBusy("propose"); setError(""); setStatus(null)
+    setBusy("propose")
     try {
       const result = await requestSemanticSettings("settings.assistant.propose", { text: text.trim() }, controller.signal)
       if (controller.signal.aborted) return
@@ -61,7 +89,51 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
       setCandidateId(first?.id || ""); setSelected(first?.changes.map(change => change.id) || [])
     } catch (e) { if (!controller.signal.aborted) setError((e as Error).message) }
     finally { if (requestRef.current === controller) { requestRef.current = null; setBusy(null) } }
-  }, [text, disabled, active, busy])
+  }, [text, disabled, active, busy, connected, onOpenSection, reasoningDisplay, onReasoningDisplay, knowledgeScope])
+
+  const confirmDisplay = async () => {
+    if (!displayChange || !onReasoningDisplay || !active || disabled || busy) return
+    const generation = generationRef.current
+    setBusy("apply"); setError(""); setStatus(null)
+    try {
+      const read = async () => (await chrome.storage.local.get(REASONING_DISPLAY_STORAGE_KEY))[REASONING_DISPLAY_STORAGE_KEY] ?? "auto_live"
+      const before = await read()
+      if (generation !== generationRef.current) return
+      if (before !== displayChange.before) {
+        setDisplayChange(null)
+        setError("思考过程的显示已变化。请重新预览。")
+        return
+      }
+      await chrome.storage.local.set({ [REASONING_DISPLAY_STORAGE_KEY]: displayChange.after })
+      if (await read() !== displayChange.after) throw new Error("READBACK_MISMATCH")
+      onReasoningDisplay(displayChange.after)
+      if (generation === generationRef.current) setStatus("已保存并核对思考过程的显示方式。")
+    } catch {
+      if (generation === generationRef.current) setError("未能确认保存。请在「回复显示」核对当前设置。")
+    } finally {
+      if (generation === generationRef.current) { setDisplayChange(null); setBusy(null) }
+    }
+  }
+
+  const confirmKnowledge = async () => {
+    if (!knowledgeChange || !active || disabled || busy || !connected) return
+    setKnowledgeChange(null)
+    if (!sameKnowledgeScope(knowledgeChange, scopeRef.current)) {
+      setError("对话或知识范围已变化，请重新预览。")
+      return
+    }
+    const controller = new AbortController()
+    requestRef.current = controller
+    setBusy("apply"); setError(""); setStatus(null)
+    try {
+      await applyManualKnowledge(knowledgeChange, controller.signal)
+      if (!controller.signal.aborted) setStatus("已保存并核对。刚才确认的对话现在只使用勾选知识。")
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "未能确认保存。")
+    } finally {
+      if (requestRef.current === controller) { requestRef.current = null; setBusy(null) }
+    }
+  }
   const apply = useCallback(async () => {
     if (!proposal || !selected.length || disabled || !active || busy || submitted) return
     const controller = new AbortController(); requestRef.current = controller
@@ -80,6 +152,7 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
     if (disabled || !active || listening || busy) return
     const Ctor = getSpeechRecognitionCtor(typeof globalThis !== "undefined" ? globalThis as any : {})
     if (!Ctor) { setStatus("此环境不支持语音识别，请直接输入描述"); return }
+    setProposal(null); setReceipt(null); setDisplayChange(null); setKnowledgeChange(null); setError("")
     const generation = ++generationRef.current, r = new Ctor()
     r.lang = VOICE_DEFAULT_LANG; r.continuous = false; r.interimResults = true; r.maxAlternatives = 1
     r.onresult = (ev: any) => {
@@ -116,18 +189,32 @@ export function SettingsIntentBar({ onIntent, onOpenSection, onOpenDestination, 
     finally { if (isCurrent()) setBusy(null) }
   }
   const candidate = proposal?.candidates.find(item => item.id === candidateId)
+  const local = localSettingsIntent(text)
   const rule = parseSettingsIntent(text)
   const isVoiceRule = rule.type === "set_dictation_mode" || rule.type === "set_hotkey_enabled" || rule.type === "set_asr_refiner" || rule.type === "set_stt_engine" || rule.type === "set_realtime_streaming" || rule.type === "enable_hotkey_default"
   const canNavigateRule = rule.type === "open_meeting" || rule.type === "open_packs" || (isVoiceRule && !!onOpenSection)
   return <div style={styles.wrap} data-testid="settings-intent-bar" aria-busy={!!busy}>
-    <div style={styles.title}>描述目标，比较设置候选</div>
-    <p style={styles.hint}>例如：语音错字太多；少打扰我，但别漏掉待办。AI 使用当前模型理解描述，只接收允许公开的设置目录和值。请勿输入密钥。</p>
+    <div style={styles.title}>搜索设置或说出你想改什么</div>
+    <p style={styles.hint}>例如「会议纪要模型」或「把思考过程收起来」。复杂目标使用当前模型理解。请勿输入密钥。</p>
     <div style={styles.row}>
-      <input aria-label="描述设置目标" type="text" maxLength={2000} value={text} disabled={disabled || !!busy} placeholder="想改善什么体验？" onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && text.trim() && !listening) { e.preventDefault(); void propose() } }} style={styles.input} />
-      <button type="button" disabled={disabled || !!busy || listening || !text.trim()} style={styles.btn} onClick={() => void propose()}>{busy === "propose" ? "理解中…" : "生成候选"}</button>
+      <input aria-label="描述设置目标" type="text" maxLength={2000} value={text} disabled={disabled || !!busy} placeholder="设置名或一句话" onChange={e => { setText(e.target.value); setDisplayChange(null); setKnowledgeChange(null); setProposal(null); setReceipt(null); setStatus(null); setError("") }} onKeyDown={e => { if (e.key === "Enter" && text.trim() && !listening) { e.preventDefault(); void propose() } }} style={styles.input} />
+      <button type="button" disabled={disabled || !!busy || listening || !text.trim()} style={styles.btn} onClick={() => void propose()}>{busy === "propose" ? "理解中…" : local?.type === "search" && onOpenSection ? "打开设置" : local ? "预览变更" : "生成候选"}</button>
       <button type="button" disabled={disabled || !!busy} style={{ ...styles.btn, ...(listening ? styles.btnLive : {}) }} onClick={() => listening ? stopVoice() : startVoice()} title="语音只填写描述，不自动修改设置">{listening ? "停止" : "语音"}</button>
     </div>
-    {canNavigateRule && <button type="button" style={styles.btn} disabled={disabled || !!busy} onClick={() => void navigateRule()}>规则导航：{isVoiceRule ? "打开语音设置" : rule.type === "open_meeting" ? "打开会议" : "打开场景"}</button>}
+    {local?.type === "search" && <p style={styles.hint}>找到 {local.label}</p>}
+    {!local && canNavigateRule && <button type="button" style={styles.btn} disabled={disabled || !!busy} onClick={() => void navigateRule()}>规则导航：{isVoiceRule ? "打开语音设置" : rule.type === "open_meeting" ? "打开会议" : "打开场景"}</button>}
+    {displayChange && <div style={styles.change}>
+      <strong>思考过程显示</strong>
+      <p style={styles.hint}>{REASONING_DISPLAY_NAMES[displayChange.before]} → {REASONING_DISPLAY_NAMES[displayChange.after]}。仅改变本浏览器的回复显示。</p>
+      <button type="button" style={styles.btn} disabled={disabled || !!busy} onClick={() => void confirmDisplay()}>{busy === "apply" ? "正在保存…" : "确认更改显示"}</button>
+    </div>}
+    {knowledgeChange && <div style={styles.change}>
+      <strong>当前对话的知识范围</strong>
+      <p style={styles.hint}>{knowledgeChange.mode === "all" ? "在全库检索" : "自动匹配"} → 仅使用勾选知识</p>
+      <p style={styles.hint}>已勾选 {knowledgeChange.selected.length} 项。只修改当前对话。</p>
+      {!connected && <p style={styles.hint}>连接 Companion 后可保存。</p>}
+      <button type="button" style={styles.btn} disabled={disabled || !connected || !!busy} onClick={() => void confirmKnowledge()}>确认更改知识范围</button>
+    </div>}
     {status && <p role="status" style={styles.status}>{status}</p>}
     {error && <p role="alert" style={styles.error}>{error}</p>}
     {proposal && <div style={styles.proposal}>

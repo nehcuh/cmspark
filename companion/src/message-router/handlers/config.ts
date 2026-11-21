@@ -20,6 +20,14 @@ import { appendCapabilityAudit } from "../../packs/audit-log"
 import { redactConfigForWire } from "../../config-redact"
 import { validateAcpConcurrencyLimit } from "../../acp/types"
 import { normalizeLocalTerminalApp } from "../../acp/open-local-terminal"
+import { isModelCenterAction, readModelCenter, saveModelCenter } from "../../model-center"
+import { isChromeExtensionWsOrigin } from "../../ws/handshake-surface"
+import type { WorkspaceSession } from "./personal-workspace"
+
+const MODEL_CENTER_ERRORS = new Set([
+  "CONFIG_REVISION_CONFLICT", "INVALID_MODEL_CENTER_ACTION", "MODEL_PROFILE_NOT_FOUND", "MODEL_PROFILE_NAME_IN_USE",
+  "MODEL_PROFILE_LIMIT", "MODEL_PROFILE_IN_USE", "MODEL_NOT_CONFIGURED", "MODEL_ENDPOINT_INVALID",
+])
 
 
 const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"])
@@ -32,6 +40,13 @@ export function hasPrototypePollutionKey(obj: any): boolean {
     if (typeof val === "object" && hasPrototypePollutionKey(val)) return true
   }
   return false
+}
+
+export function handlePairedModelCenterMessage(type: string, rest: any, session?: WorkspaceSession): Promise<any> {
+  if (session?.surface !== "panel" || !isChromeExtensionWsOrigin(session.origin) || !session.panelId || session.isCurrentSession?.() !== true) {
+    return Promise.resolve({ type: "error", id: rest.id, error: "MODEL_CENTER_DENIED" })
+  }
+  return handleConfigFamily(type, rest)
 }
 
 function sanitizeConfig(obj: Record<string, any>): Record<string, any> {
@@ -58,6 +73,19 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
     return typeof id === "string" && /^settings-save:[A-Za-z0-9_-]{1,70}$/.test(id) ? { ...message, id } : message
   }
   switch (type) {
+    case "model.center.get":
+      return { type: "model.center.state", id: rest.id, ...readModelCenter() }
+    case "model.center.save": {
+      const fail = (error: string) => ({ type: "error", id: rest.id, error })
+      if (typeof rest.config_revision !== "string" || !rest.config_revision || rest.config_revision.length > 128) return fail("INVALID_CONFIG_REVISION")
+      if (hasPrototypePollutionKey(rest.action) || !isModelCenterAction(rest.action)) return fail("INVALID_MODEL_CENTER_ACTION")
+      try {
+        return { type: "model.center.state", id: rest.id, ...saveModelCenter(rest.action, rest.config_revision) }
+      } catch (cause) {
+        const error = cause instanceof Error ? cause.message : ""
+        return fail(MODEL_CENTER_ERRORS.has(error) ? error : "MODEL_CENTER_SAVE_FAILED")
+      }
+    }
     case "config.get": {
       // SoT: same redaction as config.updated broadcast (MCP env/headers + llm keys).
       const snapshot = getConfigSnapshot()

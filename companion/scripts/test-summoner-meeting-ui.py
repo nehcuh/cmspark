@@ -10,6 +10,7 @@ import json
 import math
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -85,6 +86,14 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             assert not events("meeting.generate_minutes", after=after)
             assert not [item for item in control()["traces"] if item["n"] > after and item.get("phase") == "llm"]
 
+        def confirm_minutes(page, after=0):
+            prepared = wait_event(page, "meeting.prepare_minutes", "ack", after=after)
+            assert prepared["response"]["type"] == "meeting.minutes_prepared", prepared
+            no_model(after=after)
+            expect(page.locator("#meetingMinutesDestination")).to_have_text("synthetic · https://unused.invalid/")
+            expect(page.locator("#meetingMinutesMaterial")).to_contain_text("将发送转写")
+            page.locator("#meetingMinutesSend").click()
+
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="chrome", headless=True, args=[
                 "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
@@ -100,6 +109,36 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             page.goto(origin)
             expect(page.locator("#meetingStart")).to_be_visible()
             no_model()
+
+            if "--minutes-only" in sys.argv:
+                page.locator("#meetingOpen").click()
+                page.locator("#meetingNew").click()
+                created = wait_event(page, "meeting.create", "ack")["response"]["meeting"]
+                appended = page.evaluate("""async ({id,text}) => {
+                    const response = await fetch('/api/meeting/append', {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({id,text,segment_id:'isolated-browser-fixture'})
+                    });
+                    return response.json();
+                }""", {"id": created["id"], "text": "配森将在周五发布。"})
+                assert appended["type"] == "meeting.updated", appended
+                page.locator("#meetingMinutesBtn").click()
+                page.locator("#meetingPrivacyAck").click()
+                prepared = wait_event(page, "meeting.prepare_minutes", "ack")
+                assert prepared["response"]["material"]["transcript_chars"] == len("配森将在周五发布。")
+                expect(page.locator("#meetingMinutesDestination")).to_have_text("synthetic · https://unused.invalid/")
+                expect(page.locator("#meetingMinutesCancel")).to_be_focused()
+                page.locator("#meetingMinutesCancel").click()
+                expect(page.locator("#meetingMinutesConfirm")).to_be_hidden()
+                no_model()
+                page.locator("#meetingMinutesBtn").click()
+                confirm_minutes(page, after=prepared["n"])
+                expect(page.locator("#meetingMinutes")).to_contain_text("Python")
+                assert len(events("meeting.generate_minutes")) == 1
+                assert not errors, errors
+                browser.close()
+                print("PASS native minutes target, consent cancellation, and confirmed generation", flush=True)
+                sys.exit(0)
 
             page.locator("#meetingOpen").click()
             expect(page.locator("#meetingDesk")).to_be_visible()
@@ -131,6 +170,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             end_held = wait_event(page, "meeting.end", "held")
             no_model()
             control(release="meeting.end")
+            confirm_minutes(page)
             generated = wait_event(page, "meeting.generate_minutes", "ack")
             assert generated["response"]["type"] == "meeting.minutes_result", generated
             append_acks = events("meeting.append_transcript", "ack")
@@ -153,6 +193,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             marker = control()["traces"][-1]["n"]
             control(failLlm=True)
             page.locator("#meetingMinutesBtn").click()
+            confirm_minutes(page, after=marker)
             failed = wait_event(page, "meeting.generate_minutes", "ack", after=marker)
             assert failed["response"]["type"] == "meeting.error"
             assert page.locator("#meetingLive").inner_text() == before_text
@@ -277,6 +318,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
                 expect(page.locator("#meetingRetry")).to_be_hidden()
                 no_model(after=marker)
                 page.locator("#meetingMinutesBtn").click()
+                confirm_minutes(page, after=marker)
                 regenerated = wait_event(page, "meeting.generate_minutes", "ack", after=marker)
                 assert regenerated["response"]["type"] == "meeting.minutes_result", regenerated
                 expect(page.locator("#meetingMinutesBtn")).to_be_enabled()
@@ -314,6 +356,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             assert len(events("voice.stt.start", after=marker)) == 1
             no_model(after=marker)
             imported_page.locator("#meetingMinutesBtn").click()
+            confirm_minutes(imported_page, after=marker)
             imported_minutes = wait_event(imported_page, "meeting.generate_minutes", "ack", after=marker)
             assert imported_minutes["response"]["type"] == "meeting.minutes_result", imported_minutes
             expect(imported_page.locator("#meetingEvidence")).to_contain_text("Python")

@@ -86,6 +86,7 @@ async function dispatch(message) {
   // Record byte counts, not PCM/base64; fixture text is generated, never user material.
   const request = { ...message };
   if (typeof request.data === 'string') request.data = `<${Buffer.from(request.data, 'base64').length} synthetic PCM bytes>`;
+  if (request.consent_token) request.consent_token = '[issued fixture token]';
   if (request.file) request.file = { name: request.file.name, type: request.file.type, bytes: Buffer.from(request.file.content, 'base64').length };
   record({ phase: 'request', type: message.type, request });
   await gate(message.type);
@@ -111,7 +112,8 @@ async function dispatch(message) {
   } else if (message.type === 'thread.list') result = { type: 'thread.list', threads: [] };
   else if (message.type === 'thread.select') result = { type: 'thread.selected', messages: [], run_status: 'idle' };
   else result = { type: 'ok' };
-  record({ phase: 'ack', type: message.type, response: result ?? null });
+  const response = result?.consent_token ? { ...result, consent_token: '[issued fixture token]' } : result;
+  record({ phase: 'ack', type: message.type, response: response ?? null });
   return result;
 }
 const controlServer = http.createServer(async (req, res) => {

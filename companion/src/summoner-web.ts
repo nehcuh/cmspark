@@ -89,6 +89,7 @@ export const SUMMONER_WEB_DISPATCH_ALLOW = new Set([
   "meeting.start",
   "meeting.end",
   "meeting.append_transcript",
+  "meeting.prepare_minutes",
   "meeting.generate_minutes",
   "meeting.import_reference",
   "meeting.set_reference",
@@ -1299,14 +1300,22 @@ async function handleRequest(
       return
     }
 
-    if (pathOnly === "/api/meeting/minutes" && req.method === "POST") {
+    if ((pathOnly === "/api/meeting/minutes" || pathOnly === "/api/meeting/minutes/prepare") && req.method === "POST") {
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       const id = typeof body.id === "string" ? body.id : ""
       if (body.privacy_ack_v1 !== true) {
         jsonResponse(res, { type: "meeting.error", v: 1, code: "need_privacy_ack", message: "请先阅读并确认会议说明" }, 400)
         return
       }
-      jsonResponse(res, await dispatchAllowed("meeting.generate_minutes", { v: 1, id }))
+      if (pathOnly === "/api/meeting/minutes/prepare") {
+        jsonResponse(res, await dispatchAllowed("meeting.prepare_minutes", { v: 1, id }))
+        return
+      }
+      if (typeof body.consent_token !== "string" || body.consent_token.length !== 36) {
+        jsonResponse(res, { type: "meeting.error", v: 1, code: "minutes_consent_required", message: "请确认本次纪要的材料和模型端点" }, 400)
+        return
+      }
+      jsonResponse(res, await dispatchAllowed("meeting.generate_minutes", { v: 1, id, consent_token: body.consent_token }))
       return
     }
 
@@ -1824,6 +1833,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <button type="button" id="meetingCancel" hidden>取消未处理音频</button>
       <button type="button" id="meetingMinutesBtn" hidden>生成会议纪要</button>
     </div>
+    <section class="privacy-sheet" id="meetingMinutesConfirm" aria-labelledby="meetingMinutesConfirmTitle" hidden>
+      <strong id="meetingMinutesConfirmTitle">确认发送会议材料</strong>
+      <p id="meetingMinutesDestination"></p>
+      <p id="meetingMinutesMaterial"></p>
+      <div class="cta-actions">
+        <button type="button" id="meetingMinutesCancel">取消</button>
+        <button type="button" id="meetingMinutesSend">确认并生成</button>
+      </div>
+    </section>
   </div>
 </div>
 <script>
@@ -2544,6 +2562,8 @@ try{
   };
   $("meetingMinutesBtn").onclick=function(){ requestMeetingMinutes(); };
   $("meetingBack").onclick=function(){
+    if(cancelMeetingMinutesConfirmation){cancelMeetingMinutesConfirmation();return}
+    if(meetingWorkBusy)return;
     endMeetingCapture().then(function(){showMeetingDesk(false)}).catch(meetingProblem);
   };
   $("cruiseChip").onclick=function(){ $("operateOpen").click(); };

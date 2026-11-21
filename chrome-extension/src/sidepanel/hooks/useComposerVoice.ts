@@ -489,7 +489,7 @@ export function useComposerVoice({
     voice.dismissBanner()
     setComposeOpen(false)
     closePanel()
-    dispatch({ type: "OPEN_SETTINGS_SECTION", section: "voice" })
+    dispatch({ type: "OPEN_SETTINGS_SECTION", section: "input-dictation-engine" })
   }, [closePanel, dispatch, voice])
 
   return {

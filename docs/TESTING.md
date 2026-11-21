@@ -2,7 +2,7 @@
 
 ## 活状态（2026-11-16）
 
-产品版本 **1.3.1**（尚未正式发布）。此前 1.0.1 文档核对基线是 `16f3048b9b83b813648830517d0a1bd9994bf564`。Node 要求看 `companion/package.json` 与仓库根 `package.json` 的 `engines.node`（`>=22.23.4 <23`）。CI 固定版本看 `.github/workflows/ci.yml` 的 `node-version`（`22.23.4`）。`chrome-extension/package.json` 没有单独的 `engines` 字段。
+产品版本 **1.4.0**（尚未正式发布）。此前 1.0.1 文档核对基线是 `16f3048b9b83b813648830517d0a1bd9994bf564`。Node 要求看 `companion/package.json` 与仓库根 `package.json` 的 `engines.node`（`>=22.23.4 <23`）。CI 固定版本看 `.github/workflows/ci.yml` 的 `node-version`（`22.23.4`）。`chrome-extension/package.json` 没有单独的 `engines` 字段。
 
 在仓库根执行下面两条命令。现行 `*.test.ts` 数以命令结果为准。口径是对应目录中文件名匹配 `*.test.ts` 的个数。`*.test.mjs`、`*.test.js` 和 `scripts/tests` 另计。该文件数也不同于 `node:test` 跑出来的用例条数。
 
@@ -356,6 +356,8 @@ uv run --no-project --with playwright python companion/scripts/test-web-surfaces
 ## #471 设置与召唤器交互
 
 在 `nvm use 22` 后，从仓库根运行 `uv run --no-project --with playwright python chrome-extension/scripts/test-settings-pages-ui.py` 与 `uv run --no-project --with playwright python companion/scripts/test-summoner-workspace-ui.py`。使用本机 Chrome headless、真实 React/HTML 和隔离传输，覆盖四档宽度、分类草稿与深链、语音迟到回调取消、隐藏快捷键录制、许可焦点隔离及召唤器输入操作顺序；不会改写已安装程序或真实配置。
+
+模型中心回归覆盖命名连接、不同用途选择、旧模型继承、配置版本冲突和密钥脱敏。会议用例覆盖准备接收方、取消、显式确认和权限失效。先编译 Companion 测试产物，再运行 `uv run --no-project --with playwright python chrome-extension/scripts/test-meeting-workflow-ui.py --external-asr --artifacts <目录>`，可核对实际浏览器的导入、分段、取消、HTTP 429 与已完成段保留。转写服务是受控夹具。真实服务的识别准确率需要单独验收。
 
 ## #473 对话管理
 

@@ -149,6 +149,7 @@ export class AnthropicProvider implements LlmProvider {
       headers,
       body: JSON.stringify(body),
       signal: params.signal,
+      redirect: params.rejectRedirects ? "error" : undefined,
     })
 
     if (!response.ok) {

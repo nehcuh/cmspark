@@ -5,19 +5,22 @@
  * auto_diarize / import_text remain extension-only.
  */
 
-import { DATA_DIR, getConfig } from "../config"
+import { DATA_DIR, getConfig, getConfigSnapshot, setVoiceFields } from "../config"
 import { getSttSessionService, type SttSessionService } from "../voice/stt-session-service"
 import { isCaptureId, isCaptureEpoch, meetingPcmCapsSnapshot, MEETING_PCM } from "../voice/meeting-pcm-contract"
 import type { MeetingPcmCapture } from "../voice/meeting-pcm-capture"
 import { resolveWinSapiHelper } from "../voice/win-sapi"
 import { logger } from "../logger"
-import { meetingExternalRefusal } from "../voice/external-asr-meeting"
+import { createMeetingExternalAsr, handleMeetingAsrMessage, meetingExternalRefusal } from "../voice/external-asr-meeting"
 import { isChromeExtensionOrigin, isVoiceSttOriginAllowed, sttResult } from "../voice/stt-handlers"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import type { LlmExtractConfig } from "../llm/llm-extract"
+import { displayModelEndpoint, resolveMeetingTextModel } from "../model-center"
+import { assertLlmEndpointUrlAllowed } from "../security"
 import { generateMeetingMinutes } from "./meeting-minutes"
+import { consumeMinutesConsent, minutesConsentFingerprint, prepareMinutesConsent } from "./minutes-consent"
 import { importMeetingReference, MEETING_REFERENCE_MAX_CHARS, MEETING_REFERENCE_MAX_NAME_CHARS } from "./meeting-reference"
-import { MEETING_MINUTES_MAX_INPUT_CHARS } from "./minutes-prompt"
+import { MEETING_MINUTES_MAX_INPUT_CHARS, MEETING_MINUTES_MAX_TEMPLATE_CHARS } from "./minutes-prompt"
 import {
   appendTranscript,
   beginMeetingCapture,
@@ -85,27 +88,20 @@ export interface MeetingHandlerDeps {
   sttService?: SttSessionService
 }
 
-function llmConfigFromCompanion(): LlmExtractConfig | null {
-  try {
-    const cfg = getConfig()
-    const llm = cfg?.llm
-    if (!llm?.base_url || !llm?.api_key || !llm?.model_name) return null
-    return {
-      base_url: llm.base_url,
-      api_key: llm.api_key,
-      model_name: llm.model_name,
-      temperature: typeof llm.temperature === "number" ? llm.temperature : 0.3,
-      reasoning_effort: llm.reasoning_effort,
-      protocol: llm.protocol,
-      auth_style: llm.auth_style,
-      client_header_profile: llm.client_header_profile,
-      claude_code_compat_version: llm.claude_code_compat_version,
-      extra_headers: llm.extra_headers,
-      anthropic_version: llm.anthropic_version,
-      context_window: llm.context_window,
-    }
-  } catch {
-    return null
+function meetingExtractConfig(llm: LlmExtractConfig): LlmExtractConfig {
+  return {
+    base_url: llm.base_url,
+    api_key: llm.api_key,
+    model_name: llm.model_name,
+    temperature: typeof llm.temperature === "number" ? llm.temperature : 0.3,
+    reasoning_effort: llm.reasoning_effort,
+    protocol: llm.protocol,
+    auth_style: llm.auth_style,
+    client_header_profile: llm.client_header_profile,
+    claude_code_compat_version: llm.claude_code_compat_version,
+    extra_headers: llm.extra_headers,
+    anthropic_version: llm.anthropic_version,
+    context_window: llm.context_window,
   }
 }
 
@@ -114,6 +110,14 @@ function err(code: string, message: string, extra?: Record<string, unknown>) {
 }
 
 const minutesInFlight = new Set<string>()
+const externalAsr = createMeetingExternalAsr({
+  config: () => getConfig().voice?.meetingAsr,
+  save: meetingAsr => { setVoiceFields({ meetingAsr }) },
+})
+
+export function disconnectMeetingAsr(peerId: string) {
+  externalAsr.disconnect(peerId)
+}
 
 function transcriptWriteError(cause: unknown, id: string) {
   if (cause instanceof MeetingTranscriptSegmentCollisionError) return err("segment_id_conflict", cause.message, { id })
@@ -127,6 +131,7 @@ const OVERLAY_MEETING_TYPES = new Set([
   "meeting.start",
   "meeting.end",
   "meeting.append_transcript",
+  "meeting.prepare_minutes",
   "meeting.generate_minutes",
   "meeting.import_reference",
   "meeting.set_reference",
@@ -169,6 +174,9 @@ export async function handleMeetingMessage(
       surface: ctx.surface,
     })
     return err("origin_denied", "chrome-extension origin required")
+  }
+  if (typeof type === "string" && type.startsWith("meeting.asr.")) {
+    return handleMeetingAsrMessage(msg, ctx.peerId, externalAsr)
   }
   if ((type === "meeting.start" || type === "meeting.end") && hasMeetingPcmFields(msg) && !validMeetingPcmMessage(msg)) return err("queue_protocol_error", "invalid continuous meeting message")
 
@@ -666,37 +674,61 @@ export async function handleMeetingMessage(
     return { type: "meeting.imported", v: 1, meeting: m, kind: "text" }
   }
 
-  if (type === "meeting.generate_minutes") {
+  if (type === "meeting.prepare_minutes" || type === "meeting.generate_minutes") {
     const id = resolveMeetingId(msg)
+    const preparing = type === "meeting.prepare_minutes"
     if ((msg.text !== undefined && typeof msg.text !== "string") ||
         (msg.reference_notes !== undefined && typeof msg.reference_notes !== "string") ||
-        (msg.reference_name !== undefined && typeof msg.reference_name !== "string")) {
-      return err("invalid_material", "转写和参考笔记必须为文本", { id })
+        (msg.reference_name !== undefined && typeof msg.reference_name !== "string") ||
+        (msg.template_md !== undefined && typeof msg.template_md !== "string")) {
+      return err("invalid_material", "转写、参考笔记和纪要模板必须为文本", { id })
     }
     if (id && minutesInFlight.has(id)) return err("generation_busy", "该会议正在生成纪要，请等待当前结果", { id })
-    if (id) minutesInFlight.add(id)
+    let generating = false
     try {
       const meeting = id ? loadMeeting(id) : null
       if (id && !meeting) return err("not_found", "meeting not found", { id })
       // An explicit current snapshot wins, including an explicit empty draft.
-      const transcriptText = (msg.text !== undefined ? msg.text : meeting ? transcriptToText(meeting.transcript) : "").trim()
+      const storedTranscript = meeting ? transcriptToText(meeting.transcript) : ""
+      const transcriptText = (msg.text !== undefined ? msg.text : storedTranscript).trim()
       const referenceNotes = msg.reference_notes ?? meeting?.reference_notes ?? ""
       const referenceName = msg.reference_name ?? meeting?.reference_name ?? ""
+      const templateMd = msg.template_md?.trim() || undefined
       if (!transcriptText) return err("empty_transcript", "empty transcript", { id })
       if (transcriptText.length > MEETING_MINUTES_MAX_INPUT_CHARS) return err("transcript_too_long", "转写不能超过 200000 字", { id })
       if (referenceNotes.length > MEETING_REFERENCE_MAX_CHARS || referenceNotes.length + transcriptText.length > MEETING_MINUTES_MAX_INPUT_CHARS) {
         return err("reference_too_long", "转写与参考笔记合计不能超过 200000 字，参考笔记不能超过 100000 字", { id })
       }
       if (referenceName.length > MEETING_REFERENCE_MAX_NAME_CHARS) return err("invalid_reference", "参考文件名不能超过 255 字", { id })
-      const getLlm = deps.getLlmConfig ?? llmConfigFromCompanion
-      const llm = getLlm()
-      if (!llm) {
-        if (id) setMeetingStatus(id, "error", "llm not configured")
-        return err("llm_not_configured", "Companion LLM not configured", { id })
+      if (msg.template_md?.length > MEETING_MINUTES_MAX_TEMPLATE_CHARS) return err("template_too_long", "纪要模板过长", { id })
+
+      const configSnapshot = getConfigSnapshot()
+      const resolved = deps.getLlmConfig
+        ? { llm: deps.getLlmConfig(), profileId: null, profileName: null }
+        : resolveMeetingTextModel(configSnapshot)
+      if (!resolved?.llm) return err("llm_not_configured", "请在模型与服务中配置会议纪要模型", { id })
+      const llm = meetingExtractConfig(resolved.llm)
+      if (assertLlmEndpointUrlAllowed(llm.base_url)) return err("llm_endpoint_invalid", "纪要模型端点无效，请在模型与服务中检查配置", { id })
+      const owner = JSON.stringify([ctx.origin, ctx.surface, ctx.peerId])
+      const fingerprint = meetingSourceFingerprint(transcriptText, referenceNotes, referenceName)
+      const consentFingerprint = minutesConsentFingerprint([
+        configSnapshot.revision, resolved.profileId, resolved.profileName, llm, id, fingerprint, templateMd,
+        meeting ? meetingSourceFingerprint(storedTranscript, meeting.reference_notes ?? "", meeting.reference_name ?? "") : null,
+      ])
+      if (preparing) {
+        return {
+          type: "meeting.minutes_prepared", v: 1, id: msg.id, consent_token: prepareMinutesConsent(owner, consentFingerprint),
+          target: { model_name: llm.model_name, base_url: displayModelEndpoint(llm.base_url), profile_name: resolved.profileName },
+          material: { transcript_chars: transcriptText.length, reference_chars: referenceNotes.trim().length, reference_name: referenceName.trim(), template_chars: templateMd?.length ?? 0 },
+        }
       }
+      if (typeof msg.consent_token !== "string" || !msg.consent_token) return err("minutes_consent_required", "请确认本次纪要的材料和模型端点", { id })
+      if (!consumeMinutesConsent(msg.consent_token, owner, consentFingerprint)) return err("minutes_consent_changed", "纪要材料或配置已变化，请重新核对并确认", { id })
+      generating = true
+      if (id) minutesInFlight.add(id)
       if (meeting) {
         // Preserve STT provenance when the supplied text matches existing lines.
-        if (transcriptText !== transcriptToText(meeting.transcript)) {
+        if (transcriptText !== storedTranscript) {
           meeting.transcript = transcriptText.split("\n").map((text: string) => ({ text, source: "user_edit" }))
         }
         meeting.reference_notes = referenceNotes
@@ -704,9 +736,7 @@ export async function handleMeetingMessage(
         meeting.status = "generating"
         saveMeeting(meeting) // persistence failure must prevent the LLM call
       }
-      const fingerprint = meetingSourceFingerprint(transcriptText, referenceNotes, referenceName)
       const generate = deps.generate ?? generateMeetingMinutes
-      const templateMd = typeof msg.template_md === "string" ? msg.template_md : undefined
       const result = await generate({ transcriptText, config: llm, templateMd, referenceNotes, referenceName })
       if (!result.ok) {
         if (id) setMeetingStatus(id, "error", result.message)
@@ -722,10 +752,10 @@ export async function handleMeetingMessage(
       return { type: "meeting.minutes_result", v: 1, meeting: null, minutes }
     } catch (cause) {
       logger.warn("meeting.minutes.failed", { id, error: cause instanceof Error ? cause.message : "meeting minutes failed" })
-      try { if (id) setMeetingStatus(id, "error", "会议纪要生成或保存失败") } catch { /* storage may still be unavailable */ }
+      try { if (id && generating) setMeetingStatus(id, "error", "会议纪要生成或保存失败") } catch { /* storage may still be unavailable */ }
       return err("minutes_failed", "会议纪要生成或保存失败，原始转写仍保留，请重试", { id })
     } finally {
-      if (id) minutesInFlight.delete(id)
+      if (id && generating) minutesInFlight.delete(id)
     }
   }
 
