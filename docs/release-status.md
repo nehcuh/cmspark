@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-源码候选版本为 **1.5.0**。工作台与会议验收范围见 [设计 #878](superpowers/specs/personal-workbench-meeting.md)。
+源码开发版本 **1.5.0（尚未正式发布）**。工作台与会议验收范围见 [设计 #878](superpowers/specs/personal-workbench-meeting.md)。
 
 ## 1.4.0
 
