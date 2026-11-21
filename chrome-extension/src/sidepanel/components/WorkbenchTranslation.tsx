@@ -177,7 +177,7 @@ function TranslationPanel({ meetingId }: { meetingId?: string }) {
     if (next) void translate(next)
   })
 
-  return <section aria-label={meetingId ? "分段翻译" : "文本翻译"} style={{ display: "grid", gap: 10, padding: 12, minWidth: 0 }}>
+  return <section aria-label={meetingId ? "分段翻译" : "文本翻译"} className={meetingId ? undefined : "cm-workbench-page"} style={{ display: "grid", gap: 10, padding: meetingId ? 12 : undefined, minWidth: 0 }}>
     <h3 style={{ margin: 0 }}>{meetingId ? "分段翻译" : "文本翻译"}</h3>
     {!meetingId && <label>原文<textarea rows={6} maxLength={16000} style={{ width: "100%", boxSizing: "border-box" }} value={source}
       onChange={event => { stop(); setSource(event.target.value); setResult(""); setNotice("") }} /></label>}

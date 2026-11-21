@@ -122,7 +122,7 @@ export function WorkbenchRecording({ visible = true, pendingContext, onActiveCha
     } catch (error) { setStatus(message(error)); setBusy(error instanceof ScreenCaptureBusy) }
   }
 
-  return <section aria-label="屏幕录制" style={{ color: tokens.text }}>
+  return <section aria-label="屏幕录制" className="cm-workbench-page" style={{ color: tokens.text }}>
     <h2>录屏</h2>
     <p>请选择要录制的标签页、窗口或屏幕。视频仅保存在此浏览器配置中。</p>
     <div style={actions}>

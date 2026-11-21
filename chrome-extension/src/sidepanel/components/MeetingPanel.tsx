@@ -1001,6 +1001,10 @@ export function MeetingPanel(props: {
 
   const startLiveCapture = async (confirmed = false) => {
     if (!ensureAck()) return
+    if (!props.purpose && !meetingId) {
+      setError("请先新建会议会话")
+      return
+    }
     if (!companionConnected) {
       setError("Companion 未连接")
       return
@@ -2000,7 +2004,7 @@ export function MeetingPanel(props: {
           <button
             type="button"
             data-testid="meeting-start-capture"
-            disabled={busy || !ack || !companionConnected || (externalLive ? !liveTarget?.ready : !state.voicePrivacyAckV2 || !localEngineReady || !localModelReady || !localBinaryReady)}
+            disabled={busy || !ack || !companionConnected || (!props.purpose && !meetingId) || (externalLive ? !liveTarget?.ready : !state.voicePrivacyAckV2 || !localEngineReady || !localModelReady || !localBinaryReady)}
             onClick={() => void startLiveCapture()}
             style={btnStyle(true)}
             title={

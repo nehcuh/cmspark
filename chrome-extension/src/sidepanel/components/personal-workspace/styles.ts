@@ -1,6 +1,8 @@
 import { tokens as t } from '../../ui/tokens'
 export const personalWorkspaceCSS = `
 .cm-workbench-meeting {box-sizing:border-box;max-width:980px;width:100%;margin-inline:auto}
+.cm-workbench-page {box-sizing:border-box;width:100%;max-width:980px;margin-inline:auto;padding:clamp(16px,3vw,32px);font:14px/1.5 ${t.font}}
+.cm-workbench-page>h2,.cm-workbench-page>h3 {font-size:22px;margin:0}
 .cm-workbench-tool .cm-workbench-meeting {min-height:100%}
 .cm-workbench-meeting summary {cursor:pointer;font-size:13px;color:${t.text}}
 .cm-workbench-meeting summary+ul {line-height:1.65}
