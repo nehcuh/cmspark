@@ -4,7 +4,7 @@ class D476Snapshot825 {
  public:
  static constexpr uint32_t magic=0x82577301u,words=32,bytes=words*4;
  enum Flag:uint32_t { EnvApi=1,EnvLeave=2,ControllerApi=4,WrapperLeave=8,ControllerEntry=16,OuterDispatch=32,Armed=64,EnvEntry=128,ControllerLeave=256,SendReturned=512 };
- struct Shared { std::atomic<uint32_t> version;std::atomic<uint32_t> value[10];Shared() noexcept:version(0),value{}{} };
+ struct Shared { std::atomic<uint32_t> version;std::atomic<uint32_t> value[11];Shared() noexcept:version(0),value{}{} };
  static_assert(std::atomic<uint32_t>::is_always_lock_free,"MCP snapshot UI hooks must be lock-free");
  static_assert(offsetof(Shared,value)==4 && sizeof(std::atomic<uint32_t>)==4,"Natural uint32 snapshot layout required");
  inline static Shared state;
@@ -35,10 +35,15 @@ class D476Snapshot825 {
  };
  // Called only after the real outer run-loop DispatchMessageW returns.
  static void outerDispatch() noexcept {auto f=state.value[0].load();if((f&Armed)&&!(f&OuterDispatch))flags(OuterDispatch);}
+ static void initialShow(uint32_t stage) noexcept {
+  if(state.value[10].load()==5)return;
+  publish([&](){state.value[10].store(stage);});
+ }
  // Exactly one stable read. An updating UI is UNKNOWN, never spun on.
  static bool capture(uint32_t* out) noexcept {
   auto before=state.version.load();if(before&1)return false;
   for(unsigned i=0;i<10;i++)out[12+i]=state.value[i].load();
+  out[24]=state.value[10].load();
   auto after=state.version.load();if(before!=after||(after&1))return false;
   out[11]=after;return true;
  }

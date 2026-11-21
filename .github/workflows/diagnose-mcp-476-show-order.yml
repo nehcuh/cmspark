@@ -1,0 +1,47 @@
+name: MCP WebView2 window-order diagnostic
+on:
+  push:
+    branches: [codex/mcp-476-show-order]
+permissions:
+  contents: read
+jobs:
+  compare:
+    name: Cold window ${{ matrix.label }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: display immediately A
+            defer: '0'
+          - label: display after controller A
+            defer: '1'
+          - label: display immediately B
+            defer: '0'
+          - label: display after controller B
+            defer: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+      - name: Build the original test suite and selected test-only window order
+        working-directory: companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+          CMSPARK_MCP_476_DIAGNOSTIC_DEFER_SHOW: ${{ matrix.defer }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          node scripts/build-desktop-native.mjs --test-fixtures
+          ./node_modules/.bin/tsc -p tsconfig.test.json
+      - name: Compare the exact 20-second native MCP assertions
+        working-directory: companion
+        shell: bash
+        run: node scripts/run-tests.mjs .test-dist/tests/desktop-native-mcp-476.test.js

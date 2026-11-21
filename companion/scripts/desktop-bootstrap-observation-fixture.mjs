@@ -80,10 +80,10 @@ function balanced(text, start, open, close) {
 export function desktopBootstrapObservationFixture773(original) {
   return bootstrapObservationFixture773(original, false)
 }
-export function desktopMcpBootstrapObservationFixture773(original, snapshotControl) {
+export function desktopMcpBootstrapObservationFixture773(original, snapshotControl, deferInitialShow = false) {
   const base=bootstrapObservationFixture773(original, true)
   if(snapshotControl===undefined)return base
-  const sampled=desktopMcpSnapshotFixture825(base.source,snapshotControl)
+  const sampled=desktopMcpSnapshotFixture825(base.source,snapshotControl,deferInitialShow)
   if(sampled.inverse!==base.source)throw Error('MCP825_SNAPSHOT_INVERSE')
   return{...base,source:sampled.source}
 }

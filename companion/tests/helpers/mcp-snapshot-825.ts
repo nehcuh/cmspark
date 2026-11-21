@@ -4,7 +4,7 @@ import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 export const MCP_SNAPSHOT_BYTES_825 = 128
 export const MCP_SNAPSHOT_MAGIC_825 = 0x82577301
-export type McpSnapshot825 = { status: 'UNKNOWN' } | { status: 'OBSERVED'; sampleOffsetMs: number; version: number; flags: number; envHr: number; controllerHr: number; callbackHr: number; callbackPresent: number; sendKind: number; sendSite: number; sendEdge: number; sendStage: number; sendResult: number; sendResultKnown: boolean }
+export type McpSnapshot825 = { status: 'UNKNOWN' } | { status: 'OBSERVED'; sampleOffsetMs: number; version: number; flags: number; envHr: number; controllerHr: number; callbackHr: number; callbackPresent: number; sendKind: number; sendSite: number; sendEdge: number; sendStage: number; sendResult: number; sendResultKnown: boolean; initialShow: number }
 const unknown = (): McpSnapshot825 => ({ status: 'UNKNOWN' })
 const identity = (stat: fs.BigIntStats) => ({ dev: stat.dev, ino: stat.ino, birth: stat.birthtimeNs })
 const same = (a: ReturnType<typeof identity>, b: ReturnType<typeof identity>) => a.dev === b.dev && a.ino === b.ino && a.birth === b.birth
@@ -18,10 +18,12 @@ export function decodeMcpSnapshot825(seed: Buffer, result: Buffer, now = Date.no
   const at = (word: number) => result.readUInt32LE(word * 4), generation = at(3), target = number(result, 4), deadline = number(result, 6), sampled = number(result, 9), version = at(11)
   if (at(0) !== MCP_SNAPSHOT_MAGIC_825 || at(1) !== 1 || at(2) !== MCP_SNAPSHOT_BYTES_825 || !generation || generation === MCP_SNAPSHOT_MAGIC_825 || at(8) !== 1 || at(31) !== ((MCP_SNAPSHOT_MAGIC_825 ^ generation) >>> 0)) return unknown()
   if (![target, deadline, sampled, now, number(result, 22)].every(Number.isSafeInteger) || deadline - target !== 1500 || sampled < target || sampled - target > 250 || sampled >= deadline || sampled > now || number(result, 22) < sampled || number(result, 22) >= deadline || version > 65536 || version % 2) return unknown()
-  for (let word = 24; word < 31; word++) if (at(word) !== 0) return unknown()
+  const initialShow = at(24)
+  if (initialShow > 6) return unknown()
+  for (let word = 25; word < 31; word++) if (at(word) !== 0) return unknown()
   const flags = at(12), kind = at(17), site = at(18), edge = at(19), stage = at(20)
   if (flags > 1023 || at(16) > 1 || kind > 2 || edge > 2 || stage > 6 || !kind && (site || edge || stage || at(21)) || kind === 1 && (site > 7 || edge !== 0) || kind === 2 && (site < 1 || site > 30)) return unknown()
-  return { status: 'OBSERVED', sampleOffsetMs: sampled - target, version, flags, envHr: at(13), controllerHr: at(14), callbackHr: at(15), callbackPresent: at(16), sendKind: kind, sendSite: site, sendEdge: edge, sendStage: stage, sendResult: at(21), sendResultKnown: (flags & 512) !== 0 }
+  return { status: 'OBSERVED', sampleOffsetMs: sampled - target, version, flags, envHr: at(13), controllerHr: at(14), callbackHr: at(15), callbackPresent: at(16), sendKind: kind, sendSite: site, sendEdge: edge, sendStage: stage, sendResult: at(21), sendResultKnown: (flags & 512) !== 0, initialShow }
  } catch { return unknown() }
 }
 
