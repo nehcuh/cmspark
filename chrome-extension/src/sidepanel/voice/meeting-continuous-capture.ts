@@ -88,7 +88,11 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
       if (!matches(ack) || ack.type !== "meeting.capture.status" || ack.credit_id !== value.credit_id || ack.accepted_through !== value.sample_offset + value.frame_count) throw new Error("queue_protocol_error")
       inflight.delete(value.credit_id)
       handleStatus(ack)
-    }).catch(() => { options.onError?.("network_unknown"); if (!stopping) void stop("transport_backpressure") })
+    }).catch(() => {
+      if (ended || silent) return
+      options.onError?.("network_unknown")
+      if (!stopping) void stop("transport_backpressure")
+    })
       .finally(() => inflight.delete(value.credit_id))
     inflight.set(value.credit_id, pending)
   }
@@ -104,7 +108,7 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
     if (!stopping) void stop(reason)
   }
   async function stop(reason = "user_stop"): Promise<void> {
-    if (stopPromise) return stopPromise
+    if (stopPromise || ended) return stopPromise ?? undefined
     stopping = true; stopReason = reason; tracksStop(); options.onStopped?.()
     if (deadline) clearTimeout(deadline); if (idle) clearTimeout(idle)
     stopPromise = (async () => {
@@ -119,10 +123,11 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
         }
         closeGraph()
         await timeout(Promise.all([...inflight.values()]).then(() => {}), 2000 - (Date.now() - startedAt))
+        if (ended) return
         const ack = await request("voice.stt.end", { final_sample_end: cursor, last_credit_id: Math.ceil(cursor / 640), stop_reason: stopReason })
         if (!matches(ack)) throw new Error("stale_capture")
         handleStatus(ack)
-      } catch { closeGraph(); if (!silent) options.onError?.("network_unknown") }
+      } catch { closeGraph(); if (!silent && !ended) options.onError?.("network_unknown") }
     })()
     return stopPromise
   }
@@ -132,7 +137,7 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
     // Cancel discards any local partial; it must not manufacture an end/drain.
     closeGraph()
     try { const ack = await request("voice.stt.abort"); if (!matches(ack)) throw new Error("stale_capture"); handleStatus(ack) }
-    catch { if (!silent) options.onError?.("network_unknown") }
+    catch { if (!silent && !ended) options.onError?.("network_unknown") }
   }
   async function start() {
     if (started || stopping || ended) return

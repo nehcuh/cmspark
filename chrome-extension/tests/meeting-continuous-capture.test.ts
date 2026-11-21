@@ -110,6 +110,36 @@ test("actual ScriptProcessor stays open while earlier chunk ACK is delayed; Stop
   } finally { capture.destroy() }
 })
 
+test("only a terminal status for this capture supersedes a lost seal reply", async () => {
+  for (const ownTerminal of [true, false]) {
+    const audio = audioEnvironment(), errors: string[] = []
+    let sealSent!: () => void, loseReply!: () => void, terminals = 0
+    const pendingSeal = new Promise<void>(resolve => { sealSent = resolve })
+    const capture = createMeetingContinuousCapture({
+      meetingId: identity.meeting_id, captureId: identity.capture_id, epoch: 1, modelId: "medium", env: audio.env,
+      onError: error => errors.push(error), onEnd: () => terminals++,
+      request: async message => {
+        if (message.type === "voice.stt.start") return status("capturing", { type: "voice.stt.partial", status: "receiving", credits: initial })
+        if (message.type === "voice.stt.end") return new Promise((_, reject) => {
+          loseReply = () => reject(new Error("channel closed"))
+          sealSent()
+        })
+        return status("finished")
+      },
+    })
+    try {
+      await capture.start()
+      const stopped = capture.stop()
+      await pendingSeal
+      capture.handleStatus(status("finished", { capture_epoch: ownTerminal ? 1 : 2 }))
+      loseReply()
+      await stopped
+      assert.equal(terminals, ownTerminal ? 1 : 0)
+      assert.deepEqual(errors, ownTerminal ? [] : ["network_unknown"])
+    } finally { capture.destroy() }
+  }
+})
+
 test("Cancel before permission resolution stops late tracks and never sends voice.start/chunk/end", async () => {
   let resolve!: (s: any) => void
   const audio = audioEnvironment(new Promise(r => { resolve = r })), wire: any[] = []
