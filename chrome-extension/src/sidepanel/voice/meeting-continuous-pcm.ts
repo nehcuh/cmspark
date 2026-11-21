@@ -91,19 +91,19 @@ export class MeetingPcmEncoder {
   }
 
   private encode(value: number): boolean {
-      if (this.ended) return false
-      if (this.end >= 172800000) { this.seal("hard_limit"); return false }
-      if (!this.current) {
-        const next = [...this.grants.values()].find(c => c.sample_offset === this.end)
-        if (!next) { this.seal("transport_backpressure"); return false }
-        this.grants.delete(next.credit_id); this.current = next
-        this.bytes = new Uint8Array(next.max_frames * 2); this.frames = 0
-      }
-      const clipped = Math.max(-1, Math.min(1, Number.isFinite(value) ? value : 0))
-      new DataView(this.bytes!.buffer).setInt16(this.frames * 2, Math.round(clipped < 0 ? clipped * 32768 : clipped * 32767), true)
-      this.frames++; this.end++
-      if (this.frames === this.current.max_frames) this.flush()
-      return true
+    if (this.ended) return false
+    if (this.end >= 172800000) { this.seal("hard_limit"); return false }
+    if (!this.current) {
+      const next = [...this.grants.values()].find(c => c.sample_offset === this.end)
+      if (!next) { this.seal("transport_backpressure"); return false }
+      this.grants.delete(next.credit_id); this.current = next
+      this.bytes = new Uint8Array(next.max_frames * 2); this.frames = 0
+    }
+    const clipped = Math.max(-1, Math.min(1, Number.isFinite(value) ? value : 0))
+    new DataView(this.bytes!.buffer).setInt16(this.frames * 2, Math.round(clipped < 0 ? clipped * 32768 : clipped * 32767), true)
+    this.frames++; this.end++
+    if (this.frames === this.current.max_frames) this.flush()
+    return true
   }
 
   seal(reason: string): void {

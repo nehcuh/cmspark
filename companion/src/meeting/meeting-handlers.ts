@@ -212,7 +212,7 @@ export async function handleMeetingMessage(
       if (existing.privacy.audio_retained) return err("queue_protocol_error", "continuous capture does not support retained audio")
       const speaker = typeof msg.speaker === "string" && msg.speaker.trim() ? msg.speaker.slice(0, 32) : undefined
       const wantsExternal = typeof msg.live_asr === "string" && msg.live_asr !== "local"
-      if (wantsExternal && !isChromeExtensionOrigin(ctx.origin)) return err("origin_denied", "external live ASR requires a browser confirmation")
+      if (msg.live_asr !== undefined && !isChromeExtensionOrigin(ctx.origin)) return err("origin_denied", "workbench live ASR requires browser confirmation")
       const previous = service.getMeetingCapture()
       if (previous?.owns(ctx.peerId, msg.capture_id, existing.capture_epoch ?? 0) && previous.identity.meeting_id === id) {
         if (previous.identity.capture_epoch !== msg.expected_capture_epoch + 1) return err("stale_capture", "capture operation epoch changed")
@@ -227,12 +227,15 @@ export async function handleMeetingMessage(
         return err("external_configuration_changed", "meeting ASR configuration changed")
       }
       if (!external) {
-        const externalRefusal = meetingExternalRefusal(voice?.sttEngine)
-        if (externalRefusal) return err(externalRefusal.code, "会议转写仍只使用本机或系统识别。外部转写只用于聊天输入，不会发送会议音频。")
-        if (voice?.sttEngine !== "local" && voice?.sttEngine !== "system") return err("engine_not_local", "trusted STT engine required")
-        if (voice.sttEngine === "system" && (process.platform !== "win32" || !resolveWinSapiHelper().ok)) return err("system_unavailable", "system STT is unavailable")
-        const ready = service.checkMeetingModelReady({ sessionId: msg.capture_id, modelId: voice.localModelId ?? "medium",
-          ...(voice.sttEngine === "system" ? { engine: "system" as const } : {}), format: "pcm_s16le", sampleRate: 16000, channels: 1 })
+        // The workbench pins its own local/external preference. Legacy tray
+        // clients still choose their engine through the existing voice setting.
+        const engine = msg.live_asr === "local" ? "local" : voice?.sttEngine
+        const refusal = meetingExternalRefusal(engine)
+        if (refusal) return err(refusal.code, "此录制入口只支持本机或系统转写，请在工作台核对外部接收方。")
+        if (engine !== "local" && engine !== "system") return err("engine_not_local", "trusted STT engine required")
+        if (engine === "system" && (process.platform !== "win32" || !resolveWinSapiHelper().ok)) return err("system_unavailable", "system STT is unavailable")
+        const ready = service.checkMeetingModelReady({ sessionId: msg.capture_id, modelId: voice?.localModelId ?? "medium",
+          ...(engine === "system" ? { engine: "system" as const } : {}), format: "pcm_s16le", sampleRate: 16000, channels: 1 })
         if (!ready.ok) return err(ready.code, "model not ready")
       }
       let published = false
@@ -260,7 +263,8 @@ export async function handleMeetingMessage(
       } : undefined)
       if (!capture) return err("resource_conflict", "STT slot is owned")
       try {
-        const started = beginMeetingCapture(id, msg.capture_id, msg.expected_capture_epoch)
+        const liveEngine = msg.live_asr === undefined ? undefined : external ? "external" : "local"
+        const started = beginMeetingCapture(id, msg.capture_id, msg.expected_capture_epoch, DATA_DIR, liveEngine)
         if (!started) { capture.cancel(); return err("stale_capture", "meeting changed") }
         published = true
         return { type: "meeting.started", v: 1, meeting: started, continuous_capture: capture.status(), meeting_pcm_contract: 1, meeting_pcm_caps: meetingPcmCapsSnapshot() }

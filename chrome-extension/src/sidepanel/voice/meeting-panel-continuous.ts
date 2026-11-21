@@ -40,7 +40,7 @@ export function createPanelMeetingCapture(options: {
         ...(options.liveAsr && options.liveAsr !== "local" ? { privacy_ack_meeting_asr_v1: true } : { privacy_ack_v2: true }),
         audio_retained: false, ...(speaker ? { speaker } : {}) })
       beginPending = false
-      if (reply.type === "meeting.error") throw new Error(reply.code || "stale_capture")
+      if (reply.type === "meeting.error" || reply.type === "error") throw new Error(reply.code || "stale_capture")
       const status = reply.continuous_capture
       if (reply.type !== "meeting.started" || reply.meeting?.id !== options.meetingId || status?.capture_id !== captureId ||
           status.meeting_id !== options.meetingId || status.queue_contract !== 1 || !Number.isSafeInteger(status.capture_epoch)) throw new Error("stale_capture")

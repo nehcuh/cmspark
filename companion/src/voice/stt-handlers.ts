@@ -224,7 +224,7 @@ export async function handleVoiceSttMessage(
     if (!capture?.owns(peerId, sessionId ?? "", rest.capture_epoch)) return sttError(sessionId, "stale_capture", "capture not owned")
     if (type === "voice.stt.start") {
       const external = capture.liveTarget && capture.liveTarget !== "local"
-      if ((rest.engine === "meeting-external") !== Boolean(external)) return sttError(sessionId, "stale_capture", "meeting ASR target changed")
+      if ((capture.liveTarget === "local" && rest.engine !== undefined) || (rest.engine === "meeting-external") !== Boolean(external)) return sttError(sessionId, "stale_capture", "meeting ASR target changed")
       if (external) {
         const req = { sessionId: sessionId!, modelId: "", format: "pcm_s16le" as const, sampleRate: 16000, channels: 1, lang: rest.lang }
         if (!capture.matchesRequest(req)) return sttError(sessionId, "stale_capture", "capture settings changed")
@@ -360,7 +360,7 @@ export async function handleVoiceSttMessage(
       if (meetingImport && voice?.meetingAsr?.mode === "external") {
         return sttError(sessionId, "meeting_asr_configuration_changed", "meeting import transcription mode changed")
       }
-      if (sttEngine !== "local" && !meetingImport) {
+      if (sttEngine !== "local" && !meetingImport && !(q1 && capture?.liveTarget === "local")) {
         logger.warn("voice.stt.start.refused", { reason: "engine_not_local", sttEngine })
         return sttError(sessionId, "engine_not_local", "local STT requires voice.sttEngine=local", {
           family: "voice.stt",
