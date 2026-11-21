@@ -1,10 +1,10 @@
 # 版本与交付状态
 
-> 源码开发版本 **1.4.0（尚未正式发布）**。已发布基线为 [v1.3.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.3.1)。
+源码候选版本为 **1.5.0**。工作台与会议验收范围见 [设计 #878](superpowers/specs/personal-workbench-meeting.md)。
 
-## 1.4.0 发布准备
+## 1.4.0
 
-- 设置、模型配置、会议导入转写和生成确认范围见 [设置与模型中心](superpowers/specs/2026-11-21-settings-model-center-design.md) 与 [变更记录](../CHANGELOG.md)。
+当前发布基线为 [v1.4.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.4.0)。设置与模型中心支持按场景配置模型、会议录音导入和一句话配置。
 
 ## 1.3.1
 
