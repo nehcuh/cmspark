@@ -46,6 +46,9 @@ test("parseWhisperStdout strips logs and handles BLANK_AUDIO", () => {
   assert.equal(parseWhisperStdout("hello world\n"), "hello world")
   assert.equal(parseWhisperStdout("ggml_init: foo\nwhisper_model: bar\n你好\n"), "你好")
   assert.equal(parseWhisperStdout("[BLANK_AUDIO]\n"), "")
+  assert.equal(parseWhisperStdout("heard\n[BLANK_AUDIO]\nlast"), "heard last")
+  assert.equal(parseWhisperStdout("开会了\n[BLANK_AUDIO]\n请记录"), "开会了 请记录")
+  assert.equal(parseWhisperStdout("开始 [BLANK_AUDIO] 结束"), "开始 结束")
   assert.equal(
     parseWhisperStdout("main: processing\nuse Metal\ntranscript line\n"),
     "transcript line",

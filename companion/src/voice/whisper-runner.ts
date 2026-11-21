@@ -91,13 +91,10 @@ export function buildWhisperArgs(opts: {
  * Strip ggml/whisper log lines; `[BLANK_AUDIO]` → empty; empty stdout ok.
  */
 export function parseWhisperStdout(stdout: string): string {
-  const raw = String(stdout ?? "")
-  if (raw.includes("[BLANK_AUDIO]")) return ""
-
-  const lines = raw.split(/\r?\n/)
+  const lines = String(stdout ?? "").split(/\r?\n/)
   const kept: string[] = []
   for (const line of lines) {
-    const t = line.trim()
+    const t = line.replaceAll("[BLANK_AUDIO]", " ").trim()
     if (!t) continue
     // Common whisper.cpp / ggml log prefixes (usually stderr, but be defensive)
     if (/^ggml[_:]/i.test(t)) continue
