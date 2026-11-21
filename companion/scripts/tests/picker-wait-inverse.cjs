@@ -2,7 +2,8 @@
 'use strict'
 const assert = require('node:assert/strict')
 const {createHash} = require('node:crypto')
-const NEW_DIGEST = '33645c729edd5672abf72ed8ac322c7439be17f57a9360406ffee13f27bb319a'
+const NEW_DIGEST = '356a8941b8333d40308c90af0223291e46dc0b3f16d501c8444503210f8244c5'
+const SECOND_READY_DIGEST = '33645c729edd5672abf72ed8ac322c7439be17f57a9360406ffee13f27bb319a'
 const OLD_DIGEST = '2eca9be781a3c401b6d96bf8cba6b41f9c8fe32f9be5052be094d0ae27c972b8'
 const HELPER_SUCCESS = '56cb1183b0e057b879d11567424c5b325362e7dbfd373edeca4faa5dd73751e5'
 const pairs = [
@@ -47,6 +48,26 @@ const readyPairs = [
   uiStage=18;uiDetail=0;observeUIStage();let cancelOne=cancel.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=cancelOne ? 2:1;observeUIStage();guard cancelOne else{throw OwnedUI705Error.refused};let cancelCount=cancel.count;uiDetail=min(cancelCount,2)+1;observeUIStage();guard cancelCount==1 else{throw OwnedUI705Error.refused}
 `],
 ]
+function restoreFirstReadyPickerUi(raw) {
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n'
+  const value = raw.replace(/\r\n/g, '\n')
+  if (!value.includes('let owners=app.windows') && !value.includes('try requireUniqueAfterReady(owners,')) return raw
+  const current = [
+    '   let owners=app.windows.matching(identifier:scene.nonce)',
+    '   try requireUniqueAfterReady(owners,stage,stage)',
+    '   let sheets=owners.firstMatch.sheets',
+    '   try requireUniqueAfterReady(sheets,stage+1,stage+2)',
+    '   return sheets.firstMatch',
+  ].join('\n')
+  const prior = [
+    '   ' + pairs[0][0],
+    '   uiStage=stage+1;uiDetail=0;observeUIStage();let exists=w.sheets.firstMatch.waitForExistence(timeout:try remaining());uiDetail=exists ? 2:1;observeUIStage();guard exists else{throw OwnedUI705Error.refused}',
+    '   ' + pairs[1][0],
+  ].join('\n')
+  assert.equal(value.split(current).length, 2, 'PICKER_FIRST_READY_QUERY_ONCE')
+  return value.replace(current, prior).replace(/\n/g, eol)
+}
+
 function restoreReadyPickerUi(raw) {
   const eol = raw.includes('\r\n') ? '\r\n' : '\n'
   let value = raw.replace(/\r\n/g, '\n')
@@ -61,17 +82,18 @@ function restoreReadyPickerUi(raw) {
 function restorePickerWait(kind, raw, options = {}) {
   const requireSuccessDigest = options.requireSuccessDigest !== false
   if (typeof raw !== 'string') throw new Error('PICKER_WAIT_SOURCE_REQUIRED')
-  if (kind === 'ui') raw = restoreReadyPickerUi(raw)
+  if (kind === 'ui') raw = restoreReadyPickerUi(restoreFirstReadyPickerUi(raw))
   const eol = raw.includes('\r\n') ? '\r\n' : '\n'
   let value = raw.replace(/\r\n/g, '\n')
   const digest = text => createHash('sha256').update(text).digest('hex')
   if (kind === 'helper') {
-    if (!value.includes(NEW_DIGEST)) return raw
+    const current = value.includes(NEW_DIGEST) ? NEW_DIGEST : SECOND_READY_DIGEST
+    if (!value.includes(current)) return raw
     const stderrNote = ";try{require('./picker-failure-evidence-476').notePickerToolStderr476(b)}catch{}"
     assert.equal(value.split(stderrNote).length, 2, 'XCRESULT_STDERR_ONCE')
     value = value.replace(stderrNote, '')
-    assert.equal(value.split(NEW_DIGEST).length, 2, 'PICKER_WAIT_HELPER_DIGEST_ONCE')
-    value = value.replace(NEW_DIGEST, OLD_DIGEST)
+    assert.equal(value.split(current).length, 2, 'PICKER_WAIT_HELPER_DIGEST_ONCE')
+    value = value.replace(current, OLD_DIGEST)
     if (requireSuccessDigest) assert.equal(digest(value), HELPER_SUCCESS, 'PICKER_WAIT_HELPER_SUCCESS')
     return value.replace(/\n/g, eol)
   }
@@ -83,4 +105,4 @@ function restorePickerWait(kind, raw, options = {}) {
   if (requireSuccessDigest) assert.equal(digest(value), OLD_DIGEST, 'PICKER_WAIT_UI_SUCCESS')
   return value.replace(/\n/g, eol)
 }
-module.exports = {restorePickerWait, NEW_DIGEST, OLD_DIGEST}
+module.exports = {restorePickerWait, restoreFirstReadyPickerUi, NEW_DIGEST, OLD_DIGEST}
