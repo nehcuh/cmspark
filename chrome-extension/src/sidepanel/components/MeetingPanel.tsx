@@ -134,6 +134,7 @@ export function MeetingPanel(props: {
   active?: boolean
   meetingId?: string
   meetingSelectionRevision?: number
+  onMeetingSelected?: (selected: boolean) => void
   onClose: () => void
   onSendToDraft: (text: string) => void
   registerBeforeClose?: (guard: () => Promise<boolean>) => () => void
@@ -171,6 +172,7 @@ export function MeetingPanel(props: {
     meetingId: string; text: string; notes: string; name: string; template: string; prepared: PreparedMinutes
   } | null>(null)
   const [meetingId, setMeetingId] = useState<string | null>(null)
+  useEffect(() => { props.onMeetingSelected?.(!!meetingId) }, [meetingId, props.onMeetingSelected])
   const [status, setStatus] = useState<string>("")
   const [taskBusy, setBusy] = useState(false)
   const [loadingMeeting, setLoadingMeeting] = useState(false)
@@ -988,7 +990,7 @@ export function MeetingPanel(props: {
     }
     const previousId = meetingIdRef.current, epoch = recordingEpochRef.current
     setBusy(true); setError(null)
-    void persistenceRef.current.create({ title: title || undefined, thread_id: state.activeThreadId || undefined }).then(created => {
+    void persistenceRef.current.create({ title: previousId ? undefined : title || undefined, thread_id: state.activeThreadId || undefined }).then(created => {
       if (!mountedRef.current || meetingIdRef.current !== previousId || recordingEpochRef.current !== epoch || phaseRef.current !== "idle") return
       if (previousId) { applySavedMeeting(created); return }
       setMeetingId(created.id); meetingIdRef.current = created.id
@@ -1731,7 +1733,8 @@ export function MeetingPanel(props: {
         fontSize: 13,
       }}
     >
-      <fieldset disabled={closing} style={{ display: "contents" }}>
+      {loadingMeeting && <p role="status">正在打开会议记录…</p>}
+      <fieldset disabled={closing || loadingMeeting} style={{ display: "contents" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         {props.purpose ? <h1 style={{ margin: 0, flex: 1, fontSize: 22 }}>{props.purpose === "transcribe" ? "实时转写" : "会议记录"}</h1>
           : <strong style={{ flex: 1, fontSize: 15 }}>会议记录</strong>}

@@ -12,6 +12,32 @@ const model = () => ({ revision: "a", profileId: null, profileName: null,
 const frame = (action: string, fields: object) => ({ type: "meeting.translation." + action, v: 1, id: "fixture-rpc", ...fields })
 const manual = { text: "First words", language: "English" }
 
+test("overlapping translation requests from two workbenches preserve both languages after reopening", async t => {
+  const meeting = createMeeting({ title: "concurrent translations" })
+  t.after(() => deleteMeeting(meeting.id))
+  appendTranscript(meeting.id, { segment_id: "shared", source: "stt", text: "发布" })
+  const releases: Array<(text: string) => void> = []
+  const service = createTranslationService(model, () => new Promise(resolve => releases.push(resolve)))
+  const call = (peer: string, action: string, fields: object) => service.handle(frame(action, fields), peer) as Promise<any>
+  const selection = { meeting_id: meeting.id }
+  const { segments: [row] } = await call("peer-a", "list", selection)
+  const requests = await Promise.all(["English", "日本語"].map(async (language, index) => {
+    const peer = "peer-" + index
+    const scope = { ...selection, language }
+    const { token } = await call(peer, "prepare", scope)
+    return { peer, params: { ...scope, token, segment_id: row.id, version: row.version } }
+  }))
+  const results = requests.map(({ peer, params }) => call(peer, "run", params))
+  assert.equal(releases.length, 2)
+  releases[1]("リリース")
+  releases[0]("Release")
+  for (const result of await Promise.all(results)) assert.equal(result.type, "meeting.translation.result")
+  const reopened: any = await createTranslationService(model).handle(frame("list", selection), "reader")
+  assert.deepEqual(Object.fromEntries(reopened.translations.map((e: any) => [e.language, e.text])), {
+    English: "Release", "日本語": "リリース",
+  })
+})
+
 test("manual preparation names the receiver, binds source, language, peer and model, admits text only once", async () => {
   let revision = "a"
   const sent: string[] = []

@@ -53,6 +53,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
     return "today"
   })
   const [screenCaptureActive, setScreenCaptureActive] = useState(false)
+  const [hasSelectedMeeting, setHasSelectedMeeting] = useState(false)
   const [recent, setRecent] = useState<{ id?: string; revision: number }>({ revision: 0 })
   const [opened, setOpened] = useState(() => new Set([view]))
   useEffect(() => {
@@ -221,7 +222,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
       </nav> : null}
       <div className="cm-shell-layers">
         {(opened.has("meeting") || opened.has("transcribe")) && <div className="cm-workbench-tool" hidden={visibleView !== "meeting" && visibleView !== "transcribe"}>
-          <MeetingPanel active={visibleView === "meeting" || visibleView === "transcribe"} meetingId={recent.id} meetingSelectionRevision={recent.revision} purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
+          <MeetingPanel active={visibleView === "meeting" || visibleView === "transcribe"} meetingId={recent.id} meetingSelectionRevision={recent.revision} onMeetingSelected={setHasSelectedMeeting} purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
             navigate("chat")
             window.dispatchEvent(new CustomEvent("cmspark:fill-composer", { detail: { text } }))
           }} />
@@ -231,7 +232,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
         <div className="cm-chat-mount" hidden={visibleView !== "chat"}>{children}</div>
         {(["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource}
           actions={destination === "today" ? <nav className="cm-workbench-actions" aria-label="常用操作">{workbenchActions.map(([page, label]) =>
-        <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{label}</button>)}</nav> : undefined}
+        <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{page === "meeting" && hasSelectedMeeting ? "返回会议" : label}</button>)}</nav> : undefined}
           recent={destination === "today" && visibleView === "today" ? <RecentWorkbenchMeetings connected={state.connectionState === "connected"} recording={state.meetingCaptureActive} onSelect={id => {
           setRecent(old => ({ id, revision: old.revision + 1 }))
           navigate("meeting")
