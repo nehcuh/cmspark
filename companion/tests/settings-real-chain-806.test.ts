@@ -19,6 +19,7 @@ const incoming = parse("chrome-extension/src/sidepanel/hooks/useWebSocket.ts")
 const draft = parse("chrome-extension/src/sidepanel/utils/settings-draft.ts")
 const normalizer = parse("chrome-extension/src/sidepanel/utils/normalize-config.ts")
 const effort = parse("chrome-extension/src/sidepanel/utils/reasoning-effort.ts")
+const voice = parse("chrome-extension/src/sidepanel/voice/detect.ts")
 const store = parse("chrome-extension/src/sidepanel/store/agentStore.tsx", ts.ScriptKind.TSX)
 const functionText = (source: ts.SourceFile, name: string) => {
   const found = source.statements.filter((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === name)
@@ -44,17 +45,20 @@ assert.equal(stateDeclarations.length, 1)
 const initialExpression = stateDeclarations[0].initializer
 assert.ok(initialExpression)
 const draftFunctions = ["sameValue", "createSettingsDraft", "editSettingsDraft", "receiveSettingsSnapshot", "prepareSettingsSubmission", "resolveSettingsConflict", "acknowledgeSettingsSubmission", "compareSettingsRevisions"].map(name => functionText(draft, name)).join("\n")
-const budgetLimit = normalizer.statements
-  .filter(ts.isVariableStatement)
-  .flatMap(node => [...node.declarationList.declarations])
-  .filter(node => node.name.getText(normalizer) === "CHAT_OUTPUT_LIMIT_MAX")
-assert.equal(budgetLimit.length, 1, "unique actual chat output limit")
+function constantText(source: ts.SourceFile, name: string) {
+  const declarations = source.statements.filter(ts.isVariableStatement)
+    .flatMap(node => [...node.declarationList.declarations])
+    .filter(node => node.name.getText(source) === name)
+  assert.equal(declarations.length, 1, `unique actual constant ${name}`)
+  return `const ${declarations[0].getText(source)};`
+}
 const consumerCode = [
   draftFunctions,
   functionText(effort, "isReasoningEffort"),
   functionText(effort, "effectiveReasoningEffort"),
   functionText(normalizer, "isMaskedApiKey"),
-  `const ${budgetLimit[0].getText(normalizer)};`,
+  constantText(normalizer, "CHAT_OUTPUT_LIMIT_MAX"),
+  constantText(voice, "VOICE_DEFAULT_LANG"),
   functionText(normalizer, "normalizeSavedChatOutputLimit"),
   functionText(normalizer, "normalizeConfig"),
   functionText(store, "agentReducer"),
