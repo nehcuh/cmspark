@@ -205,9 +205,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
       {!wide && navigation()}
       {openingError && <p role="alert" className="cm-personal-fieldnote">{openingError}</p>}
       {full && <nav className="cm-personal-mobile-nav" aria-label="工作中心页面">{WORKSPACE_DESTINATIONS.map(item => <button type="button" key={item.id} aria-current={visibleView === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}<button type="button" disabled={state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)} onClick={() => { navigate("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>设置</button></nav>}
-      {full && visibleView !== "chat" && state.meetingCaptureActive && <div className="cm-personal-banner" role="status"><span>会议录制中</span><button className="cm-icon-button" type="button" onClick={() => openResource("meeting")}>返回会议</button></div>}
-      {visibleView === "today" && <nav className="cm-workbench-actions" aria-label="常用操作">{workbenchActions.map(([page, label]) =>
-        <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{label}</button>)}</nav>}
+      {full && !["chat", "meeting", "transcribe"].includes(visibleView) && state.meetingCaptureActive && <div className="cm-personal-banner" role="status"><span>会议录制中</span><button className="cm-icon-button" type="button" onClick={() => openResource("meeting")}>返回会议</button></div>}
       {visibleView === "meeting" || visibleView === "transcribe" || visibleView === "recording" || visibleView === "translation" ? <nav className="cm-workbench-actions" aria-label="会议工具">
         <button type="button" className="cm-p-link" onClick={() => navigate("today")}>返回个人工作台</button>
         {workbenchActions.filter(([page]) => page !== visibleView).map(([page, label]) => <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{label}</button>)}
@@ -219,17 +217,21 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
             window.dispatchEvent(new CustomEvent("cmspark:fill-composer", { detail: { text } }))
           }} />
         </div>}
-        {opened.has("recording") && <div className="cm-workbench-tool" hidden={visibleView !== "recording"}><WorkbenchRecording /></div>}
+        {opened.has("recording") && <div className="cm-workbench-tool" hidden={visibleView !== "recording"}><WorkbenchRecording pendingContext={destinationOwner} visible={visibleView === "recording"} /></div>}
         {opened.has("translation") && <div className="cm-workbench-tool" hidden={visibleView !== "translation"}><WorkbenchTranslation /></div>}
         <div className="cm-chat-mount" hidden={visibleView !== "chat"}>{children}</div>
-        {(["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource} /></div>)}
-        {visibleView === "today" && <RecentWorkbenchMeetings connected={state.connectionState === "connected"} recording={state.meetingCaptureActive} onSelect={id => {
+        {(["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource}
+          actions={destination === "today" ? <nav className="cm-workbench-actions" aria-label="常用操作">{workbenchActions.map(([page, label]) =>
+        <button type="button" key={page} className="cm-p-button" onClick={() => navigate(page)}>{label}</button>)}</nav> : undefined}
+          recent={destination === "today" && visibleView === "today" ? <RecentWorkbenchMeetings connected={state.connectionState === "connected"} recording={state.meetingCaptureActive} onSelect={id => {
           setRecentMeetingId(id)
           navigate("meeting")
-        }} />}
+        }} /> : undefined}
+        /></div>)}
+
       </div>
       <div className="cm-thread-manager-mount" />
-      <div className="cm-shell-bottom">{bottom}</div>
+      <div className="cm-shell-bottom" hidden={visibleView !== "chat"}>{bottom}</div>
       {overlays}
     </main>
   </div>
