@@ -18,6 +18,8 @@ import {
   transcribeWavViaStt,
   uint8ToBase64,
 } from "../voice/meeting-audio-import"
+import { beginMeetingExternalImport, meetingAsrDelivery, meetingAsrError, meetingAsrState, meetingExternalConfirmation, type MeetingAsrDelivery } from "../voice/meeting-external-asr"
+import { createMeetingRuntimeChannel } from "../voice/meeting-runtime-channel"
 import {
   loadMeetingTemplate,
   saveMeetingTemplate,
@@ -45,7 +47,7 @@ import {
 } from "../voice/meeting-live-refine"
 import { VOICE_PRIVACY_ACK_V2_CLAUSES } from "../voice/privacy-copy"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
-import { confirmMeetingClose, createMeetingPersistence, saveMeetingMaterials } from "../voice/meeting-close"
+import { confirmMeetingClose, createMeetingPersistence, saveMeetingMaterials, type PreparedMinutes } from "../voice/meeting-close"
 
 /** Format companion transcript lines for textarea (Speaker: text). */
 function formatLinesFromMeeting(transcript: any[]): string {
@@ -149,10 +151,14 @@ export function MeetingPanel(props: {
   const referenceDirtyRef = useRef(false)
   const referenceImportRef = useRef<string | null>(null)
   const importControllerRef = useRef<AbortController | null>(null)
+  const externalImportActiveRef = useRef(false)
   const mountedRef = useRef(true)
   const recordingEpochRef = useRef(0)
   const generatingRef = useRef(false)
   const minutesRequestRef = useRef<{ id: string; text: string; notes: string; template: string } | null>(null)
+  const [minutesConfirmation, setMinutesConfirmation] = useState<{
+    meetingId: string; text: string; notes: string; name: string; template: string; prepared: PreparedMinutes
+  } | null>(null)
   const [meetingId, setMeetingId] = useState<string | null>(null)
   const [status, setStatus] = useState<string>("")
   const [busy, setBusy] = useState(false)
@@ -174,6 +180,7 @@ export function MeetingPanel(props: {
   /** Mtg2: optional default speaker for STT append / bulk label (manual only). */
   const [defaultSpeaker, setDefaultSpeaker] = useState("")
   const [importStatus, setImportStatus] = useState<string | null>(null)
+  const [importApproval, setImportApproval] = useState<{ copy: string; finish: (approved: boolean) => void } | null>(null)
   const textFileRef = useRef<HTMLInputElement | null>(null)
   const audioFileRef = useRef<HTMLInputElement | null>(null)
   const defaultSpeakerRef = useRef("")
@@ -435,7 +442,7 @@ export function MeetingPanel(props: {
       setError(
         (prev) =>
           prev ||
-          "Companion 未连接；转写已保留，重连后将自动生成纪要（也可手动点「生成会议纪要」）",
+          "Companion 未连接。转写已保留，重连后可查看纪要接收方并确认。",
       )
       return
     }
@@ -449,11 +456,13 @@ export function MeetingPanel(props: {
       let owner = id
       if (!owner) {
         const created = await persistenceRef.current.create({ title: titleRef.current || undefined })
-        owner = created.id
-        setMeetingId(owner)
-        meetingIdRef.current = owner
+        const createdId: unknown = created.id
+        if (typeof createdId !== "string" || !createdId) throw new Error("未能核对新建会议，未开始生成纪要。")
+        owner = createdId
+        setMeetingId(createdId)
+        meetingIdRef.current = createdId
       }
-      const savedText = await saveMeetingMaterials({ id: owner!, text: snapshot.text, referenceNotes: snapshot.notes,
+      const savedText = await saveMeetingMaterials({ id: owner, text: snapshot.text, referenceNotes: snapshot.notes,
         referenceName: snapshot.name, persistence: persistenceRef.current, silenceCut })
       if (transcriptRef.current === snapshot.text) {
         transcriptRef.current = savedText
@@ -462,26 +471,57 @@ export function MeetingPanel(props: {
       snapshot.text = savedText
       referenceDirtyRef.current = referenceNotesRef.current !== snapshot.notes || referenceNameRef.current !== snapshot.name
       setReferenceStatus(referenceDirtyRef.current ? "笔记已修改，尚未保存" : "参考笔记已保存")
-      const requestId = `meeting-minutes-${crypto.randomUUID()}`
-      minutesRequestRef.current = { id: requestId, text: snapshot.text, notes: snapshot.notes, template: snapshot.template }
-      setPendingGenerate(true)
-      chrome.runtime.sendMessage({ type: "meeting.generate_minutes", v: 1, id: requestId, meeting_id: owner,
+      const prepared = await persistenceRef.current.prepareMinutes(owner, {
         text: snapshot.text, reference_notes: snapshot.notes, reference_name: snapshot.name,
-        template_md: snapshot.template || undefined }, reply => {
-        if (chrome.runtime.lastError || reply?.ok === false || reply?.sent === false) {
-          generatingRef.current = false
-          setPendingGenerate(false)
-          setBusy(false)
-          setError("纪要请求未发送，材料已保存；请确认连接后重试")
-        }
+        template_md: snapshot.template || undefined,
       })
+      if (!mountedRef.current) return
+      if (meetingIdRef.current !== owner || closePendingRef.current || !generatingRef.current) return
+      setMinutesConfirmation({ meetingId: owner, ...snapshot, prepared })
     })().catch(cause => {
       generatingRef.current = false
       setBusy(false)
       setPendingGenerate(false)
-      setError(cause instanceof Error ? cause.message : "材料保存失败，未开始生成纪要")
+      setError(cause instanceof Error ? cause.message : "未能保存材料或核对接收方，未开始生成纪要")
     })
   }, [])
+
+  const cancelMinutesConfirmation = () => {
+    setMinutesConfirmation(null)
+    generatingRef.current = false
+    setBusy(false)
+  }
+
+  const confirmMinutes = () => {
+    const request = minutesConfirmation
+    if (!request || minutesRequestRef.current) return
+    setMinutesConfirmation(null)
+    if (!companionConnectedRef.current || meetingIdRef.current !== request.meetingId ||
+        transcriptRef.current !== request.text || referenceNotesRef.current !== request.notes ||
+        referenceNameRef.current !== request.name || templateMdRef.current !== request.template) {
+      cancelMinutesConfirmation()
+      setError("会议材料或连接已变化。请重新查看接收方和发送范围。")
+      return
+    }
+    const id = `meeting-minutes-${crypto.randomUUID()}`
+    minutesRequestRef.current = { id, text: request.text, notes: request.notes, template: request.template }
+    setPendingGenerate(true)
+    const reportUnconfirmed = () => {
+      if (!mountedRef.current || minutesRequestRef.current?.id !== id) return
+      minutesRequestRef.current = null
+      generatingRef.current = false
+      setPendingGenerate(false)
+      setBusy(false)
+      setError("未确认纪要请求结果，材料已保存。请先核对该会议，再决定是否重试。")
+    }
+    try {
+      chrome.runtime.sendMessage({ type: "meeting.generate_minutes", v: 1, id, meeting_id: request.meetingId,
+        text: request.text, reference_notes: request.notes, reference_name: request.name,
+        template_md: request.template || undefined, consent_token: request.prepared.consent_token }, reply => {
+        if (chrome.runtime.lastError || reply?.ok === false || reply?.sent === false) reportUnconfirmed()
+      })
+    } catch { reportUnconfirmed() }
+  }
 
   /**
    * End server session + tear down adapter. Idempotent via finalizedRef.
@@ -581,7 +621,7 @@ export function MeetingPanel(props: {
       generatingRef.current = false
       setBusy(false)
       retryGenerateOnReconnectRef.current = false
-      setError((prev) => prev || "纪要生成超时。转写已保留，可再点「生成会议纪要」")
+      setError((prev) => prev || "尚未收到纪要结果。转写已保留，请先核对会议再决定是否重试。")
     }, MEETING_MINUTES_WATCHDOG_MS)
     return () => clearTimeout(t)
   }, [pendingGenerate])
@@ -815,6 +855,7 @@ export function MeetingPanel(props: {
         setBusy(false)
         setPendingGenerate(false)
         generatingRef.current = false
+        if (msg.id === minutesRequestRef.current?.id) minutesRequestRef.current = null
         if (
           msg.code === "need_privacy_ack" ||
           msg.code === "already_recording" ||
@@ -948,6 +989,7 @@ export function MeetingPanel(props: {
         }
         if (importDoneRef.current) {
           importAbortRef.current = true
+          if (externalImportActiveRef.current) importControllerRef.current?.abort()
           setImportStatus("正在中止导入并保存当前段…")
           const done = importDoneRef.current
           const finished = await new Promise<boolean>(resolve => {
@@ -1168,7 +1210,7 @@ export function MeetingPanel(props: {
   }
 
   const onImportAudioFile = async (file: File | null) => {
-    if (!file) return
+    if (!file || importDoneRef.current) return
     if (!ensureAck()) return
     if (!companionConnected) {
       setError("Companion 未连接")
@@ -1178,182 +1220,237 @@ export function MeetingPanel(props: {
       setError("听写或会议录音进行中，请先结束后再导入音频")
       return
     }
-    if (!state.voicePrivacyAckV2) {
-      setError("导入音频需先确认「本机语音隐私说明」（见下方卡片，或设置 → 输入与语音 → 启用本机转写）")
-      return
-    }
-    if (!localModelReady || !localBinaryReady) {
-      setError("本机转写模型或二进制未就绪")
-      return
-    }
-    if (!localEngineReady) {
-      setError("请先点击「启用本机转写」，再导入录音")
-      return
-    }
-
     setError(null)
     setBusy(true)
     importAbortRef.current = false
-    importControllerRef.current = new AbortController()
+    const controller = new AbortController()
+    importControllerRef.current = controller
     const previousText = transcriptRef.current
     const hasPreviousText = previousText.trim().length > 0
     dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: true })
-    setImportStatus("解码音频…")
+    setImportStatus("读取会议转写设置…")
     let resolveImport!: (ok: boolean) => void
     let importSucceeded = true
     importDoneRef.current = new Promise<boolean>(resolve => { resolveImport = resolve })
+    let channel: ReturnType<typeof createMeetingRuntimeChannel> | undefined
+    let externalJob: Extract<Awaited<ReturnType<typeof beginMeetingExternalImport>>, { ok: true }> | undefined
 
     try {
-    const decoded = await fileToWavSegments(file)
-    if (importAbortRef.current) return
-    if (decoded.ok === false) {
-      importSucceeded = false
-      setError(decoded.message)
-      setBusy(false)
-      setImportStatus(null)
-      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
-      return
-    }
+      channel = createMeetingRuntimeChannel(() => {}, () => {})
+      let target
+      try { target = meetingAsrState(await channel.request({ type: "meeting.asr.get" })) } catch { /* report below */ }
+      if (importAbortRef.current) {
+        setImportStatus("已取消导入，音频未发送。")
+        return
+      }
+      if (!target) {
+        setError("无法核对会议转写设置。请检查 Companion 连接和版本。")
+        setImportStatus("音频未发送。")
+        return
+      }
+      const external = target.mode === "external"
+      externalImportActiveRef.current = external
+      if (external && !target.ready) {
+        setError(meetingAsrError("external_unconfigured"))
+        setImportStatus("音频未发送。")
+        return
+      }
+      if (!external && !state.voicePrivacyAckV2) {
+        setError("请先确认下方「本机语音隐私说明」，再使用本机转写。")
+        setImportStatus(null)
+        return
+      }
+      if (!external && (!localModelReady || !localBinaryReady)) {
+        setError("本机转写模型或二进制未就绪")
+        setImportStatus(null)
+        return
+      }
 
-    // Ensure meeting exists
-    let id = meetingId
-    if (!id) {
-      id = await new Promise<string | null>((resolve) => {
-        const listener = (msg: any) => {
-          if (msg?.type === "meeting.created" && msg.meeting?.id) {
-            chrome.runtime.onMessage.removeListener(listener)
-            resolve(msg.meeting.id as string)
+      setImportStatus("解码音频…")
+      const decoded = await fileToWavSegments(file, external ? {
+        segmentMs: target.segmentMs, keepShortTail: true, encodeOnDemand: true,
+      } : undefined)
+      if (importAbortRef.current) {
+        setImportStatus("已取消导入，音频未发送。")
+        return
+      }
+      if (decoded.ok === false) {
+        importSucceeded = false
+        setError(decoded.message)
+        setBusy(false)
+        setImportStatus(null)
+        dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
+        return
+      }
+
+      if (external) {
+        setImportStatus(null)
+        const copy = meetingExternalConfirmation(file.name, target, decoded.durationSec, decoded.segments.length)
+        const approved = await new Promise<boolean>(resolve => {
+          const finish = (approved: boolean) => {
+            controller.signal.removeEventListener("abort", cancel)
+            setImportApproval(null)
+            resolve(approved && !controller.signal.aborted)
           }
-          return false
+          const cancel = () => finish(false)
+          if (controller.signal.aborted) cancel()
+          else {
+            controller.signal.addEventListener("abort", cancel, { once: true })
+            setImportApproval({ copy, finish })
+          }
+        })
+        if (!approved) {
+          setImportStatus("已取消外部转写，音频未发送。")
+          return
         }
-        chrome.runtime.onMessage.addListener(listener)
-        sendViaRuntime({
-          type: "meeting.create",
-          v: 1,
+      }
+
+      let id = meetingId
+      if (!id) {
+        const created = await persistenceRef.current.create({
           title: title || file.name.replace(/\.[^.]+$/, ""),
           thread_id: state.activeThreadId || undefined,
         })
-        setTimeout(() => {
-          try {
-            chrome.runtime.onMessage.removeListener(listener)
-          } catch {
-            /* */
-          }
-          resolve(null)
-        }, 8000)
-      })
-      if (id) setMeetingId(id)
-    }
-    if (!id) {
-      importSucceeded = false
-      setError("无法创建会议会话")
-      setBusy(false)
-      setImportStatus(null)
-      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
-      return
-    }
-    closeMeetingIdRef.current = id
-    closeNeedsEndRef.current = false
-    needsClosePersistenceRef.current = true
-    liveTextRef.current = []
-
-    const total = decoded.segments.length
-    let failedAt: number | null = null
-    let done = 0
-    const pcms: Uint8Array[] = []
-    const texts: string[] = []
-    setImportStatus(`本机转写 0/${total} 段…`)
-    for (let i = 0; i < total; i++) {
-      if (importAbortRef.current) break
-      const seg = decoded.segments[i]!
-      setImportStatus(`本机转写 ${i + 1}/${total} 段…`)
-      const sid = `mtg-imp-${id}-${i}-${Date.now().toString(36)}`
-      const r = await transcribeWavViaStt({
-        wav: seg.wav,
-        sessionId: sid,
-        modelId: activeModelId,
-        send: sendViaRuntime,
-        onMessage: subscribeVoiceStt,
-        signal: importControllerRef.current?.signal,
-      })
-      if (r.ok === false) {
-        importSucceeded = false
-        failedAt = i + 1
-        setError(`音频第 ${i + 1} 段转写失败: ${r.code}`)
-        break
+        id = created.id
+        setMeetingId(id)
       }
-      if (r.text.trim()) {
-        // One physical line per segment so PCM stays aligned (dual-review nit)
-        const oneLine = r.text.trim().replace(/\s*\n+\s*/g, " ")
-        texts.push(oneLine)
-        pcms.push(wavToRawPcm(seg.wav))
-        // local preview (speaker optional)
-        appendLocalAndRemote(oneLine, id)
-      }
-      done = i + 1
-    }
-    linePcmRef.current = hasPreviousText ? [] : pcms
-
-    // Single set_transcript so line count == features (avoid append race before diarize)
-    if (texts.length > 0 && id) {
-      const sp = defaultSpeakerRef.current.trim().slice(0, 32)
-      const importedText = texts.map(text => sp ? `${sp}: ${text}` : text).join("\n\n")
-      const body = previousText ? `${previousText}\n\n${importedText}` : importedText
-      setTranscript(body)
-      transcriptRef.current = body
-      await persistenceRef.current.waitForWrites(id)
-      const saved = await persistenceRef.current.write(id, "meeting.set_transcript", {
-        text: body,
-        source: "user_edit",
-        silence_cut: false,
-      })
-      if (!saved) {
+      if (!id) {
         importSucceeded = false
-        setError("录音转写尚未确认保存；完整原文仍保留，请点击「保存转写」重试")
-        setImportStatus("转写已追加到编辑稿，尚未确认保存")
+        setError("无法创建会议会话")
+        setBusy(false)
+        setImportStatus(null)
+        dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
         return
       }
-      // Restore default-speaker when not auto-diarizing (Mtg2 contract)
-      if (sp && !hasPreviousText && !autoDiarizeAfterImport) {
-        setTimeout(() => {
-          sendViaRuntime({
-            type: "meeting.bulk_speaker",
-            v: 1,
-            id,
-            speaker: sp,
-          })
-        }, 100)
+      if (importAbortRef.current) {
+        setImportStatus("已取消导入，音频未发送。")
+        return
       }
-    }
+      if (external) {
+        setImportStatus("核对本次发送的音频段…")
+        const job = await beginMeetingExternalImport({
+          request: channel.request, configIdentity: target.configIdentity, segments: decoded.segments,
+          requestTimeoutMs: target.requestTimeoutMs, signal: controller.signal,
+        })
+        if (job.ok === false) {
+          if (job.code !== "aborted") setError(meetingAsrError(job.code))
+          setImportStatus(job.code === "aborted" ? "已取消外部转写，音频未发送。" : "未开始外部转写，音频未发送。")
+          return
+        }
+        externalJob = job
+      }
+      closeMeetingIdRef.current = id
+      closeNeedsEndRef.current = false
+      needsClosePersistenceRef.current = true
+      liveTextRef.current = []
 
-    setBusy(false)
-    if (importAbortRef.current) {
-      setImportStatus(`导入已中止（已完成 ${done}/${total} 段）`)
-    } else if (failedAt != null) {
-      setImportStatus(`导入部分失败（成功 ${done}/${total} 段，失败于第 ${failedAt} 段）`)
-    } else {
-      setImportStatus(`音频导入完成 ${done}/${total} 段`)
-      if (autoDiarizeAfterImport && !hasPreviousText && pcms.length >= 2 && id) {
-        // embedding 引擎；模型未就绪 → 显式引导下载（#260 硬约束，不静默落回）
-        if (!diarizeModelReady) {
-          setError(mapMeetingDiarizeError("embedding_model_required"))
-        } else {
-          setBusy(true)
-          await runUploadDiarize(id, pcms, "embedding")
+      const total = decoded.segments.length
+      let failedAt: number | null = null
+      let done = 0
+      const pcms: Uint8Array[] = []
+      const texts: string[] = []
+      const sourceLabel = external ? "外部转写" : "本机转写"
+      setImportStatus(`${sourceLabel} 0/${total} 段…`)
+      let externalFailure: string | undefined
+      for (let i = 0; i < total; i++) {
+        if (importAbortRef.current) break
+        const seg = decoded.segments[i]!
+        setImportStatus(`${sourceLabel} ${i + 1}/${total} 段…`)
+        const sid = `mtg-imp-${id}-${i}-${Date.now().toString(36)}`
+        const r: { ok: true; text: string } | { ok: false; code: string; delivery?: MeetingAsrDelivery } = externalJob
+          ? await externalJob.transcribe(seg) : await transcribeWavViaStt({
+          wav: seg.wav,
+          sessionId: sid,
+          modelId: activeModelId,
+          send: sendViaRuntime,
+          onMessage: subscribeVoiceStt,
+          signal: controller.signal,
+        })
+        if (r.ok === false) {
+          importSucceeded = importAbortRef.current
+          failedAt = i + 1
+          if (r.delivery) {
+            externalFailure = `第 ${failedAt} 段。\n${meetingAsrError(r.code)}${meetingAsrDelivery(r.delivery)}`
+          } else if (!importAbortRef.current) setError(r.code === "meeting_asr_configuration_changed"
+            ? "会议转写方式已变化，请重新选择录音。"
+            : `音频第 ${i + 1} 段转写失败：${r.code}`)
+          break
+        }
+        if (r.text.trim()) {
+          // One physical line per segment so PCM stays aligned (dual-review nit)
+          const oneLine = r.text.trim().replace(/\s*\n+\s*/g, " ")
+          texts.push(oneLine)
+          if (!hasPreviousText) pcms.push(wavToRawPcm(seg.wav))
+          // local preview (speaker optional)
+          appendLocalAndRemote(oneLine, id)
+        }
+        done = i + 1
+      }
+      linePcmRef.current = hasPreviousText ? [] : pcms
+
+      // Single set_transcript so line count == features (avoid append race before diarize)
+      if (texts.length > 0 && id) {
+        const sp = defaultSpeakerRef.current.trim().slice(0, 32)
+        const importedText = texts.map(text => sp ? `${sp}: ${text}` : text).join("\n\n")
+        const body = previousText ? `${previousText}\n\n${importedText}` : importedText
+        setTranscript(body)
+        transcriptRef.current = body
+        await persistenceRef.current.waitForWrites(id)
+        const saved = await persistenceRef.current.write(id, "meeting.set_transcript", {
+          text: body,
+          source: "user_edit",
+          silence_cut: false,
+        })
+        if (!saved) {
+          importSucceeded = false
+          setError("录音转写尚未确认保存；完整原文仍保留，请点击「保存转写」重试")
+          setImportStatus("转写已追加到编辑稿，尚未确认保存")
+          return
+        }
+        // Restore default-speaker when not auto-diarizing (Mtg2 contract)
+        if (sp && !hasPreviousText && !autoDiarizeAfterImport) {
+          setTimeout(() => {
+            sendViaRuntime({
+              type: "meeting.bulk_speaker",
+              v: 1,
+              id,
+              speaker: sp,
+            })
+          }, 100)
         }
       }
-      if (hasPreviousText) setImportStatus(`已追加 ${done}/${total} 段；已有文字保留，合并稿不能自动按音频标说话人`)
-    }
-    dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
+
+      setBusy(false)
+      if (importAbortRef.current) {
+        setImportStatus(`导入已中止（已完成 ${done}/${total} 段）${externalFailure ? `。${externalFailure}` : ""}`)
+      } else if (failedAt != null) {
+        setImportStatus(`导入未完成（已完成 ${done}/${total} 段）${externalFailure ? `。${externalFailure}` : `，失败于第 ${failedAt} 段`}`)
+      } else {
+        setImportStatus(`音频导入完成 ${done}/${total} 段`)
+        if (autoDiarizeAfterImport && !hasPreviousText && pcms.length >= 2 && id) {
+          // embedding 引擎；模型未就绪 → 显式引导下载（#260 硬约束，不静默落回）
+          if (!diarizeModelReady) {
+            setError(mapMeetingDiarizeError("embedding_model_required"))
+          } else {
+            setBusy(true)
+            await runUploadDiarize(id, pcms, "embedding")
+          }
+        }
+        if (hasPreviousText) setImportStatus(`已追加 ${done}/${total} 段；已有文字保留，合并稿不能自动按音频标说话人`)
+      }
+      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
     } catch (cause) {
       importSucceeded = false
       setError(cause instanceof Error ? `${cause.message}；已识别文字仍在，请点击「保存转写」后重试` : "音频导入失败，已保留现有转写；请点击「保存转写」后重试")
       setImportStatus("导入未完成，已识别文字保留在编辑稿中")
     } finally {
+      externalJob?.dispose()
+      channel?.destroy()
       setBusy(false)
       dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
       importDoneRef.current = null
       importControllerRef.current = null
+      externalImportActiveRef.current = false
       resolveImport(importSucceeded)
     }
   }
@@ -1548,12 +1645,12 @@ export function MeetingPanel(props: {
       {closing && <div role="status" aria-live="polite">正在保存最后一段转写，完成后收起…</div>}
 
       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
-        开始录制或导入录音后，本机识别的原文会显示在下方。参考笔记独立保存，用于明确生成时的纠错与核对。
+        录制或导入录音后的原始转写会显示在下方。参考笔记独立保存，用于生成纪要时的纠错与核对。
         持续采集，每 8 秒依次识别；识别期间继续录音。停止后会排空已采集音频，接近 60 秒积压上限时会提前停采。
         仅录麦克风，不含系统声音；录音与听写互斥。AI 建议和校正稿不会覆盖原始转写。
       </div>
 
-      {/* Path B: meeting live STT / audio import requires voice_privacy_ack_v2.
+      {/* Live capture and local imports require voice_privacy_ack_v2.
           Previously only reachable via Settings → 启用本机转写 (easy to miss). */}
       {!state.voicePrivacyAckV2 && (
         <div
@@ -1571,7 +1668,7 @@ export function MeetingPanel(props: {
             本机语音隐私说明
           </div>
           <p style={{ margin: "0 0 6px", fontSize: 10 }}>
-            会议本机录音 / 上传音频转写前须确认。也可在：侧栏 ⋯ → 设置 → 输入与语音 →
+            会议录音或在本机转写导入音频前须确认。也可在：侧栏 ⋯ → 设置 → 输入与交互 →
             「启用本机转写」。
           </p>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -1627,7 +1724,7 @@ export function MeetingPanel(props: {
             <li>会创建本地会话产物（转写 ± 可选音频）。</li>
             <li>默认结束录制后删除会议目录下音频（当前 UI 不提供保留选项）。</li>
             <li>生成纪要将把转写文本发给你已配置的 LLM。</li>
-            <li>长会 STT 仅本机；不会自动开始录音。</li>
+            <li>会议录音在本机转写；不会自动开始录音。导入音频使用外部服务时会逐次确认接收地址。</li>
             <li>多方录音法律合规由你负责。</li>
           </ul>
           <button
@@ -1666,9 +1763,11 @@ export function MeetingPanel(props: {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
           <button type="button" data-testid="meeting-import-audio" disabled={busy || capturing || !ack}
             onClick={() => audioFileRef.current?.click()} style={btnStyle(false)}>导入录音</button>
+          <button type="button" disabled={busy || capturing} style={linkBtn}
+            onClick={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model-meeting-transcribe" })}>转写服务</button>
           <button type="button" data-testid="meeting-import-reference" disabled={busy || capturing}
             onClick={() => referenceFileRef.current?.click()} style={btnStyle(false)}>导入参考笔记</button>
-          {importDoneRef.current && <button type="button" data-testid="meeting-import-abort" onClick={() => {
+          {importDoneRef.current && !importApproval && <button type="button" data-testid="meeting-import-abort" onClick={() => {
             importAbortRef.current = true; importControllerRef.current?.abort(); setImportStatus("正在中止导入…")
           }} style={btnStyle(false)}>中止导入</button>}
         </div>
@@ -1683,6 +1782,11 @@ export function MeetingPanel(props: {
         <div data-testid="meeting-reference-status" role="status" style={{ fontSize: 11, color: tokens.textSecondary }}>
           {referenceName ? `来源：${referenceName} · ` : referenceNotes ? "来源：手动笔记 · " : ""}{referenceStatus}
         </div>
+        {importApproval && <section aria-label="确认发送导入录音" style={{ marginTop: 8, fontSize: 12 }}>
+          <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{importApproval.copy}</p>
+          <button type="button" style={btnStyle(true)} onClick={() => importApproval.finish(true)}>确认发送并转写</button>{" "}
+          <button type="button" style={btnStyle(false)} onClick={() => importApproval.finish(false)}>取消</button>
+        </section>}
         {importStatus && <div data-testid="meeting-import-status" role="status" style={{ fontSize: 11, marginTop: 6 }}>{importStatus}</div>}
         <input ref={referenceFileRef} data-testid="meeting-reference-file" type="file" accept=".txt,.md,.docx" style={{ display: "none" }} onChange={event => {
           const file = event.target.files?.[0] || null; event.target.value = ""; void onImportReferenceFile(file)
@@ -2124,8 +2228,23 @@ export function MeetingPanel(props: {
       </button>
       <div role="status" aria-live="polite" data-testid="meeting-save-status">{status.startsWith("已保存") || status.startsWith("正在保存") ? status : ""}</div>
       <button type="button" disabled={busy || !ack || capturing} onClick={generate} style={btnStyle(true)}>
-        {pendingGenerate ? "生成中…" : generatingRef.current ? "保存会议材料…" : "生成会议纪要"}
+        {pendingGenerate ? "生成中…" : minutesConfirmation ? "等待确认…" : generatingRef.current ? "核对材料与接收方…" : "生成会议纪要"}
       </button>
+      {minutesConfirmation && <section aria-label="确认纪要发送范围" style={{ display: "grid", gap: 6, padding: 8, border: `1px solid ${tokens.border}`, borderRadius: 6 }}>
+        <strong>确认纪要接收方</strong>
+        <span style={{ overflowWrap: "anywhere" }}>{minutesConfirmation.prepared.target.profile_name || minutesConfirmation.prepared.target.model_name} · {minutesConfirmation.prepared.target.base_url}</span>
+        {minutesConfirmation.prepared.target.profile_name && <span>模型 {minutesConfirmation.prepared.target.model_name}</span>}
+        <span>会发送逐字稿 {minutesConfirmation.prepared.material.transcript_chars} 字、纪要模板{minutesConfirmation.prepared.material.template_chars ? `（自定义 ${minutesConfirmation.prepared.material.template_chars} 字）` : "（默认）"}{minutesConfirmation.prepared.material.reference_chars ? `、参考笔记 ${minutesConfirmation.prepared.material.reference_chars} 字` : ""}。</span>
+        <details><summary>预览本次文字</summary>
+          <div style={{ maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+            <strong>逐字稿</strong><div>{minutesConfirmation.text}</div>
+            {minutesConfirmation.notes && <><strong>参考笔记 {minutesConfirmation.name}</strong><div>{minutesConfirmation.notes}</div></>}
+            {minutesConfirmation.template && <><strong>自定义模板</strong><div>{minutesConfirmation.template}</div></>}
+          </div>
+        </details>
+        <button type="button" style={btnStyle(true)} onClick={confirmMinutes}>确认发送并生成</button>
+        <button type="button" style={btnStyle(false)} onClick={cancelMinutesConfirmation}>取消，保留文字</button>
+      </section>}
 
       {error && (
         <div style={{ color: "#c44", fontSize: 12 }} role="alert">

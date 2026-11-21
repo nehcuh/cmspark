@@ -6,7 +6,7 @@ import { WSClient } from "./ws-client"
 import { normalizeSavedChatOutputLimit } from "../sidepanel/utils/normalize-config"
 import { createCockpitNativeRelay, COCKPIT_NATIVE_PORT } from "./cockpit-native-bridge"
 import { projectMetadataSenderAllowed } from "./project-metadata"
-import { forwardWorkspaceRequest } from "./workspace-sender"
+import { forwardWorkspaceRequest, workspaceSenderAllowed } from "./workspace-sender"
 import {
   attachTerminalPort,
   buildTerminalOpenBinding,
@@ -720,6 +720,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "todo.dismiss":
       case "settings.assistant.propose":
       case "settings.assistant.apply":
+      case "model.center.get":
+      case "model.center.save":
         sendResponse(forwardWorkspaceRequest(message, sender, chrome.runtime.id, wsClient))
         return false
       case "getStatus":
@@ -1093,11 +1095,16 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
 
       case "thread.update":
+        if (message.expected_knowledge_scope !== undefined && !workspaceSenderAllowed(sender, chrome.runtime.id)) {
+          sendResponse({ ok: false, error: "仅工作中心和对话面板可修改知识范围" })
+          return false
+        }
         if (message.require_connected && wsClient.getState() !== "connected") {
           sendResponse({ ok: false, error: "Companion 未连接，尚未保存" })
           return false
         }
-        const metadataSent = wsClient.send({ type: "thread.update", id: message.id, thread_id: message.threadId || message.thread_id, updates: message.updates })
+        const metadataSent = wsClient.send({ type: "thread.update", id: message.id, thread_id: message.threadId || message.thread_id, updates: message.updates,
+          ...(message.expected_knowledge_scope !== undefined ? { expected_knowledge_scope: message.expected_knowledge_scope } : {}) })
         sendResponse({ ok: metadataSent })
         return true
 
@@ -1753,6 +1760,11 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "voice.dictation.hold_state":
       // Meeting minutes scene (Mtg0 paste + Mtg1 live capture)
       case "meeting.create":
+      case "meeting.asr.get":
+      case "meeting.asr.set":
+      case "meeting.asr.authorize":
+      case "meeting.asr.segment":
+      case "meeting.asr.cancel":
       case "system.ping":
       case "meeting.start":
       case "meeting.end":
@@ -1772,6 +1784,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "meeting.diarize.upload_start":
       case "meeting.diarize.upload_chunk":
       case "meeting.diarize.upload_end":
+      case "meeting.prepare_minutes":
       case "meeting.generate_minutes":
       case "meeting.set_status":
       case "overlay.shell.open":

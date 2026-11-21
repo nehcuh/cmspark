@@ -1,5 +1,6 @@
 /** Closed semantic settings catalog. Model output never names arbitrary config keys. */
 import { describeShellProvision, shellProvisionSentence } from "../capability/shell-provision"
+import { effectiveReasoningEffort, reasoningSupport } from "../llm/reasoning-effort"
 export type SettingValue = boolean | number | string
 export type SettingsSection = "voice" | "export" | "integrations" | "security" | "model"
 export interface CatalogEntry {
@@ -20,6 +21,9 @@ const manual = (id: string, label: string, description: string, section: Setting
   id, label, description, section, values, prerequisites, scope: "manual", read: () => "需在对应设置核对",
 })
 export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
+  { id: "chat.reasoningEffort", label: "默认对话思考强度", description: "改变支持思考强度的对话模型请求。较低强度适合减少等待，复杂问题可能需要更高强度。", scope: "companion", section: "model",
+    values: ["low", "medium", "high", "xhigh"], prerequisites: [], read: c => effectiveReasoningEffort(c.llm?.reasoning_effort),
+    patch: value => ({ llm: { reasoning_effort: value } }) },
   { id: "history.retentionDays", label: "对话历史保留天数", description: "缩短保存期限，减少历史占用；到期清理后无法通过恢复设置找回历史。", scope: "companion", section: "export", min: 1, max: 3650,
     prerequisites: ["缩短期限可能使旧历史在清理时被删除，请先导出需要保留的内容。"], read: c => c.history_retention_days ?? 30, patch: value => ({ history_retention_days: value }) },
   { id: "logs.retentionDays", label: "运行日志保留天数", description: "减少本机日志保留，过短会限制故障排查。", scope: "companion", section: "integrations", min: 1, max: 365,
@@ -40,6 +44,13 @@ export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
   { ...manual("shell.provision", "shell 资格", "shell 是否可由当前能力档使用。这不是电源，也不能代替命令确认。", "integrations", ["review"], ["打开本机与工具的能力档确认；不会自动升档、执行命令或应用场景。"]),
     read: (config) => shellProvisionSentence(describeShellProvision(config)) },
 ]
+
+export function availableSettings(config: any): readonly CatalogEntry[] {
+  const llm = config.llm
+  return reasoningSupport(llm?.protocol, llm?.base_url, llm?.model_name) === "unsupported"
+    ? SETTINGS_CATALOG.filter(entry => entry.id !== "chat.reasoningEffort")
+    : SETTINGS_CATALOG
+}
 export function validSettingValue(entry: CatalogEntry, value: unknown): value is SettingValue {
   if (entry.values) return entry.values.some(v => v === value)
   return typeof value === "number" && Number.isInteger(value) && value >= entry.min! && value <= entry.max!
@@ -48,6 +59,8 @@ export function readSettingValue(entry: CatalogEntry, config: unknown): SettingV
   const value = entry.read(config)
   if (entry.id === "shell.provision") return value
   if (entry.scope === "manual") return "需在对应设置核对"
-  if (entry.min !== undefined ? typeof value === "number" && Number.isFinite(value) : typeof value === "boolean") return value
+  // Persisted values can include values that the assistant may only turn off.
+  if (entry.min !== undefined ? typeof value === "number" && Number.isFinite(value) :
+    typeof value === "boolean" || entry.values?.some(allowed => allowed === value)) return value
   throw new Error("INVALID_CURRENT_SETTING")
 }

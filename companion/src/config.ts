@@ -19,6 +19,7 @@ import { isChatOutputLimit, normalizeSavedChatOutputLimit } from "./llm/output-b
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
 import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-provision"
 import { defaultVoiceExternal, type VoiceExternalConfig } from "./voice/external-asr-config"
+import type { MeetingAsrConfig } from "./voice/external-asr-meeting"
 
 export const configEvents = new EventEmitter()
 export const CONFIG_CHANGE_EVENT = "config.change"
@@ -183,6 +184,8 @@ export interface VoiceConfig {
   sttEngine: "browser" | "local" | "system" | "external"
   /** Chat-only external transcription. Absent on old files until load fills it. */
   external?: VoiceExternalConfig
+  /** Independent transcription of imported meeting recordings. */
+  meetingAsr?: MeetingAsrConfig
   /** Active model when engine=local; may be set only if ready (handlers enforce). */
   localModelId: "small" | "medium" | "large-v3-turbo"
   /** Whisper family disk budget MB (default 4096; scoped to whisper root only). */
@@ -308,6 +311,7 @@ export interface ThreadDigestConfig {
 export interface CompanionConfig {
   port: number
   llm: LlmConfig
+  model_center?: import("./model-profiles").ModelCenterConfig
   vision?: VisionConfig
   trusted_domains: string[]
   /**
@@ -439,6 +443,14 @@ export interface CompanionConfig {
 
 function getEnvApiKey(): string {
   return process.env.DEEPSEEK_API_KEY || ""
+}
+
+export function getModelProfileRuntimeKey(storedKey: string): string {
+  return storedKey || getEnvApiKey()
+}
+
+export function createTextModelConfig(provider: Pick<LlmConfig, "protocol" | "base_url" | "model_name" | "api_key">): LlmConfig {
+  return { ...defaultConfig.llm, ...provider }
 }
 
 /** Factory default: Agent working budget. Auto-compact triggers later; fill the model's real window. */
@@ -710,6 +722,11 @@ function refreshRuntimeCredentials(config: CompanionConfig): void {
       visionApiKey: storedVisionKey, visionProtocol: config.vision.protocol,
     }) ?? storedVisionKey
   }
+}
+
+/** Call after reading the current snapshot. Its LLM API key may include the environment fallback. */
+export function getStoredMainModelKey(): string {
+  return storedLlmKey
 }
 
 function saveConfigSnapshot(updated: CompanionConfig, llmKey = storedLlmKey, visionKey = storedVisionKey, inherited = visionUsesLlm, captureReceipt = false): CompanionConfig {
@@ -1418,14 +1435,21 @@ export function saveConfigWithReceipt(config: Partial<CompanionConfig>, intent?:
   return saveConfigInternal(config, intent, expectedRevision, true)
 }
 
-function saveConfigInternal(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string, captureReceipt = false): CompanionConfig {
+interface ConfigWriteIntent { llmKey?: boolean; visionKey?: boolean; replaceLlm?: boolean }
+
+/** Commit an optional replacement main provider and its profile binding in one write. */
+export function saveModelCenterConfig(center: NonNullable<CompanionConfig["model_center"]>, llm: LlmConfig | undefined, expectedRevision: string): CompanionConfig {
+  return saveConfigInternal({ model_center: center, ...(llm ? { llm } : {}) }, { replaceLlm: !!llm }, expectedRevision, true)
+}
+
+function saveConfigInternal(config: Partial<CompanionConfig>, intent?: ConfigWriteIntent, expectedRevision?: string, captureReceipt = false): CompanionConfig {
   enterConfigWrite()
   try {
   return saveConfigInternalBody(config, intent, expectedRevision, captureReceipt)
   } finally { leaveConfigWrite() }
 }
 
-function saveConfigInternalBody(config: Partial<CompanionConfig>, intent?: { llmKey?: boolean; visionKey?: boolean }, expectedRevision?: string, captureReceipt = false): CompanionConfig {
+function saveConfigInternalBody(config: Partial<CompanionConfig>, intent?: ConfigWriteIntent, expectedRevision?: string, captureReceipt = false): CompanionConfig {
   if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "max_tokens") &&
       !isChatOutputLimit(config.llm.max_tokens)) throw new Error("INVALID_CHAT_OUTPUT_LIMIT")
   if (config.llm && Object.prototype.hasOwnProperty.call(config.llm, "reasoning_effort")) {
@@ -1485,6 +1509,7 @@ function saveConfigInternalBody(config: Partial<CompanionConfig>, intent?: { llm
   // Credential projection must not mutate the cached snapshot before the
   // atomic write succeeds, including when a section is absent from the patch.
   const updated = stripCompanionUiProcessContinueDeny(deepMerge(structuredClone(current), config) as CompanionConfig)
+  if (intent?.replaceLlm && config.llm) updated.llm = structuredClone(config.llm)
 
   // ACP: re-sanitize after deepMerge so hand-edited/partial writes cannot skip
   // profile coercion (review_readonly) that load-time sanitize already enforces.
@@ -1503,9 +1528,15 @@ function saveConfigInternalBody(config: Partial<CompanionConfig>, intent?: { llm
     ? config.llm.api_key : undefined
   const explicitVision = intent?.visionKey === true && config.vision?.api_key && !isMaskedApiKey(config.vision.api_key)
     ? config.vision.api_key : undefined
-  const nextLlmKey = explicitLlm ?? storedLlmKey
+  const nextLlmKey = intent?.replaceLlm ? (config.llm?.api_key ?? "") : explicitLlm ?? storedLlmKey
   let nextVisionKey = explicitVision ?? storedVisionKey
   updated.llm.api_key = nextLlmKey || getEnvApiKey()
+  const center = updated.model_center
+  if (center?.chat_profile_id) {
+    const { matchesTextModel } = require("./model-profiles") as typeof import("./model-profiles")
+    const selected = Array.isArray(center.profiles) && center.profiles.find(profile => profile?.id === center.chat_profile_id && profile.llm)
+    if (!selected || !matchesTextModel(updated.llm, nextLlmKey, selected)) center.chat_profile_id = null
+  }
   let inherited = false
   if (updated.vision) {
     updated.vision.api_key = nextVisionKey

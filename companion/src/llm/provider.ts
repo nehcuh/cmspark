@@ -104,6 +104,8 @@ export interface CompleteParams {
   temperature?: number
   model?: string
   signal?: AbortSignal
+  /** Keep consent-scoped requests on the configured destination. */
+  rejectRedirects?: boolean
   /** Optional output cap override; falls back to config.llm.max_tokens. */
   max_tokens?: number
   reasoning_effort?: "none"

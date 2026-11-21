@@ -17,19 +17,23 @@ export function createMeetingRuntimeChannel(onStatus: (message: any) => void, on
   }
   chrome.runtime.onMessage.addListener(listener)
   return {
-    request(message: Record<string, unknown>): Promise<any> {
+    request(message: Record<string, unknown>, timeoutMs = 5000): Promise<any> {
       if (closed || pending.size >= 9) return Promise.reject(new Error("contract_unavailable"))
       const id = typeof message.id === "string" && message.type !== "meeting.start" ? message.id : `${prefix}-${++seq}`
       const frame = { v: 1, ...message, ...(message.type === "meeting.start" && message.id ? { meeting_id: message.id } : {}), id }
       return new Promise((resolve, reject) => {
         if (pending.has(id)) { reject(new Error("queue_protocol_error")); return }
-        const timer = setTimeout(() => { pending.delete(id); reject(new Error("network_unknown")) }, 5000)
+        const timer = setTimeout(() => { pending.delete(id); reject(new Error("network_unknown")) }, timeoutMs)
         pending.set(id, { resolve, reject, timer })
         try {
           chrome.runtime.sendMessage(frame, (receipt: any) => {
             if (!pending.has(id)) return
             if (chrome.runtime.lastError || receipt?.ok !== true) {
-              clearTimeout(timer); pending.delete(id); reject(new Error("contract_unavailable"))
+              clearTimeout(timer); pending.delete(id)
+              const code = typeof message.type === "string" && message.type.startsWith("meeting.asr.")
+                ? chrome.runtime.lastError ? "network_unknown" : "not_connected"
+                : "contract_unavailable"
+              reject(new Error(code))
             }
           })
         } catch { clearTimeout(timer); pending.delete(id); reject(new Error("contract_unavailable")) }

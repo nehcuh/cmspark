@@ -30,6 +30,75 @@ test("semantic model proposals have fixed catalog labels/current values and no w
   assert.equal(receipt.items[0].status, "saved"); assert.equal(receipt.items[0].actual, false)
   assert.equal((await f.apply(result.proposal)).error_code, "PROPOSAL_EXPIRED")
 })
+
+test("precise reasoning changes preview locally and never fall through to the model", async () => {
+  const f = fixture()
+  Object.assign(f.config.llm, { protocol: "openai", base_url: "https://api.deepseek.com/v1", model_name: "deepseek-v4-pro", reasoning_effort: "high" })
+  const { proposal } = await f.propose("把思考强度调低")
+  assert.equal(f.prompts.length, 0)
+  assert.equal(f.writes.length, 0)
+  assert.equal(proposal.candidates[0].changes[0].before, "high")
+  assert.equal(proposal.candidates[0].changes[0].after, "low")
+  const receipt = await f.apply(proposal)
+  assert.deepEqual(f.writes, [{ llm: { reasoning_effort: "low" } }])
+  assert.equal(receipt.items[0].actual, "low")
+})
+
+test("unspecified external meeting model asks which stage before consulting any model", async () => {
+  const f = fixture()
+  const { proposal } = await f.propose("把会议改成外部模型")
+  assert.equal(f.prompts.length, 0)
+  assert.deepEqual(proposal.candidates, [])
+  assert.match(proposal.clarification, /转写音频.*生成纪要/)
+  assert.equal(f.writes.length, 0)
+})
+
+test("explicit named meeting model switches with revision checks and a real receipt", async () => {
+  const profile = { id: "7d2ea1a5-a560-4877-bc06-fb2bbfc67494", name: "会议 A", model_name: "minutes-model", base_url: "https://provider.test/v1", has_key: true }
+  let revision = "epoch:1", bound: string | null = null, modelCalls = 0, writes = 0
+  const models = () => ({ config_revision: revision, model_center: { chat_profile_id: null, meeting_minutes_profile_id: bound, profiles: [profile] } })
+  const service = new SettingsAssistant({
+    read: () => ({ voice: { meetingAsr: { mode: "local" } } }),
+    save: async () => assert.fail("profile binding must use the model-center writer"),
+    extract: async () => { modelCalls++; throw new Error() },
+    models,
+    bindModel: (action, expectedRevision) => {
+      assert.equal(expectedRevision, revision)
+      assert.equal(action.scope, "meeting_minutes")
+      bound = action.profile_id; writes++; return models()
+    },
+  })
+  const propose = () => service.handle({ type: "settings.assistant.propose", id: "named", text: "会议还是本机转写，纪要用会议 A" }, "panel")
+  const confirm = (proposal: any) => service.handle({ type: "settings.assistant.apply", id: "apply", proposalId: proposal.id, candidateId: "candidate-1", changeIds: ["change-1"], userConfirmed: true }, "panel")
+  const first = await propose()
+  assert.equal(modelCalls, 0)
+  assert.equal(writes, 0)
+  assert.match(first.proposal.candidates[0].changes[0].after, /会议 A.*provider\.test/)
+  revision = "epoch:2"
+  assert.equal((await confirm(first.proposal)).error_code, "STALE_SETTINGS")
+  assert.equal(writes, 0)
+  const second = await propose()
+  assert.equal((await confirm(second.proposal)).items[0].status, "saved")
+  assert.equal(bound, profile.id)
+  assert.equal(writes, 1)
+})
+
+test("default model switch preview shows dependent uses and the meeting inheritance boundary", async () => {
+  const profile = { id: "7d2ea1a5-a560-4877-bc06-fb2bbfc67494", name: "快速", model_name: "chat", base_url: "https://provider.test/v1", has_key: true }
+  for (const independent of [false, true]) {
+    const service = new SettingsAssistant({
+      read: () => ({}), save: async () => assert.fail("proposal never saves"), extract: async () => assert.fail("explicit model name is resolved locally"),
+      models: () => ({ config_revision: "epoch:1", model_center: {
+        chat_profile_id: null, meeting_minutes_profile_id: independent ? profile.id : null, profiles: [profile],
+      } }),
+    })
+    const { proposal } = await service.handle({ type: "settings.assistant.propose", id: "default", text: "默认对话改用快速" }, "panel")
+    const summary = proposal.candidates[0].tradeoffs
+    assert.match(summary, /默认对话.*看图.*听写纠错.*活动提取.*后台摘要.*设置助手/)
+    if (independent) assert.match(summary, /会议纪要使用独立模型/)
+    else assert.match(summary, /会议纪要也继承/)
+  }
+})
 test("model receives only safe catalog values and redacted description, no provider, vision, header or MCP secrets", async () => {
   const f = fixture()
   await f.propose("provider-private-key vision-private-key configured-header-secret configured-mcp-secret bearer abcdefgh sk-123456789012")

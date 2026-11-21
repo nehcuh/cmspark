@@ -22,6 +22,23 @@ function harness(timeoutMs = 2000) {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
+test("minutes preflight waits for the correlated destination and does not send generation", async () => {
+  const h = harness()
+  const pending = h.persistence.prepareMinutes(owner, { text: "已保存的转写" })
+  const sent = h.sent[0]
+  assert.equal(sent.type, "meeting.prepare_minutes")
+  const actual = {
+    type: "meeting.minutes_prepared", consent_token: "token", target: { model_name: "model", base_url: "https://example.com", profile_name: "纪要" },
+    material: { transcript_chars: 6, reference_chars: 0, reference_name: "", template_chars: 0 },
+  }
+  h.emit({ ...actual, id: "other" })
+  assert.equal(h.listeners.size, 1)
+  h.emit({ ...actual, id: sent.id })
+  assert.equal((await pending).target.model_name, "model")
+  assert.equal(h.sent.length, 1)
+  assert.equal(h.listeners.size, 0)
+})
+
 test("a rejected current transcript never advances to reference saving or generation", async () => {
   const h = harness()
   let generated = false

@@ -11,12 +11,69 @@ import {
   meetingAudioSttTimeoutMs,
 } from "../src/sidepanel/voice/meeting-audio-import"
 import { LOCAL_STT_SAMPLE_RATE } from "../src/sidepanel/voice/local-stt-detect"
+import { beginMeetingExternalImport, meetingExternalConfirmation } from "../src/sidepanel/voice/meeting-external-asr"
 
 test("uint8ToBase64 round-trip small", () => {
   const u = new Uint8Array([1, 2, 3, 250])
   const b64 = uint8ToBase64(u)
   assert.equal(typeof b64, "string")
   assert.ok(b64.length > 0)
+})
+
+test("local meeting imports identify their own capture purpose", async () => {
+  const sent: Record<string, unknown>[] = []
+  let receive: (message: any) => void = () => {}
+  await transcribeWavViaStt({ wav: new Uint8Array(46), sessionId: "local-fixture", modelId: "medium",
+    send: message => {
+      sent.push(message)
+      if (message.type === "voice.stt.end") receive({ type: "voice.stt.result", sessionId: "local-fixture", text: "local" })
+    },
+    onMessage: handler => { receive = handler; return () => {} },
+  })
+  assert.equal(sent[0].purpose, "meeting-import")
+  assert.equal(sent[0].privacy_ack_v2, true)
+})
+
+test("meeting confirmation names the actual endpoint, model, and selected file", () => {
+  const text = meetingExternalConfirmation("会议.wav", { normalizedUrl: "https://asr.example/v1/audio/transcriptions", model: "test-model" }, 92, 3)
+  for (const part of ["会议.wav", "https://asr.example/v1/audio/transcriptions", "test-model", "3 段", "1:32"]) assert.ok(text.includes(part), part)
+})
+
+test("external import authorizes segment digests before sending audio and cancels its own grant", async () => {
+  const sent: Record<string, unknown>[] = []
+  const controller = new AbortController()
+  let resolveSegment!: (value: any) => void
+  const segments = [
+    { index: 0, wav: Uint8Array.of(1, 2, 3), t0Sec: 0, t1Sec: 45 },
+    { index: 1, wav: Uint8Array.of(4, 5, 6), t0Sec: 45, t1Sec: 90 },
+  ]
+  const job = await beginMeetingExternalImport({
+    configIdentity: "recipient-version", segments, requestTimeoutMs: 30_000, signal: controller.signal,
+    request: (message: Record<string, unknown>) => {
+      sent.push(message)
+      if (message.type === "meeting.asr.authorize") return Promise.resolve({ type: "meeting.asr.authorized", token: "test-grant" })
+      if (message.type === "meeting.asr.cancel") return Promise.resolve({ type: "meeting.asr.cancelled", delivery: "unknown" })
+      if (message.index === 0) return Promise.resolve({ type: "meeting.asr.result", index: 0, text: "retained" })
+      return new Promise(resolve => { resolveSegment = resolve })
+    },
+  })
+  assert.equal(job.ok, true)
+  if (!job.ok) return
+  assert.deepEqual(sent.map(message => message.type), ["meeting.asr.authorize"])
+  assert.deepEqual(sent[0].segments, [
+    { bytes: 3, sha256: "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81" },
+    { bytes: 3, sha256: "787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472" },
+  ])
+  assert.equal(sent[0].privacy_ack_meeting_asr_v1, true)
+  assert.deepEqual(await job.transcribe(segments[0]), { ok: true, text: "retained" })
+  assert.equal(sent[1].data, "AQID")
+  const pending = job.transcribe(segments[1])
+  controller.abort()
+  assert.deepEqual(await pending, { ok: false, code: "aborted", delivery: "unknown" })
+  resolveSegment({ type: "meeting.asr.result", index: 1, text: "late" })
+  job.dispose()
+  assert.deepEqual(sent.map(message => message.type), ["meeting.asr.authorize", "meeting.asr.segment", "meeting.asr.segment", "meeting.asr.cancel"])
+  assert.equal(sent[3].token, "test-grant")
 })
 
 test("import timeout aborts its real STT session and unsubscribes", async () => {

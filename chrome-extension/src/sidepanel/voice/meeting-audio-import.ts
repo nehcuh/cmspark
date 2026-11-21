@@ -1,5 +1,5 @@
 /**
- * Mtg2: client-side audio file → 16k mono WAV segments for voice.stt.*
+ * Mtg2: client-side audio file → 16k mono WAV segments.
  * Not auto-diarize. System audio mix is still parking-lot (see SoT).
  */
 
@@ -41,6 +41,8 @@ export async function fileToWavSegments(
   opts: {
     maxFileBytes?: number
     segmentMs?: number
+    keepShortTail?: boolean
+    encodeOnDemand?: boolean
     /** Inject AudioContext for tests */
     audioContextFactory?: () => AudioContext
   } = {},
@@ -75,7 +77,7 @@ export async function fileToWavSegments(
       if (typeof AC !== "function") {
         throw new Error("no_audio_context")
       }
-      return new AC() as AudioContext
+      return new AC({ sampleRate: LOCAL_STT_SAMPLE_RATE }) as AudioContext
     })
 
   let ctx: AudioContext
@@ -91,7 +93,7 @@ export async function fileToWavSegments(
 
   let decoded: AudioBuffer
   try {
-    decoded = await ctx.decodeAudioData(ab.slice(0))
+    decoded = await ctx.decodeAudioData(ab)
   } catch {
     try {
       await ctx.close()
@@ -128,14 +130,17 @@ export async function fileToWavSegments(
   // Mixdown to mono float
   const n = decoded.length
   const ch = decoded.numberOfChannels
-  const mono = new Float32Array(n)
-  for (let c = 0; c < ch; c++) {
-    const data = decoded.getChannelData(c)
-    for (let i = 0; i < n; i++) {
-      mono[i] += data[i] / ch
+  const mono = ch === 1 ? decoded.getChannelData(0) : new Float32Array(n)
+  if (ch > 1) {
+    for (let c = 0; c < ch; c++) {
+      const data = decoded.getChannelData(c)
+      for (let i = 0; i < n; i++) {
+        mono[i] += data[i] / ch
+      }
     }
   }
-  const resampled = resampleFloat32Mono(mono, decoded.sampleRate, LOCAL_STT_SAMPLE_RATE)
+  const resampled = decoded.sampleRate === LOCAL_STT_SAMPLE_RATE ? mono
+    : resampleFloat32Mono(mono, decoded.sampleRate, LOCAL_STT_SAMPLE_RATE)
   const segmentMs = opts.segmentMs ?? MEETING_AUDIO_SEGMENT_MS
   const samplesPerSeg = Math.max(
     1,
@@ -147,15 +152,16 @@ export async function fileToWavSegments(
   for (let off = 0; off < resampled.length; off += samplesPerSeg) {
     const end = Math.min(off + samplesPerSeg, resampled.length)
     const slice = resampled.subarray(off, end)
-    if (slice.length < LOCAL_STT_SAMPLE_RATE * 0.2) {
+    if (!opts.keepShortTail && slice.length < LOCAL_STT_SAMPLE_RATE * 0.2) {
       // drop trailing <200ms
       if (segments.length > 0) break
     }
-    const pcm = float32ToS16lePcm(slice)
-    const wav = wrapPcmS16leAsWav(pcm, LOCAL_STT_SAMPLE_RATE, LOCAL_STT_CHANNELS)
     const t0Sec = off / LOCAL_STT_SAMPLE_RATE
     const t1Sec = end / LOCAL_STT_SAMPLE_RATE
-    segments.push({ index, wav, t0Sec, t1Sec })
+    const encode = () => wrapPcmS16leAsWav(float32ToS16lePcm(slice), LOCAL_STT_SAMPLE_RATE, LOCAL_STT_CHANNELS)
+    segments.push(opts.encodeOnDemand
+      ? { index, get wav() { return encode() }, t0Sec, t1Sec }
+      : { index, wav: encode(), t0Sec, t1Sec })
     index += 1
   }
 
@@ -261,6 +267,7 @@ export function transcribeWavViaStt(opts: {
       send({
         type: "voice.stt.start",
         v: 1,
+      purpose: "meeting-import",
         sessionId,
         modelId,
         format: "wav",

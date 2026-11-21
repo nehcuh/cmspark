@@ -6,6 +6,18 @@ import vm from "node:vm"
 import ts from "typescript"
 import * as jsxRuntime from "react/jsx-runtime"
 import { requestSemanticSettings } from "../src/sidepanel/utils/semantic-settings"
+import * as settingsIntent from "../src/sidepanel/utils/settings-intent"
+import { localSettingsIntent } from "../src/sidepanel/utils/settings-intent"
+
+test("local settings instructions distinguish display, search, and model effort", () => {
+  assert.deepEqual(localSettingsIntent("把思考过程收起来"), { type: "reasoning_display", mode: "always_collapsed" })
+  assert.deepEqual(localSettingsIntent("思考过程在哪"), { type: "search", destination: "input-display", label: "思考过程显示" })
+  assert.equal(localSettingsIntent("把思考强度调低"), null)
+  assert.equal(localSettingsIntent("把思考过程收起来，再切换到模型 A"), null)
+  assert.equal(localSettingsIntent("不要把思考过程收起来"), null)
+  assert.deepEqual(localSettingsIntent("这次对话别自动带不相关的知识"), { type: "manual_knowledge" })
+  assert.equal(localSettingsIntent("别自动带知识，然后换模型"), null)
+})
 
 /** Executes the actual component with controlled hooks; no browser or model call. */
 function harness() {
@@ -30,7 +42,7 @@ function harness() {
     require(id: string) {
       if (id === "react") return react
       if (id === "react/jsx-runtime") return jsxRuntime
-      if (id === "../utils/settings-intent") return { parseSettingsIntent: () => ({ type: "unknown" }) }
+      if (id === "../utils/settings-intent") return { ...settingsIntent, parseSettingsIntent: () => ({ type: "unknown" }) }
       if (id === "../utils/semantic-settings") return { semanticValue: String, requestSemanticSettings: async (type: string, fields: any) => { calls.push({ type, fields }); return type.endsWith("propose") ? { proposal } : { items: [] } } }
       if (id === "../voice/detect") return { getSpeechRecognitionCtor: () => Recognition, VOICE_DEFAULT_LANG: "zh-CN" }
       if (id === "../ui/tokens") return { tokens: {} }
@@ -199,9 +211,7 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
   const renderSlideout = () => render("slideout", slideout.SettingsSlideout)
   const find = (ui: any, predicate: (node: any) => boolean) => { const found = rows(ui).filter(predicate); assert.equal(found.length, 1); return found[0] }
   function assistant() {
-    let ui = renderSlideout()
-    find(ui, n => n.type === "details" && n.props.className === "cm-settings-assistant").props.onToggle({ currentTarget: { open: true } })
-    ui = renderSlideout()
+    const ui = renderSlideout()
     return find(ui, n => n.type === intentBar.SettingsIntentBar).props
   }
   renderHost(); renderWorkspace()
@@ -404,7 +414,7 @@ test("#754 actual offline voice rules navigate to voice settings without model r
       const beforeConfig = JSON.stringify(f.state().config), beforeActions = f.actions.length, beforeMessages = f.messages.length
       await f.find(ui, n => n.type === "button" && navigationText(n) === "规则导航：打开语音设置").props.onClick()
       const settings = f.renderSlideout()
-      assert.equal(f.find(settings, n => n.props?.["data-settings-page"] === "voice").props.hidden, false, phrase)
+      assert.equal(f.find(settings, n => n.type?.name === "SettingsPage" && n.props?.id === "input-dictation").props.active, true, phrase)
       assert.equal(f.state().settingsOpen, true)
       assert.equal(JSON.stringify(f.state().config), beforeConfig)
       assert.equal(f.actions.length, beforeActions); assert.equal(f.messages.length, beforeMessages)
@@ -432,7 +442,7 @@ test("#754 offline rule navigation refuses missing destinations and stale inacti
         await buttons[0].props.onClick()
         assert.ok(f.pendingEffects() > 0, "stale callback refused before passive cleanup")
       }
-      assert.equal(f.find(f.renderSlideout(), n => n.props?.["data-settings-page"] === "voice").props.hidden, true)
+      assert.equal(f.find(f.renderSlideout(), n => n.type?.name === "SettingsPage" && n.props?.id === "input-dictation").props.active, false)
       assert.equal(f.state().settingsOpen, true); assert.equal(f.intentResults.length, 0)
     } finally { f.close() }
   }

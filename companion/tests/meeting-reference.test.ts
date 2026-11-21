@@ -8,6 +8,7 @@ import { DATA_DIR } from "../src/config"
 import * as store from "../src/meeting/meeting-store"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
 import { generateMeetingMinutes } from "../src/meeting/meeting-minutes"
+import { generateFixtureMinutes, prepareFixtureMinutes } from "./meeting-minutes-test-helper"
 
 const origin = { origin: "chrome-extension://meetingreferencefixture" }
 const llm = { base_url: "https://fixture.invalid", api_key: "fixture", model_name: "fixture", temperature: 0 }
@@ -85,7 +86,7 @@ test("#492 original STT archive survives edits and repeated utterances", async (
   assert.equal(response.meeting.transcript[0].text, "整稿编辑")
   const same = meeting()
   store.setTranscript(same.id, [{ text: raw, source: "stt" }])
-  await handleMeetingMessage({ type: "meeting.generate_minutes", id: same.id, text: raw }, origin, { getLlmConfig: () => llm, generate: params => generateMeetingMinutes({ ...params, extract: async () => "### TL;DR\n原文" }) })
+  await generateFixtureMinutes({ type: "meeting.generate_minutes", id: same.id, text: raw }, origin, { getLlmConfig: () => llm, generate: params => generateMeetingMinutes({ ...params, extract: async () => "### TL;DR\n原文" }) })
   assert.equal(store.loadMeeting(same.id)!.transcript[0].source, "stt", "unchanged explicit snapshot retains STT provenance")
 })
 
@@ -124,7 +125,7 @@ test("#492 reference save/get/clear is independent of transcript", async () => {
 test("#492 reference generation validates evidence and preserves original transcript", async () => {
   const m = meeting()
   store.setTranscript(m.id, [{ text: "旧稿不能遮蔽新快照", source: "stt" }])
-  const response = await handleMeetingMessage({ type: "meeting.generate_minutes", id: m.id, text: raw, reference_notes: notes, reference_name: "notes.md" }, origin, { getLlmConfig: () => llm, generate: generateWithReferences })
+  const response = await generateFixtureMinutes({ type: "meeting.generate_minutes", id: m.id, text: raw, reference_notes: notes, reference_name: "notes.md" }, origin, { getLlmConfig: () => llm, generate: generateWithReferences })
   assert.equal(response.type, "meeting.minutes_result", JSON.stringify(response))
   assert.equal(store.transcriptToText(response.meeting.transcript), raw)
   assert.equal(response.meeting.reference_notes, notes)
@@ -157,7 +158,7 @@ test("#492 invalid correction evidence or ambiguous/overlapping originals fails 
 
 test("#492 changing transcript/reference marks retained minutes stale, including in-flight changes", async () => {
   const m = meeting()
-  const generated = await handleMeetingMessage({ type: "meeting.generate_minutes", id: m.id, text: raw, reference_notes: notes }, origin, { getLlmConfig: () => llm, generate: generateWithReferences })
+  const generated = await generateFixtureMinutes({ type: "meeting.generate_minutes", id: m.id, text: raw, reference_notes: notes }, origin, { getLlmConfig: () => llm, generate: generateWithReferences })
   assert.equal(generated.minutes.stale, false)
   const changed = await handleMeetingMessage({ type: "meeting.set_reference", id: m.id, reference_notes: notes + "新笔记" }, origin)
   assert.equal(changed.meeting.minutes.stale, true)
@@ -168,10 +169,12 @@ test("#492 changing transcript/reference marks retained minutes stale, including
 
   let release!: () => void
   const pending = new Promise<void>(resolve => { release = resolve })
-  const inFlight = handleMeetingMessage({ type: "meeting.generate_minutes", id: m.id, text: raw, reference_notes: notes }, origin, {
+  const deps = {
     getLlmConfig: () => llm,
-    generate: async params => { await pending; return generateWithReferences(params) },
-  })
+    generate: async (params: Parameters<typeof generateMeetingMinutes>[0]) => { await pending; return generateWithReferences(params) },
+  }
+  const prepared = await prepareFixtureMinutes({ id: m.id, text: raw, reference_notes: notes }, origin, deps)
+  const inFlight = handleMeetingMessage(prepared, origin, deps)
   await handleMeetingMessage({ type: "meeting.set_reference", id: m.id, reference_notes: notes + "再次修改" }, origin)
   release()
   const result = await inFlight
@@ -188,7 +191,7 @@ test("#492 no-reference generation keeps Markdown path and explicit empty text d
     seen.push(params.transcriptText)
     return generateMeetingMinutes({ ...params, extract: async () => "### TL;DR\nCurrent material" })
   } }
-  const current = await handleMeetingMessage({ type: "meeting.generate_minutes", id: m.id, text: "current snapshot", reference_notes: "" }, origin, deps)
+  const current = await generateFixtureMinutes({ type: "meeting.generate_minutes", id: m.id, text: "current snapshot", reference_notes: "" }, origin, deps)
   assert.equal(current.type, "meeting.minutes_result")
   assert.deepEqual(seen, ["current snapshot"])
   assert.equal(current.minutes.corrected_transcript, undefined)
@@ -200,11 +203,14 @@ test("#492 no-reference generation keeps Markdown path and explicit empty text d
 test("#492 failed snapshot persistence cannot invoke generation or return success", async () => {
   const m = meeting()
   const transcriptPath = path.join(DATA_DIR, "meetings", m.id, "transcript.json")
+  let invoked = false
+  const deps = { getLlmConfig: () => llm, generate: async () => { invoked = true; throw new Error("must not run") } }
+  const prepared = await prepareFixtureMinutes({ id: m.id, text: raw }, origin, deps)
   fs.unlinkSync(transcriptPath)
   fs.mkdirSync(transcriptPath)
-  let invoked = false
-  const result = await handleMeetingMessage({ type: "meeting.generate_minutes", id: m.id, text: raw }, origin, { getLlmConfig: () => llm, generate: async () => { invoked = true; throw new Error("must not run") } })
+  const result = await handleMeetingMessage(prepared, origin, deps)
   assert.equal(result.type, "meeting.error")
+  assert.equal(result.code, "minutes_failed")
   assert.equal(invoked, false)
   assert.equal(result.minutes, undefined)
 })
@@ -219,13 +225,14 @@ test("#492 one active generation per meeting, lock releases after failure", asyn
     await pending
     return { ok: false as const, code: "fixture_failed", message: "fixture failure" }
   } }
-  const first = handleMeetingMessage({ type: "meeting.generate_minutes", id: m.id, text: raw }, origin, deps)
+  const prepared = await prepareFixtureMinutes({ id: m.id, text: raw }, origin, deps)
+  const first = handleMeetingMessage(prepared, origin, deps)
   const second = handleMeetingMessage({ type: "meeting.generate_minutes", id: m.id, text: "another draft" }, origin, deps)
   release()
   assert.equal((await second).code, "generation_busy")
   await first
   assert.equal(calls, 1)
-  const retried = await handleMeetingMessage({ type: "meeting.generate_minutes", id: m.id, text: raw }, origin, deps)
+  const retried = await generateFixtureMinutes({ id: m.id, text: raw }, origin, deps)
   assert.equal(retried.code, "fixture_failed")
   assert.equal(calls, 2)
 })

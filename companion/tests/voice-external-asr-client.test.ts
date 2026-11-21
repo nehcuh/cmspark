@@ -111,6 +111,18 @@ test("abort while lookup is pending does not fetch", async () => {
   }
 })
 
+test("an unresolved DNS lookup counts against the external request deadline", { timeout: 1000 }, async () => {
+  let posted = false
+  const got = await transcribeExternal({
+    style: "openai", url: "https://asr.example/v1/audio/transcriptions", apiKey: "synthetic",
+    wav, timeoutMs: 15, signal: new AbortController().signal,
+    lookup: () => new Promise(() => {}),
+    fetchImpl: async () => { posted = true; return { status: 204 } },
+  })
+  assert.deepEqual(got, { ok: false, code: "external_timeout" })
+  assert.equal(posted, false)
+})
+
 test("abort after fetch registers its listener drops late text", async () => {
   let fetches = 0
   const live = new AbortController()

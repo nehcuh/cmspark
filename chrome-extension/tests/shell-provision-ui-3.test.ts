@@ -67,7 +67,7 @@ test("settings assistant navigation click sends no shell writes", async () => {
     require(id: string) {
       if (id === "react") return { useState(initial: any) { const slot = cursor++; if (!(slot in cells)) cells[slot] = initial; return [cells[slot], (value: any) => { cells[slot] = typeof value === "function" ? value(cells[slot]) : value }] }, useRef(initial: any) { const slot = cursor++; if (!(slot in cells)) cells[slot] = { current: initial }; return cells[slot] }, useCallback(fn: any) { return fn }, useEffect(effect: () => any, deps: any[]) { const slot = effectCursor++; const old = effects[slot]; if (!old || deps.some((value, index) => value !== old.deps[index])) { old?.cleanup?.(); effects[slot] = { deps, cleanup: effect() } } } }
       if (id === "react/jsx-runtime") return jsxRuntime
-      if (id === "../utils/settings-intent") return { parseSettingsIntent: () => ({ type: "unknown", reason: "no_match" }) }
+      if (id === "../utils/settings-intent") return { localSettingsIntent: () => null, parseSettingsIntent: () => ({ type: "unknown", reason: "no_match" }) }
       if (id === "../utils/semantic-settings") return { semanticValue: (value: unknown) => String(value), requestSemanticSettings: async (type: string) => { calls.push(type); return type.endsWith("propose") ? { proposal } : { items: receipt } } }
       if (id === "../voice/detect") return { getSpeechRecognitionCtor: () => null, VOICE_DEFAULT_LANG: "zh-CN" }
       if (id === "../ui/tokens") return { tokens: {} }

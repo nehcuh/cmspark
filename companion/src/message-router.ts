@@ -129,6 +129,7 @@ import {
 } from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
+  handlePairedModelCenterMessage,
 } from "./message-router/handlers/config"
 import { handleRunProgressToggle } from "./message-router/handlers/run-progress"
 import {
@@ -1167,6 +1168,9 @@ async function dispatchMessage(
           || securityConfirmations.hasPendingForWorker(rest.thread_id) || securityConfirmations.hasPendingForOriginWs(session?.originWs)
       })
     // --- Config (C10-C: handlers/config.ts) ---
+    case "model.center.get":
+    case "model.center.save":
+      return handlePairedModelCenterMessage(type, rest, session)
     case "config.get":
     case "config.set":
     case "config.test":
@@ -3274,6 +3278,19 @@ async function dispatchMessage(
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const allowedUpdates: Record<string, any> = {}
       const updates = rest.updates || {}
+      if (rest.expected_knowledge_scope !== undefined) {
+        const expected = rest.expected_knowledge_scope
+        if (!expected || !["auto", "all", "manual"].includes(expected.mode) ||
+            !Array.isArray(expected.selected) || !expected.selected.every((item: unknown) => typeof item === "string") ||
+            Object.keys(updates).length !== 1 || updates.knowledge_selection_mode !== "manual") {
+          return { type: "error", error: "invalid knowledge scope update" }
+        }
+        const thread = threadManager.get(rest.thread_id)
+        if (!thread || (thread.knowledge_selection_mode ?? "auto") !== expected.mode ||
+            JSON.stringify([...(thread.active_knowledge_ids ?? [])].sort()) !== JSON.stringify([...expected.selected].sort())) {
+          return { type: "error", code: "STALE_KNOWLEDGE_SCOPE", error: "知识范围已变化" }
+        }
+      }
       for (const key of [
         "alias",
         "config_override",
@@ -3736,6 +3753,11 @@ async function dispatchMessage(
         },
       )
     case "meeting.create":
+    case "meeting.asr.get":
+    case "meeting.asr.set":
+    case "meeting.asr.authorize":
+    case "meeting.asr.segment":
+    case "meeting.asr.cancel":
     case "meeting.start":
     case "meeting.end":
     case "meeting.list":
@@ -3753,6 +3775,7 @@ async function dispatchMessage(
     case "meeting.diarize.upload_chunk":
     case "meeting.diarize.upload_end":
     case "meeting.auto_diarize":
+    case "meeting.prepare_minutes":
     case "meeting.generate_minutes":
     case "meeting.set_status":
       return handleMeetingMessage(

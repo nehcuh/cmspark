@@ -18,17 +18,19 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--artifacts', type=Path, required=True)
 parser.add_argument('--real-mic', action='store_true')
 parser.add_argument('--baseline', action='store_true')
+parser.add_argument('--external-asr', action='store_true')
+parser.add_argument('--minutes-only', action='store_true')
 args = parser.parse_args()
 args.artifacts.mkdir(parents=True, exist_ok=True)
 project = Path(__file__).resolve().parent.parent
 
-def wav_bytes():
+def wav_bytes(seconds=2):
     buffer = io.BytesIO()
     with wave.open(buffer, 'wb') as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(16000)
-        wav.writeframes(b''.join(struct.pack('<h', 1800 if i % 40 < 20 else -1800) for i in range(32000)))
+        wav.writeframes((struct.pack('<h', 1800) * 20 + struct.pack('<h', -1800) * 20) * (seconds * 400))
     return buffer.getvalue()
 
 def docx_bytes():
@@ -46,6 +48,8 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
         command.append('--real-mic')
     if args.baseline:
         command.append('--baseline')
+    if args.external_asr:
+        command.append('--external-asr')
     subprocess.run(command, cwd=project, check=True)
     server = subprocess.Popen(['node', 'scripts/meeting-workflow-server.cjs', str(temp/'web'), str(temp/'data'), str(args.artifacts.resolve()/'workflow-frames.json')], cwd=project, stdout=subprocess.PIPE, stderr=open(temp/'server.log','w'), text=True)
     try:
@@ -66,6 +70,109 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 page.evaluate("text=>window.emit({type:'voice.stt.result',sessionId:window.sent.findLast(m=>m.type==='voice.stt.end').sessionId,text})", text)
             def transcript():
                 return page.get_by_test_id('meeting-transcript')
+            def verify_minutes(use_audio_import=False):
+                open_page()
+                raw = '讨论配森发布'
+                if use_audio_import:
+                    page.locator('input[type=file][accept^="audio/"]').set_input_files({
+                        'name':'synthetic.wav','mimeType':'audio/wav','buffer':wav_bytes(),
+                    })
+                    final(raw)
+                    page.get_by_test_id('meeting-import-status').filter(has_text='音频导入完成').wait_for()
+                else:
+                    transcript().fill(raw)
+                page.get_by_test_id('meeting-reference-file').set_input_files({'name':'会议笔记.md','mimeType':'text/markdown','buffer':'项目技术栈：Python。'.encode()})
+                page.wait_for_function('document.querySelector("[data-testid=meeting-reference-input]").value.includes("Python")')
+                assert transcript().input_value() == raw
+                page.get_by_role('button',name='生成会议纪要',exact=True).click()
+                confirmation = page.get_by_role('region', name='确认纪要发送范围', exact=True)
+                confirmation.get_by_text('参考笔记', exact=False).first.wait_for()
+                confirmation.get_by_text('synthetic · https://unused.invalid/', exact=True).wait_for()
+                confirmation.get_by_role('button',name='取消，保留文字',exact=True).click()
+                assert not page.evaluate('window.sent.some(m=>m.type==="meeting.generate_minutes")')
+                page.get_by_role('button',name='生成会议纪要',exact=True).click()
+                confirmation.get_by_role('button',name='确认发送并生成',exact=True).click()
+                page.wait_for_function('window.responses.some(m=>m.type==="meeting.minutes_result")')
+                result=page.evaluate('window.responses.findLast(m=>m.type==="meeting.minutes_result")')
+                assert result['minutes']['source_transcript'] == raw
+                assert result['minutes']['corrected_transcript']=='讨论Python发布'
+                assert result['meeting']['transcript'][0]['text'] == raw
+                assert result['meeting']['reference_notes']=='项目技术栈：Python。'
+                assert transcript().input_value() == raw
+                if use_audio_import:
+                    assert [line['text'] for line in result['meeting']['original_transcript']] == [raw]
+                    archive = page.get_by_test_id('meeting-original-transcript')
+                    archive.locator('summary').click()
+                    assert archive.locator('pre').inner_text() == raw
+                    counts = page.evaluate('''() => ({
+                        prepared: window.sent.filter(m => m.type === 'meeting.prepare_minutes').length,
+                        generated: window.sent.filter(m => m.type === 'meeting.generate_minutes').length,
+                    })''')
+                    assert counts == {'prepared': 2, 'generated': 1}
+                page.get_by_text('会议纪要 · AI 草稿',exact=True).wait_for()
+                corrected=page.get_by_test_id('meeting-corrected-transcript')
+                corrected.locator('summary').click()
+                assert corrected.locator('pre').inner_text()=='讨论Python发布'
+                page.get_by_test_id('meeting-correction-evidence').locator('summary').click()
+                page.get_by_test_id('meeting-correction-evidence').scroll_into_view_if_needed()
+                page.screenshot(path=str(args.artifacts/'meeting-result-390.png'),full_page=True)
+                page.get_by_test_id('meeting-materials').scroll_into_view_if_needed()
+                page.screenshot(path=str(args.artifacts/'meeting-390.png'),full_page=True)
+                page.set_viewport_size({'width':960,'height':900})
+                page.screenshot(path=str(args.artifacts/'meeting-960.png'),full_page=True)
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                page.get_by_test_id('meeting-reference-input').fill('项目技术栈：Python。新增议程待核对。')
+                page.get_by_test_id('meeting-minutes-stale').wait_for()
+                print('PASS reference import remains separate; cancellation gates generation; original survives correction', flush=True)
+
+            if args.minutes_only:
+                verify_minutes(use_audio_import=True)
+                assert not errors, errors
+                browser.close()
+                raise SystemExit(0)
+            if args.external_asr:
+                open_page()
+                form = page.get_by_test_id('meeting-asr-settings')
+                page.get_by_test_id('meeting-asr-current').filter(has_text='本机转写').wait_for()
+                form.get_by_label('转写方式').select_option('external')
+                form.get_by_label('服务协议').select_option('openai')
+                form.get_by_label('服务地址').fill(f'http://127.0.0.1:{port}/v1')
+                form.get_by_label('模型名称').fill('fixture-whisper')
+                form.get_by_label('会议转写密钥').fill('synthetic-asr')
+                form.get_by_role('button', name='保存', exact=True).click()
+                page.get_by_test_id('meeting-asr-current').filter(has_text='fixture-whisper').wait_for()
+                source = {'name':'synthetic-long.wav','mimeType':'audio/wav','buffer':wav_bytes(92)}
+                audio_input = page.locator('input[type=file][accept^="audio/"]')
+                audio_input.set_input_files(source)
+                approval = page.get_by_role('region', name='确认发送导入录音')
+                approval.wait_for()
+                confirmation = approval.inner_text()
+                for value in ('synthetic-long.wav', f'http://127.0.0.1:{port}/v1/audio/transcriptions', 'fixture-whisper', '共 3 段'):
+                    assert value in confirmation, confirmation
+                assert not page.evaluate('window.sent.some(m=>m.type==="meeting.asr.authorize"||m.type==="meeting.asr.segment")')
+                approval.get_by_role('button', name='取消', exact=True).click()
+                page.get_by_test_id('meeting-import-status').filter(has_text='音频未发送').wait_for()
+                assert not page.evaluate('window.sent.some(m=>m.type==="meeting.asr.authorize"||m.type==="meeting.asr.segment")')
+                audio_input.set_input_files(source)
+                approval.get_by_role('button', name='确认发送并转写').click()
+                page.get_by_test_id('meeting-import-status').filter(has_text='服务正在限流').wait_for()
+                assert '已完成 1/3 段' in page.get_by_test_id('meeting-import-status').inner_text()
+                assert '该段音频已发送' in page.get_by_test_id('meeting-import-status').inner_text()
+                assert transcript().input_value() == '第一段外部转写'
+                assert page.evaluate('window.sent.filter(m=>m.type==="meeting.asr.segment").map(m=>m.index)') == [0, 1]
+                assert not page.evaluate('window.sent.some(m=>m.type==="voice.stt.start"||m.type==="meeting.generate_minutes")')
+                trace = json.loads((args.artifacts/'workflow-frames.json').read_text(encoding='utf-8'))
+                assert [item['asrBoundary'] for item in trace if 'asrBoundary' in item] == [
+                    {'status': 200, 'wavBytes': 1440044, 'model': 'fixture-whisper'},
+                    {'status': 429, 'wavBytes': 1440044, 'model': 'fixture-whisper'},
+                ]
+                persisted = [item['response']['meeting'] for item in trace if item.get('request', {}).get('type') == 'meeting.set_transcript']
+                assert [line['text'] for line in persisted[-1]['original_transcript']] == ['第一段外部转写']
+                page.screenshot(path=str(args.artifacts/'meeting-asr-partial.png'), full_page=True)
+                assert not errors, errors
+                print('PASS meeting ASR settings, per-file refusal, long PCM segmentation, provider rejection and retained completed text', flush=True)
+                browser.close()
+                raise SystemExit(0)
             open_page()
             page.get_by_test_id('meeting-asr-refine').check()
             page.get_by_test_id('meeting-start-capture').click()
@@ -154,6 +261,10 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 assert saved['transcript'][0].get('speaker') == '张三'
                 canonical = '\n'.join((f"{line['speaker']}: " if line.get('speaker') else '') + line['text'] for line in saved['transcript'])
                 release_gate('meeting.set_reference')
+                confirmation = page.get_by_role('region', name='确认纪要发送范围', exact=True)
+                confirmation.get_by_text('synthetic · https://unused.invalid/', exact=True).wait_for()
+                assert not page.evaluate('window.sent.some(m=>m.type==="meeting.generate_minutes")')
+                confirmation.get_by_role('button', name='确认发送并生成', exact=True).click()
                 page.wait_for_function('window.responses.some(m=>m.type==="meeting.minutes_result")')
                 generated = page.evaluate('window.responses.findLast(m=>m.type==="meeting.minutes_result")')
                 assert generated['minutes']['source_transcript'] == canonical
@@ -174,35 +285,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 assert fresh['id'] != generated['meeting']['id']
                 assert not fresh.get('original_transcript')
                 print('PASS creating a new meeting clears the prior owner original-recognition archive immediately', flush=True)
-                # Independent reference upload parses through production handler.
-                open_page()
-                transcript().fill('讨论配森发布')
-                page.get_by_test_id('meeting-reference-file').set_input_files({'name':'会议笔记.md','mimeType':'text/markdown','buffer':'项目技术栈：Python。'.encode()})
-                page.wait_for_function('document.querySelector("[data-testid=meeting-reference-input]").value.includes("Python")')
-                assert transcript().input_value()=='讨论配森发布'
-                page.get_by_role('button',name='生成会议纪要',exact=True).click()
-                page.wait_for_function('window.responses.some(m=>m.type==="meeting.minutes_result")')
-                result=page.evaluate('window.responses.findLast(m=>m.type==="meeting.minutes_result")')
-                assert result['minutes']['source_transcript']=='讨论配森发布'
-                assert result['minutes']['corrected_transcript']=='讨论Python发布'
-                assert result['meeting']['transcript'][0]['text']=='讨论配森发布'
-                assert result['meeting']['reference_notes']=='项目技术栈：Python。'
-                assert transcript().input_value()=='讨论配森发布'
-                page.get_by_text('会议纪要 · AI 草稿',exact=True).wait_for()
-                corrected=page.get_by_test_id('meeting-corrected-transcript')
-                corrected.locator('summary').click()
-                assert corrected.locator('pre').inner_text()=='讨论Python发布'
-                page.get_by_test_id('meeting-correction-evidence').locator('summary').click()
-                page.get_by_test_id('meeting-correction-evidence').scroll_into_view_if_needed()
-                page.screenshot(path=str(args.artifacts/'meeting-result-390.png'),full_page=True)
-                page.get_by_test_id('meeting-materials').scroll_into_view_if_needed()
-                page.screenshot(path=str(args.artifacts/'meeting-390.png'),full_page=True)
-                page.set_viewport_size({'width':960,'height':900})
-                page.screenshot(path=str(args.artifacts/'meeting-960.png'),full_page=True)
-                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-                page.get_by_test_id('meeting-reference-input').fill('项目技术栈：Python。新增议程待核对。')
-                page.get_by_test_id('meeting-minutes-stale').wait_for()
-                print('PASS reference import remains separate; production generation validates evidence and preserves original while returning corrected draft', flush=True)
+                verify_minutes()
                 # Failed persistence must not generate using old server text.
                 open_page();transcript().fill('当前编辑稿')
                 page.get_by_role('button',name='新建会议会话',exact=True).click()
@@ -318,4 +401,4 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
     finally:
         server.terminate()
         server.wait(timeout=10)
-        (args.artifacts/'server.log').write_text((temp/'server.log').read_text())
+        (args.artifacts/'server.log').write_bytes((temp/'server.log').read_bytes())

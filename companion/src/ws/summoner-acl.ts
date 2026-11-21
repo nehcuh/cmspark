@@ -43,6 +43,7 @@ const SUMMONER_ALLOW = new Set([
   "meeting.start",
   "meeting.end",
   "meeting.append_transcript",
+  "meeting.prepare_minutes",
   "meeting.generate_minutes",
   "meeting.import_reference",
   "meeting.set_reference",

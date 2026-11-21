@@ -255,6 +255,11 @@ export async function handleVoiceSttMessage(
       if (typeof sessionId !== "string" || !sessionId) {
         return sttError(undefined, "invalid_session_id", "sessionId required")
       }
+      const meetingImport = rest.purpose === "meeting-import" && isChromeExtensionOrigin(ctx.origin) &&
+        rest.engine === undefined && !q1 && format === "wav"
+      if (rest.purpose !== undefined && !meetingImport) {
+        return sttError(sessionId, "origin_denied", "local meeting audio import requires the browser extension")
+      }
 
       if (rest.engine === "external") {
         const saved = getConfig().voice?.sttEngine
@@ -340,8 +345,12 @@ export async function handleVoiceSttMessage(
       }
 
       // P1: server-enforce engine=local + privacy_ack_v2 (client chrome.storage alone is not a gate)
-      const sttEngine = getConfig().voice?.sttEngine
-      if (sttEngine !== "local") {
+      const voice = getConfig().voice
+      const sttEngine = voice?.sttEngine
+      if (meetingImport && voice?.meetingAsr?.mode === "external") {
+        return sttError(sessionId, "meeting_asr_configuration_changed", "meeting import transcription mode changed")
+      }
+      if (sttEngine !== "local" && !meetingImport) {
         logger.warn("voice.stt.start.refused", { reason: "engine_not_local", sttEngine })
         return sttError(sessionId, "engine_not_local", "local STT requires voice.sttEngine=local", {
           family: "voice.stt",

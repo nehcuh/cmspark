@@ -3,7 +3,7 @@
 
 export const LS_SETTINGS_EXPAND = "cmspark.settings.expandSections"
 
-/** Canonical ids; SettingsPage.SETTINGS_PAGES owns presentation order. */
+/** Stable ids for existing settings links and saved section preferences. */
 export const SETTINGS_SECTION_IDS = [
   "connection",
   "model",

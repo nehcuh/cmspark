@@ -11,9 +11,11 @@ import { validateSiteCounterMessage } from "../message-router/handlers/site-coun
 import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "../voice/session-caps"
 import { validateProjectRequest } from "../threads/project-store"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
+import { validMeetingAsrMessage } from "../voice/external-asr-meeting"
 import { validBinaryDriftMessage } from "../apps/binary-drift-state"
 import { validateActivityMessage } from "../activity"
 import { validateSettingsAssistantMessage } from "../settings-assistant"
+import { isModelCenterAction } from "../model-center"
 import { validLcuCommand } from "../computer/lcu/contract"
 
 function validateLcuSettings(message: any, field?: "command" | "enabled"): WsValidationResult {
@@ -43,6 +45,32 @@ function projectSchema(message: any): WsValidationResult {
 export interface WsValidationResult {
   valid: boolean
   error?: string
+}
+
+function meetingAsrSchema(message: any): WsValidationResult {
+  return validMeetingAsrMessage(message) ? { valid: true } : { valid: false, error: "Invalid meeting ASR request" }
+}
+
+function meetingMinutesSchema(m: any): WsValidationResult {
+  if (m.v !== 1) return { valid: false, error: `${m.type} requires v:1` }
+  if (m.reference_notes !== undefined && (typeof m.reference_notes !== "string" || m.reference_notes.length > 100_000)) {
+    return { valid: false, error: "参考笔记必须为文本，且不能超过 100000 字" }
+  }
+  if (m.reference_name !== undefined && (typeof m.reference_name !== "string" || m.reference_name.length > 255)) {
+    return { valid: false, error: "参考文件名无效或过长" }
+  }
+  if (m.text !== undefined && (typeof m.text !== "string" || m.text.length > 200_000)) {
+    return { valid: false, error: "转写必须为文本，且不能超过 200000 字" }
+  }
+  const hasId = (typeof m.id === "string" && m.id) || (typeof m.meeting_id === "string" && m.meeting_id)
+  if (!hasId && !m.text?.trim()) return { valid: false, error: `${m.type} requires id and/or text` }
+  if (m.template_md !== undefined && (typeof m.template_md !== "string" || m.template_md.length > 16_384)) {
+    return { valid: false, error: "纪要模板必须为文本，且不能超过 16384 字" }
+  }
+  if (m.consent_token !== undefined && (m.type !== "meeting.generate_minutes" || typeof m.consent_token !== "string" || m.consent_token.length !== 36)) {
+    return { valid: false, error: "Invalid minutes consent token" }
+  }
+  return { valid: true }
 }
 
 export function validateWsMessage(msg: any): WsValidationResult {
@@ -714,6 +742,10 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.v !== 1) {
         return { valid: false, error: "voice.stt.start requires v:1" }
       }
+      if (m.purpose !== undefined && (m.purpose !== "meeting-import" || m.engine !== undefined ||
+          m.queue_contract !== undefined || m.format !== "wav" || m.privacy_ack_v2 !== true)) {
+        return { valid: false, error: "Invalid local meeting import session" }
+      }
       if (typeof m.sessionId !== "string" || !m.sessionId || m.sessionId.length > 128) {
         return { valid: false, error: "voice.stt.start requires sessionId string (1–128)" }
       }
@@ -866,6 +898,11 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     // Meeting minutes scene (Mtg0/Mtg1)
+    "meeting.asr.get": (m) => meetingAsrSchema(m),
+    "meeting.asr.set": (m) => meetingAsrSchema(m),
+    "meeting.asr.authorize": (m) => meetingAsrSchema(m),
+    "meeting.asr.segment": (m) => meetingAsrSchema(m),
+    "meeting.asr.cancel": (m) => meetingAsrSchema(m),
     "meeting.create": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.create requires v:1" }
       return { valid: true }
@@ -1085,29 +1122,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
-    "meeting.generate_minutes": (m) => {
-      if (m.v !== 1) return { valid: false, error: "meeting.generate_minutes requires v:1" }
-      if (m.reference_notes !== undefined && (typeof m.reference_notes !== "string" || m.reference_notes.length > 100_000)) {
-        return { valid: false, error: "参考笔记必须为文本，且不能超过 100000 字" }
-      }
-      if (m.reference_name !== undefined && (typeof m.reference_name !== "string" || m.reference_name.length > 255)) {
-        return { valid: false, error: "参考文件名无效或过长" }
-      }
-      const hasId = typeof m.id === "string" && m.id
-      const hasText = typeof m.text === "string" && m.text.trim()
-      if (!hasId && !hasText) {
-        return { valid: false, error: "meeting.generate_minutes requires id and/or text" }
-      }
-      if (m.template_md !== undefined) {
-        if (typeof m.template_md !== "string") {
-          return { valid: false, error: "template_md must be string" }
-        }
-        if (m.template_md.length > 16_384) {
-          return { valid: false, error: "template_md too long" }
-        }
-      }
-      return { valid: true }
-    },
+    "meeting.prepare_minutes": (m) => meetingMinutesSchema(m),
+    "meeting.generate_minutes": (m) => meetingMinutesSchema(m),
     "meeting.set_status": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.set_status requires v:1" }
       if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.set_status requires id" }
@@ -1497,6 +1513,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
     // as unknown (looks like Companion "crash"/dead connection). Keep in lock-step with
     // message-router.ts case arms.
     "config.get": () => ({ valid: true }),
+    "model.center.get": () => ({ valid: true }),
+    "model.center.save": (m) => typeof m.config_revision === "string" && m.config_revision.length > 0 && m.config_revision.length <= 128 && isModelCenterAction(m.action)
+      ? { valid: true } : { valid: false, error: "Invalid model center save" },
     "config.test": () => ({ valid: true }),
     "config.testVision": () => ({ valid: true }),
     "llm.oneshot": (m: any) => {

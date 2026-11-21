@@ -28,6 +28,8 @@ export function redactConfigForWire(config: any): any {
   if (!config || typeof config !== "object") return config
 
   const redacted: any = { ...config }
+  // The model center has a separate, allow-listed projection on its paired route.
+  delete redacted.model_center
 
   if (config.llm && typeof config.llm === "object") {
     redacted.llm = {
@@ -47,6 +49,7 @@ export function redactConfigForWire(config: any): any {
 
   if (config.voice && typeof config.voice === "object") {
     const voice = { ...config.voice }
+    delete voice.meetingAsr
     if (voice.external && typeof voice.external === "object") {
       voice.external = {
         ...voice.external,

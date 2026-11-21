@@ -29,6 +29,7 @@ export interface LlmExtractConfig {
   context_window?: number
   /** Output cap for the extraction call; forwarded so a tiny context_window cannot recap it. */
   max_tokens?: number
+  rejectRedirects?: boolean
 }
 
 function toLlmConfig(config: LlmExtractConfig): LlmConfig {
@@ -80,6 +81,7 @@ export async function llmExtract(params: {
     temperature: Math.min(config.temperature, temperatureCap),
     model: config.model_name,
     signal,
+    rejectRedirects: config.rejectRedirects,
     messages: [
       { role: "system", content: systemPrompt },
       // Strip lone surrogates from user content — vault notes / thread text can contain them
