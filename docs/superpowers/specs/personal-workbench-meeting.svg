@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 510" font-family="Microsoft YaHei, sans-serif" fill="#232323">
+<title>个人工作台 · 从侧栏进入会议</title>
+<rect width="1180" height="510" fill="#fafafa"/>
+<g fill="white" stroke="#999"><rect x="16" y="56" width="254" height="420" rx="10"/><rect x="289" y="56" width="431" height="420" rx="10"/><rect x="739" y="56" width="425" height="420" rx="10"/></g>
+<g font-size="21" font-weight="bold"><text x="18" y="35">侧栏</text><text x="292" y="35">个人工作台</text><text x="744" y="35">会议</text></g>
+<g font-size="15"><text x="30" y="92">导航　 当前对话</text><text x="163" y="92">个人工作台 ↗</text><text x="32" y="157">对话内容</text><text x="32" y="441">输入消息…</text>
+<text x="307" y="92">今日　 待办　 活动记录　 会议　 资料</text><text x="308" y="149" font-size="23">今天</text><text x="308" y="197">开始会议　　 录屏　　 实时转写　　 翻译</text><text x="308" y="259">今日待办</text><text x="504" y="259">聊天中发现 · 待整理</text><text x="308" y="296">□ 提交方案</text><text x="504" y="296">查看原文 → 确认</text><text x="308" y="395">最近会议</text><text x="616" y="395">导入录音</text>
+<text x="756" y="92">‹ 工作台　　 会议名</text><text x="957" y="92">● 正在收音　00:31　停止</text><text x="756" y="151">麦克风　　 共享屏幕　　 字幕　　 译为…</text><text x="756" y="216">00:04</text><text x="826" y="216">我们周五前提交方案。</text><text x="826" y="251" fill="#666">We’ll submit the proposal by Friday.</text><text x="756" y="306">00:12</text><text x="826" y="306" fill="#666">正在识别…</text><text x="756" y="432">结束后　 核对逐字稿　 生成纪要　 保存录屏</text></g>
+<path d="M25 112H261 M25 406H261 M300 112H710 M300 219H710 M300 354H710 M749 112H1154 M749 171H1154 M749 390H1154" stroke="#bbb"/>
+</svg>
