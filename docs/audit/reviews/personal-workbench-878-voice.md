@@ -91,3 +91,18 @@ Each fresh profile selected English (US) using the visible chat dictation langua
 ## Saved record navigation
 
 In the production workbench, delayed the first saved-meeting reply by 1.4 s and selected a second item through Today. The second record stayed visible after the late reply. An attempt to switch away from edited text preserved the draft. Saving and selecting the previously blocked item again loaded the correct record. Creating a new meeting then cleared the previous transcript.
+
+## Saved DeepSeek meeting service
+
+On 22 November 2026, the installed meeting preference selected DeepSeek’s default ASR endpoint. Each take used the public AMI clip and a fresh confirmation in the built extension. An isolated companion read the existing meeting receiver in memory and kept the test meetings in disposable storage. The first cold profile was retired after its take. Profiles B and C were reused for the warm takes. Provider-side cache state was unknown. [DeepSeek speech-to-text API](https://api-docs.deepseek.com/guides/asr/)
+
+All six transcripts contained both words in order, “Okay. Right.” The twelve audio requests returned HTTP 200. The service returns complete batches, and the browser displayed the first batch while capture continued. Request durations below include the HTTP round trip through response headers.
+
+| Chrome profile / take | Device | First PCM | Submit | Audible | First text | Onset → text | Stop → final | HTTP first / tail |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| A cold | 0.356 | 0.361 | 0.403 | 0.413 | 2.108 | 1.695 | 0.764 | 0.704 / 0.669 |
+| B cold | 0.316 | 0.321 | 0.362 | 0.372 | 1.998 | 1.626 | 0.823 | 0.638 / 0.714 |
+| B warm 1 | 0.276 | 0.288 | 0.326 | 0.336 | 1.836 | 1.499 | 0.746 | 0.512 / 0.654 |
+| B warm 2 | 0.267 | 0.273 | 0.311 | 0.322 | 1.958 | 1.636 | 0.720 | 0.644 / 0.622 |
+| C cold | 0.320 | 0.335 | 0.373 | 0.373 | 1.871 | 1.498 | 0.835 | 0.495 / 0.726 |
+| C warm | 0.270 | 0.276 | 0.315 | 0.345 | 1.896 | 1.551 | 0.711 | 0.579 / 0.604 |
