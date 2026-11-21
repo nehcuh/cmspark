@@ -12,10 +12,11 @@ export interface ProjectListViewProps {
   onQuery: (value: string) => void
   onClearQuery: () => void
   onToggleArchive: () => void
+  onRetry?: () => void
   onOpen: (projectId: string) => void
 }
 
-export function ProjectListView({ projects, query, archiveView, phase, fetchedAt, hasSnapshot, onQuery, onClearQuery, onToggleArchive, onOpen }: ProjectListViewProps) {
+export function ProjectListView({ projects, query, archiveView, phase, fetchedAt, hasSnapshot, onQuery, onClearQuery, onToggleArchive, onOpen, onRetry }: ProjectListViewProps) {
   const rows = hasSnapshot ? visibleProjects({ projects, query, archiveView }) : []
   const status = !hasSnapshot && phase === "loading" ? projectCopy.loading
     : phase === "refreshing" ? projectCopy.updating
@@ -29,6 +30,7 @@ export function ProjectListView({ projects, query, archiveView, phase, fetchedAt
     : null
   return <section aria-label={projectCopy.projects}>
     {status && <p role="status">{status}</p>}
+    {phase === "list-error" && !hasSnapshot && onRetry && <button type="button" onClick={onRetry}>重试</button>}
     {phase === "list-error" && hasSnapshot && <p role="alert">{projectCopy.listFailed}</p>}
     <label>搜索项目<input aria-label="搜索项目" value={query} onChange={event => onQuery(event.target.value)} /></label>
     {query.trim() && <button type="button" onClick={onClearQuery}>{projectCopy.clearSearch}</button>}

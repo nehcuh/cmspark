@@ -126,8 +126,9 @@ function harness() {
         if (id === "katex/dist/katex.min.css") return {}
         if (!id.startsWith(".")) throw new Error(`unexpected nonlocal dependency ${id} from ${path.basename(filename)}`)
         const target = path.resolve(path.dirname(filename), id)
-        if (target.endsWith("/store/agentStore")) return { ...store, useAgentStore: () => ({ state, dispatch }) }
-        if (target.endsWith("/components/ContextPanelHost")) {
+        const modulePath = target.replace(/\\/g, "/")
+        if (modulePath.endsWith("/store/agentStore")) return { ...store, useAgentStore: () => ({ state, dispatch }) }
+        if (modulePath.endsWith("/components/ContextPanelHost")) {
           const actual = load(target + ".tsx")
           return { ...actual, useContextPanelHostOptional: () => host }
         }

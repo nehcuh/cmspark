@@ -26,7 +26,12 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
     engine.bindThreadManager(manager)
     const dir = join(root, "skills")
     mkdirSync(dir, { recursive: true })
-    for (const [name, host, marker] of [["site-a", "a.test", "SITE_A_451"], ["site-b", "b.test", "SITE_B_451"], ["manual-c", "c.test", "MANUAL_C_451"]]) {
+    for (const [name, host, marker] of [
+      ["site-a", "a.test", "Inspect the shipping record. SITE_A_451"],
+      ["site-b", "b.test", "Inspect the product record. SITE_B_451"],
+      ["site-a-decoy", "a.test", "Holiday scheduling only. IRRELEVANT_451"],
+      ["manual-c", "c.test", "MANUAL_C_451"],
+    ]) {
       engine.createExperienceSkill(name, "site_knowledge", host, ["manual"], {
         id: name, category: "tip", content: marker, recorded_at: new Date().toISOString(),
         confirmed_at: null, stale: false, stale_reason: "", replaced_by: "",
@@ -50,6 +55,8 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
       { name: "get_page_text", args: { tabId: 123 } },
     ]
     const requests: string[] = []
+    const completed: any[] = []
+    const finalFinishReason = initialTab === undefined ? "max_tokens" : "stop"
     proto = Object.getPrototypeOf(new OpenAI({ baseURL: "http://localhost:9999", apiKey: "test" }).chat.completions)
     original = proto.create
     proto.create = async (params: any) => {
@@ -57,7 +64,7 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
       const step = steps.shift()
       return (async function* () {
         yield { choices: [{ delta: step ? { tool_calls: [{ index: 0, id: `call-${requests.length}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } : { content: "done" } }] }
-        yield { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }
+        yield { choices: [{ delta: {}, finish_reason: step ? "tool_calls" : finalFinishReason }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }
       })()
     }
     let actualUrl: string | undefined = "https://a.test/start"
@@ -68,7 +75,7 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
       resolveSiteTarget: async (id: number) => { assert.equal(id, 123); return siteTargetFromBrowser(id, actualUrl, Date.now()) },
       config: { base_url: "http://localhost:9999", api_key: "test", model_name: "test", temperature: 0, context_window: 128000 },
       threadManager: manager, skillEngine: engine, historyStore: { record: () => 0 } as any,
-      sendToExtension: () => {},
+      sendToExtension: (frame: any) => { if (frame.type === "chat.done" && frame.message_id) completed.push(frame) },
       executeTool: async (_id: string, name: string, args: any) => {
         if (name === "run_progress_propose") return { success: true, data: { items: [{ text: "read the pages" }] } }
         if (args.tabId === 999) return { success: false, error: "TAB_LOCKED", data: { error_code: "TAB_LOCKED" } }
@@ -85,6 +92,7 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
     assert.equal(requests.length, 5)
     assert.ok(requests[0].includes("SITE_A_451"))
     assert.ok(!requests[0].includes("SITE_B_451"))
+    assert.ok(!requests[0].includes("IRRELEVANT_451"))
     assert.equal(requests[0].includes("SECRET_LOCATOR_451"), initialTab !== undefined)
     assert.ok(requests[2].includes("SITE_A_451"), "failed tab must not retarget context")
     assert.ok(requests[3].includes("SITE_B_451"))
@@ -96,6 +104,15 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
       assert.ok(prompt.includes("MANUAL_C_451"))
       assert.ok(prompt.includes("SECURITY FOOTER (non-overrideable)"))
     }
+    const final = manager.getMessages(thread.id).find(row => row.content === "done")
+    assert.ok(final)
+    assert.deepEqual(final.retrieved_sources?.map(source => [source.id, source.selection]), [["manual-c", "explicit"]])
+    assert.match(final.retrieved_sources?.[0].excerpt ?? "", /MANUAL_C_451/)
+    const finalFrame = completed.find(frame => frame.message_id === final.id)
+    assert.deepEqual(finalFrame?.retrieved_sources, final.retrieved_sources)
+    const generationLimit = finalFinishReason === "max_tokens" ? "output_budget" : undefined
+    assert.equal(final.generation_limit, generationLimit)
+    assert.equal(finalFrame?.generation_limit, generationLimit)
   } finally {
     if (proto && original) proto.create = original
     if (previous === undefined) delete process.env.CMSPARK_DATA_DIR

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { prepareSettingsSubmission } from "../utils/settings-draft"
+import { CHAT_OUTPUT_LIMIT_MAX, isChatOutputLimit } from "../utils/normalize-config"
 import type { LLMConfig, SecurityAuditEntry } from "../types"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
@@ -1167,6 +1168,27 @@ export function SettingsSlideout() {
           </div>
 
           <div style={styles.field}>
+            <label htmlFor="chat-output-limit" style={styles.label}>单次输出上限（Token）</label>
+            <input
+              id="chat-output-limit"
+              style={styles.input}
+              type="number"
+              min={0}
+              max={CHAT_OUTPUT_LIMIT_MAX}
+              step={1}
+              placeholder="自动"
+              value={config.max_tokens || ""}
+              onChange={e => {
+                const input = e.currentTarget
+                if (input.validity.badInput) return
+                const value = input.value === "" ? 0 : input.valueAsNumber
+                if (isChatOutputLimit(value)) dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { max_tokens: value } })
+              }}
+            />
+            <div style={styles.helpText}>留空按模型和思考强度选择。模型能力和上下文窗口也会限制实际输出。</div>
+          </div>
+
+          <div style={styles.field}>
             <label style={styles.label}>上下文窗口（Token）</label>
             <input
               style={styles.input}
@@ -1257,6 +1279,8 @@ export function SettingsSlideout() {
             </div>
           </div>
 
+          <details className="cm-settings-extra">
+            <summary>其他能力</summary>
                     {/* --- Vision Model Settings --- */}
           <div style={styles.sectionTitle}>视觉模型（看图描述）</div>
 
@@ -1506,6 +1530,8 @@ export function SettingsSlideout() {
               </>
             )
           })()}
+
+          </details>
 
             </SettingsPage>
           </div>
@@ -1981,6 +2007,8 @@ export function SettingsSlideout() {
                         <span style={{ color: tokens.textMuted, fontSize: 12 }}> — {ENGINE_BROWSER_HINT}</span>
                       </span>
                     </label>
+                    <details className="cm-settings-extra" open={engineDraft === "external" || undefined}>
+                      <summary>{externalView?.keyConfigured || committedExternal ? "外部转写已配置" : "其他能力"}</summary>
                     <label
                       style={{
                         display: "flex",
@@ -2092,6 +2120,7 @@ export function SettingsSlideout() {
                         </button>
                       </div>
                     ) : null}
+                    </details>
                     <label
                       style={{
                         display: "flex",
@@ -3623,6 +3652,8 @@ export function SettingsSlideout() {
               title="实验功能"
               id="experimental"
             >
+          <details className="cm-settings-extra">
+            <summary>本地视觉定位</summary>
           {/* --- WP5-I4 实验功能(Qwen3-VL 本地模型定位层) --- */}
           <div style={styles.sectionTitle}>实验功能</div>
           {(() => {
@@ -4255,6 +4286,8 @@ export function SettingsSlideout() {
               </div>
             )
           })()}
+
+          </details>
 
             </SettingsPage>
           </div>

@@ -239,6 +239,7 @@ export interface LLMConfig {
   api_key_set?: boolean
   model_name: string
   reasoning_effort?: "low" | "medium" | "high" | "xhigh"
+  max_tokens?: number
   temperature: number
   context_window: number
   /**
@@ -348,13 +349,22 @@ export interface Message {
    */
   client_message_id?: string
   /** Companion-attached knowledge ledger (Wave 1). Never model-authored. */
-  retrieved_sources?: Array<{ id: string; title: string; chunk_index?: number; chars: number; group_label?: string }>
+  retrieved_sources?: Array<{
+    id: string
+    title: string
+    chunk_index?: number
+    chars: number
+    group_label?: string
+    selection?: "automatic" | "explicit" | "library"
+    excerpt?: string
+  }>
   /** #273 Wave B（AC-18）：路由元数据——分组概览两态 + 芯片口径 M=|S_pre|。 */
   knowledge_routing?: { groupmap: "injected" | "omitted"; m: number }
   /** Length-stop / truncated-tool-batch honesty (hydrate chip). */
   truncated?: boolean
   incomplete_tools?: boolean
   finish_reason?: string | null
+  generation_limit?: "output_budget" | "context_window" | "length"
   /** Present only for the two shell-enable gate errors. Buttons navigate; they do not send. */
   shellEnableNavigation?: { packs: true; settingsSection: "integrations" }
 }

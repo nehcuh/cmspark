@@ -257,6 +257,19 @@ test('actual emitted phase writer appends real helper records and bounds seek fa
   // direct close-failure observation; the real collector still validates data.
 })
 
+test('the scoped stop macro prefers native PowerShell and retains a system-only fallback', () => {
+  const macro = originalMacro.toString().replaceAll('\r\n', '\n')
+  const selection = [
+    '  StrCpy $0 "$WINDIR\\Sysnative\\WindowsPowerShell\\v1.0\\powershell.exe"',
+    '  ${IfNot} ${FileExists} "$0"',
+    '    StrCpy $0 "$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe"',
+    '  ${EndIf}',
+    '  nsExec::ExecToLog `"$0" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\\cmspark-stop.ps1"`',
+  ].join('\n')
+  assert.ok(macro.includes(selection))
+  assert.equal(macro.match(/^  nsExec::ExecToLog /gm)?.length, 1)
+})
+
 test('actual whole macro producer has strict byte inverse for BOM and CRLF and only four added calls', () => {
   // Only construct the synthetic CRLF variant; retain the actual source bytes above.
   for (const bytes of [originalMacro, Buffer.concat([Buffer.from([239, 187, 191]), originalMacro]), Buffer.from(originalMacro.toString().replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'))]) {

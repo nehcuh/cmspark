@@ -4,16 +4,42 @@
 
 import { tokens } from "../ui/tokens"
 
-export type RetrievedSourceChip = { id: string; title: string; group_label?: string }
+export type RetrievedSourceChip = {
+  id: string
+  title: string
+  group_label?: string
+  selection?: "automatic" | "explicit" | "library"
+  excerpt?: string
+}
+
+function openKnowledge(id: string) {
+  window.dispatchEvent(new CustomEvent("cmspark:open-knowledge", { detail: { id } }))
+}
+
+const chipStyle = {
+  border: `1px solid ${tokens.border}`,
+  background: tokens.bgElevated,
+  color: tokens.textSecondary,
+  borderRadius: 10,
+  fontSize: 11,
+  padding: "2px 8px",
+  cursor: "pointer",
+}
+
+const selectionLabels = { automatic: "自动检索", explicit: "手动选择", library: "全库选择" } as const
 
 export function RetrievedSourcesChips({
   sources,
   routing,
+  showEmpty,
 }: {
   sources: RetrievedSourceChip[]
   routing?: { groupmap: "injected" | "omitted"; m: number }
+  showEmpty?: boolean
 }) {
-  if (!Array.isArray(sources) || sources.length === 0) return null
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return showEmpty ? <span style={{ fontSize: 10, color: tokens.textMuted }}>本轮未附带知识</span> : null
+  }
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }} aria-label="本轮附带">
       {/* 口径钉死：N=|S_post|（实际注入）；路由轮加 /M（M=|S_pre|，预预算候选） */}
@@ -24,23 +50,23 @@ export function RetrievedSourcesChips({
         本轮附带 {sources.length}
         {routing ? `/${routing.m}` : ""}
       </span>
-      {sources.map((s) => (
+      {sources.map((s) => typeof s.excerpt === "string" && s.excerpt.length > 0 ? (
+        <details key={s.id} style={{ ...chipStyle, maxWidth: "100%" }}>
+          <summary>
+            {s.title || s.id}
+            {s.selection && selectionLabels[s.selection] ? ` · ${selectionLabels[s.selection]}` : ""}
+            {s.group_label ? `（${s.group_label}）` : ""}
+          </summary>
+          <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: "6px 0" }}>{s.excerpt}</div>
+          <button type="button" onClick={() => openKnowledge(s.id)} style={chipStyle}>打开知识原文</button>
+        </details>
+      ) : (
         <button
           key={s.id}
           type="button"
           title={s.group_label ? `${s.id} · 来源分组：${s.group_label}` : s.id}
-          onClick={() => {
-            window.dispatchEvent(new CustomEvent("cmspark:open-knowledge", { detail: { id: s.id } }))
-          }}
-          style={{
-            border: `1px solid ${tokens.border}`,
-            background: tokens.bgElevated,
-            color: tokens.textSecondary,
-            borderRadius: 10,
-            fontSize: 11,
-            padding: "2px 8px",
-            cursor: "pointer",
-          }}
+          onClick={() => openKnowledge(s.id)}
+          style={chipStyle}
         >
           本轮附带 · {s.title || s.id}
           {s.group_label ? `（${s.group_label}）` : ""}

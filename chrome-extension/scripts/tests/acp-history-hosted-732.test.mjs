@@ -356,54 +356,92 @@ test('seeded preparation actual normal store serializes one prebound conversatio
 })
 
 function productionNavigationClicks(ts,repo) {
-  const file=path.join(repo,'chrome-extension/src/sidepanel/components/ProjectNavigationRoot.tsx'),tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),clicks=[]
-  const visit=n=>{if((ts.isJsxOpeningElement(n)||ts.isJsxSelfClosingElement(n))&&n.tagName.getText(tree)==='button'){const attr=n.attributes.properties.find(p=>ts.isJsxAttribute(p)&&p.name.getText(tree)==='onClick'&&p.initializer&&ts.isJsxExpression(p.initializer));if(attr)clicks.push(attr.initializer.expression.getText(tree))}ts.forEachChild(n,visit)};visit(tree)
-  const recent=clicks.filter(text=>text.includes('layer: "recent"'));assert.equal(recent.length,2);assert.equal(new Set(recent).size,1)
-  const owner=clicks.filter(text=>text.includes('SET_ACTIVE_THREAD')&&text.includes('projectId: null'));assert.equal(owner.length,1)
-  assert.equal(owner[0].includes('thread.select'),false);assert.equal(recent[0].includes('thread.select'),false)
+  const file=path.join(repo,'chrome-extension/src/sidepanel/components/WorkspaceFrame.tsx')
+  const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX)
+  const clicks=[]
+  const visit=n=>{
+    if((ts.isJsxOpeningElement(n)||ts.isJsxSelfClosingElement(n))&&n.tagName.getText(tree)==='button'){
+      const attr=n.attributes.properties.find(p=>ts.isJsxAttribute(p)&&p.name.getText(tree)==='onClick'&&p.initializer&&ts.isJsxExpression(p.initializer))
+      if(attr)clicks.push(attr.initializer.expression.getText(tree))
+    }
+    ts.forEachChild(n,visit)
+  }
+  visit(tree)
+  const recent=clicks.filter(text=>text.includes('setConversationsOpen(value => !value)'))
+  const owner=clicks.filter(text=>text.includes('SET_ACTIVE_THREAD')&&text.includes('thread.select'))
+  assert.equal(recent.length,1)
+  assert.equal(owner.length,1)
   return {recent:recent[0],owner:owner[0]}
 }
 function projectSurface({alias,onRecent,onOwner,missing=false,disabled=false,duplicate=false,listed=()=>true}) {
-  let layer='projects',recentClicks=0
+  let selected=false,navOpen=false,listOpen=false,allowToggle=true,recentClicks=0,activeId='owned-history-732'
   const node=extra=>({nodeType:1,hidden:false,disabled:false,textContent:'',parentElement:null,click(){},getClientRects(){return[{width:10,height:10}]},querySelectorAll(){return[]},getAttribute(){return null},...extra})
-  const projectsWrap=node(),recentWrap=node(),sessionWrap=node(),nav=node(),projects=node()
-  projects.parentElement=projectsWrap
-  const home=node({textContent:'最近对话',click(){recentClicks++;onRecent()}}),navRecent=node({textContent:'最近对话',click(){recentClicks++;onRecent()}})
-  home.parentElement=projectsWrap;navRecent.parentElement=nav
-  const owner=node({textContent:alias,disabled,click(){if(!owner.disabled)onOwner()}}),copy=node({textContent:alias,click(){onOwner()}})
-  owner.parentElement=recentWrap;copy.parentElement=recentWrap
-  const header=node(),title=node({textContent:'项目外 / '+alias}),workspaceLine=node({textContent:'未绑定工作目录'})
-  header.parentElement=sessionWrap;title.parentElement=header;workspaceLine.parentElement=header
-  header.getAttribute=name=>name==='aria-label'?'会话位置':null
-  header.querySelectorAll=sel=>sel==='p'?[title,workspaceLine]:[]
-  const sync=()=>{projectsWrap.hidden=layer!=='projects';recentWrap.hidden=layer!=='recent';sessionWrap.hidden=layer!=='session';nav.hidden=layer!=='projects'}
+  const nav=node(),projects=node({parentElement:nav}),recentWrap=node({parentElement:nav})
+  const toggle=node({getAttribute:name=>name==='aria-expanded'?String(navOpen):null,click(){navOpen=true;sync()}})
+  const navRecent=node({textContent:'最近对话',parentElement:nav,getAttribute:name=>name==='aria-expanded'?String(listOpen):null,click(){recentClicks++;onRecent()}})
+  const owner=node({textContent:alias,disabled,parentElement:recentWrap,click(){if(!owner.disabled)onOwner()}})
+  const copy=node({textContent:alias,parentElement:recentWrap,click(){onOwner()}})
+  const header=node({getAttribute:name=>name==='data-active-thread-id'?activeId:null}),title=node({textContent:alias,parentElement:header})
+  header.querySelectorAll=sel=>sel==='.cm-task-title'?[title]:[]
+  const sync=()=>{nav.hidden=!navOpen;recentWrap.hidden=!listOpen;header.hidden=!selected;toggle.hidden=!allowToggle}
   sync()
-    const document={querySelector(sel){return sel==='.cm-projects'?projects:null},querySelectorAll(sel){if(sel==='button'){const list=[home,navRecent];if(listed()&&!missing)list.push(owner);if(duplicate)list.push(copy);return list}if(sel==='header[aria-label="会话位置"]')return [header];return []}}
-  return {document,setLayer(next){layer=next;sync()},getComputedStyle(){return{display:'block',visibility:'visible'}},get recentClicks(){return recentClicks}}
+  const document={
+    querySelector(sel){return sel==='.cm-projects'?projects:null},
+    querySelectorAll(sel){
+      if(sel==='button[aria-label="打开工作区导航"]')return [toggle]
+      if(sel==='button'){
+        const list=[navRecent]
+        if(listed()&&!missing)list.push(owner)
+        if(duplicate)list.push(copy)
+        return list
+      }
+      if(sel==='.cm-status-rail[data-active-thread-id]')return [header]
+      return []
+    },
+  }
+  return {
+    document,
+    setSelected(value){selected=value;sync()},
+    setActiveId(value){activeId=value},
+    close(){navOpen=false;sync()},
+    expand(set){listOpen=set(listOpen);sync()},
+    disableNavigation(){allowToggle=false;sync()},
+    getComputedStyle(){return{display:'block',visibility:'visible'}},
+    get recentClicks(){return recentClicks},
+  }
 }
 test('seeded UI selector uses the shipping project navigation handlers and refuses hidden or non-unique owners',async()=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-ui-')))
   try{
     const h=await import('../accept-acp-history-hosted-732.mjs'),{ts,repo}=await actualSeedStore(dir)
-    const clicks=productionNavigationClicks(ts,repo),actions=[],thread={id:h.OWNED_THREAD.id,alias:h.OWNED_THREAD.alias}
-    let layer='projects'
-    const dispatch=action=>{actions.push(action);if(action.type==='NAVIGATE'){layer=action.layer;surface.setLayer(layer)}}
-    const invoke=source=>vm.runInNewContext(`(${source})()`,{dispatch,thread})
+    const clicks=productionNavigationClicks(ts,repo),actions=[],selection=[],thread={id:h.OWNED_THREAD.id,alias:h.OWNED_THREAD.alias}
+    const invoke=source=>vm.runInNewContext(`(${source})()`,{
+      thread,
+      setConversationsOpen:set=>surface.expand(set),
+      onView:destination=>assert.equal(destination,'chat'),
+      dispatch:action=>{actions.push(action);surface.setSelected(action.threadId===thread.id)},
+      chrome:{runtime:{sendMessage:message=>selection.push(message)}},
+      onNavigate:()=>surface.close(),
+      focusComposer(){},
+    })
     const surface=projectSurface({alias:thread.alias,onRecent:()=>invoke(clicks.recent),onOwner:()=>invoke(clicks.owner)})
     const run=operation=>vm.runInNewContext(h.seededThreadSelectionExpression(operation),{document:surface.document,getComputedStyle:surface.getComputedStyle})
     assert.equal(run('home'),true);assert.equal(run('session'),false);assert.equal(run('restored'),false)
-    assert.equal(run('recent'),true);assert.equal(layer,'recent');assert.equal(run('ready'),true)
-    assert.equal(run('owner'),true);assert.equal(layer,'session');assert.equal(actions.some(action=>action.type==='thread.select'),false)
-    assert.deepEqual(actions.map(action=>action.type),['NAVIGATE','SET_ACTIVE_THREAD','NAVIGATE'])
+    assert.equal(run('recent'),false);assert.equal(run('recent'),true);assert.equal(run('ready'),true)
+    assert.equal(run('owner'),true)
+    assert.deepEqual(actions.map(action=>[action.type,action.threadId]),[['SET_ACTIVE_THREAD',thread.id]])
+    assert.deepEqual(selection.map(message=>[message.type,message.threadId]),[['thread.select',thread.id]])
     assert.equal(run('session'),true);assert.equal(run('restored'),true);assert.throws(()=>run('home'))
+    surface.setActiveId('foreign')
+    assert.equal(run('session'),false);assert.equal(run('restored'),false)
     const hidden=projectSurface({alias:thread.alias,onRecent(){throw Error('HIDDEN_RECENT_CLICKED')},onOwner(){throw Error('HIDDEN_OWNER_CLICKED')}})
-    hidden.setLayer('session')
+    hidden.disableNavigation()
     assert.throws(()=>vm.runInNewContext(h.seededThreadSelectionExpression('recent'),{document:hidden.document,getComputedStyle:hidden.getComputedStyle}))
     assert.throws(()=>vm.runInNewContext(h.seededThreadSelectionExpression('owner'),{document:hidden.document,getComputedStyle:hidden.getComputedStyle}))
     for(const mode of ['disabled','duplicate']){
-      const bad=projectSurface({alias:thread.alias,disabled:mode==='disabled',duplicate:mode==='duplicate',onRecent(){},onOwner(){throw Error('OWNER_CLICKED')}})
-      bad.setLayer('recent')
-      assert.throws(()=>vm.runInNewContext(h.seededThreadSelectionExpression('owner'),{document:bad.document,getComputedStyle:bad.getComputedStyle}))
+      const bad=projectSurface({alias:thread.alias,disabled:mode==='disabled',duplicate:mode==='duplicate',onRecent:()=>bad.expand(()=>true),onOwner(){throw Error('OWNER_CLICKED')}})
+      const runBad=operation=>vm.runInNewContext(h.seededThreadSelectionExpression(operation),{document:bad.document,getComputedStyle:bad.getComputedStyle})
+      assert.equal(runBad('recent'),false);assert.equal(runBad('recent'),true);assert.throws(()=>runBad('owner'))
     }
     assert.throws(()=>h.seededThreadSelectionExpression('select'))
   }finally{fs.rmSync(dir,{recursive:true,force:true})}
@@ -451,31 +489,40 @@ async function freshOwnerControl(dir,{ready=false,deferClose=false,missing=false
   const historyEffect=exact(panel,n=>ts.isExpressionStatement(n)&&ts.isCallExpression(n.expression)&&n.expression.expression.getText(panel)==='useEffect'&&n.getText(panel).includes('type: "acp.sessions.list"')).getText(panel)
   const owned=manager.get(h.OWNED_THREAD.id),clicks=productionNavigationClicks(ts,repo)
   let state=agentReducer(initialState,{type:'SET_CONNECTION',state:'connected'}),opened=false,pendingClose=false,owner={current:null},active={current:null},navigationRememberedRef={current:null},deps=[],events=new Map(),wire=[],historyDeps,openCalls=0,hydrations=0,actions=[],surface
-  const dispatch=a=>{if(deferClose&&a.type==='NAVIGATE'&&a.layer==='session'){pendingClose=true;return}actions.push(a);state=agentReducer(state,a);surface.setLayer(state.navigationLayer);render()}
-  surface=projectSurface({alias:owned.alias,missing,disabled,listed:()=>state.threads.some(thread=>thread.id===owned.id),onRecent:()=>vm.runInNewContext(`(${clicks.recent})()`,{dispatch}),onOwner:()=>vm.runInNewContext(`(${clicks.owner})()`,{dispatch,thread:owned})})
+  const selection=[]
+  const dispatch=a=>{actions.push(a);state=agentReducer(state,a);surface.setSelected(state.activeThreadId===owned.id);render()}
+  const invoke=source=>vm.runInNewContext(`(${source})()`,{
+    dispatch,thread:owned,
+    setConversationsOpen:set=>surface.expand(set),
+    onView:destination=>assert.equal(destination,'chat'),
+    chrome:{runtime:{sendMessage:message=>selection.push(message)}},
+    onNavigate(){if(deferClose)pendingClose=true;else surface.close()},
+    focusComposer(){},
+  })
+  surface=projectSurface({alias:owned.alias,missing,disabled,listed:()=>state.threads.some(thread=>thread.id===owned.id),onRecent:()=>invoke(clicks.recent),onOwner:()=>invoke(clicks.owner)})
   const render=()=>{active.current=state.activeThreadId;navigationRememberedRef.current=state.navigationRemembered;effects.forEach((effect,i)=>compile('export function install(){'+effect+'}',{appState:state,activeCodingSession:selectCodingSession(state),codingPanelThreadRef:owner,setCodingPanelOpen:v=>{opened=v},setCodingPanelSeed(){},window:{addEventListener:(name,fn)=>events.set(name,fn),removeEventListener:name=>events.delete(name)},useEffect:(fn,next)=>{if(!deps[i]||next.some((v,j)=>!Object.is(v,deps[i][j]))){deps[i]=next;fn()}}}).install())}
   const isOpen=()=>new vm.Script(attr).runInNewContext({codingPanelOpen:opened,codingPanelThreadRef:owner,appState:state})
   const consume=compile('export function consume(msg){switch(msg.type){'+threadClause+'}}',{dispatch,creatingBlankThreadRef:{current:false},activeThreadRef:active,navigationRememberedRef,decideActiveThreadList,chrome:{runtime:{sendMessage(){}}},generateShortId(){throw Error('NO_BLANK')}}).consume
   const hydrate=async()=>{assert.equal(hydrations++,0);const reply=await list({});assert.equal(reply.type,'thread.list');assert.equal(reply.list_scope,'active');consume(JSON.parse(JSON.stringify(reply)));render()}
-  const evaluate=async expression=>vm.runInNewContext(expression,{document:surface.document,getComputedStyle:surface.getComputedStyle}),waitDOM=async expression=>{if(expression.includes('("home",')&&!state.threads.length)await hydrate();if(pendingClose&&expression.includes('("session",')){assert.equal(await evaluate(expression),false);pendingClose=false;state=agentReducer(state,{type:'NAVIGATE',layer:'session',projectId:null});surface.setLayer(state.navigationLayer)}const value=await evaluate(expression);assert.equal(value,true,'exact stock UI predicate must commit');return value}
-  render();if(ready)await hydrate();if(restored){state=agentReducer(state,{type:'SET_ACTIVE_THREAD',threadId:owned.id});state=agentReducer(state,{type:'NAVIGATE',layer:'session',projectId:null});surface.setLayer('session');render()}
+  const evaluate=async expression=>vm.runInNewContext(expression,{document:surface.document,getComputedStyle:surface.getComputedStyle}),waitDOM=async expression=>{if(expression.includes('("home",')&&!state.threads.length)await hydrate();if(pendingClose&&expression.includes('("session",')){assert.equal(await evaluate(expression),false);pendingClose=false;surface.close()}let value=await evaluate(expression);if(value===false&&expression.includes('("recent",'))value=await evaluate(expression);assert.equal(value,true,'exact stock UI predicate must commit');return value}
+  render();if(ready)await hydrate();if(restored){state=agentReducer(state,{type:'SET_ACTIVE_THREAD',threadId:owned.id});state=agentReducer(state,{type:'NAVIGATE',layer:'session',projectId:null});surface.setSelected(true);render()}
   const openCoding=()=>{openCalls++;events.get('cmspark:open-coding-handoff')({detail:undefined})}
-  const select=async()=>{await waitDOM(h.seededThreadSelectionExpression('home'));await evaluate(h.seededThreadSelectionExpression('recent'));await waitDOM(h.seededThreadSelectionExpression('ready'));await evaluate(h.seededThreadSelectionExpression('owner'));await waitDOM(h.seededThreadSelectionExpression('session'));openCoding()}
+  const select=async()=>{await waitDOM(h.seededThreadSelectionExpression('home'));await waitDOM(h.seededThreadSelectionExpression('recent'));await waitDOM(h.seededThreadSelectionExpression('ready'));await evaluate(h.seededThreadSelectionExpression('owner'));await waitDOM(h.seededThreadSelectionExpression('session'));openCoding()}
   const reload=()=>new vm.Script('(async()=>{'+prefix+'})()').runInNewContext({evaluate,waitDOM,seededThreadSelectionExpression:h.seededThreadSelectionExpression,openPanel:async()=>openCoding()})
   const readHistory=()=>compile('export function install(){'+historyEffect+'}',{open:isOpen(),threadId:state.activeThreadId,state,session:selectCodingSession(state),storeAcpEnabled:true,dispatch,crypto:{randomUUID:()=> 'owned-fresh'},chrome:{runtime:{sendMessage:(m,done)=>{wire.push(m);done()},lastError:undefined}},useEffect:(fn,next)=>{if(!historyDeps||next.some((v,i)=>!Object.is(v,historyDeps[i]))){historyDeps=next;fn()}}}).install()
-  return {select,reload,render,hydrate,dispatch,readHistory,isOpen,wire,actions,get state(){return state},get openCalls(){return openCalls},get hydrated(){return hydrations>0},get recentClicks(){return surface.recentClicks}}
+  return {select,reload,render,hydrate,dispatch,readHistory,isOpen,wire,actions,selection,get state(){return state},get openCalls(){return openCalls},get hydrated(){return hydrations>0},get recentClicks(){return surface.recentClicks}}
 }
 test('fresh document waits real selected owner before opening, with late hydration and delayed navigation close',async()=>{
-  for(const variant of [{ready:false},{ready:true},{ready:false,deferClose:true}]){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-')));try{const f=await freshOwnerControl(dir,variant);await f.select();if(!f.hydrated)await f.hydrate();f.render();assert.equal(f.state.activeThreadId,'owned-history-732');assert.equal(f.actions.some(action=>action.type==='thread.select'),false);assert.equal(f.isOpen(),true);f.readHistory();assert.equal(f.wire.length,1);assert.equal(f.wire[0].thread_id,'owned-history-732')}finally{fs.rmSync(dir,{recursive:true,force:true})}}
+  for(const variant of [{ready:false},{ready:true},{ready:false,deferClose:true}]){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-')));try{const f=await freshOwnerControl(dir,variant);await f.select();if(!f.hydrated)await f.hydrate();f.render();assert.equal(f.state.activeThreadId,'owned-history-732');assert.deepEqual(f.selection.map(message=>[message.type,message.threadId]),[['thread.select','owned-history-732']]);assert.equal(f.isOpen(),true);f.readHistory();assert.equal(f.wire.length,1);assert.equal(f.wire[0].thread_id,'owned-history-732')}finally{fs.rmSync(dir,{recursive:true,force:true})}}
 })
 test('fresh document missing or disabled owned navigation row cannot open or query another owner',async()=>{
-  for(const mode of ['missing','disabled']){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-missing-')));try{const f=await freshOwnerControl(dir,{[mode]:true});await assert.rejects(f.select());assert.equal(f.openCalls,0);assert.equal(f.actions.some(action=>action.type==='thread.select'),false);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}}
+  for(const mode of ['missing','disabled']){const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-missing-')));try{const f=await freshOwnerControl(dir,{[mode]:true});await assert.rejects(f.select());assert.equal(f.openCalls,0);assert.equal(f.selection.length,0);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}}
 })
 test('fresh document owner changes still close panel and refuse foreign history',async()=>{
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-fresh-owner-')));try{const f=await freshOwnerControl(dir,{ready:true});await f.select();f.render();assert.equal(f.isOpen(),true);f.dispatch({type:'SET_ACTIVE_THREAD',threadId:'foreign'});f.render();assert.equal(f.isOpen(),false);f.readHistory();assert.equal(f.wire.length,0)}finally{fs.rmSync(dir,{recursive:true,force:true})}
 })
 test('reloaded fresh document observes the restored session and does not click recent or owner',async()=>{
-  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-reload-')));try{const f=await freshOwnerControl(dir,{restored:true});await f.reload();assert.equal(f.recentClicks,0);assert.equal(f.state.activeThreadId,'owned-history-732');assert.equal(f.actions.some(action=>action.type==='thread.select'),false);assert.equal(f.isOpen(),true);f.readHistory();assert.equal(f.wire[0].thread_id,'owned-history-732')}finally{fs.rmSync(dir,{recursive:true,force:true})}
+  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'owned-history732-reload-')));try{const f=await freshOwnerControl(dir,{restored:true});await f.reload();assert.equal(f.recentClicks,0);assert.equal(f.state.activeThreadId,'owned-history-732');assert.equal(f.selection.length,0);assert.equal(f.isOpen(),true);f.readHistory();assert.equal(f.wire[0].thread_id,'owned-history-732')}finally{fs.rmSync(dir,{recursive:true,force:true})}
 })
 
 // Current single-business contract: source-extracted factory and real supplier lifecycle helpers.

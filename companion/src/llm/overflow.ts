@@ -2,14 +2,31 @@
 
 export function isContextOverflowError(msg: string): boolean {
   const s = String(msg || "")
-  return /context.?length|maximum context|too many tokens|prompt is too long|input is too long|context_length_exceeded|request_too_large|token limit|token count exceeds|context window|exceeds? the (model'?s? )?context/i.test(
+  return /context.?length|maximum context|prompt is too long|input is too long|context_length_exceeded|(?:input|prompt) token count exceeds|context[ _-]window|exceeds? the (model'?s? )?context/i.test(
     s,
   )
 }
 
+export type GenerationLimit = "output_budget" | "context_window" | "length"
+
+export function classifyGenerationLimit(
+  finishReason?: unknown,
+  evidence?: { officialOpenAI?: boolean; sentTokens?: number; completionTokens?: number },
+): GenerationLimit | undefined {
+  const reason = typeof finishReason === "string" ? finishReason.toLowerCase() : undefined
+  if (reason === "model_context_window_exceeded" || reason === "context_length_exceeded") return "context_window"
+  if (reason === "max_tokens" || reason === "max_output_tokens") return "output_budget"
+  if (reason !== "length") return undefined
+  const { officialOpenAI, sentTokens, completionTokens } = evidence ?? {}
+  if (officialOpenAI || (
+    typeof sentTokens === "number" && sentTokens > 0 &&
+    typeof completionTokens === "number" && Number.isSafeInteger(completionTokens) && completionTokens >= sentTokens
+  )) return "output_budget"
+  return "length"
+}
+
 export function isLengthStop(finishReason?: string | null): boolean {
-  const r = String(finishReason || "").toLowerCase()
-  return r === "length" || r === "max_tokens" || r === "max_output_tokens"
+  return classifyGenerationLimit(finishReason) !== undefined
 }
 
 export function isTruncatedToolBatch(

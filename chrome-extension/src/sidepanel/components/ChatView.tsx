@@ -874,8 +874,8 @@ const MessageRow = memo(function MessageRow({
                 {honestyChip}
               </div>
             ) : null}
-            {!isUser && Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0 ? (
-              <RetrievedSourcesChips sources={msg.retrieved_sources} routing={msg.knowledge_routing} />
+            {!isUser && Array.isArray(msg.retrieved_sources) ? (
+              <RetrievedSourcesChips sources={msg.retrieved_sources} routing={msg.knowledge_routing} showEmpty />
             ) : null}
             {isUser && msg.files?.map((file, index) => (
               <DocumentWarning key={`${file.filename}-${index}`} filename={file.filename} warning={file.warning} />

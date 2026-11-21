@@ -58,10 +58,24 @@ final class WorkspacePicker705:XCTestCase {
   observeUIStage()
   guard observedState == .runningForeground || observedState == .runningBackground else{throw OwnedUI705Error.refused}
   func ready(_ file:OwnedUI705File,_ number:Int) throws {let f=try waitFile(file);try scene.tuple(f,["schema","nonce","number"]);guard try OwnedUI705Scene.number(f["number"])==Double(number) else{throw OwnedUI705Error.refused}}
+  func requireUniqueAfterReady(_ query:XCUIElementQuery,_ stage:Int,_ countStage:Int) throws {
+   uiStage=stage;uiDetail=0;observeUIStage();_ = try remaining()
+   var count=query.count
+   if count==0 {
+    let exists=query.firstMatch.waitForExistence(timeout:try remaining())
+    guard exists else{throw OwnedUI705Error.refused}
+    _ = try remaining();count=query.count
+   }
+   uiStage=countStage;uiDetail=min(count,2)+1;observeUIStage()
+   guard count==1 else{throw OwnedUI705Error.refused}
+   _ = try remaining()
+  }
   func sheet(_ stage:Int) throws ->XCUIElement {
-   uiStage=stage;uiDetail=0;observeUIStage();let windows=app.windows.matching(identifier:scene.nonce);let windowTimeout=try remaining();uiDetail=1;observeUIStage();let windowOne=windows.element(boundBy:0).waitForExistence(timeout:windowTimeout);uiDetail=windowOne ? 2:1;observeUIStage();guard windowOne else{throw OwnedUI705Error.refused};let windowCount=windows.count;uiDetail=min(windowCount,2)+1;observeUIStage();guard windowCount==1 else{throw OwnedUI705Error.refused};let w=windows.firstMatch
-   uiStage=stage+1;uiDetail=0;observeUIStage();let exists=w.sheets.firstMatch.waitForExistence(timeout:try remaining());uiDetail=exists ? 2:1;observeUIStage();guard exists else{throw OwnedUI705Error.refused}
-   uiStage=stage+2;uiDetail=0;observeUIStage();let sheetCount=w.sheets.count;uiDetail=min(sheetCount,2)+1;observeUIStage();guard sheetCount==1 else{throw OwnedUI705Error.refused};return w.sheets.firstMatch
+   let owners=app.windows.matching(identifier:scene.nonce)
+   try requireUniqueAfterReady(owners,stage,stage)
+   let sheets=owners.firstMatch.sheets
+   try requireUniqueAfterReady(sheets,stage+1,stage+2)
+   return sheets.firstMatch
   }
   uiStage=2;uiDetail=0;observeUIStage();try ready(.first,1);let first=try sheet(3)
   uiStage=6;uiDetail=0;observeUIStage();_ = try remaining();first.typeKey("g",modifierFlags:[.command,.shift])
@@ -96,8 +110,16 @@ final class WorkspacePicker705:XCTestCase {
   uiStage=11;uiDetail=0;observeUIStage();let chooseElement=choose.firstMatch;uiDetail=3;observeUIStage();let chooseTimeout=try remaining();uiDetail=4;observeUIStage();let chooseSeen=chooseElement.waitForExistence(timeout:chooseTimeout);uiDetail=chooseSeen ? 2:1;observeUIStage();guard chooseSeen else{throw OwnedUI705Error.refused};let chooseCount=choose.count;uiDetail=min(chooseCount,2)+1;observeUIStage();guard chooseCount==1 else{throw OwnedUI705Error.refused}
   uiStage=12;uiDetail=0;observeUIStage();let chooseHittable=choose.element.isHittable;uiDetail=chooseHittable ? 2:1;observeUIStage();guard chooseHittable else{throw OwnedUI705Error.refused}
   uiStage=13;uiDetail=0;observeUIStage();_ = try remaining();choose.element.click()
-  uiStage=14;uiDetail=0;observeUIStage();try ready(.second,2);let second=try sheet(15),cancel=second.buttons.matching(identifier:"Cancel")
-  uiStage=18;uiDetail=0;observeUIStage();let cancelOne=cancel.element(boundBy:0).waitForExistence(timeout:try remaining());uiDetail=cancelOne ? 2:1;observeUIStage();guard cancelOne else{throw OwnedUI705Error.refused};let cancelCount=cancel.count;uiDetail=min(cancelCount,2)+1;observeUIStage();guard cancelCount==1 else{throw OwnedUI705Error.refused}
+  uiStage=14;uiDetail=0;observeUIStage();try ready(.second,2)
+  // The host has shown the second panel. Check uniqueness directly and wait
+  // only if XCTest's accessibility tree has not exposed the element yet.
+  let secondOwners=app.windows.matching(identifier:scene.nonce)
+  try requireUniqueAfterReady(secondOwners,15,15)
+  let secondSheets=secondOwners.firstMatch.sheets
+  try requireUniqueAfterReady(secondSheets,16,17)
+  let second=secondSheets.firstMatch
+  let cancel=second.buttons.matching(identifier:"Cancel")
+  try requireUniqueAfterReady(cancel,18,18)
   uiStage=19;uiDetail=0;observeUIStage();let cancelHittable=cancel.element.isHittable;uiDetail=cancelHittable ? 2:1;observeUIStage();guard cancelHittable else{throw OwnedUI705Error.refused}
   uiStage=20;uiDetail=0;observeUIStage();_ = try remaining();cancel.element.click()/*OBS788_BEGIN*/;observeCancelTiming788(20,true)/*OBS788_END*/
   } catch {

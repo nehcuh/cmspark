@@ -1,5 +1,7 @@
 # Windows 开发与失败定位
 
+macOS 的 #476 工作区夹具在收到经原生窗口和 nonce 核对的就绪回执后，首个选择框也先查窗口和 sheet 的唯一性。只有查询结果为零时才等待元素出现并重新计数。保留原 45 秒、按钮可点击性、真实选择和取消、工作区绑定及清理断言。失败用例的 XCTest 活动显示，首个窗口和 sheet 的两次存在等待合计约 2.7 秒，开始第二次取消点击时原预算仅余约 408 毫秒。[macOS 失败与活动回执](https://github.com/nehcuh/cmspark/actions/runs/44844411898/job/136660479711)
+
 MCP 原生表单用例复用 #480 已有的固定启动阶段与导航回执，仅在未分发的 Windows MCP 测试宿主编译启用。已认证、已请求窗口但无业务请求，不能区分 WebView 初始化、导航、脚本与消息接收边界；缺失阶段保持未知。原 20 秒、表单/确认/持久化断言及清理仍生效，诊断不改变生产宿主。
 
 MCP 测试宿主的初始化区间另外复用原 #773 WebView API 前后、HRESULT 和 250ms native-first-hook 时钟；共用原固定站点、每站点前八次及总 192 行上限，只在原失败投影附加闭集 BOOT 行。未植入 #480 checker/auth/attach 行为，原 #480 输出不变；API 返回成功不等于导航或业务成功，缺失行不能直接认定某个 API 故障，也不与 Node 时钟相减。
@@ -11,6 +13,8 @@ MCP 测试宿主的初始化区间另外复用原 #773 WebView API 前后、HRES
 #826 的临时 CDB 取证入口与四个脚本现已退役。最终 `aad9d65e` 的真实 CPU 工具资格为 OBSERVED／COMPLETE、OK／实际退出码 0，真实解析、分离后 IPC 和 dummy 关闭均通过；随后原 MCP **20 秒**用例在 **10.747 秒**完成全部业务及清理。本次未触发超时、没有目标调用栈，不能据此认定历史 SDK 原因；前四次准备失败仍保留。见[实际回执](audit/reviews/activity-826-mcp-stack-aad9d65e.md)。诊断资格曾将 agent 新设的工具工作窗口 6→120 秒，未改变原 MCP 验收；该临时配置已随入口移除。正常 Release 恢复原流程，仅保留两处已验证的 CPU 安装配置；[独立退役核验](audit/reviews/activity-826-probe-retirement-independent-source.md)与[实际 GLM 源码门](audit/reviews/activity-826-probe-retirement-glm-source.md)已通过，最终发行树 `38a1d6e9` 的正常 CI 已 10 项全绿，三平台预演与正式 v0.8.0 Release 已完成。工具成功或这次业务通过不能抵消原 canonical 失败。
 
 Apps 的 201／4096／4097 条批量边界夹具现用 `List[object].Add` 构造记录后一次转数组，避免 PowerShell 5.1 逐条数组追加的重复复制；所有输入字段、顺序、过滤、重复身份与真实生产者断言保持。仍只调用一次 PowerShell，原调用 15 秒、用例 30 秒及 MCP 20 秒不变。失败时仅保留原错误的整数退出码、killed 布尔值和固定 signal，再原样抛出；这些字段不单独证明历史超时原因。原完整源码 seal 只增加五处精确逆变换，原 d94 摘要与 LF／CRLF 字节契约保持。该测试修正已通过[非作者验证](audit/reviews/activity-826-apps-producer-independent-source.md)和[实际 GLM 源码门](audit/reviews/activity-826-apps-producer-glm-source.md)，`0805bca0` 的真实 Windows producer 已在原调用 15 秒／case 30 秒内以 9.973 秒通过，不将此前失败武断归因于单一物理原因。
+
+NSIS 的停止宏在系统原生 PowerShell 可见时从 `Sysnative` 启动，否则使用原系统目录。宏仍同步等待同一个停止脚本，并检查失败回执。原 30 秒、目标进程停止、相邻安装及无关进程存活的断言仍有效。一次托管对照从宏进程启动计时，原生子进程于 3.152 秒退出，WOW64 子进程于 6.091 秒退出，两组都完整通过。此前的超时记录停在 `exec-enter`，其中还不能确定 PowerShell 是否已进入脚本。[失败日志](https://github.com/nehcuh/cmspark/actions/runs/44842082011/job/136652689285) · [托管对照](https://github.com/nehcuh/cmspark/actions/runs/44843930101)
 
 LOCAL／ARCHIVE／TERMINAL 的未分发 Windows 原生夹具现有显式的初始标题栏选择契约：Node 入口仅允许 GitHub 托管 Windows 环境，原启动前台汇合只增加至多一次自有标题栏 move/down/up。检查可见／非最小化／启用、当前 PID 与 root HWND、物理坐标和虚拟桌面边界、HTCAPTION 及实际命中；每线程 DPI 上下文必须恢复。尝试围栏在系统调用前设置，只有完整三项插入并恢复 DPI 才完成，短输入、拒绝和迟到激活不重试／不开表单；之后重核文档／连接／控制器身份与原实际前台条件。这明确改变夹具初始输入，不改变产品、macOS、键盘控制器、启动器环境或权限；命中检查与 SendInput 并非原子 HWND 绑定。原 20／45 秒及全部确认、PTY、业务和清理断言保持。Dialog 同批只在已有回执增加 terminalAttempted 布尔值、最多 6 的 openReplyAttempts 和最多 4 的 sendRequests；尝试不表示送达或业务接纳，第三次用户 ACK 丢弃路径保持。设计与[非作者源码核验](audit/reviews/activity-826-initial-owned-input-independent-source.md)、[实际 GLM 源码门](audit/reviews/activity-826-initial-owned-input-glm-source.md)通过；`a4ddaf13` 的实际 Windows SDK 编译、两路原 MCP 和 interaction12 已通过，完整普查 9572 PASS／67 SKIP／0 FAIL；见[实际回执](audit/reviews/activity-826-shipping-a4ddaf13-ci.md)。该轮旧 CI 消费者失败已保留历史记录；修复后的精确 PR `7bbda8f9` 与主线 `38a1d6e9` 完整检查均已全绿，见[正式主线回执](audit/reviews/activity-826-main-38a1d6e9-ci.md)。
 

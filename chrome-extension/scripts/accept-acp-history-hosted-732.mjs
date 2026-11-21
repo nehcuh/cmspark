@@ -383,7 +383,7 @@ export function seedOwnedThread(ThreadManager,workspace) {
 // Real side-panel project navigation. Hidden ancestors and invisible boxes are not targets.
 export function seededThreadSelectionExpression(operation) {
   if(!['home','recent','ready','owner','session','restored'].includes(operation))fail()
-  return `(${function(operation,alias){
+  return `(${function(operation,alias,ownerId){
     const refuse=()=>{throw Error('OWNED_THREAD_UI_REFUSED')}
     const shown=el=>{
       if(!el||el.nodeType!==1)return false
@@ -395,19 +395,32 @@ export function seededThreadSelectionExpression(operation) {
     const buttons=text=>[...document.querySelectorAll('button')].filter(button=>button.textContent===text)
     const usable=list=>list.filter(button=>shown(button)&&!button.disabled)
     const projects=()=>shown(document.querySelector('.cm-projects'))
-    const location=()=>[...document.querySelectorAll('header[aria-label="会话位置"]')].find(shown)
+    const rail=()=>[...document.querySelectorAll('.cm-status-rail[data-active-thread-id]')].find(shown)
     const sessionReady=()=>{
-      const header=location()
-      if(!header||projects())return false
-      return [...header.querySelectorAll('p')].some(line=>shown(line)&&line.textContent.endsWith(' / '+alias))
+      const header=rail()
+      if(!header||header.getAttribute('data-active-thread-id')!==ownerId||(!document.querySelector('[data-navigation-mode="resident"]')&&projects()))return false
+      return [...header.querySelectorAll('.cm-task-title')].some(line=>shown(line)&&line.textContent===alias)
     }
-    if(operation==='home'){if(location())refuse();return projects()}
-    if(operation==='recent'){const found=usable(buttons('最近对话'));if(!found.length)refuse();found[0].click();return true}
+    if(operation==='home'){
+      if(rail())refuse()
+      return projects()||usable([...document.querySelectorAll('button[aria-label="打开工作区导航"]')]).length===1
+    }
+    if(operation==='recent'){
+      const toggle=usable([...document.querySelectorAll('button[aria-label="打开工作区导航"]')])
+      if(!usable(buttons('最近对话')).length&&toggle.length===1&&toggle[0].getAttribute('aria-expanded')==='false'){
+        toggle[0].click()
+        return false
+      }
+      const found=usable(buttons('最近对话'))
+      if(found.length!==1)refuse()
+      if(found[0].getAttribute('aria-expanded')!=='true')found[0].click()
+      return true
+    }
     if(operation==='ready'){const found=buttons(alias).filter(shown);if(found.length>1)refuse();if(found.length===1&&found[0].disabled)refuse();return found.length===1&&!found[0].disabled}
     if(operation==='owner'){const found=usable(buttons(alias));if(found.length!==1)refuse();found[0].click();return true}
     if(operation==='session'||operation==='restored')return sessionReady()
     refuse()
-  }.toString()})(${JSON.stringify(operation)},${JSON.stringify(OWNED_THREAD.alias)})`
+  }.toString()})(${JSON.stringify(operation)},${JSON.stringify(OWNED_THREAD.alias)},${JSON.stringify(OWNED_THREAD.id)})`
 }
 // Root contents may change; inode/dev/uid/mode/type/canonical path must not.
 export function sameOwnedRoot(root,identity,stat=fs.lstatSync,realpath=fs.realpathSync,uid=process.getuid?.()) {
@@ -479,7 +492,7 @@ export async function main() {
     const seeded=initialList.threads[0]
     if(seeded.id!==OWNED_THREAD.id||seeded.alias!==OWNED_THREAD.alias||seeded.workspace_root!==workspace)fail()
     thread=seeded.id;panelStep='identity'
-    await evaluate(seededThreadSelectionExpression('recent'));await waitDOM(seededThreadSelectionExpression('ready'));panelStep='recent'
+    await waitDOM(seededThreadSelectionExpression('recent'));await waitDOM(seededThreadSelectionExpression('ready'));panelStep='recent'
     await evaluate(seededThreadSelectionExpression('owner'));panelStep='owner'
     await waitDOM(seededThreadSelectionExpression('session'));panelStep='session'
     const openPanel=()=>evaluate("window.dispatchEvent(new CustomEvent('cmspark:open-coding-handoff'));true");await openPanel()

@@ -149,6 +149,7 @@ export function ProjectPanel({ filter, onFilter, onSnapshot, onOpenProject }: {
         fetchedAt={snapshot?.fetchedAt || null}
         hasSnapshot={!!snapshot}
         onQuery={setSearch}
+        onRetry={() => void refresh()}
         onClearQuery={() => setSearch("")}
         onToggleArchive={() => setArchiveView(value => !value)}
         onOpen={id => {
