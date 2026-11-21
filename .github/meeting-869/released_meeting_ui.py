@@ -15,8 +15,11 @@ def read_json(path):
 
 def open_meeting(page):
     page.wait_for_function("() => document.readyState === 'complete' && document.body.innerText.length > 20")
-    page.get_by_role("navigation", name="工作区", exact=True).get_by_role("button", name="工具", exact=True).click()
-    page.get_by_role("region", name="工具", exact=True).get_by_role("button", name="会议", exact=True).click()
+    expect(page.locator("[data-navigation-mode]")).to_have_attribute("data-navigation-mode", "layered")
+    page.get_by_role("button", name="打开工作区导航", exact=True).click()
+    drawer = page.get_by_role("dialog", name="工作区导航", exact=True)
+    drawer.get_by_text("资料与工具", exact=True).click()
+    drawer.get_by_role("button", name="会议", exact=True).click()
     expect(page.get_by_test_id("meeting-panel")).to_be_visible(timeout=15000)
 
 
@@ -35,6 +38,7 @@ def main():
     with sync_playwright() as pw:
         browser = pw.chromium.launch_persistent_context(
             str(a.profile), channel="chromium", headless=True,
+            viewport={"width": 420, "height": 860},
             args=[f"--disable-extensions-except={a.extension}", f"--load-extension={a.extension}"],
         )
         try:
