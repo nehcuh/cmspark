@@ -1,0 +1,29 @@
+name: NSIS stop PowerShell launch diagnostic
+on:
+  push:
+    branches: [codex/nsis-stop-powershell-comparison]
+permissions:
+  contents: read
+jobs:
+  compare:
+    name: NSIS with ${{ matrix.mode }} PowerShell lookup
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [shipped, native]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Resolve the same NSIS toolchain as CI
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe") -and -not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            node scripts/ensure-ci-nsis.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Observe the real process and all original stop assertions at 30 seconds
+        run: ./scripts/diagnostics/nsis-stop-shell-comparison.ps1 -Mode '${{ matrix.mode }}'
