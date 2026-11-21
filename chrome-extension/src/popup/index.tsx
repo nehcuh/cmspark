@@ -1,10 +1,12 @@
 // CMspark Browser Agent — Popup
 
+import { openWorkbench } from "../sidepanel/navigation/open-workbench"
 import { useEffect, useState } from "react"
 
 type ConnectionState = "connected" | "connecting" | "disconnected"
 
 function Popup() {
+  const [openError, setOpenError] = useState(false)
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected")
 
   useEffect(() => {
@@ -75,7 +77,12 @@ function Popup() {
         打开 Side Panel
       </button>
 
+      {openError && <p role="alert">无法打开个人工作台，请重试。</p>}
       <div style={styles.footer}>
+        <button style={styles.linkBtn} onClick={async () => {
+          if (await openWorkbench("today")) window.close()
+          else setOpenError(true)
+        }}>个人工作台</button>
         <button style={styles.linkBtn} onClick={() => openSidePanel(true)}>
           设置
         </button>
@@ -129,7 +136,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   footer: {
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
   },
   linkBtn: {
     background: "none",

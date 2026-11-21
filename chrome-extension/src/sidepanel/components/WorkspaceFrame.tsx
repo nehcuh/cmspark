@@ -17,6 +17,7 @@ import { residentMinWidth, type NavigationSurface } from "../navigation/navigati
 import { toolGroups } from "../navigation/tool-groups"
 import type { CapabilityLevel } from "../types"
 import { PersonalWorkspace, WORKSPACE_DESTINATIONS, type WorkspaceDestination } from "./personal-workspace/PersonalWorkspace"
+import { RecentWorkbenchMeetings } from "./RecentWorkbenchMeetings"
 import { MeetingPanel } from "./MeetingPanel"
 import { WorkbenchRecording } from "./WorkbenchRecording"
 import { WorkbenchTranslation } from "./WorkbenchTranslation"
@@ -51,6 +52,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
     try { const saved = localStorage.getItem("cmspark.workspace.destination"); if (WORKSPACE_DESTINATIONS.some(item => item.id === saved)) return saved as WorkspaceDestination } catch { /* View persistence is optional. */ }
     return "today"
   })
+  const [recentMeetingId, setRecentMeetingId] = useState<string>()
   const [opened, setOpened] = useState(() => new Set([view]))
   useEffect(() => {
     setOpened(previous => previous.has(view) ? previous : new Set([...previous, view]))
@@ -212,7 +214,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
       </nav> : null}
       <div className="cm-shell-layers">
         {(opened.has("meeting") || opened.has("transcribe")) && <div className="cm-workbench-tool" hidden={visibleView !== "meeting" && visibleView !== "transcribe"}>
-          <MeetingPanel purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
+          <MeetingPanel meetingId={recentMeetingId} purpose={visibleView === "transcribe" ? "transcribe" : "meeting"} onClose={() => navigate("today")} onSendToDraft={text => {
             navigate("chat")
             window.dispatchEvent(new CustomEvent("cmspark:fill-composer", { detail: { text } }))
           }} />
@@ -221,6 +223,10 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
         {opened.has("translation") && <div className="cm-workbench-tool" hidden={visibleView !== "translation"}><WorkbenchTranslation /></div>}
         <div className="cm-chat-mount" hidden={visibleView !== "chat"}>{children}</div>
         {(["today", "todos", "materials", "activity"] as const).map(destination => <div className="cm-personal-mount" key={destination} hidden={visibleView !== destination}><PersonalWorkspace destination={destination} controller={controller} connected={state.connectionState === "connected"} active={visibleView === destination && !forceChat} navigationOwner={destinationOwner} navigate={navigate} openResource={openResource} /></div>)}
+        {visibleView === "today" && <RecentWorkbenchMeetings connected={state.connectionState === "connected"} recording={state.meetingCaptureActive} onSelect={id => {
+          setRecentMeetingId(id)
+          navigate("meeting")
+        }} />}
       </div>
       <div className="cm-thread-manager-mount" />
       <div className="cm-shell-bottom">{bottom}</div>
