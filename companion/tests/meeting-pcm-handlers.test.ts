@@ -3,6 +3,7 @@ import { test } from "node:test"
 import * as assert from "node:assert/strict"
 import * as path from "node:path"
 import { DATA_DIR, getConfig, setVoiceFields } from "../src/config"
+import { defaultVoiceExternal } from "../src/voice/external-asr-config"
 import { createMeeting, loadMeeting, deleteMeeting } from "../src/meeting/meeting-store"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
 import { generateFixtureMinutes } from "./meeting-minutes-test-helper"
@@ -12,7 +13,7 @@ import { validateWsMessage } from "../src/ws/validate"
 
 for (const delayedRunner of [false, true]) test(`actual q1 validators/meeting handler/STT handler/service/store protect owner and persist a short tail${delayedRunner ? " after delayed runner settlement" : ""}`, { timeout: 20000 }, async () => {
   const chatEngine = delayedRunner ? "browser" : "local"
-  setVoiceFields({ sttEngine: chatEngine, localModelId: "medium", meetingAsr: { mode: "local" } })
+  setVoiceFields({ sttEngine: chatEngine, localModelId: "medium", meetingAsr: { mode: "local", external: defaultVoiceExternal() } })
   const meeting = createMeeting({ title: "owned synthetic 494" })
   const other = createMeeting({ title: "legacy control" })
   const root = path.join(DATA_DIR, "models", "owned")
