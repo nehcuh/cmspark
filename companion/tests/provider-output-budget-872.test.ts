@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { chatOutputBudget, isChatOutputLimit } from "../src/llm/output-budget"
+import { modelSpec } from "../src/llm/reasoning-effort"
 import { classifyGenerationLimit } from "../src/llm/overflow"
 import { applyContextBudget } from "../src/llm/context-budget"
 import type { CanonicalChatMessage } from "../src/llm/provider"
@@ -15,6 +16,17 @@ import { isContextOverflowError } from "../src/llm/overflow"
 const known = { protocol: "openai" as const, base_url: "https://api.openai.com/v1", model_name: "gpt-5.2", reasoning_effort: "high" as const }
 const deepseek = { ...known, base_url: "https://api.deepseek.com/v1", model_name: "deepseek-v4-pro" }
 const claude = { ...known, protocol: "anthropic" as const, base_url: "https://api.anthropic.com", model_name: "claude-sonnet-4-6" }
+
+test("catalog caps apply independently of reasoning support and only on documented routes", () => {
+  const legacy = { ...known, model_name: "gpt-4o" }
+  const spec = modelSpec(legacy.protocol, legacy.base_url, legacy.model_name)
+  assert.equal(spec?.support, "unsupported")
+  assert.equal(chatOutputBudget(512000, { ...legacy, max_tokens: 65536 }).preferred, 16384)
+  assert.equal(chatOutputBudget(512000, { ...known, model_name: "gpt-5.4" }).contextWindow, 512000)
+  assert.equal(modelSpec("openai", "https://open.bigmodel.cn/api/paas/v4/", "glm-5.1")?.output, 128000)
+  assert.equal(modelSpec("openai", "https://open.bigmodel.cn/v1", "glm-5.1"), undefined)
+  assert.equal(modelSpec("anthropic", "https://api.moonshot.cn/v1", "kimi-k3.1-pro"), undefined)
+})
 
 test("chat budget selects by exact provider, protocol, model, and current effort", () => {
   assert.deepEqual(chatOutputBudget(512000, known), { contextWindow: 400000, preferred: 64000, ceiling: 128000, documented: true })

@@ -53,6 +53,26 @@ test("unspecified external meeting model asks which stage before consulting any 
   assert.equal(f.writes.length, 0)
 })
 
+test("single-sentence output budget validates explicit tokens and restores automatic selection locally", async () => {
+  const f = fixture()
+  const proposal = (await f.propose("把单次输出上限设为 64000 Token")).proposal
+  assert.equal(f.writes.length, 0)
+  assert.equal((await f.apply(proposal)).items[0].actual, 64000)
+  const automatic = (await f.propose("单次输出上限恢复自动")).proposal
+  assert.equal((await f.apply(automatic)).items[0].actual, 0)
+  assert.equal((await f.propose("单次输出上限设为9999999")).proposal.candidates.length, 0)
+  assert.equal(f.prompts.length, 0)
+})
+
+test("a combined budget and effort proposal saves both nested fields in one write", async () => {
+  const f = fixture([{ settingId: "chat.outputLimit", after: 48000, reason: "限制用量" },
+    { settingId: "chat.reasoningEffort", after: "low", reason: "减少等待" }])
+  Object.assign(f.config.llm, { protocol: "openai", base_url: "https://api.deepseek.com/v1", model_name: "deepseek-flash" })
+  const { proposal } = await f.propose("给我一个更快的对话设置")
+  assert.deepEqual((await f.apply(proposal)).items.map((item: any) => item.status), ["saved", "saved"])
+  assert.deepEqual(f.writes, [{ llm: { max_tokens: 48000, reasoning_effort: "low" } }])
+})
+
 test("explicit named meeting model switches with revision checks and a real receipt", async () => {
   const profile = { id: "7d2ea1a5-a560-4877-bc06-fb2bbfc67494", name: "会议 A", model_name: "minutes-model", base_url: "https://provider.test/v1", has_key: true }
   let revision = "epoch:1", bound: string | null = null, modelCalls = 0, writes = 0

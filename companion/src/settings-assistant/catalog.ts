@@ -1,6 +1,7 @@
 /** Closed semantic settings catalog. Model output never names arbitrary config keys. */
 import { describeShellProvision, shellProvisionSentence } from "../capability/shell-provision"
 import { effectiveReasoningEffort, reasoningSupport } from "../llm/reasoning-effort"
+import { CHAT_OUTPUT_LIMIT_MAX, normalizeSavedChatOutputLimit } from "../llm/output-budget"
 export type SettingValue = boolean | number | string
 export type SettingsSection = "voice" | "export" | "integrations" | "security" | "model"
 export interface CatalogEntry {
@@ -21,6 +22,9 @@ const manual = (id: string, label: string, description: string, section: Setting
   id, label, description, section, values, prerequisites, scope: "manual", read: () => "需在对应设置核对",
 })
 export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
+  { id: "chat.outputLimit", label: "默认对话单次输出上限", description: "以 Token 为单位设置每次对话请求的输出预算。0 为自动，模型规格和可用上下文仍会约束实际输出。", scope: "companion", section: "model",
+    min: 0, max: CHAT_OUTPUT_LIMIT_MAX, prerequisites: [], read: c => normalizeSavedChatOutputLimit(c.llm?.max_tokens) ?? 0,
+    patch: value => ({ llm: { max_tokens: value } }) },
   { id: "chat.reasoningEffort", label: "默认对话思考强度", description: "改变支持思考强度的对话模型请求。较低强度适合减少等待，复杂问题可能需要更高强度。", scope: "companion", section: "model",
     values: ["low", "medium", "high", "xhigh"], prerequisites: [], read: c => effectiveReasoningEffort(c.llm?.reasoning_effort),
     patch: value => ({ llm: { reasoning_effort: value } }) },

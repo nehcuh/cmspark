@@ -1,5 +1,6 @@
 export interface ScreenRecording {
   id: string
+  meetingId?: string
   started: number
   mime: string
   chunks: number

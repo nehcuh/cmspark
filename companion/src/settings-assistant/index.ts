@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { z } from "zod"
 import { getConfig, getConfigRevision } from "../config"
 import { llmExtract } from "../llm/llm-extract"
+import { CHAT_OUTPUT_LIMIT_MAX, isChatOutputLimit } from "../llm/output-budget"
 import { handleConfigFamily } from "../message-router/handlers/config"
 import { readModelCenter, saveModelCenter, type ModelCenterAction } from "../model-center"
 import { redactSecrets } from "../threads/distill"
@@ -57,7 +58,16 @@ function localProposal(text: string, canSetReasoning: boolean): z.infer<typeof m
   if (/^(?:请\s*)?(?:把)?会议(?:改成|改用|换成|换用|使用)外部(?:大)?模型$/.test(command)) {
     return { intent: "为会议选择外部模型", clarification: "要改的是转写音频，还是生成纪要？前者会发送选定的音频，后者会发送逐字稿等已确认文本。", candidates: [] }
   }
-  const effort = /^(?:请\s*)?(?:把)?(?:默认对话(?:的)?)?思考强度(?:调|改|设)(?:为|成|到)?(低|中|高|极高)$/.exec(command)?.[1]
+  const budget = /^(?:请\s*)?(?:把)?(?:默认对话(?:的)?)?(?:单次)?输出上限(?:调|改|设|恢复)(?:置)?(?:为|成|到)?\s*(自动|[0-9]+)\s*(?:tokens?)?$/i.exec(command)?.[1]
+  if (budget) {
+    const after = budget === "自动" ? 0 : Number(budget)
+    if (!isChatOutputLimit(after)) return { intent: "更改单次输出上限", clarification: `请输入 1 至 ${CHAT_OUTPUT_LIMIT_MAX} 的整数，或设为自动。`, candidates: [] }
+    return { intent: "更改单次输出上限", candidates: [{
+      title: after ? `设置为 ${after} Token` : "恢复自动预算", reason: "影响后续默认对话请求", tradeoffs: "上下文和服务端规格仍会限制可生成的 Token 数。",
+      changes: [{ settingId: "chat.outputLimit", after, reason: "使用你指定的输出预算" }],
+    }] }
+  }
+  const effort = /^(?:请\s*)?(?:把)?(?:默认对话(?:的)?)?思考强度(?:调|改|设置?)(?:为|成|到)?\s*(低|中|高|极高)$/.exec(command)?.[1]
   if (!effort) return
   if (!canSetReasoning) {
     return { intent: "更改默认对话思考强度", clarification: "当前对话模型未配置或不支持思考强度。可在「模型与服务」查看其他模型。", candidates: [] }
@@ -221,7 +231,7 @@ export class SettingsAssistant {
       const catalog = availableSettings(currentConfig)
       stale = selected.some(change => {
         if (change.scope !== "companion") return false
-        if (change.settingId === "chat.reasoningEffort" && cached.revision !== expectedRevision) return true
+        if (change.section === "model" && cached.revision !== expectedRevision) return true
         const entry = catalog.find(item => item.id === change.settingId)
         return !entry || readSettingValue(entry, currentConfig) !== change.before
       })
@@ -237,7 +247,12 @@ export class SettingsAssistant {
       if (!current()) return error("SESSION_ENDED", "页面已断开，未提交设置。")
       if (writable.length) {
         const patch: Record<string, unknown> = {}
-        for (const change of writable) Object.assign(patch, SETTINGS_CATALOG.find(entry => entry.id === change.settingId)!.patch!(change.after))
+        for (const change of writable) {
+          const fields = SETTINGS_CATALOG.find(entry => entry.id === change.settingId)!.patch!(change.after)
+          for (const [key, value] of Object.entries(fields)) {
+            patch[key] = value && typeof value === "object" ? { ...(patch[key] as object), ...value } : value
+          }
+        }
         try { await this.deps.save(patch, expectedRevision) } catch { failure = true }
       }
       const actual = this.deps.read()

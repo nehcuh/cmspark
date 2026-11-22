@@ -9,6 +9,7 @@
  * - reasoning_content dropped on wire (M7)
  */
 
+import { LLM_MAX_TOKENS_DEFAULT } from "../chat-output-policy"
 import type {
   CanonicalChatMessage,
   CanonicalToolCall,
@@ -51,7 +52,7 @@ export interface AnthropicRequestBody {
 }
 
 /** Pinned chat output cap (not vision.max_tokens). */
-export const LLM_MAX_TOKENS_DEFAULT = 32768
+export { LLM_MAX_TOKENS_DEFAULT }
 export const LLM_MAX_TOKENS_HARD_CAP = 32768
 
 /**

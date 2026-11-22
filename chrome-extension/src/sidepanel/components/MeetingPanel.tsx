@@ -2,7 +2,7 @@
  * Meeting workbench — Mtg0–Mtg3.
  * SoT: meeting-minutes-design + Mtg3 diarize design.
  * Mtg3: experimental anonymous 发言人N via local feature k-means (NOT identity).
- * Does NOT auto-start mic on pack apply. System audio mix still parking-lot.
+ * Media acquisition begins with an explicit choice in the meeting workbench.
  */
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
@@ -12,6 +12,7 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { meetingSourceRangeLabel, meetingCaptureErrorMessage, meetingCaptureStopLabel } from "../voice/meeting-continuous-pcm"
 import { createPanelMeetingCapture } from "../voice/meeting-panel-continuous"
+import { chooseDesktopMeetingInput } from "../voice/meeting-desktop-input"
 import {
   detectLocalMediaCapture,
 } from "../voice/local-stt-detect"
@@ -151,7 +152,13 @@ export function MeetingPanel(props: {
   const [referenceStatus, setReferenceStatus] = useState("")
   const [liveTarget, setLiveTarget] = useState<ReturnType<typeof meetingAsrState>>(null)
   const [liveLang, setLiveLang] = useState("zh")
-  const [pendingTarget, setPendingTarget] = useState<{ identity: string; meetingId: string | null; thread: string | null } | null>(null)
+  const [inputSource, setInputSource] = useState<"microphone" | "desktop">("microphone")
+  const [includeMicrophone, setIncludeMicrophone] = useState(true)
+  const [chooseDesktop, setChooseDesktop] = useState<(() => void) | null>(null)
+  const [desktopMessage, setDesktopMessage] = useState("")
+  const desktopInput = !!props.purpose && inputSource === "desktop"
+  const audioScope = desktopInput ? includeMicrophone ? "共享来源声音和麦克风音频" : "共享来源声音" : "麦克风音频"
+  const [pendingTarget, setPendingTarget] = useState<{ identity: string; meetingId: string | null; thread: string | null; audioScope: string } | null>(null)
   const startupContext = useRef("")
   const [captureBusy, setCaptureBusy] = useState(false)
   const externalLive = liveTarget?.mode === "external"
@@ -284,15 +291,17 @@ export function MeetingPanel(props: {
     setCapturePhase(p)
   }, [])
 
-  const contextKey = JSON.stringify([props.active !== false, props.meetingId, props.purpose, state.activeThreadId, state.activeThreadSelectionRevision, state.codingHistoryConnectionRevision, liveTarget?.configIdentity, companionConnected])
+  const contextKey = JSON.stringify([props.active !== false, props.meetingId, props.purpose, state.activeThreadId, state.activeThreadSelectionRevision, state.codingHistoryConnectionRevision, liveTarget?.configIdentity, companionConnected, audioScope])
   const currentContext = useRef(contextKey)
   currentContext.current = contextKey
   useEffect(() => {
     setPendingTarget(null)
     if (phaseRef.current === "starting" && startupContext.current !== contextKey) {
+      setChooseDesktop(null)
       cancelStartingRef.current = true
       continuousRef.current?.actor.destroy()
       continuousRef.current = null; adapterRef.current = null
+      setDesktopMessage("")
       finalizedRef.current = true; setPhase("idle")
       setError("会议或接收方已变化，请重新开始录制。")
       dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
@@ -312,6 +321,7 @@ export function MeetingPanel(props: {
   }, [companionConnected])
 
   const applySavedMeeting = (saved: any) => {
+    setDesktopMessage("")
     transcriptDirtyRef.current = false; referenceDirtyRef.current = false
     linePcmRef.current = []; setImportStatus(null); setReferenceStatus("")
     setPendingTarget(null); setMinutesConfirmation(null)
@@ -751,14 +761,35 @@ export function MeetingPanel(props: {
       return owner.syncing
     }
     owner.actor = createPanelMeetingCapture({ meetingId: id, modelId: activeModelId, lang: liveLang, speaker, liveAsr,
+      desktop: desktopInput ? {
+        select: signal => chooseDesktopMeetingInput(signal, includeMicrophone, choose => {
+          if (!current()) return
+          setDesktopMessage("选择会议窗口或整个屏幕，并勾选共享声音。")
+          setChooseDesktop(() => () => {
+            if (signal.aborted || !current() || currentContext.current !== startupContext.current) return
+            setChooseDesktop(null)
+            setDesktopMessage("正在等待共享来源与声音权限…")
+            choose()
+          })
+        }),
+        report: message => { if (current()) setDesktopMessage(message) },
+      } : undefined,
       canAcquire: () => current() && currentContext.current === startupContext.current,
       onStarted: meeting => {
         if (!current()) return
         for (const line of meeting.original_transcript || []) if (line.segment_id) owner.seen.add(line.segment_id)
         setStatus(meeting.status || "recording")
       },
-      onStart: () => { if (!current()) return; captureStartRef.current = Date.now(); setElapsedMs(0); setPhase("recording") },
-      onStopped: () => { if (current()) { captureStartRef.current = null; setPhase("stopping") } },
+      onStart: () => {
+        if (!current()) return
+        if (desktopInput) setDesktopMessage(`正在录制所选画面，并将${audioScope}用于实时转写。`)
+        captureStartRef.current = Date.now(); setElapsedMs(0); setPhase("recording")
+      },
+      onStopped: () => {
+        if (!current()) return
+        if (desktopInput) setDesktopMessage("桌面采集已停止，正在保存视频和整理已收到的音频…")
+        captureStartRef.current = null; setPhase("stopping")
+      },
       onStatus: status => {
         if (!current()) return
         setContinuousStatus(status)
@@ -768,9 +799,12 @@ export function MeetingPanel(props: {
       onError: code => {
         if (!current()) return
         closeFailureRef.current = true; wantGenerateRef.current = false
+        setChooseDesktop(null)
         setCaptureBusy(code === "capture_busy")
         setError(code.startsWith("external_") ? meetingAsrError(code) : meetingCaptureErrorMessage(code))
-        if (code === "network_unknown" || code === "contract_unavailable" || phaseRef.current === "starting") {
+        if (desktopInput && code === "capture_cancelled") setDesktopMessage("")
+        if (desktopInput && code === "network_unknown") setDesktopMessage("连接已中断，录屏已停止。已写入的视频可在「录屏」中查看。")
+        if (code !== "desktop_video_partial" && (code === "network_unknown" || code === "contract_unavailable" || code === "capture_cancelled" || code === "desktop_source_lost" || phaseRef.current === "starting")) {
           finalizedRef.current = true; captureStartRef.current = null; setPhase("idle")
           owner.actor.destroy(); continuousRef.current = null; adapterRef.current = null
           captureFinishedRef.current?.(false); captureFinishedRef.current = null
@@ -778,6 +812,7 @@ export function MeetingPanel(props: {
       },
       onEnd: status => {
         if (!current()) return
+        setChooseDesktop(null)
         owner.wanted = Math.max(owner.wanted, status.committed_end || 0)
         if (status.completion?.outcome !== "complete") {
           closeFailureRef.current = true; wantGenerateRef.current = false
@@ -1004,6 +1039,7 @@ export function MeetingPanel(props: {
   }
 
   const startLiveCapture = async (confirmed = false) => {
+    const canStart = phaseRef.current === "idle"
     if (!ensureAck()) return
     if (!props.purpose && !meetingId) {
       setError("请先新建会议会话")
@@ -1017,18 +1053,19 @@ export function MeetingPanel(props: {
       setError("听写进行中，请先结束听写再开始会议录音（全局同时仅一路本机 STT）")
       return
     }
-    if (capturing) return
-    if (!localMedia.ok) {
+    if (!canStart) return
+    if (!desktopInput && !localMedia.ok) {
       setError("当前环境无法访问麦克风")
       return
     }
     if (externalLive && liveTarget) {
       if (!liveTarget.ready) { setError(meetingAsrError("external_unconfigured")); return }
       if (!confirmed) {
-        setPendingTarget({ identity: liveTarget.configIdentity, meetingId, thread: state.activeThreadId })
+        setPendingTarget({ identity: liveTarget.configIdentity, meetingId, thread: state.activeThreadId, audioScope })
         return
       }
-      if (pendingTarget?.identity !== liveTarget.configIdentity || pendingTarget.meetingId !== meetingId || pendingTarget.thread !== state.activeThreadId) return
+      if (pendingTarget?.identity !== liveTarget.configIdentity || pendingTarget.meetingId !== meetingId ||
+          pendingTarget.thread !== state.activeThreadId || pendingTarget.audioScope !== audioScope) return
     } else {
       if (!state.voicePrivacyAckV2) {
         setError("请先确认下方「本机语音隐私说明」（或：设置 → 输入与语音 → 启用本机转写）")
@@ -1049,6 +1086,7 @@ export function MeetingPanel(props: {
       }
     }
     setPendingTarget(null); setCaptureBusy(false)
+    setChooseDesktop(null); setDesktopMessage("")
     setError(null)
     if (minutesMd) setMinutesStale(true)
     setLiveCorrections([])
@@ -1764,7 +1802,7 @@ export function MeetingPanel(props: {
       {closing && <div role="status" aria-live="polite">正在保存最后一段转写，完成后收起…</div>}
 
       <p style={{ margin: 0, color: tokens.textSecondary }}>
-        {props.purpose === "transcribe" ? "选择字幕语言并开启麦克风，识别结果会逐段显示在下方。" : "开启麦克风或导入已有录音。核对逐字稿后即可生成会议纪要。"}
+        {props.purpose ? "选择麦克风或外部会议窗口，逐段查看转写。核对逐字稿后可以生成纪要。" : "开启麦克风或导入已有录音。核对逐字稿后即可生成会议纪要。"}
       </p>
 
       {/* Live capture and local imports require voice_privacy_ack_v2.
@@ -1834,7 +1872,7 @@ export function MeetingPanel(props: {
           <summary>会议隐私说明 · 转写保存在本机，生成纪要时向所选模型发送文字</summary>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             <li>会创建本地会话产物（转写 ± 可选音频）。</li>
-            <li>默认结束录制后删除会议目录下音频（当前 UI 不提供保留选项）。</li>
+            <li>结束后会清理会议目录内的临时录音。选择桌面录制时，含所选声音的视频会保存在本机工作台的「录屏」中，可随时清除。</li>
             <li>生成纪要将把转写文本发给你已配置的 LLM。</li>
             <li>默认设置下，会议录音在本机转写；不会自动开始录音。选用外部转写时，每次录制或导入前都需确认模型与音频接收地址。</li>
             <li>多方录音法律合规由你负责。</li>
@@ -1923,7 +1961,7 @@ export function MeetingPanel(props: {
         <span style={{ fontSize: 12, fontWeight: 500 }}>
           {capturing ? (
             <>
-              {capturePhase === "starting" ? "准备麦克风与识别服务…" : capturePhase === "stopping" ? "正在整理已收到的音频…" :
+              {capturePhase === "starting" ? desktopInput ? "准备桌面会议录制…" : "准备麦克风与识别服务…" : capturePhase === "stopping" ? "正在整理已收到的音频…" :
                 <><span style={{ color: tokens.warning }}>●</span> 正在收音 {formatElapsed(elapsedMs)}</>}
               {refinePending > 0 ? ` · AI 纠错中(${refinePending})` : ""}
             </>
@@ -2004,6 +2042,14 @@ export function MeetingPanel(props: {
         <button type="button" disabled={busy || capturing} onClick={createMeeting} style={btnStyle(false)}>
           新建会议会话
         </button>
+        {props.purpose && <label>采集来源 <select value={inputSource} disabled={capturing || busy} onChange={event => {
+          setPendingTarget(null); setDesktopMessage(""); setInputSource(event.target.value === "desktop" ? "desktop" : "microphone")
+        }}>
+          <option value="microphone">仅麦克风</option>
+          <option value="desktop">外部会议窗口或整个屏幕</option>
+        </select></label>}
+        {desktopInput && <label><input type="checkbox" checked={includeMicrophone} disabled={capturing || busy}
+          onChange={event => { setPendingTarget(null); setIncludeMicrophone(event.target.checked) }} /> 同时录制我的麦克风</label>}
         <label>字幕语言 <select value={liveLang} disabled={capturing} onChange={event => setLiveLang(event.target.value)}>
           <option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option>
         </select></label>
@@ -2020,7 +2066,7 @@ export function MeetingPanel(props: {
                 : undefined
             }
           >
-            {props.purpose === "transcribe" ? "开始转写" : "开始录制"}
+            {desktopInput ? "准备桌面会议录制" : props.purpose === "transcribe" ? "开始转写" : "开始录制"}
           </button>
         ) : (
           <>
@@ -2052,9 +2098,12 @@ export function MeetingPanel(props: {
         )}
       </div>
 
+      {desktopInput && <p>视频含所选声音，保存在工作台的「录屏」中。若窗口未提供声音，可选择整个屏幕并共享系统声音。系统声音也可能包含其他应用和通知。</p>}
+      {desktopMessage && <p role="status">{desktopMessage}</p>}
+      {chooseDesktop && capturePhase === "starting" && <button type="button" style={btnStyle(true)} onClick={chooseDesktop}>选择窗口或整个屏幕</button>}
       {pendingTarget && externalLive && <section aria-label="确认实时会议转写">
-        <p>将本次会议的麦克风音频按段发送到 {liveTarget?.normalizedUrl}，模型 {liveTarget?.model}。停止后处理已收音频，取消会停止后续发送。</p>
-        <button type="button" style={btnStyle(true)} onClick={() => void startLiveCapture(true)}>确认发送麦克风音频并开始</button>
+        <p>将本次会议的{audioScope}按段发送到 {liveTarget?.normalizedUrl}，模型 {liveTarget?.model}。停止后处理已收音频，取消会停止后续发送。</p>
+        <button type="button" style={btnStyle(true)} onClick={() => void startLiveCapture(true)}>确认发送{audioScope}并开始</button>
         <button type="button" style={linkBtn} onClick={() => setPendingTarget(null)}>取消</button>
       </section>}
       {captureBusy && <button type="button" style={linkBtn} onClick={focusWorkbenchCaptureOwner}>返回正在录制的工作台</button>}

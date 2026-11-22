@@ -25,7 +25,7 @@ export const REASONING_DISPLAY_NAMES: Record<ReasoningDisplay, string> = {
 
 const LOCAL_SETTINGS_SEARCH = [
   { destination: "model-profiles", label: "已连接的模型服务", aliases: ["模型", "模型配置", "添加模型", "模型服务", "api key", "服务地址"] },
-  { destination: "model-chat", label: "默认对话模型和思考强度", aliases: ["思考强度", "默认模型", "对话模型", "输出预算", "上下文"] },
+  { destination: "model-chat", label: "默认对话模型、输出上限与思考强度", aliases: ["思考强度", "默认模型", "对话模型", "单次输出上限", "输出上限", "输出预算", "上下文"] },
   { destination: "model-vision", label: "看图模型", aliases: ["看图", "看图模型", "视觉模型"] },
   { destination: "model-meeting-transcribe", label: "会议转写", aliases: ["会议转写", "会议外部转写", "会议录音识别"] },
   { destination: "model-meeting-minutes", label: "会议纪要模型", aliases: ["纪要模型", "会议纪要模型", "摘要模型"] },
