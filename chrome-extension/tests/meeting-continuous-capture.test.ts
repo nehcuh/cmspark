@@ -77,6 +77,31 @@ function audioEnvironment(gum?: Promise<any>, rate = 16000) {
 const identity = { queue_contract: 1, meeting_id: "owned-meeting", capture_id: "00000000-0000-4000-8000-000000000494", capture_epoch: 1 }
 function status(phase = "capturing", extra: any = {}) { return { type: "meeting.capture.status", ...identity, phase, input_open: phase === "capturing", credits: [], ...extra } }
 
+test("external meeting ASR encodes the provided desktop mix without opening another microphone", async () => {
+  const audio = audioEnvironment(), wire: any[] = []
+  const capture = createMeetingContinuousCapture({
+    meetingId: identity.meeting_id, captureId: identity.capture_id, epoch: 1, modelId: "", engine: "meeting-external", env: audio.env,
+    acquireAudio: async () => audio.stream as unknown as MediaStream,
+    request: async m => {
+      wire.push(m)
+      if (m.type === "voice.stt.start") return status("capturing", { type: "voice.stt.partial", status: "receiving", credits: initial })
+      if (m.type === "voice.stt.chunk") return status("capturing", { credit_id: m.credit_id, accepted_through: Number(m.sample_offset) + Number(m.frame_count) })
+      return status("finished")
+    },
+  })
+  try {
+    await capture.start()
+    assert.equal(audio.gumCalls, 0)
+    assert.equal(wire[0].engine, "meeting-external")
+    const input = samples(260)
+    audio.push(input)
+    await capture.stop()
+    assert.equal(wire[1].type, "voice.stt.chunk")
+    assert.deepEqual(Uint8Array.from(atob(wire[1].data), ch => ch.charCodeAt(0)), encode(input, 16000, []).pcm)
+    assert.equal(wire[2].final_sample_end, 260)
+  } finally { capture.destroy() }
+})
+
 test("actual ScriptProcessor stays open while earlier chunk ACK is delayed; Stop flushes all 1376 samples once", async () => {
   const audio = audioEnvironment(), wire: any[] = [], errors: string[] = []
   let release!: (ack: any) => void, ended = 0

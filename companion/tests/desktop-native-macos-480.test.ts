@@ -37,7 +37,9 @@ test("actual C construction failures reap only their owned child; normal waiter 
 })
 
 // Actual native host+WKWebView+crypto/network test, hidden window (not GUI/installed acceptance).
-test("real Mac native child authenticates over WS and bundled hidden WK document reads the four metadata pages",{skip:process.platform!=="darwin",timeout:20000},async(t)=>{
+for (const transportOnly of [false, true]) test(transportOnly
+ ? "real Mac native child honors the authenticated revocation close frame without a final JSON message"
+ : "real Mac native child authenticates over WS and bundled hidden WK document reads the four metadata pages",{skip:process.platform!=="darwin",timeout:20000},async(t)=>{
  return withSurface650(t, async (t, surfaceLease) => {
  const root=path.resolve(__dirname,"../../dist/desktop-native"),addon=path.join(root,"desktop-launcher.node"),binary=path.join(root,"cmspark-desktop")
  assert.equal(fs.existsSync(addon)&&fs.existsSync(binary),true,"Build actual native desktop artifacts before Mac native gate")
@@ -57,7 +59,10 @@ test("real Mac native child authenticates over WS and bundled hidden WK document
    assert.equal(legacy.clients.size,0);assert.equal(channel.wss.clients.size,1);assert.equal(methods.size,4)
    // Ordered list replies contain arrays; native must consume them and remain owner-connected.
    const ws=[...channel.wss.clients][0];const dropped=new Promise<never>((_,reject)=>ws.once("close",code=>{if(code===1001)reject(Error(`Native disconnected before consuming valid metadata replies (${code})`))}))
-   ws.send(JSON.stringify({type:"desktop.close"}));assert.equal(await Promise.race([exit,dropped]),0)
+   const reconnected=new Promise<never>((_,reject)=>channel.wss.once("connection",()=>reject(Error("Native reconnected after intentional close"))))
+   if(transportOnly)ws.close(1000,"desktop.host.revoked")
+   else ws.send(JSON.stringify({type:"desktop.close"}))
+   assert.equal(await Promise.race([exit,dropped,reconnected]),0)
  }finally{surfaceLease.retain();child?.terminate();for(const ws of channel.wss.clients)ws.terminate();if(child)await exit;await Promise.all([new Promise<void>(r=>channel.wss.close(()=>r())),new Promise<void>(r=>legacy.close(()=>r()))]);await new Promise<void>(r=>server.close(()=>r()));surfaceLease.settled()}
 
  })

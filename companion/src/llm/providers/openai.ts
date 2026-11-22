@@ -18,7 +18,7 @@ import type {
 import { throwIfLlmEndpointBlocked } from "../../security"
 import { isBenignStreamTailClose } from "../transport-error"
 import { cleanCompanionUserAgent } from "./headers"
-import { reasoningSupport, reasoningWireEffort } from "../reasoning-effort"
+import { reasoningWireEffort } from "../reasoning-effort"
 import { LLM_MAX_TOKENS_DEFAULT } from "./anthropic-convert"
 import { providerModelLimits } from "../output-budget"
 
@@ -43,7 +43,8 @@ export class OpenAIProvider implements LlmProvider {
     await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
-    const support = reasoningSupport(this.config.protocol, this.config.base_url, model)
+    const spec = providerModelLimits(this.config, model)
+    const support = spec?.support ?? "unsupported"
     const effort = reasoningWireEffort(support, this.config.reasoning_effort)
     const messages = toWireMessages(params.messages)
     const tools = params.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined
@@ -51,14 +52,14 @@ export class OpenAIProvider implements LlmProvider {
     const createParams: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
       model,
       messages,
-      ...(support === "openai" ? {} : { temperature }),
+      ...(support === "openai" || support === "kimi" ? {} : { temperature }),
       stream: true,
       stream_options: { include_usage: true },
     }
     if (effort) (createParams as unknown as { reasoning_effort: string }).reasoning_effort = effort
     if (typeof params.max_tokens === "number" && params.max_tokens > 0) {
-      const limit = Math.min(params.max_tokens, providerModelLimits(this.config, model)?.output ?? Infinity)
-      if (support === "openai") createParams.max_completion_tokens = limit
+      const limit = Math.min(params.max_tokens, spec?.output ?? Infinity)
+      if (spec?.provider === "OpenAI" || support === "kimi") createParams.max_completion_tokens = limit
       else createParams.max_tokens = limit
     }
     if (tools && tools.length > 0) {
@@ -133,21 +134,22 @@ export class OpenAIProvider implements LlmProvider {
     await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
-    const support = reasoningSupport(this.config.protocol, this.config.base_url, model)
-    const effort = params.reasoning_effort ?? reasoningWireEffort(support, this.config.reasoning_effort)
+    const spec = providerModelLimits(this.config, model)
+    const support = spec?.support ?? "unsupported"
+    const effort = (support === "kimi" ? undefined : params.reasoning_effort) ?? reasoningWireEffort(support, this.config.reasoning_effort)
     const messages = toWireMessages(params.messages)
 
     const createParams: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
       model,
-      ...(support === "openai" ? {} : { temperature }),
+      ...(support === "openai" || support === "kimi" ? {} : { temperature }),
       messages,
     }
     if (effort) (createParams as unknown as { reasoning_effort: string }).reasoning_effort = effort
     // Same policy as streamChat: send a cap only when explicitly requested.
     const completeMax = params.max_tokens ?? (this.config.max_tokens === 0 ? LLM_MAX_TOKENS_DEFAULT : this.config.max_tokens)
     if (typeof completeMax === "number" && completeMax > 0) {
-      const limit = Math.min(completeMax, providerModelLimits(this.config, model)?.output ?? Infinity)
-      if (support === "openai") createParams.max_completion_tokens = limit
+      const limit = Math.min(completeMax, spec?.output ?? Infinity)
+      if (spec?.provider === "OpenAI" || support === "kimi") createParams.max_completion_tokens = limit
       else createParams.max_tokens = limit
     }
 

@@ -455,26 +455,7 @@ export function createTextModelConfig(provider: Pick<LlmConfig, "protocol" | "ba
 
 /** Factory default: Agent working budget. Auto-compact triggers later; fill the model's real window. */
 export const CONTEXT_WINDOW_DEFAULT = 512000
-/** Disk values below this are treated as tiny at the request path. */
-export const CONTEXT_WINDOW_TINY = 16000
-/** Runtime floor only — never persist. Tiny/non-finite disk windows use this for budgeting. */
-export const CONTEXT_WINDOW_FLOOR = 128000
-
-/**
- * Request-path window. Disk scalars stay as written; tiny/non-finite values
- * floor to CONTEXT_WINDOW_FLOOR without rewriting config.json.
- */
-export function effectiveContextWindow(disk: number): {
-  disk: number
-  effective: number
-  floored: boolean
-} {
-  const n = Number.isFinite(disk) ? Math.floor(disk) : disk
-  if (!Number.isFinite(n) || n <= 0 || n < CONTEXT_WINDOW_TINY) {
-    return { disk: n, effective: CONTEXT_WINDOW_FLOOR, floored: true }
-  }
-  return { disk: n, effective: n, floored: false }
-}
+export { CONTEXT_WINDOW_TINY, CONTEXT_WINDOW_FLOOR, effectiveContextWindow } from "./llm/chat-output-policy"
 
 const defaultConfig: CompanionConfig = {
   port: 23401,

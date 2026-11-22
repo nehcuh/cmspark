@@ -7,7 +7,8 @@ import { CHAT_OUTPUT_LIMIT_MAX, isChatOutputLimit } from "../utils/normalize-con
 import type { LLMConfig, SecurityAuditEntry } from "../types"
 import { Modal } from "./ui/Modal"
 import { connectionLabel, tokens } from "../ui/tokens"
-import { effectiveReasoningEffort, reasoningSupport, type ReasoningEffort } from "../utils/reasoning-effort"
+import { effectiveReasoningEffort, modelSpec, modelSuggestions, reasoningWireEffort, type ReasoningEffort } from "../utils/reasoning-effort"
+import { calculateChatOutputBudget, effectiveContextWindow } from "../utils/chat-output-policy"
 import { UserEnvSection } from "./UserEnvSection"
 import { SiteCounterSettingsSection } from "./SiteCounterSettingsSection"
 import { NetSecSettingsSection } from "./NetSecSettingsSection"
@@ -484,6 +485,9 @@ export function SettingsSlideout() {
       Object.assign(config, { [key]: draft.value[key] })
     }
   }
+  const spec = modelSpec(config.protocol, config.base_url, config.model_name)
+  const wireEffort = reasoningWireEffort(spec?.support ?? "unsupported", config.reasoning_effort)
+  const budget = calculateChatOutputBudget(effectiveContextWindow(config.context_window).effective, spec, config.max_tokens, config.reasoning_effort)
   const saveBlocked = settingsSaveDisabled(state.configHydratedFromCompanion) || !draft ||
     !state.configRevision || state.connectionState !== "connected" || !!state.settingsSave.pending ||
     state.settingsSave.status === "unknown" || Object.keys(draft?.conflicts ?? {}).length > 0
@@ -1171,14 +1175,7 @@ export function SettingsSlideout() {
               placeholder="输入模型名称或从列表选择"
             />
             <datalist id="model-options">
-              <option value="deepseek-v4-flash" />
-              <option value="deepseek-v4-pro" />
-              <option value="deepseek-chat" />
-              <option value="deepseek-reasoner" />
-              <option value="gpt-4o" />
-              <option value="gpt-4-turbo" />
-              <option value="claude-sonnet-4-6" />
-              <option value="claude-opus-4-7" />
+              {modelSuggestions(config.protocol, config.base_url).map(model => <option key={model} value={model} />)}
             </datalist>
             {!config.model_name && state.companionConfig?.model_name && (
               <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}>
@@ -1197,12 +1194,9 @@ export function SettingsSlideout() {
               <option value="xhigh">极高</option>
             </select>
             <div style={styles.helpText}>
-              {reasoningSupport(config.protocol, config.base_url, config.model_name) === "unsupported"
-                ? "当前服务或模型暂未确认支持；将保存偏好，但不会发送强度参数。"
-                : reasoningSupport(config.protocol, config.base_url, config.model_name) === "deepseek"
-                  ? "DeepSeek 原生提供低、高、最高三档：中与高均使用高，极高使用最高。"
-                  : "所选强度将在对话模型请求中发送；更高强度可能增加耗时和费用。"}
-              测试连接只验证连通性，不验证强度是否生效。
+              {!wireEffort
+                ? spec ? "当前模型没有已核实的强度档位。此偏好会保留，调用时省略强度参数。" : "当前服务或模型暂未确认支持；将保存偏好，但不会发送强度参数。"
+                : <>{spec?.support === "deepseek" || spec?.support === "kimi" ? "中与高均使用高，极高使用最高。" : ""}实际发送 {wireEffort}。较高强度可能花更多 Token 思考，留给正文的空间也会减少。</>}
             </div>
           </div>
 
@@ -1264,7 +1258,11 @@ export function SettingsSlideout() {
                 if (isChatOutputLimit(value)) dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { max_tokens: value } })
               }}
             />
-            <div style={styles.helpText}>留空按模型和思考强度选择。模型能力和上下文窗口也会限制实际输出。</div>
+            <div style={styles.helpText}>
+              {spec ? <>{spec.provider} 公布的单次输出上限为 {spec.output.toLocaleString("zh-CN")} Token，上下文窗口为 {spec.contextWindow.toLocaleString("zh-CN")} Token。 <a href={spec.source} target="_blank" rel="noreferrer">官方规格</a></>
+                : "当前服务与模型组合尚未收录。对话使用最多 32,768 Token 的兼容预算。"}
+              {" "}按当前设置，首次请求预算为 {budget.preferred.toLocaleString("zh-CN")} Token，恢复截断回复时最多可请求 {budget.ceiling.toLocaleString("zh-CN")} Token。留空使用自动预算，思考强度不会改变厂商上限。
+            </div>
           </div>
 
           <div style={styles.field}>

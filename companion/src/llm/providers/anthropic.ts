@@ -139,6 +139,7 @@ export class AnthropicProvider implements LlmProvider {
       temperature: support === "anthropic-47" ? undefined : temperature,
       stream: false,
       maxTokens: completeMax,
+      maxTokenCeiling: providerModelLimits(this.config, model)?.output,
     })
 
     const effort = reasoningWireEffort(support, this.config.reasoning_effort)

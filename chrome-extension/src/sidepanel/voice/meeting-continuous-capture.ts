@@ -6,6 +6,8 @@ export type MeetingCaptureOptions = {
   request: (message: Record<string, unknown>) => Promise<any>;
   onStart?: () => void; onStatus?: (status: any) => void; onStopped?: () => void;
   onError?: (code: string) => void; onEnd?: (status: any) => void;
+  /** Start the selected desktop recording and return its dedicated mixed audio track. */
+  acquireAudio?: () => Promise<MediaStream>;
   /** Owned audio environment seam; production uses the current browser APIs. */
   env?: any;
 }
@@ -187,7 +189,9 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
       }
       // Build the graph before opening the device. Module compilation, the port
       // handshake and AudioContext.resume cannot consume the first syllable.
-      const gum = env.navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }).then((s: MediaStream) => {
+      const input = options.acquireAudio ? options.acquireAudio() :
+        env.navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+      const gum = input.then((s: MediaStream) => {
         if (stopping || ended) stopStream(s)
         return s
       })

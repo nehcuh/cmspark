@@ -264,6 +264,7 @@ test("#789 actual settings select defaults to medium and saves the chosen effort
     const select = f.find(ui, n => n.type === "select" && n.props.id === "reasoning-effort")
     assert.equal(select.props.value, "medium")
     assert.match(navigationText(ui), /中与高均使用高/)
+    assert.match(navigationText(ui), /393,216 Token/)
     assert.equal(f.rows(select).filter((n: any) => n.type === "option").map((n: any) => n.props.value).join(","), "low,medium,high,xhigh")
     select.props.onChange({ target: { value: "xhigh" } })
     assert.equal(f.state().settingsDraft.value.reasoning_effort, "xhigh")
@@ -275,6 +276,7 @@ test("#789 actual settings select defaults to medium and saves the chosen effort
     assert.equal(sent[0].config.reasoning_effort, "xhigh")
     f.setState({ config: { ...f.state().config, base_url: "https://relay.example/v1" } })
     assert.match(navigationText(f.renderSlideout()), /暂未确认支持/)
+    assert.match(navigationText(f.renderSlideout()), /尚未收录/)
   } finally { f.close() }
 })
 

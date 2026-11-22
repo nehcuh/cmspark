@@ -32,7 +32,8 @@ Optional:
 
 Under 待办, use "- [ ] " checklist items. Owner only if explicit in transcript; else "未指定".`
 
-export const MEETING_MINUTES_CITATION_RULE = `For the default Markdown minutes, write one brief claim per line. Under 决议 include only choices actually agreed or adopted during the meeting. Put descriptions of an existing brief, process or plan in TL;DR. Under 待办 include only an explicit future commitment. At the end of each claim, cite a short exact passage copied from the transcript in its original language inside 〔〕. Cite enough to support every detail. Do not translate the quoted text, rewrite it or join fragments with ellipses. Use separate bullets for separate facts. Empty sections say 无明确记录. Do not output an appendix.`
+export const MEETING_MINUTES_CITATION_RULE = `For the default Markdown minutes, write one brief claim per line. Under 决议 include only choices actually agreed or adopted during the meeting. Put descriptions of an existing brief, process or plan in TL;DR. Under 待办 include only an explicit future commitment. At the end of each claim, cite a short exact passage copied from the transcript in its original language inside 〔〕. Cite enough to support every detail. Do not translate the quoted text, rewrite it or join fragments with ellipses. Use separate bullets for separate facts. Empty sections say 无明确记录. Do not output an appendix.
+Every nonempty factual bullet MUST end with 〔exact words copied from this transcript〕. The application drops each uncited bullet. Format example for a different meeting: given "We will review the draft tomorrow.", write "- 明天审阅草稿 〔review the draft tomorrow〕". Use only this meeting’s transcript for your actual facts and quotes. Before responding, check every bullet has both 〔 and 〕, with an exact transcript substring between them.`
 
 /**
  * Build the system prompt for the meeting_minutes job.

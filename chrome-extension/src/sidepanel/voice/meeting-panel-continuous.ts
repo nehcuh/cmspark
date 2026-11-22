@@ -1,10 +1,13 @@
 import { claimWorkbenchCapture } from "./workbench-capture-owner"
 import { createMeetingContinuousCapture } from "./meeting-continuous-capture"
 import { createMeetingRuntimeChannel } from "./meeting-runtime-channel"
+import { createDesktopMeetingInput } from "./meeting-desktop-input"
+import type { DesktopMeetingMedia } from "./desktop-meeting-media"
 
 /** One explicit plugin Begin. Current-connection capability precedes record/mic admission. */
 export function createPanelMeetingCapture(options: {
   liveAsr?: string; canAcquire?: () => boolean;
+  desktop?: { select: (signal: AbortSignal) => Promise<DesktopMeetingMedia>; report: (message: string) => void };
   meetingId: string; modelId: string; lang?: string; speaker?: string;
   /** Owned audio seam; live callers omit it. */ env?: any;
   onStarted: (meeting: any) => void; onStart: () => void; onStopped: () => void;
@@ -12,13 +15,20 @@ export function createPanelMeetingCapture(options: {
 }) {
   let controller: ReturnType<typeof createMeetingContinuousCapture> | null = null
   let stopped = false, destroyed = false
-  let beginPending = false
+  let beginPending = false, receiving = false
+  let stopCode = "capture_cancelled"
   const stale = () => destroyed || stopped || options.canAcquire?.() === false
   let releaseLock: (() => void) | null = null
   const release = () => { releaseLock?.(); releaseLock = null }
+  const desktop = options.desktop && createDesktopMeetingInput(options.meetingId, options.desktop.select, options.desktop.report, () => {
+    stopped = true
+    stopCode = "desktop_source_lost"
+    if (receiving) void controller?.stop("input_gap")
+    else void controller?.abort()
+  })
   const channel = createMeetingRuntimeChannel(message => controller?.handleStatus(message), () => {
     if (destroyed) return
-    destroyed = true; release(); controller?.destroy(); options.onError("network_unknown"); channel.destroy()
+    destroyed = true; desktop?.close("interrupted"); release(); controller?.destroy(); options.onError("network_unknown"); channel.destroy()
   })
   const captureId = crypto.randomUUID()
   // Snapshot synchronously at the explicit Begin, before any transport await.
@@ -33,6 +43,14 @@ export function createPanelMeetingCapture(options: {
       const loaded = await channel.request({ type: "meeting.get", meeting_id: options.meetingId })
       if (stale() || loaded.type !== "meeting.get_result" || loaded.meeting?.id !== options.meetingId) throw new Error("stale_capture")
       if (loaded.meeting.privacy?.audio_retained) throw new Error("audio_retention_unsupported")
+      if (desktop) {
+        try { await desktop.select() }
+        catch (error) {
+          if (!stale()) options.desktop!.report(error instanceof Error ? error.message : "无法获取桌面或声音")
+          throw new Error(stale() ? stopCode : "desktop_selection_failed")
+        }
+        if (stale()) throw new Error(stopCode)
+      }
       beginPending = true
       const reply = await channel.request({ type: "meeting.start", v: 1, id: options.meetingId, queue_contract: 1,
         capture_id: captureId, expected_capture_epoch: loaded.meeting.capture_epoch ?? 0,
@@ -46,20 +64,34 @@ export function createPanelMeetingCapture(options: {
           status.meeting_id !== options.meetingId || status.queue_contract !== 1 || !Number.isSafeInteger(status.capture_epoch)) throw new Error("stale_capture")
       if (stale()) {
         await channel.request({ type: "voice.stt.abort", v: 1, queue_contract: 1, sessionId: captureId, capture_epoch: status.capture_epoch })
-        throw new Error("stale_capture")
+        throw new Error(stopped ? stopCode : "stale_capture")
       }
       controller = createMeetingContinuousCapture({ meetingId: options.meetingId, captureId, epoch: status.capture_epoch,
-        engine: options.liveAsr && options.liveAsr !== "local" ? "meeting-external" : undefined, modelId: options.modelId, lang: options.lang, env: options.env, request: channel.request, onStart: options.onStart,
-        onStopped: options.onStopped, onStatus: options.onStatus, onError: options.onError,
-        onEnd: value => { release(); options.onEnd(value); channel.destroy() } })
+        engine: options.liveAsr && options.liveAsr !== "local" ? "meeting-external" : undefined, modelId: options.modelId, lang: options.lang, env: options.env, request: channel.request,
+        acquireAudio: desktop?.acquireAudio,
+        onStart: () => { receiving = true; options.onStart() },
+        onStopped: () => { desktop?.close("interrupted"); options.onStopped() },
+        onStatus: options.onStatus,
+        onError: code => { desktop?.close("interrupted"); options.onError(code) },
+        onEnd: value => {
+          release(); channel.destroy()
+          if (!desktop) { options.onEnd(value); return }
+          void Promise.resolve(desktop.close(value.completion?.outcome === "complete" ? "stop" : "interrupted")).then(() => {
+            if (destroyed) return
+            if (desktop.failed) options.onError("desktop_video_partial")
+            options.onEnd(value)
+          })
+        } })
       options.onStarted(reply.meeting)
       if (stopped) await controller.abort()
       else await controller.start()
     } catch (error) {
-      release(); channel.destroy()
-      if (!destroyed) options.onError(error instanceof Error ? error.message : "contract_unavailable")
+      desktop?.close("interrupted"); release(); channel.destroy()
+      if (!destroyed) options.onError(stopped ? stopCode : error instanceof Error ? error.message : "contract_unavailable")
     }
   }
-  return { start, stop() { stopped = true; return controller?.stop() }, abort() { stopped = true; return controller?.abort() },
-    destroy() { destroyed = true; stopped = true; release(); controller?.destroy(); if (!beginPending) channel.destroy() } }
+  return { start,
+    stop() { stopped = true; desktop?.close("stop"); return desktop && !receiving ? controller?.abort() : controller?.stop() },
+    abort() { stopped = true; desktop?.close("interrupted"); return controller?.abort() },
+    destroy() { destroyed = true; stopped = true; desktop?.close("interrupted"); release(); controller?.destroy(); if (!beginPending) channel.destroy() } }
 }

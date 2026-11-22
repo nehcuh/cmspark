@@ -70,7 +70,7 @@ import {
 } from "./tool-batch-heal"
 import { redactAssistantToolCallsForPersistence } from "../security/tool-persistence-redact"
 import { classifyGenerationLimit, isContentRiskError, isContextOverflowError, type GenerationLimit } from "./overflow"
-import { reasoningSupport } from "./reasoning-effort"
+import { modelSpec } from "./reasoning-effort"
 import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
 import type { RunStats } from "../loop/loop-state"
 import { chatOutputBudget } from "./output-budget"
@@ -675,7 +675,7 @@ export async function chatCreate(params: ChatCreateParams) {
   }
   const outputBudget = chatOutputBudget(cw.effective, config)
   const contextWindow = outputBudget.contextWindow
-  const officialOpenAI = reasoningSupport(config.protocol, config.base_url, config.model_name) === "openai"
+  const officialOpenAI = modelSpec(config.protocol, config.base_url, config.model_name)?.provider === "OpenAI"
   let outputMaxTokens = outputBudget.preferred
   const executeToolInner = params.executeTool
   let executeTool: ChatCreateParams["executeTool"] =

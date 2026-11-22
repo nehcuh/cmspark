@@ -17,6 +17,7 @@ const cfg = (base_url: string, model_name: string, protocol: "openai" | "anthrop
 
 test("#789 model capability and UI mirror stay exact", () => {
   assert.equal(readFileSync(path.resolve("src/llm/reasoning-effort.ts"), "utf8"), readFileSync(path.resolve("../chrome-extension/src/sidepanel/utils/reasoning-effort.ts"), "utf8"))
+  assert.equal(readFileSync(path.resolve("src/llm/chat-output-policy.ts"), "utf8"), readFileSync(path.resolve("../chrome-extension/src/sidepanel/utils/chat-output-policy.ts"), "utf8"))
   assert.equal(effectiveReasoningEffort(undefined), "medium")
   assert.equal(effectiveReasoningEffort("bogus"), "medium")
   assert.equal(isReasoningEffort("MAX"), false)
@@ -68,4 +69,28 @@ test("#789 Anthropic actual provider sends supported effort on stream and comple
 
 test("#789 unsupported mapping never guesses a wire value", () => {
   for (const level of levels) assert.equal(reasoningWireEffort("unsupported", level), undefined)
+})
+
+test("Kimi K3 and non-reasoning GPT-4o use their documented wire limits on both request paths", async () => {
+  for (const [url, model, expectedLimit, expectedEffort] of [
+    ["https://api.moonshot.cn/v1", "kimi-k3.1-pro", 200000, "max"],
+    ["https://api.openai.com/v1", "gpt-4o", 16384, undefined],
+  ] as const) {
+    const provider = new OpenAIProvider(cfg(url, model, "openai", "xhigh"))
+    const bodies: any[] = []
+    ;(provider as any).client.chat.completions.create = async (body: any) => {
+      bodies.push(body)
+      return body.stream ? (async function* () { yield { choices: [{ delta: {}, finish_reason: "stop" }] } })()
+        : { choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }
+    }
+    for await (const _ of provider.streamChat({ messages: message, max_tokens: 200000 })) {}
+    await provider.complete({ messages: message, max_tokens: 200000 })
+    assert.equal(bodies.length, 2)
+    for (const body of bodies) {
+      assert.equal(body.reasoning_effort, expectedEffort)
+      assert.equal(body.max_completion_tokens, expectedLimit)
+      assert.equal(body.max_tokens, undefined)
+      assert.equal(body.temperature, model === "gpt-4o" ? 0.4 : undefined)
+    }
+  }
 })

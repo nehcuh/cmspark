@@ -50,7 +50,6 @@ export function WorkbenchRecording({ visible = true, pendingContext, onActiveCha
   }, [])
   useEffect(() => {
     mounted.current = true
-    void refresh()
     const onClose = (event: BeforeUnloadEvent) => {
       if (active.current) {
         event.preventDefault()
@@ -61,6 +60,7 @@ export function WorkbenchRecording({ visible = true, pendingContext, onActiveCha
     window.addEventListener("beforeunload", onClose)
     window.addEventListener("pagehide", onHide)
     window.addEventListener("focus", refresh)
+    window.addEventListener("cmspark:screen-recording-saved", refresh)
     return () => {
       mounted.current = false
       ++previewVersion.current
@@ -68,8 +68,10 @@ export function WorkbenchRecording({ visible = true, pendingContext, onActiveCha
       window.removeEventListener("beforeunload", onClose)
       window.removeEventListener("pagehide", onHide)
       window.removeEventListener("focus", refresh)
+      window.removeEventListener("cmspark:screen-recording-saved", refresh)
     }
   }, [refresh])
+  useEffect(() => { if (visible) void refresh() }, [visible, refresh])
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url) }, [preview])
 
   async function start() {
@@ -140,6 +142,7 @@ export function WorkbenchRecording({ visible = true, pendingContext, onActiveCha
     {rows.length > 0 && <h3>本机录屏</h3>}
     {rows.map(row => <article key={row.id} style={{ borderTop: `1px solid ${tokens.border}`, padding: "12px 0" }}>
       <strong>{new Date(row.started).toLocaleString()}</strong>
+      {row.meetingId && <p>桌面会议 · {row.meetingId}</p>}
       <p>{row.state === "complete" ? "录制已结束" : row.state === "partial" ? row.detail : "录制尚未封装，可恢复已写入的部分"}
         {" · "}{row.chunks} 个分块 · 约 {formatMeetingElapsed(row.elapsedMs)} · {(row.bytes / (1024 * 1024)).toFixed(1)} MB</p>
       <div style={actions}>

@@ -228,7 +228,7 @@ export function createDesktopChannel(opts: { registry: DesktopIdentityRegistry; 
       try {
         // Revoke authority and retire effects before graceful transport shutdown.
         opts.registry.revokeHost(host)
-        for (const ws of targets) { send(ws,{type:"desktop.close"}); ws.close(); active.delete(ws) }
+        for (const ws of targets) { send(ws,{type:"desktop.close"}); ws.close(1000, "desktop.host.revoked"); active.delete(ws) }
       } finally { for (const ws of targets) gracefulClose.delete(ws) }
     },
   }

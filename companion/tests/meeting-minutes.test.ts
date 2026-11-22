@@ -65,6 +65,21 @@ test("MEETING_MINUTES_SYSTEM_PROMPT is distinct job and forbids invention", () =
   assert.doesNotMatch(MEETING_MINUTES_SYSTEM_PROMPT, /ASR post-editor/)
 })
 
+test("the default prompt demonstrates citation syntax and the example is never evidence for another meeting", async () => {
+  const transcript = "This is the kickoff meeting for our project."
+  const result = await generateMeetingMinutes({
+    transcriptText: transcript,
+    config: { base_url: "https://fixture.invalid", api_key: "fixture", model_name: "test", temperature: 0 },
+    extract: async ({ systemPrompt }) => {
+      assert.match(systemPrompt, /- 明天审阅草稿 〔review the draft tomorrow〕/)
+      return "### TL;DR\n- 项目启动 〔kickoff meeting for our project〕\n- 明天审阅草稿 〔review the draft tomorrow〕"
+    },
+  })
+  assert.ok(result.ok)
+  assert.match(result.minutes.raw_md, /项目启动/)
+  assert.doesNotMatch(result.minutes.raw_md, /明天审阅草稿/)
+})
+
 test("buildMinutesSystemPrompt embeds safety and optional template", () => {
   const def = buildMinutesSystemPrompt()
   assert.match(def, /RULES:/)
