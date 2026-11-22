@@ -53,6 +53,8 @@ private final class BundledScheme: NSObject, WKURLSchemeHandler {
 private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     let capability: String; let key: SymmetricKey; let endpoint: URL
     var socket: URLSessionWebSocketTask?; var session: URLSession?
+    var retiringTransport: URLSessionWebSocketTask?
+    var terminating = false
     var phase = "initial"; var connection: String?; var authenticated = false
     var web: WKWebView?; var window: NSWindow?; var generation: String?
     var requests = [String: (nativeId: String, uiId: String?, generation: String, thread: String?, kind: String?, target: String?, revision: String?)]()
@@ -76,6 +78,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
     }
     func applicationDidFinishLaunching(_ notification: Notification) { connect() }
     func connect() {
+        guard !terminating else { return }
         guard getppid() > 1 else { exit(1) }
         authenticated=false;phase="initial";connection=nil
         let s=URLSession(configuration:.ephemeral);session=s
@@ -83,21 +86,47 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         let task=s.webSocketTask(with:request);socket=task;task.resume();receive(task)
     }
     func transmit(_ value:[String:Any], to task: URLSessionWebSocketTask) {
-        guard socket === task, let data=try? JSONSerialization.data(withJSONObject:value),let text=String(data:data,encoding:.utf8) else { return }
-        task.send(.string(text)) { error in if error != nil { DispatchQueue.main.async { self.offline(task) } } }
+        guard !terminating, socket === task, let data=try? JSONSerialization.data(withJSONObject:value),let text=String(data:data,encoding:.utf8) else { return }
+        task.send(.string(text)) { error in if error != nil { DispatchQueue.main.async { self.transportLost(task) } } }
+    }
+    func revoked(_ task:URLSessionWebSocketTask)->Bool {
+        task.closeCode == .normalClosure && task.closeReason == Data("desktop.host.revoked".utf8)
+    }
+    func endHost() {
+        guard !terminating else { return }
+        terminating=true
+        NSApp.terminate(nil)
+    }
+    func transportLost(_ task:URLSessionWebSocketTask, code:Int = 0) {
+        guard !terminating, socket === task else { return }
+        if authenticated && revoked(task) { endHost();return }
+        offline(task, code:code, drainClose:authenticated)
     }
     func receive(_ task:URLSessionWebSocketTask) {
         task.receive { result in DispatchQueue.main.async {
+            guard !self.terminating else { return }
+            // A write failure may arrive before this read. Authority is already
+            // retired. Only a final close from that same authenticated task matters.
+            if self.retiringTransport === task {
+                if self.revoked(task) { self.endHost();return }
+                if case .success(let message)=result {
+                    let data:Data
+                    switch message {case .string(let s):data=Data(s.utf8);case .data(let d):data=d;@unknown default:return}
+                    if let f=flatFrame(data),Set(f.keys)==["type"],f["type"] as? String=="desktop.close" { self.endHost();return }
+                    self.receive(task)
+                }
+                return
+            }
             guard self.socket === task else { return }
             switch result {
-            case .failure(let error): self.offline(task, code:(error as NSError).code)
+            case .failure(let error): self.transportLost(task, code:(error as NSError).code)
             case .success(let message):
                 let data:Data
                 switch message {case .string(let s): data=Data(s.utf8);case .data(let d):data=d;@unknown default:self.offline(task);return}
                 // Auth/control frames are flat; projected list replies legitimately contain arrays.
                 guard let f=(self.phase == "ready" ? (try? JSONSerialization.jsonObject(with:data)) as? [String:Any] : flatFrame(data)) else { self.offline(task);return }
                 if self.phase == "ready",let kind=f["type"] as? String,["desktop.window","desktop.close","desktop.confirmation.request","desktop.confirmation.resolved","desktop.workspace.picker.request","desktop.workspace.picker.cancel"].contains(kind),flatFrame(data)==nil { self.offline(task);return }
-                self.accept(f,task);if self.socket === task { self.receive(task) }
+                self.accept(f,task);if !self.terminating && self.socket === task { self.receive(task) }
             }
         } }
     }
@@ -294,7 +323,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         }
         guard authenticated,phase=="ready" else { offline(task);return }
         if type=="desktop.window",Set(f.keys)==["type","view"],let requested=f["view"] as? String,["compact","workspace"].contains(requested) { show(requested);return }
-        if type=="desktop.close",Set(f.keys)==["type"] { NSApp.terminate(nil);return }
+        if type=="desktop.close",Set(f.keys)==["type"] { endHost();return }
         if type=="desktop.workspace.picker.request" {beginPicker(f,task);return}
         if type=="desktop.workspace.picker.cancel" {cancelPicker(f);return}
         if type=="desktop.confirmation.request" {beginConfirmation(f,task);return}
@@ -328,11 +357,22 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
         if ["desktop.thread.metadata.edit","desktop.thread.metadata.save"].contains(pair.key),f["type"] as? String != pair.key+".result" || f["thread_id"] as? String != pair.value.thread { return }
         var reply=mapped;reply["id"]=pair.value.uiId;deliver(reply)
     }
-    func offline(_ task:URLSessionWebSocketTask, code:Int = 0) {
-        guard socket === task else { return };let wasAuthenticated=authenticated;retireLocal();retirePicker();browserRequest=nil;browserThread=nil;archiveTarget=nil;retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll();task.cancel(with:.goingAway,reason:nil);session?.invalidateAndCancel();deliver(["type":"desktop.offline"])
+    func offline(_ task:URLSessionWebSocketTask, code:Int = 0, drainClose:Bool = false) {
+        guard socket === task else { return };let wasAuthenticated=authenticated;retireLocal();retirePicker();browserRequest=nil;browserThread=nil;archiveTarget=nil;retireConfirmation(nil);socket=nil;authenticated=false;generation=nil;requests.removeAll()
+        let oldSession=session;session=nil
+        if drainClose { retiringTransport=task }
+        else { task.cancel(with:.goingAway,reason:nil);oldSession?.invalidateAndCancel() }
+        deliver(["type":"desktop.offline"])
         // Credential stays native; a fresh connection/nonce is required. Never tray fallback.
         if !wasAuthenticated { switch code { case -1022: exit(42);case -1011:exit(43);case -1004:exit(44);case 0:exit(45);default:exit(41) } }
-        DispatchQueue.main.asyncAfter(deadline:.now()+5) { if self.socket == nil { self.connect() } }
+        DispatchQueue.main.asyncAfter(deadline:.now()+5) {
+            if self.retiringTransport === task {
+                self.retiringTransport=nil
+                if self.revoked(task) { self.endHost();return }
+                task.cancel(with:.goingAway,reason:nil);oldSession?.invalidateAndCancel()
+            }
+            if self.socket == nil { self.connect() }
+        }
     }
     func buildWindow() {
         let config=WKWebViewConfiguration();config.websiteDataStore = .nonPersistent()
@@ -456,7 +496,7 @@ private final class NativeDesktop: NSObject, NSApplicationDelegate, NSWindowDele
             guard let data=try? JSONSerialization.data(withJSONObject:revoke),let text=String(data:data,encoding:.utf8) else {offline(socket);return}
             socket.send(.string(text)){ error in DispatchQueue.main.async {
                 guard self.socket === socket,self.generation==g,self.requests[type]?.nativeId==id else{return}
-                if error != nil {self.offline(socket);return}
+                if error != nil {self.transportLost(socket);return}
                 if type=="desktop.browser.tasks" {self.browserRequest=id;self.browserThread=f["thread_id"] as? String}
                 self.transmit(outgoing,to:socket)
             }}
