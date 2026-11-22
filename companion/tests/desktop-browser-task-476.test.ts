@@ -315,7 +315,16 @@ test("metadata refresh during an active run preserves its identity, and latest d
 })
 test("native controller browser tuple guards and revoke-before-forward fences are present in full source",()=>{
   for(const language of["swift","cpp"]){const s=uiSource("src/desktop/native/DesktopHost."+language);assert(s.includes("desktop.browser.retire"));assert(s.includes("desktop.browser.tasks"));assert(s.includes("desktop.browser.visibility"));
-    if(language==="swift"){const callback=s.slice(s.indexOf('socket.send(.string(text)){ error in DispatchQueue.main.async {'));assert(callback.includes('self.socket === socket,self.generation==g,self.requests[type]?.nativeId==id'));assert(callback.indexOf('if error != nil {self.offline(socket);return}')<callback.indexOf('self.transmit(outgoing,to:socket)'));assert(s.indexOf('let outgoing=out')<s.indexOf('socket.send(.string(text)){ error in DispatchQueue.main.async {'));assert(s.includes('func applicationWillTerminate(_ notification:Notification) { retireLocal();retireWorkspace();retireBrowser(true)'));assert(s.includes('if allowed { retireLocal();retireWorkspace();retireBrowser(true)'));assert(s.includes('requests.removeValue(forKey:"desktop.browser.tasks");requests.removeValue(forKey:"desktop.browser.visibility")'))}
+    if(language==="swift"){
+      const callback=s.slice(s.indexOf('socket.send(.string(text)){ error in DispatchQueue.main.async {'))
+      assert(callback.includes('self.socket === socket,self.generation==g,self.requests[type]?.nativeId==id'))
+      const onError=callback.indexOf('if error != nil {self.transportLost(socket);return}')
+      assert(onError>=0 && onError<callback.indexOf('self.transmit(outgoing,to:socket)'))
+      assert(s.indexOf('let outgoing=out')<s.indexOf('socket.send(.string(text)){ error in DispatchQueue.main.async {'))
+      assert(s.includes('func applicationWillTerminate(_ notification:Notification) { retireLocal();retireWorkspace();retireBrowser(true)'))
+      assert(s.includes('if allowed { retireLocal();retireWorkspace();retireBrowser(true)'))
+      assert(s.includes('requests.removeValue(forKey:"desktop.browser.tasks");requests.removeValue(forKey:"desktop.browser.visibility")'))
+    }
     else{assert(s.includes('if((allBrowser||viewBrowser)&&!retire_browser(allBrowser))ExitProcess(46)'));assert(s.indexOf('if((allBrowser||viewBrowser)&&!retire_browser(allBrowser))ExitProcess(46)')<s.indexOf('frame.Remove(L"generation");put(frame,L"id",id);send(frame)'));assert(s.includes('void document(){retire_local();retire_workspace();if(!retire_browser(true))ExitProcess(46)'));assert(s.includes('requests.erase(L"desktop.browser.tasks");requests.erase(L"desktop.browser.visibility")'));assert(s.includes('browser_thread!=target'))}
   }
 })
@@ -354,7 +363,7 @@ test("actual Swift queued task retirement keeps the last daemon-known parent unt
   const completion=dispatch.split('socket.send(.string(text)){ error in DispatchQueue.main.async {')[1].split('\n            }}')[0]
   const immediate=dispatch.split('        } else {')[1].split('\n')[0].replace(/}\s*$/,"")
   const lower=(s:string)=>s.replace(/guard self.socket === socket,self.generation==g,self.requests\[type\]\?\.nativeId==id else\{return\}/g,'if(!(self.socket===socket&&self.generation===g&&self.requests[type]?.nativeId===id))return;')
-    .replace('if error != nil {self.offline(socket);return}','if(error!==null){self.offline(socket);return}')
+    .replace('if error != nil {self.transportLost(socket);return}','if(error!==null){self.transportLost(socket);return}')
     .replace(/if type=="desktop.browser.tasks" \{/g,'if(type==="desktop.browser.tasks"){').replace(/f\["thread_id"\] as\? String/g,'f["thread_id"]').replace(/,to:socket/g,',socket')
   const retire=source.split('    func retireBrowser(_ all:Bool) {')[1].split('\n    }')[0]
     .replace('let parent=browserRequest','const parent=self.browserRequest').replace(/requests.removeValue\(forKey:"([^"]+)"\)/g,'delete self.requests["$1"]')
@@ -364,7 +373,7 @@ test("actual Swift queued task retirement keeps the last daemon-known parent unt
   for(const schedule of["document","valid","error","generation","socket","request","immediate"]){
     const h=browserHarness();try{await h.select();let sent=0,offline=0;const socket={},self:any={browserRequest:"acquisition",browserThread:"A",socket,generation:"g",requests:{"desktop.browser.tasks":{nativeId:"queued"}}}
       const transmit=(frame:any)=>{sent++;if(frame.type==="desktop.browser.tasks")assert.equal(self.browserRequest,"queued","new parent changes at its actual send");else void h.actor.handle(frame)}
-      self.transmit=transmit;self.offline=()=>{offline++;self.browserRequest=null;self.browserThread=null;h.actor.cancel()}
+      self.transmit=transmit;self.transportLost=(lostSocket:object)=>{assert.equal(lostSocket,socket);offline++;self.browserRequest=null;self.browserThread=null;h.actor.cancel()}
       const context:any={self,socket,g:"g",type:"desktop.browser.tasks",id:"queued",f:{thread_id:"A"},out:{type:"desktop.browser.tasks"},outgoing:{type:"desktop.browser.tasks"},error:schedule==="error"?{}:null,all:true,authenticated:true,transmit}
       if(early){self.browserRequest="queued";self.browserThread="A"}
       if(schedule==="document"){vm.runInNewContext(retire,context,{timeout:1000});delete self.requests["desktop.browser.tasks"]}
