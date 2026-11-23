@@ -120,7 +120,7 @@ function saveExpandState(state: ThreadListExpandState) {
 
 type ListView = "time" | "tags" | "topics" | "ai"
 
-export function ThreadList() {
+export function ThreadList({ onSelectHistory }: { onSelectHistory?: () => void }) {
   const { state, dispatch } = useAgentStore()
   const [open, setOpen] = useState(false)
   const managerReturnFocus = useRef<HTMLElement | null>(null)
@@ -814,6 +814,7 @@ export function ThreadList() {
     dispatch({ type: "SET_ACTIVE_THREAD", threadId })
     chrome.runtime.sendMessage({ type: "thread.select", threadId })
     setOpen(false)
+    onSelectHistory?.()
   }
 
   const handleDeleteOne = (threadId: string, e: React.MouseEvent) => {
@@ -1520,8 +1521,11 @@ export function ThreadList() {
           ...(open ? { color: tokens.text } : null),
         }}
         disabled={state.pendingSecurityConfirmations.length > 0}
-        onClick={() => setOpen(!open)}
-        title="对话管理：历史、标签、分组与图谱"
+        onClick={event => {
+          managerReturnFocus.current = event.currentTarget
+          setOpen(!open)
+        }}
+        title="历史对话、会话管理与 AI 提取标签"
         aria-label="对话管理（历史对话）"
         aria-expanded={open}
       >

@@ -84,7 +84,9 @@ export const workspaceCSS = `
 .cm-workspace-r3 .cm-nav-search-label{display:grid;gap:4px;color:${tokens.textSecondary};font-size:12px}
 .cm-workspace-r3 .cm-nav-thread:disabled{opacity:.65}
 .cm-workspace-r3 .cm-shell-layers{display:flex;flex-direction:column}
-.cm-workspace-r3 .cm-thread-manager-trigger,.cm-workspace-r3 .cm-rail-brand{display:none!important}
+.cm-workspace-r3:not(.cm-workspace-layered) .cm-thread-manager-trigger,.cm-workspace-r3 .cm-rail-brand{display:none!important}
+.cm-workspace-layered .cm-thread-manager-trigger{width:32px!important}
+.cm-workspace-layered .cm-thread-manager-trigger span{display:none}
 .cm-workspace-r3 .cm-nav-tools{border-top:0}
 .cm-workspace-r3 .cm-nav-tools .cm-nav-resources{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:0;padding:2px 0 8px;gap:2px}
 .cm-workspace-r3 .cm-nav-tools :is([role=group],.cm-resource-group){display:contents}

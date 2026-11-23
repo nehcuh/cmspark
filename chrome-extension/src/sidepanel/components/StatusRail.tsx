@@ -41,6 +41,7 @@ import { disarmAllFlags, trustStatusChip, trustStatusChipShort } from "./autopil
 export function StatusRail({
   compact,
   onNewThread,
+  onSelectHistory,
   connectionState,
   capabilityLevel,
   badgeLabel,
@@ -53,6 +54,7 @@ export function StatusRail({
 }: {
   compact: boolean
   onNewThread: () => void
+  onSelectHistory: () => void
   connectionState: ConnectionState
   capabilityLevel: CapabilityLevel
   badgeLabel: string
@@ -263,7 +265,7 @@ export function StatusRail({
       >
         <IconExternal size={16} />
       </button>
-      <ThreadList />
+      <ThreadList onSelectHistory={onSelectHistory} />
       </div>
       {cruiseLabel && (
         <button

@@ -34,7 +34,7 @@ function isWorkbenchPage(page: unknown): page is "today" | typeof workbenchActio
 export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays }: {
   children: ReactNode
   level?: CapabilityLevel
-  top?: (actions: { compact: boolean; onNewThread: () => void }) => ReactNode
+  top?: (actions: { compact: boolean; onNewThread: () => void; onSelectHistory: () => void }) => ReactNode
   bottom?: ReactNode
   overlays?: ReactNode
 }) {
@@ -206,7 +206,11 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   )
   const mode = wide ? "resident" : "layered"
   const shellClass = `cm-workspace cm-workspace-r3${full ? " cm-workspace-full" : ""}${wide ? "" : " cm-workspace-layered"}`
-  const header = top?.({ compact: !wide, onNewThread: newThread })
+  const header = top?.({ compact: !wide, onNewThread: newThread, onSelectHistory: () => {
+    navigate("chat")
+    afterNavigation()
+    focusComposer()
+  } })
   if (!full) return <>
     <style>{personalWorkspaceCSS}</style>
     <ProjectNavigationRoot mode={mode} surface={surface} shellClass={shellClass} top={header}

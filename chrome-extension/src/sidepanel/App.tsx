@@ -221,11 +221,12 @@ function AppContent() {
     <ContextPanelHostProvider capabilityLevel={level} openMeetingWorkspace={openWorkbench}>
     <WorkspaceFrame
       level={level}
-      top={({ compact, onNewThread }) => <>
+      top={({ compact, onNewThread, onSelectHistory }) => <>
         <style>{globalCSS + workspaceCSS}</style>
         <StatusRail
           compact={compact}
           onNewThread={onNewThread}
+          onSelectHistory={onSelectHistory}
           connectionState={connectionState}
           capabilityLevel={level}
           badgeLabel={badgeLabel}
