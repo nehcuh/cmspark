@@ -46,7 +46,28 @@ function restoreInitialOwnedInput826(raw) {
   assert.equal(digest(value), profiles.native.current, 'OWNED_INPUT826_COMPLETE_OBSERVATION_SOURCE')
   return value.replace(/\n/g, eol)
 }
+function restoreWorkspaceTeardown(raw) {
+  const begin = '/*WORKSPACE_TEARDOWN_BEGIN*/'
+  const end = '/*WORKSPACE_TEARDOWN_END*/'
+  if (!raw.includes(begin) && !raw.includes(end)) return raw
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n'
+  const prior = [
+    '',
+    "channel.revokeHost('owned-native-workspace-476')",
+    "   assertionSite=2;assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_WORKSPACE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_WORKSPACE_NATIVE_DEADLINE')),{once:true}))]),0)\n" +
+      "   if(uiDone){assertionSite=3;assert.equal((await uiDone).ok,true,'owned acknowledged UI runner must genuinely close quiescent')}\n",
+  ]
+  let restored = 0
+  const value = raw.replace(/\/\*WORKSPACE_TEARDOWN_BEGIN\*\/[\s\S]*?\/\*WORKSPACE_TEARDOWN_END\*\//g, () => {
+    assert.ok(restored < prior.length)
+    return prior[restored++].replace(/\n/g, eol)
+  })
+  assert.equal(restored, prior.length)
+  return value
+}
+
 function restoreObservation826(kind, raw) {
+  if (kind === 'native') raw = restoreWorkspaceTeardown(raw)
   raw = require('./workspace-query-101-inverse.cjs').restoreWorkspaceQuery101(kind, raw)
   if (kind === 'native') raw = restoreInitialOwnedInput826(raw)
   if (!raw.includes('/*OBS826_')) return raw
