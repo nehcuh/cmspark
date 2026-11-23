@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
-import { createElement } from "react"
+import { Children, createElement, isValidElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { WhisperAccelerationSettings } from "../src/sidepanel/components/WhisperAccelerationSettings"
 import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
-import type { VoiceModelState, VoiceWhisperAcceleration } from "../src/sidepanel/types"
+import type { VoiceModelState, VoiceWhisperAcceleration, VoiceWhisperGpuBackend } from "../src/sidepanel/types"
 import { parseVoiceBinaryProgress, parseWhisperAcceleration } from "../src/sidepanel/voice/whisper-acceleration-state"
 
 const acceleration: VoiceWhisperAcceleration = {
@@ -194,4 +195,35 @@ test("renders backend-specific progress, cancellation and terminal failure", () 
   assert.match(receipt, /取消安装 Vulkan/)
   assert.match(render(downloading, { progress: { backend: "cuda", phase: "cancelling" } }), /正在取消安装 CUDA/)
   assert.match(render(acceleration, { error: { backend: "cuda", message: "本机组件下载失败" } }), /CUDA：本机组件下载失败/)
+})
+
+test("a displayed GPU cancel button targets the same backend through the settings message", () => {
+  function findButton(nodes: ReactNode): (() => void) | undefined {
+    for (const node of Children.toArray(nodes)) {
+      if (!isValidElement<{ children?: ReactNode; onClick?: () => void }>(node)) continue
+      if (node.type === "button" && Children.toArray(node.props.children).join("").includes("取消安装")) {
+        return node.props.onClick
+      }
+      const nestedButton = findButton(node.props.children)
+      if (nestedButton) return nestedButton
+    }
+  }
+
+  const targets: Array<VoiceWhisperGpuBackend | undefined> = []
+  for (const backend of ["cuda", "vulkan"] as const) {
+    const row = WhisperAccelerationSettings({
+      acceleration: { ...acceleration, downloadingBackend: backend },
+      progress: null,
+      error: null,
+      modelDownloading: false,
+      onInstall: () => {},
+      onCancel: (target?: VoiceWhisperGpuBackend) => targets.push(target),
+    })
+    const click = findButton(row)
+    if (!click) throw new Error(`Missing Cancel button for ${backend}`)
+    click()
+  }
+  assert.deepEqual(targets, ["cuda", "vulkan"])
+  const settings = readFileSync("src/sidepanel/components/SettingsSlideout.tsx", "utf8")
+  assert.match(settings, /onCancel=\{\(backend\) => \{\s*clearVoiceErr\(\)\s*sendVoice\(\{ type: "voice\.binary\.cancel", backend \}\)/)
 })

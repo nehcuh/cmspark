@@ -65,7 +65,7 @@ interface Props {
   error: VoiceBinaryError | null
   modelDownloading: boolean
   onInstall: (backend: VoiceWhisperGpuBackend) => void
-  onCancel: () => void
+  onCancel: (backend: VoiceWhisperGpuBackend) => void
 }
 
 export function WhisperAccelerationSettings({ acceleration, progress, error, modelDownloading, onInstall, onCancel }: Props) {
@@ -104,7 +104,7 @@ export function WhisperAccelerationSettings({ acceleration, progress, error, mod
                 {detail && ` · ${detail}`}
               </div>
               {installing ? (
-                <button type="button" style={styles.button} disabled={update?.phase === "cancelling"} onClick={onCancel}>
+                <button type="button" style={styles.button} disabled={update?.phase === "cancelling"} onClick={() => onCancel(backend)}>
                   取消安装 {label}
                 </button>
               ) : runtime.status !== "ready" && (

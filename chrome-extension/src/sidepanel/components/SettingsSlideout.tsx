@@ -2749,9 +2749,9 @@ export function SettingsSlideout() {
                           clearVoiceErr()
                           sendVoice({ type: "voice.binary.download", backend })
                         }}
-                        onCancel={() => {
+                        onCancel={(backend) => {
                           clearVoiceErr()
-                          sendVoice({ type: "voice.binary.cancel" })
+                          sendVoice({ type: "voice.binary.cancel", backend })
                         }}
                       />
                       {renderModelRow(recommendedId, true)}
