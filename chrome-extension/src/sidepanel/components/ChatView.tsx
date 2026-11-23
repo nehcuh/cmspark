@@ -1,3 +1,4 @@
+import { useChatContext } from "../utils/chat-context"
 // Chat message list with streaming support
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -368,6 +369,7 @@ export function ChatView() {
   // Stable callbacks so MessageRow memoization is effective (audit item 11).
   // Without useCallback, every ChatView render creates new function identities,
   // busting React.memo on every row.
+  const chatContext = useChatContext(activeThreadId)
   const handleRegenerate = useCallback((messageId: string, editedMessage?: string) => {
     if (!activeThreadId) return
     chrome.runtime.sendMessage({
@@ -375,9 +377,10 @@ export function ChatView() {
       thread_id: activeThreadId,
       message_id: messageId,
       message: editedMessage,
+      chat_context: chatContext,
     })
     dispatch({ type: "SET_PROCESSING", isProcessing: true })
-  }, [activeThreadId, dispatch])
+  }, [activeThreadId, dispatch, chatContext])
 
   const handleFork = useCallback((messageId: string) => {
     if (!activeThreadId) return
@@ -502,7 +505,7 @@ export function ChatView() {
           !hydrating &&
           !streamingContent &&
           !streamingReasoning &&
-          !processingLabel && <EmptyState level={level} />}
+          !processingLabel && <EmptyState level={level} includePage={chatContext?.include_page !== false} />}
         {transcriptItems.map((item, i) => {
           const itemIsLast = i === transcriptItems.length - 1
           const liveFrontier = i === liveFrontierIdx
@@ -2065,11 +2068,15 @@ function inviteIcon(it: EmptyInvite): (p: IconProps) => JSX.Element {
   return IconGlobe
 }
 
-export function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+export function EmptyState({ level, includePage = true }: {
+  level: "chat" | "browser" | "computer"
+  includePage?: boolean
+}) {
   const [pageTitle, setPageTitle] = useState<string | null>(null)
   const [omitPage, setOmitPage] = useState(false)
 
   useEffect(() => {
+    if (!includePage) return
     const refresh = () => {
       chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
         if (chrome.runtime.lastError) {
@@ -2092,9 +2099,9 @@ export function EmptyState({ level }: { level: "chat" | "browser" | "computer" }
       chrome.tabs.onActivated.removeListener(onActivated)
       chrome.tabs.onUpdated.removeListener(onUpdated)
     }
-  }, [])
+  }, [includePage])
 
-  const { title, hint, items, pageChip } = emptyStateCopy(level, omitPage ? null : pageTitle)
+  const { title, hint, items, pageChip } = emptyStateCopy(level, !includePage || omitPage ? null : pageTitle)
   const rows: SuggestItem[] = items.map((it) =>
     it.kind === "fill"
       ? { label: it.label, fill: it.fill, Icon: inviteIcon(it) }

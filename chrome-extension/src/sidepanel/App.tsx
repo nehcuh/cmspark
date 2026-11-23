@@ -1,3 +1,4 @@
+import { useChatContext } from "./utils/chat-context"
 import { openWorkbench } from "./navigation/open-workbench"
 // #469: responsive conversation workspace; root DESIGN.md.
 // CMspark Browser Agent — Root App Component
@@ -314,6 +315,7 @@ function AppContent() {
 
 function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
+  const chatContext = useChatContext(state.activeThreadId)
   const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
   const [drafts, setDrafts] = useState<Map<string | null, string>>(() => new Map())
   const [firstThreadId, setFirstThreadId] = useState<string | null>(null)
@@ -628,7 +630,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           type: "chat.send",
           threadId: state.activeThreadId,
           message: trimmed,
-          ...(opts?.enqueue ? { enqueue: true } : { steer: true }),
+          ...(opts?.enqueue ? { enqueue: true, chat_context: chatContext } : { steer: true }),
         })
         setText("")
         // New user turn: the previous compaction notice is no longer latest.
@@ -817,7 +819,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             }
         }
         void sendComposerUpload(
-          { type: "file.upload", threadId: uploadThreadId!, message: userMessage, files, skillIds, clientMessageId },
+          { type: "file.upload", threadId: uploadThreadId!, message: userMessage, files, skillIds, clientMessageId, chat_context: chatContext },
           (message) => chrome.runtime.sendMessage(message),
         ).then(response => onUploadResponse(response), error => onUploadResponse(undefined, (error as Error).message))
       } else {
@@ -851,6 +853,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           threadId: state.activeThreadId,
           message: trimmed,
           skillIds,
+          chat_context: chatContext,
           clientMessageId,
           context_refs: context_refs.length ? context_refs : undefined,
         })

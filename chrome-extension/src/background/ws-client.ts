@@ -56,6 +56,7 @@ export class WSClient {
   /** Authenticated = companion accepted our handshake. App sends are gated on this. */
   private authenticated = false
   private fileUploadParts = false
+  private chatContextControls = false
   private meetingAuth: object = {}
   private meetingObserved: { socket: WebSocket; gen: number; auth: object } | null = null
   private meetingPing: { socket: WebSocket; gen: number; auth: object; id: string } | null = null
@@ -160,6 +161,7 @@ export class WSClient {
         }
         this.authenticated = true
         this.fileUploadParts = msg.file_upload_parts === 1
+        this.chatContextControls = msg.chat_context_controls === 1
         this.setState("connected")
         this.flushPending()
         return
@@ -303,6 +305,7 @@ export class WSClient {
 
   send(data: object): boolean {
     if ((data as any)?.queue_contract !== undefined) return this.sendMeetingPcm(data)
+    if ((data as { chat_context?: unknown }).chat_context !== undefined && !this.supportsChatContext()) return false
     const type = (data as { type?: unknown }).type
     if (typeof type === "string" && (type.startsWith("meeting.asr.") || type.startsWith("meeting.translation.")) &&
         (!this.authenticated || this.ws?.readyState !== WebSocket.OPEN)) return false
@@ -327,6 +330,10 @@ export class WSClient {
       this.connect()
     }
     return false
+  }
+
+  supportsChatContext() {
+    return this.authenticated && this.chatContextControls && this.ws?.readyState === WebSocket.OPEN
   }
 
   supportsFileUploadParts(): boolean {

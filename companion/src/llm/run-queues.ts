@@ -1,3 +1,5 @@
+import type { ChatContextInput } from "./chat-context"
+
 /**
  * Harness-v2-shaped queues, CMspark process-local.
  * steer dies on abort; nextRun survives abort only from non-user paths —
@@ -27,6 +29,7 @@ export type NextRunItem = {
   clientMessageId?: string
   /** Omitted === "user" (legacy entries predate the field). */
   source?: NextRunSource
+  context?: ChatContextInput
 }
 
 const nextRunByThread = new Map<string, NextRunItem[]>()
@@ -55,7 +58,7 @@ export function dropSteer(threadId: string): void {
 
 export const MAX_NEXT_RUN = 8
 
-export function enqueueNextRun(threadId: string, text: string, clientMessageId?: string, source?: NextRunSource): boolean {
+export function enqueueNextRun(threadId: string, text: string, clientMessageId?: string, source?: NextRunSource, context?: ChatContextInput): boolean {
   const t = String(text || "").trim()
   if (!threadId || !t) return false
   const q = nextRunByThread.get(threadId) || []
@@ -64,6 +67,7 @@ export function enqueueNextRun(threadId: string, text: string, clientMessageId?:
   const item: NextRunItem = { text: t }
   if (id) item.clientMessageId = id
   if (source && source !== "user") item.source = source
+  if (context) item.context = context
   q.push(item)
   nextRunByThread.set(threadId, q)
   return true
@@ -89,13 +93,13 @@ export function _setAfterLeftoverTakeForTests(fn?: (threadId: string) => void): 
   afterLeftoverTakeForTests = fn
 }
 
-export function convertLeftoverSteerToNextRun(threadId: string): { converted: number; dropped: number } {
+export function convertLeftoverSteerToNextRun(threadId: string, context?: ChatContextInput): { converted: number; dropped: number } {
   const leftover = takeSteer(threadId)
   if (!leftover.length) return { converted: 0, dropped: 0 }
   afterLeftoverTakeForTests?.(threadId)
   const text = leftover.map((s) => s.text).join("\n")
   const clientMessageId = leftover.find((s) => s.clientMessageId)?.clientMessageId
-  if (enqueueNextRun(threadId, text, clientMessageId)) {
+  if (enqueueNextRun(threadId, text, clientMessageId, undefined, context)) {
     return { converted: leftover.length, dropped: 0 }
   }
   return { converted: 0, dropped: leftover.length }
