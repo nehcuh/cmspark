@@ -256,24 +256,24 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
     close() { flushEffects(); for (const entry of slots.values()) for (const effect of entry.effects) effect?.cleanup?.(); listeners.clear(); stateWrites.clear() },
   }
 }
-test("#789 actual settings select defaults to medium and saves the chosen effort", () => {
+test("#789 actual settings select resolves the legacy default and saves the chosen effort", () => {
   const f = settingsNavigationHarness()
   try {
     f.setState({ configHydratedFromCompanion: true, configRevision: "epoch:1", connectionState: "connected" })
     let ui = f.renderSlideout()
     const select = f.find(ui, n => n.type === "select" && n.props.id === "reasoning-effort")
-    assert.equal(select.props.value, "medium")
-    assert.match(navigationText(ui), /中与高均使用高/)
+    assert.equal(select.props.value, "high")
+    assert.match(navigationText(ui), /实际发送 high/)
     assert.match(navigationText(ui), /393,216 Token/)
-    assert.equal(f.rows(select).filter((n: any) => n.type === "option").map((n: any) => n.props.value).join(","), "low,medium,high,xhigh")
-    select.props.onChange({ target: { value: "xhigh" } })
-    assert.equal(f.state().settingsDraft.value.reasoning_effort, "xhigh")
+    assert.equal(f.rows(select).filter((n: any) => n.type === "option").map((n: any) => n.props.value).join(","), "none,low,high,max")
+    select.props.onChange({ target: { value: "max" } })
+    assert.equal(f.state().settingsDraft.value.reasoning_effort, "max")
     assert.equal(f.state().config.reasoning_effort, "medium")
     ui = f.renderSlideout()
     f.find(ui, n => n.type === "button" && n.props.children === "保存").props.onClick()
     const sent = f.messages.filter((m: any) => m.type === "config.set")
     assert.equal(sent.length, 1)
-    assert.equal(sent[0].config.reasoning_effort, "xhigh")
+    assert.equal(sent[0].config.reasoning_effort, "max")
     f.setState({ config: { ...f.state().config, base_url: "https://relay.example/v1" } })
     assert.match(navigationText(f.renderSlideout()), /暂未确认支持/)
     assert.match(navigationText(f.renderSlideout()), /尚未收录/)

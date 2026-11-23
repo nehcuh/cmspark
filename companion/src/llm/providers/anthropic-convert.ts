@@ -29,7 +29,16 @@ export interface AnthropicTool {
   }
 }
 
+export type NativeThinkingBlock =
+  | { type: "thinking"; thinking: string; signature?: string }
+  | { type: "redacted_thinking"; data: string }
+
+/** Only carried between tool steps of the same live Messages request chain. */
+export const liveAnthropicBlocks = Symbol("liveAnthropicBlocks")
+export type LiveAnthropicBlock = NativeThinkingBlock | { type: "text"; text: string } | { type: "tool_slot"; index: number }
+
 export type AnthropicContentBlock =
+  | NativeThinkingBlock
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
@@ -46,7 +55,8 @@ export interface AnthropicRequestBody {
   messages: AnthropicMessage[]
   system?: string
   temperature?: number
-  output_config?: { effort: "low" | "medium" | "high" | "xhigh" | "max" }
+  output_config?: { effort: string }
+  thinking?: { type: string }
   tools?: AnthropicTool[]
   stream?: boolean
 }
@@ -238,7 +248,12 @@ export function convertMessagesToAnthropic(messages: CanonicalChatMessage[]): {
 
     if (msg.role === "assistant") {
       // reasoning_content intentionally dropped (M7)
-      const content = assistantContentFromMessage(msg.content, msg.tool_calls)
+      let content = assistantContentFromMessage(msg.content, msg.tool_calls)
+      const live = msg[liveAnthropicBlocks]
+      if (live && msg.tool_calls?.length && Array.isArray(content)) {
+        const tools = content.filter(block => block.type === "tool_use")
+        content = live.map(block => block.type === "tool_slot" ? tools[block.index] : block)
+      }
       out.push({ role: "assistant", content })
       i++
       continue

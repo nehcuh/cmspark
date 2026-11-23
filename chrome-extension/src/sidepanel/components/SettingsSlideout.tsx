@@ -14,7 +14,7 @@ type ComputerDraft = { pythonMode?: "isolated" | "system"; downloadSource?: "aut
 type FooterControl = { dirty: boolean; busy: boolean; save: (known?: ModelCenterState) => void | Promise<boolean | ModelCenterState>; error?: string }
 import { Modal } from "./ui/Modal"
 import { connectionLabel, tokens } from "../ui/tokens"
-import { effectiveReasoningEffort, modelSpec, modelSuggestions, reasoningWireEffort, type ReasoningEffort } from "../utils/reasoning-effort"
+import { effortLevels, modelSpec, modelSuggestions, reasoningWireEffort, type ReasoningEffort } from "../utils/reasoning-effort"
 import { calculateChatOutputBudget, effectiveContextWindow } from "../utils/chat-output-policy"
 import { UserEnvSection } from "./UserEnvSection"
 import { SiteCounterSettingsSection } from "./SiteCounterSettingsSection"
@@ -624,7 +624,9 @@ export function SettingsSlideout() {
     }
   }
   const spec = modelSpec(config.protocol, config.base_url, config.model_name)
-  const wireEffort = reasoningWireEffort(spec?.support ?? "unsupported", config.reasoning_effort)
+  const support = spec?.support ?? "unsupported"
+  const wireEffort = reasoningWireEffort(support, config.reasoning_effort)
+  const toggleOnly = support === "switch" || support === "adaptive-switch"
   const budget = calculateChatOutputBudget(effectiveContextWindow(config.context_window).effective, spec, config.max_tokens, config.reasoning_effort)
   const saveBlocked = settingsSaveDisabled(state.configHydratedFromCompanion) || !draft ||
     !state.configRevision || state.connectionState !== "connected" || !!state.settingsSave.pending ||
@@ -1629,17 +1631,16 @@ export function SettingsSlideout() {
 
           <div style={styles.field}>
             <label htmlFor="reasoning-effort" style={styles.label}>思考强度</label>
-            <select id="reasoning-effort" style={styles.input} value={effectiveReasoningEffort(config.reasoning_effort)}
+            <select id="reasoning-effort" style={styles.input} value={wireEffort ?? ""} disabled={!wireEffort}
               onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { reasoning_effort: e.target.value as ReasoningEffort } })}>
-              <option value="low">低</option>
-              <option value="medium">中（默认）</option>
-              <option value="high">高</option>
-              <option value="xhigh">极高</option>
+              {!wireEffort && <option value="">由服务决定</option>}
+              {effortLevels[support].map(level => <option key={level} value={level}>
+                {toggleOnly && level === "high" ? "开启" : { none: "关闭", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最高" }[level]}
+              </option>)}
             </select>
             <div style={styles.helpText}>
-              {!wireEffort
-                ? spec ? "当前模型没有已核实的强度档位。此偏好会保留，调用时省略强度参数。" : "当前服务或模型暂未确认支持；将保存偏好，但不会发送强度参数。"
-                : <>{spec?.support === "deepseek" || spec?.support === "kimi" ? "中与高均使用高，极高使用最高。" : ""}实际发送 {wireEffort}。较高强度可能花更多 Token 思考，留给正文的空间也会减少。</>}
+              {!wireEffort ? "当前服务或模型暂未确认支持可调档位。"
+                : toggleOnly ? "该型号支持开启或关闭思考。" : `实际发送 ${wireEffort}。思考和正文共用单次输出预算。`}
             </div>
           </div>
 
@@ -1702,7 +1703,7 @@ export function SettingsSlideout() {
               }}
             />
             <div style={styles.helpText}>
-              {spec ? <>{spec.provider} 公布的单次输出上限为 {spec.output.toLocaleString("zh-CN")} Token，上下文窗口为 {spec.contextWindow.toLocaleString("zh-CN")} Token。 <a href={spec.source} target="_blank" rel="noreferrer">官方规格</a></>
+              {spec?.output && spec.contextWindow ? <>{spec.provider} 公布的单次输出上限为 {spec.output.toLocaleString("zh-CN")} Token，上下文窗口为 {spec.contextWindow.toLocaleString("zh-CN")} Token。 <a href={spec.source} target="_blank" rel="noreferrer">官方规格</a></>
                 : "当前服务与模型组合尚未收录。对话使用最多 32,768 Token 的兼容预算。"}
               {" "}按当前设置，首次请求预算为 {budget.preferred.toLocaleString("zh-CN")} Token，恢复截断回复时最多可请求 {budget.ceiling.toLocaleString("zh-CN")} Token。留空使用自动预算，思考强度不会改变厂商上限。
             </div>

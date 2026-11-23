@@ -1,22 +1,38 @@
-/** #789: explicit, documented model/endpoint support. Keep the extension mirror in sync. */
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh"
+/** Model capabilities for the protocols actually used by Companion and Settings. */
+export const orderedEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
+export type ReasoningEffort = typeof orderedEfforts[number]
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
-  return value === "low" || value === "medium" || value === "high" || value === "xhigh"
+  return orderedEfforts.some(level => level === value)
 }
-export type ReasoningSupport = "deepseek" | "kimi" | "openai" | "anthropic-46" | "anthropic-47" | "unsupported"
-type Provider = "OpenAI" | "DeepSeek" | "Anthropic" | "智谱" | "Kimi"
+const three = ["low", "medium", "high"] as const
+const four = [...three, "xhigh"] as const
+const five = [...four, "max"] as const
+export const effortLevels = {
+  openai: ["none", ...four], deepseek: ["none", "low", "high", "max"], kimi: ["low", "high", "max"],
+  "anthropic-46": [...three, "max"], "anthropic-47": five, "glm-53": ["low", "high", "max"],
+  "glm-52": ["none", "high", "max"], three, four, five, six: ["none", ...five],
+  "minimal-three": ["minimal", ...three], "off-three": ["none", ...three],
+  switch: ["none", "high"], "adaptive-switch": ["none", "high"], unsupported: [],
+} as const satisfies Record<string, readonly ReasoningEffort[]>
+export type ReasoningSupport = keyof typeof effortLevels
+type Provider = "OpenAI" | "DeepSeek" | "Anthropic" | "智谱" | "Kimi" | "Grok" | "Gemini" | "MiniMax" | "Magpie"
 type ModelSpec = {
   provider: Provider
   models: readonly string[]
-  contextWindow: number
-  output: number
+  contextWindow?: number
+  output?: number
   support: ReasoningSupport
   source: string
+  responsesForTools?: boolean
 }
 
 // Limits are for the public API endpoint, not for similarly named gateway profiles.
 const anthropicSpecs = "https://platform.claude.com/docs/en/models/overview"
 const openaiSpecs = "https://developers.openai.com/api/docs/models/"
+const grokSpecs = "https://docs.x.ai/developers/model-capabilities/text/reasoning"
+const geminiSpecs = "https://ai.google.dev/gemini-api/docs/openai#thinking"
+const glmSpecs = "https://docs.bigmodel.cn/cn/guide/capabilities/thinking"
+const minimaxSpecs = "https://platform.minimax.io/docs/api-reference/text-openai-api"
 const catalog: readonly ModelSpec[] = [
   { provider: "DeepSeek", models: ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro"],
     contextWindow: 1000000, output: 393216, support: "deepseek", source: "https://api-docs.deepseek.com/quick_start/pricing/" },
@@ -29,8 +45,29 @@ const catalog: readonly ModelSpec[] = [
     contextWindow: 1000000, output: 128000, support: "anthropic-47", source: anthropicSpecs },
   { provider: "Anthropic", models: ["claude-sonnet-4-6", "claude-opus-4-6"], contextWindow: 1000000, output: 128000, support: "anthropic-46", source: anthropicSpecs },
   { provider: "Anthropic", models: ["claude-sonnet-4-5", "claude-haiku-4-5"], contextWindow: 200000, output: 64000, support: "unsupported", source: anthropicSpecs },
-  { provider: "智谱", models: ["glm-5.1"], contextWindow: 200000, output: 128000, support: "unsupported", source: "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.1" },
+  { provider: "智谱", models: ["glm-5.1"], contextWindow: 200000, output: 128000, support: "switch", source: "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.1" },
   { provider: "Kimi", models: ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"], contextWindow: 1048576, output: 1048576, support: "kimi", source: "https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart" },
+  { provider: "OpenAI", models: ["gpt-5.5"], contextWindow: 1050000, output: 128000, support: "openai", source: openaiSpecs },
+  { provider: "OpenAI", models: ["gpt-6.2-sol", "gpt-6.2-astra"], support: "five", contextWindow: 1050000, output: 128000, responsesForTools: true, source: openaiSpecs },
+  { provider: "OpenAI", models: ["gpt-6.1-terra"], support: "six", responsesForTools: true, source: openaiSpecs },
+  { provider: "OpenAI", models: ["o3", "o4-mini"], support: "three", source: openaiSpecs },
+  { provider: "OpenAI", models: ["gpt-5", "gpt-5-mini", "gpt-5-nano"], support: "minimal-three", source: openaiSpecs },
+  { provider: "Anthropic", models: ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-2", "claude-mythos-5-2"], support: "anthropic-47", source: anthropicSpecs },
+  { provider: "Anthropic", models: ["claude-opus-4-5", "claude-opus-4-5-20251101"], support: "three", source: anthropicSpecs },
+  { provider: "Grok", models: ["grok-4.7", "grok-4.6"], support: "four", source: grokSpecs },
+  { provider: "Grok", models: ["grok-4.5"], support: "three", source: grokSpecs },
+  { provider: "Grok", models: ["grok-4.3"], support: "off-three", source: grokSpecs },
+  { provider: "Gemini", models: ["gemini-4-hydrogen", "gemini-4-neon"], support: "four", source: geminiSpecs },
+  { provider: "Gemini", models: ["gemini-4-carbon", "gemini-4-argon", "gemini-3.8-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-pro-preview"], support: "three", source: geminiSpecs },
+  { provider: "Gemini", models: ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview"], support: "minimal-three", source: geminiSpecs },
+  { provider: "智谱", models: ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"], support: "glm-53", source: glmSpecs },
+  { provider: "智谱", models: ["glm-5.2"], support: "glm-52", source: glmSpecs },
+  { provider: "智谱", models: ["glm-5", "glm-4.7"], support: "switch", source: glmSpecs },
+  { provider: "Kimi", models: ["kimi-k3"], support: "kimi", source: "https://platform.kimi.com/docs/guide/kimi-k3-quickstart" },
+  { provider: "Kimi", models: ["kimi-k2.6", "kimi-k2.5"], support: "switch", source: "https://platform.kimi.com/docs/guide/kimi-k2-5-quickstart" },
+  { provider: "MiniMax", models: ["MiniMax-M3.1-Flash"], support: "five", source: minimaxSpecs },
+  { provider: "MiniMax", models: ["MiniMax-M3"], support: "adaptive-switch", source: minimaxSpecs },
+  { provider: "MiniMax", models: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"], support: "unsupported", source: minimaxSpecs },
 ]
 
 function directProvider(protocol: unknown, baseUrl: unknown): Provider | undefined {
@@ -40,15 +77,32 @@ function directProvider(protocol: unknown, baseUrl: unknown): Provider | undefin
   if (url.protocol !== "https:" || url.username || url.password || url.port || url.search || url.hash) return
   const path = url.pathname.replace(/\/$/, "")
   if (protocol === "anthropic" && url.hostname === "api.anthropic.com" && ["", "/v1"].includes(path)) return "Anthropic"
+  const miniMax = ["api.minimax.io", "api.minimaxi.com"].includes(url.hostname)
+  if (protocol === "anthropic" && url.hostname === "api.deepseek.com" && ["/anthropic", "/anthropic/v1"].includes(path)) return "DeepSeek"
+  if (protocol === "anthropic" && miniMax && ["/anthropic", "/anthropic/v1"].includes(path)) return "MiniMax"
   if (protocol !== "openai" && protocol !== undefined) return
-  if (["open.bigmodel.cn", "api.z.ai"].includes(url.hostname) && path === "/api/paas/v4") return "智谱"
-  if (url.hostname === "api.moonshot.cn" && path === "/v1") return "Kimi"
+  if (["open.bigmodel.cn", "api.z.ai"].includes(url.hostname) && ["/api/paas/v4", "/api/coding/paas/v4"].includes(path)) return "智谱"
+  if (["api.moonshot.cn", "api.moonshot.ai"].includes(url.hostname) && path === "/v1") return "Kimi"
+  if (url.hostname === "generativelanguage.googleapis.com" && path === "/v1beta/openai") return "Gemini"
   if (!["", "/v1"].includes(path)) return
+  if (miniMax) return "MiniMax"
+  if (url.hostname === "api.x.ai") return "Grok"
   if (url.hostname === "api.deepseek.com") return "DeepSeek"
   if (url.hostname === "api.openai.com") return "OpenAI"
 }
 
+export function isCompatibilityGateway(protocol: unknown, baseUrl: unknown): boolean {
+  return directProvider(protocol, baseUrl) === undefined
+}
+
 export function modelSpec(protocol: unknown, baseUrl: unknown, model: unknown): ModelSpec | undefined {
+  // Magpie exposes provider-qualified IDs, optional context suffixes, and
+  // translates Messages output_config.effort to its upstream Grok request.
+  if (typeof baseUrl === "string" && /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):3425(?:\/v1)?\/?$/.test(baseUrl)
+      && (protocol === "anthropic" || protocol === "openai" || protocol === undefined) && typeof model === "string") {
+    const match = /^grok\/(grok-4\.[567])(?:-build-fast)?(?:@\d+[km])?$/.exec(model)
+    if (match) return { provider: "Magpie", models: [model], support: match[1] === "grok-4.5" ? "three" : "four", source: "https://github.com/yetone/magpie" }
+  }
   const provider = directProvider(protocol, baseUrl)
   return catalog.find(entry => entry.provider === provider && typeof model === "string" && entry.models.includes(model))
 }
@@ -64,10 +118,26 @@ export function reasoningSupport(protocol: unknown, baseUrl: unknown, model: unk
 export function effectiveReasoningEffort(value: unknown): ReasoningEffort {
   return isReasoningEffort(value) ? value : "medium"
 }
-export function reasoningWireEffort(support: ReasoningSupport, value: unknown): ReasoningEffort | "max" | undefined {
+/** Resolve saved preferences (including the four legacy levels) against this model. */
+export function reasoningWireEffort(support: ReasoningSupport, value: unknown): ReasoningEffort | undefined {
+  const levels: readonly ReasoningEffort[] = effortLevels[support]
   const effort = effectiveReasoningEffort(value)
-  if (support === "unsupported") return undefined
-  if (support === "deepseek" || support === "kimi") return effort === "low" ? "low" : effort === "xhigh" ? "max" : "high"
-  if (support === "anthropic-46" && effort === "xhigh") return "max"
-  return effort
+  if (levels.includes(effort)) return effort
+  if (support === "switch" || support === "adaptive-switch") return effort === "none" ? "none" : "high"
+  // The former xhigh option meant max on three-tier models. Preserve its wire value.
+  if (effort === "xhigh" && levels.includes("max")) return "max"
+  if (effort === "medium" && levels.includes("high")) return "high"
+  if (support === "glm-52" && effort === "low") return "high"
+  return orderedEfforts.slice(orderedEfforts.indexOf(effort)).find(level => levels.includes(level)) ?? levels.at(-1)
+}
+
+export function reasoningParams(support: ReasoningSupport, value: unknown, protocol: "openai" | "anthropic") {
+  const effort = reasoningWireEffort(support, value)
+  if (!effort) return {}
+  if (support === "switch" || support === "adaptive-switch") {
+    return { thinking: { type: effort === "none" ? "disabled" : support === "adaptive-switch" ? "adaptive" : "enabled" } }
+  }
+  if (support === "anthropic-46" || support === "anthropic-47") return { thinking: { type: "adaptive" }, output_config: { effort } }
+  if (protocol === "anthropic" && effort === "none") return { thinking: { type: "disabled" } }
+  return protocol === "anthropic" ? { output_config: { effort } } : { reasoning_effort: effort }
 }

@@ -70,6 +70,9 @@ import {
 } from "./tool-batch-heal"
 import { redactAssistantToolCallsForPersistence } from "../security/tool-persistence-redact"
 import { classifyGenerationLimit, isContentRiskError, isContextOverflowError, type GenerationLimit } from "./overflow"
+import { liveResponseItems, type LiveResponseItem } from "./providers/openai-responses"
+import { liveAnthropicBlocks, type LiveAnthropicBlock } from "./providers/anthropic-convert"
+import { ReasoningRecoveryError, streamChatWithRecovery } from "./reasoning-recovery"
 import { modelSpec } from "./reasoning-effort"
 import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
 import type { RunStats } from "../loop/loop-state"
@@ -1678,6 +1681,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     round++
 
     let assistantContent = ""
+    let completedResponseItems: LiveResponseItem[] | undefined
+    let completedNativeBlocks: LiveAnthropicBlock[] | undefined
+    let recoveringReasoning = false
     let savedAssistantId: string | undefined
     let reasoningContent = ""
     const toolCalls: StreamToolCall[] = []
@@ -1717,16 +1723,25 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
 
       // Consume CanonicalStreamEvent from provider (token | tool_call_delta | reasoning | usage | done)
-      for await (const ev of provider.streamChat({
+      for await (const ev of streamChatWithRecovery(provider, {
         messages,
         tools: tools as CanonicalToolDefinition[],
         temperature: config.temperature,
         model: config.model_name,
         signal,
         max_tokens: outputMaxTokens,
-      })) {
+      }, config)) {
         params.assertCurrentRun?.()
-        if (ev.type === "token") {
+        if (ev.type === "reasoning_reset") {
+          recoveringReasoning = true
+          reasoningContent = ""
+          if (assistantContent) sendToExtension({ type: "chat.token", thread_id: threadId, content: "" })
+          assistantContent = ""
+          finalUsage = undefined
+          logger.info("llm.reasoning_retry", { thread_id: threadId, model: config.model_name, cause: ev.cause,
+            chars: ev.chars, retry_effort: ev.effort, completion_tokens: ev.completionTokens, reasoning_tokens: ev.reasoningTokens })
+          sendToExtension({ type: "chat.reasoning", thread_id: threadId, content: "", retrying: true })
+        } else if (ev.type === "token") {
           const incoming = ev.text
           assistantContent += incoming
           // Real-time jailbreak detection during streaming. Scan only the incoming
@@ -1785,6 +1800,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           }
         } else if (ev.type === "done") {
           finishReason = ev.finish_reason
+          completedResponseItems = ev.responseItems
+          completedNativeBlocks = ev.liveBlocks
         }
       }
 
@@ -1916,6 +1933,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         assistantPushMsg.reasoning_content = reasoningContent
       }
       if (assistantMsg.length > 0) {
+        if (completedResponseItems) assistantPushMsg[liveResponseItems] = completedResponseItems
+        if (completedNativeBlocks) assistantPushMsg[liveAnthropicBlocks] = completedNativeBlocks
         assistantPushMsg.tool_calls = assistantMsg.map(tc => ({
           id: tc.id,
           type: "function" as const,
@@ -2813,6 +2832,21 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         throw e
       }
 
+      if (recoveringReasoning && !savedAssistantId) {
+        // A transport failure during the second stream must not restart the original step.
+        const incomplete = toolCalls.some(call => call != null)
+        if (assistantContent.trim() || incomplete) {
+          const partial = persistAssistantDraft({ content: assistantContent, reasoning: reasoningContent, tool_calls: toolCalls,
+            incomplete_tools: incomplete, finish_reason: "interrupted", retrieved_sources: retrievedSources, knowledge_routing: knowledgeRoutingWire })
+          if (incomplete) persistInterruptedRemainder(partial.id, "interrupted")
+          sendToExtension({ type: "chat.done", thread_id: threadId, message_id: partial.id,
+            finish_reason: "interrupted", incomplete_tools: incomplete, reasoning_content: reasoningContent })
+        }
+        sendToExtension({ type: "chat.error", thread_id: threadId,
+          error: e instanceof ReasoningRecoveryError ? e.message : "重新请求模型时失败，本轮已停止。" })
+        runStats.terminal = "error"
+        return
+      }
       const errorMsg = e.message || String(e)
       if (e.status === 413 || e.code === "request_too_large") {
         logger.warn("llm.request_too_large", { thread_id: threadId })

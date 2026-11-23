@@ -94,3 +94,46 @@ test("Kimi K3 and non-reasoning GPT-4o use their documented wire limits on both 
     }
   }
 })
+
+test("both request paths honor each model's selectable native levels", async (t) => {
+  const { effortLevels } = await import("../src/llm/reasoning-effort")
+  const cases = [
+    ["openai", "https://api.openai.com/v1", "gpt-6.2-sol", "low medium high xhigh max"],
+    ["anthropic", "https://api.anthropic.com", "claude-opus-4-7", "low medium high xhigh max"],
+    ["openai", "https://api.x.ai/v1", "grok-4.7", "low medium high xhigh"],
+    ["anthropic", "http://127.0.0.1:3425", "grok/grok-4.7@500k", "low medium high xhigh"],
+    ["openai", "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-4-argon", "low medium high"],
+    ["openai", "https://api.moonshot.cn/v1", "kimi-k3.1-pro", "low high max"],
+    ["openai", "https://open.bigmodel.cn/api/paas/v4", "glm-5.3-flash", "low high max"],
+    ["openai", "https://api.z.ai/api/paas/v4", "glm-5.2", "none high max"],
+    ["openai", "https://api.minimax.io/v1", "MiniMax-M3.1-Flash", "low medium high xhigh max"],
+    ["anthropic", "https://api.minimaxi.com/anthropic", "MiniMax-M3", "none high"],
+    ["openai", "https://api.deepseek.com/v1", "deepseek-flash", "none low high max"],
+  ] as const
+  const bodies: any[] = []
+  t.mock.method(globalThis, "fetch", async (input: any, init: RequestInit) => {
+    const body = JSON.parse(String(init.body))
+    bodies.push(body)
+    const anthropic = String(input).endsWith("/messages")
+    if (body.stream) return new Response(anthropic ? 'data: {"type":"message_stop"}\n\n' : 'data: [DONE]\n\n', { headers: { "Content-Type": "text/event-stream" } })
+    return Response.json(anthropic ? { content: [{ type: "text", text: "ok" }] } : { choices: [{ message: { content: "ok" } }] })
+  })
+  for (const [protocol, url, model, expected] of cases) {
+    const supported = effortLevels[reasoningSupport(protocol, url, model)]
+    assert.equal(supported.join(" "), expected, model)
+    for (const level of supported) {
+      const config = { ...cfg(url, model, protocol), reasoning_effort: level }
+      const provider = protocol === "anthropic" ? new AnthropicProvider(config) : new OpenAIProvider(config)
+      for await (const _ of provider.streamChat({ messages: message })) {}
+      await provider.complete({ messages: message })
+      for (const body of bodies.splice(0)) {
+        assert.equal(body.model, model)
+        if (model === "MiniMax-M3") {
+          assert.deepEqual(body.thinking, { type: level === "none" ? "disabled" : "adaptive" })
+          assert.equal(body.output_config, undefined)
+        } else if (protocol === "anthropic") assert.deepEqual(body.output_config, { effort: level })
+        else assert.equal(body.reasoning_effort, level)
+      }
+    }
+  }
+})

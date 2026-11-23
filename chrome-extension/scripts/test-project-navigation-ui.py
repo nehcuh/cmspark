@@ -355,6 +355,11 @@ def test_real_hook_keeps_the_selected_session(playwright, directory):
     page.wait_for_function("() => window.fixtureState.activeThreadId === 'demo-0'")
     assert page.evaluate("window.fixtureState.navigationHomeCopy") is None
     assert page.evaluate("!window.sent.some(m => m.type==='thread.select' || m.type==='thread.create')")
+    page.evaluate("(row) => window.emitRuntime({type:'thread.list', threads:[row]})", thread_row(saved, "笔记"))
+    release_latest(page, THREAD_KEY, {THREAD_KEY: saved})
+    page.wait_for_function("(id) => window.sent.some(m => m.type === 'thread.select' && m.threadId === id)", arg=saved)
+    page.evaluate("(id) => window.emitRuntime({type:'thread.messages', thread_id:id, messages:[{id:'m1', thread_id:id, role:'user', content:'还在', created_at:'t'}]})", saved)
+    page.get_by_text("还在", exact=True).wait_for()
     browser.close()
 
 def test_empty_active_list_does_not_autocreate(playwright, directory):
