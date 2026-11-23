@@ -8,6 +8,7 @@ import {
   clearNativeVisionProbe,
 } from "../src/llm/native-vision-probe-cache"
 import { resolveNativeVision, visionConfigForAnalyze } from "../src/llm/likely-multimodal"
+import { analyzeImage } from "../src/llm/vision-pipeline"
 
 test("probe cache hits only the same url+model", () => {
   clearNativeVisionProbe()
@@ -74,6 +75,41 @@ test("visionConfigForAnalyze uses probe cache not disk flags", () => {
   )
   assert.ok(cfg)
   assert.equal(cfg!.model_name, "custom-vlm")
+  clearNativeVisionProbe()
+})
+
+test("an Anthropic main model handles screenshots through its actual provider", async () => {
+  const originalFetch = globalThis.fetch
+  let request: any
+  globalThis.fetch = async (url, options) => {
+    request = { url: String(url), body: JSON.parse(String(options?.body)), headers: options?.headers }
+    return Response.json({ content: [{ type: "text", text: "A pixel" }], stop_reason: "end_turn" })
+  }
+  try {
+    const config = visionConfigForAnalyze({
+      base_url: "http://127.0.0.1:9/v1", api_key: "fixture-key", model_name: "claude-test",
+      protocol: "anthropic", native_vision: "on", anthropic_version: "2023-06-01",
+    })
+    assert.ok(config)
+    const result = await analyzeImage({
+      base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      width: 1, height: 1, title: "test", url: "",
+    }, config as any)
+    assert.equal(result.description, "A pixel")
+    assert.equal(request.url, "http://127.0.0.1:9/v1/messages")
+    assert.equal(request.body.model, "claude-test")
+    assert.equal(request.body.messages[0].content[0].type, "image")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("a negative image probe overrides the model-name heuristic in auto mode", () => {
+  clearNativeVisionProbe()
+  rememberNativeVisionProbe("http://127.0.0.1:9/v1", "gpt-4o", false)
+  const opts = { baseUrl: "http://127.0.0.1:9/v1", modelName: "gpt-4o" }
+  assert.equal(resolveNativeVision(opts), false)
+  assert.equal(resolveNativeVision({ ...opts, mode: "on" }), true)
   clearNativeVisionProbe()
 })
 

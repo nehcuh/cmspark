@@ -279,6 +279,15 @@ test("normalizeEndpointUrl and placeholder key helpers", () => {
   assert.equal(isVisionKeyPlaceholder("sk-real"), false)
 })
 
+test("a negative image probe overrides a known multimodal name in auto mode", () => {
+  clearNativeVisionProbe()
+  rememberNativeVisionProbe("http://127.0.0.1:9/v1", "gpt-4o", false)
+  const opts = { baseUrl: "http://127.0.0.1:9/v1", modelName: "gpt-4o" }
+  assert.equal(resolveNativeVision(opts), false)
+  assert.equal(resolveNativeVision({ ...opts, mode: "on" }), true)
+  clearNativeVisionProbe()
+})
+
  test("Anthropic reuse copies protocol and enables backend gateway auth inheritance", () => {
   const result = applyVisionReuseFromMain({ model_name: "claude-owned", protocol: "anthropic", base_url: "https://owned.example/v1" })
   assert.equal(result.patch.vision_protocol, "anthropic")

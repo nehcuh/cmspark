@@ -165,6 +165,6 @@ test("probeNativeVision DNS-to-IMDS does not fetch", async (t) => {
     api_key: "sk-x",
     model_name: "gpt-4o",
   })
-  assert.equal(ok, false)
+  assert.equal(ok, null)
   assert.equal(called, false)
 })

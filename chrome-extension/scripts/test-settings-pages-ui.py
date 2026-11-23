@@ -97,9 +97,33 @@ with tempfile.TemporaryDirectory() as out:
         settings.get_by_role('button', name='返回设置首页', exact=True).click()
         home.get_by_role('button', name='模型与服务', exact=True).click()
         model_center.get_by_text('导入用外部转写 · fixture-asr · asr.example.test', exact=True).wait_for()
+        page.evaluate("""() => {
+            window.dictationFixture = {
+                sttEngine:'local', localModelId:'large-v3-turbo', recommendedModelId:'large-v3-turbo',
+                models:{}, binary:{status:'ready'}, diskBudgetMB:4096, diskUsedMB:0,
+            };
+            window.dispatchUI({type:'SET_VOICE_MODEL_STATE',modelState:window.dictationFixture});
+        }""")
         model_center.get_by_role('button', name='聊天听写', exact=True).click()
-        settings.locator('[data-settings-destination="input-dictation-engine"]').wait_for()
+        dictation = settings.locator('[data-settings-destination="input-dictation-engine"]')
+        dictation.get_by_role('radio', name='外部转写', exact=False).check()
+        dictation.get_by_label('密钥', exact=True).fill('fixture-transcription-key')
+        dictation.get_by_role('button', name='保存外部转写', exact=True).click()
+        page.wait_for_function('window.sent.some(x=>x.type==="voice.external.set" && x.source==="settings")')
+        page.evaluate("""() => {
+            const external = {style:'deepseek',baseUrl:'',normalizedUrl:'https://api.deepseek.com/v1/tools/asr',
+                model:'whisper-1',keyConfigured:true,limitNote:'deepseek-docs'};
+            window.dictationFixture = {...window.dictationFixture,external};
+            window.dispatchUI({type:'SET_VOICE_MODEL_STATE',modelState:window.dictationFixture});
+        }""")
+        dictation.get_by_role('checkbox', name='停止录音后', exact=False).check()
+        dictation.get_by_role('button', name='启用外部转写', exact=True).click()
+        page.wait_for_function('window.sent.some(x=>x.type==="voice.model.set_engine" && x.engine==="external" && x.privacy_ack_external_v1)')
+        page.evaluate("""window.dispatchUI({type:'SET_VOICE_MODEL_STATE',
+            modelState:{...window.dictationFixture,sttEngine:'external'}})""")
+        dictation.get_by_role('button', name='外部转写已启用', exact=True).wait_for()
         settings.get_by_role('button', name='返回模型与服务', exact=True).click()
+        model_center.get_by_text('外部转写 · DeepSeek · api.deepseek.com', exact=True).wait_for()
         page.wait_for_function('document.activeElement?.getAttribute("aria-label")==="聊天听写"')
         settings.get_by_role('button', name='返回设置首页', exact=True).click()
         for width, height in [(1440, 900), (800, 700), (390, 740), (320, 480)]:
@@ -118,7 +142,7 @@ with tempfile.TemporaryDirectory() as out:
                 assert settings.locator('[data-settings-destination]:visible').count() == 1
                 assert settings.evaluate('(el)=>el.scrollWidth<=el.clientWidth'), (width, route, 'horizontal overflow')
                 assert not assistant.is_visible()
-                save = settings.get_by_role('button', name='保存并关闭', exact=True).bounding_box()
+                save = settings.get_by_role('button', name='保存', exact=True).bounding_box()
                 assert save and save['y'] + save['height'] <= height, (width, route, save)
                 if route == 'model-chat':
                     assert model.input_value() == 'fixture-model-draft'

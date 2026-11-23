@@ -1,11 +1,12 @@
 // Config / settings family WS handlers (C10-C mechanical extract from message-router).
 // Zero behavior change — cases config.* + settings.* only.
 
-import { getConfig, getConfigSnapshot, getCommittedConfigRevision, saveConfig, saveConfigWithReceipt, isMaskedApiKey } from "../../config"
+import { getConfig, getConfigSnapshot, getCommittedConfigRevision, saveConfig, saveConfigWithReceipt, isMaskedApiKey, type VisionConfig } from "../../config"
 import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { isChatOutputLimit } from "../../llm/output-budget"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
+import { resolveNativeVision } from "../../llm/likely-multimodal"
 import { probeVisionConnection } from "../../llm/vision-pipeline"
 import { isPlaceholderVisionKey } from "../../llm/vision-reuse-inherit"
 import {
@@ -61,6 +62,15 @@ function sanitizeConfig(obj: Record<string, any>): Record<string, any> {
     }
   }
   return result
+}
+
+async function testVision(config: VisionConfig) {
+  try {
+    await probeVisionConnection(config)
+    return { ok: true, model: config.model_name }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 /**
@@ -494,7 +504,14 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       const probe = await probeLlmConnection(testConfig)
       if (probe.ok) {
         const nativeVision = await probeNativeVision(testConfig)
-        rememberNativeVisionProbe(testConfig.base_url, testConfig.model_name, nativeVision)
+        if (nativeVision !== null) rememberNativeVisionProbe(testConfig.base_url, testConfig.model_name, nativeVision)
+        const overrideMode = override?.native_vision
+        const nativeMode = overrideMode === "auto" || overrideMode === "on" || overrideMode === "off"
+          ? overrideMode : config.llm.native_vision
+        const useMainVision = resolveNativeVision({ baseUrl: testConfig.base_url, modelName: testConfig.model_name, mode: nativeMode })
+        const visionFallback = rest.test_vision_fallback === true && config.vision?.enabled && !useMainVision
+          ? await testVision(config.vision)
+          : undefined
         return {
           type: "config.testResult",
           ok: true,
@@ -505,6 +522,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
           // like the companion probe cache (panel M1).
           base_url: testConfig.base_url,
           model_name: testConfig.model_name,
+          ...(visionFallback ? { vision_fallback: visionFallback } : {}),
         }
       }
       return { type: "config.testResult", ok: false, error: probe.error || "连接失败" }
@@ -515,12 +533,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (!config.vision?.enabled) {
         return { type: "config.testVisionResult", ok: false, error: "Vision not enabled" }
       }
-      try {
-        await probeVisionConnection(config.vision)
-        return { type: "config.testVisionResult", ok: true, model: config.vision.model_name }
-      } catch (e: any) {
-        return { type: "config.testVisionResult", ok: false, error: e.message || String(e) }
-      }
+      return { type: "config.testVisionResult", ...await testVision(config.vision) }
     }
 
     case "settings.get": {

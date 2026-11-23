@@ -1040,8 +1040,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           raw && typeof raw === "object"
             ? raw
             : null
-        wsClient.send({ type: "config.test", llm_override: llmOverride })
-        sendResponse({ ok: true })
+        const sent = wsClient?.send({
+          type: "config.test",
+          llm_override: llmOverride,
+          ...(message.testVisionFallback === true ? { test_vision_fallback: true } : {}),
+        })
+        sendResponse(sent ? { ok: true } : { ok: false, error: "Companion 未连接" })
         return true
       }
 
@@ -1738,6 +1742,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "voice.model.delete":
       case "voice.model.set_active":
       case "voice.model.set_engine":
+      case "voice.external.set":
       case "voice.model.set_prefs":
       // #260 diarize speaker-embedding model (settings fence on companion side).
       case "voice.model.diarize_download":

@@ -309,7 +309,7 @@ test("Settings copy for the archive switch must not promise restoring old bodies
   assert.match(block, /默认关/)
   assert.match(block, /不会因打开而(恢复|回填)/, "copy must state that omitted bodies are not restored")
   assert.match(block, /脱敏/, "copy must state that secrets stay redacted when on")
-  assert.match(block, /submitImmediate\(\{ persist_full_tool_history:/, "toggle must persist immediately, not wait for 保存并关闭")
+  assert.match(block, /submitImmediate\(\{ persist_full_tool_history:/, "toggle must persist immediately, not wait for 保存")
   const helper = src.slice(src.indexOf("const submitImmediate"), src.indexOf("const handleAutoApproveDangerousChange"))
   assert.match(helper, /type:\s*["']config\.set["']/, "immediate settings still send config.set instead of waiting for the main save")
   assert.match(block, /操作历史面板与日志/, "copy must disclose history.db / logs are out of scope")

@@ -32,7 +32,7 @@ export function SettingsModelUses({ active, onOpen }: { active: boolean; onOpen:
     ? [config.vision_model_name, modelEndpointLabel(config.vision_base_url)].filter(Boolean).join(" · ")
     : undefined
   const attachmentVision = nativeVision ? main : config.file_upload_vision !== false ? vision : undefined
-  const screenshotVision = nativeVision && config.protocol !== "anthropic" ? main : vision
+  const screenshotVision = nativeVision ? main : vision
   const chatVision = attachmentVision === screenshotVision
     ? attachmentVision ?? "未启用视觉服务"
     : `附图 · ${attachmentVision ?? "未启用"} / 截图 · ${screenshotVision ?? "未启用"}`
@@ -40,7 +40,11 @@ export function SettingsModelUses({ active, onOpen }: { active: boolean; onOpen:
   const external = voice?.external
   const engine = voice?.sttEngine === "local" ? `本机 Whisper · ${voice.localModelId}`
     : voice?.sttEngine === "system" ? "Windows 系统语音识别"
-    : voice?.sttEngine === "external" ? [external?.model || "外部转写", modelEndpointLabel(external?.baseUrl)].filter(Boolean).join(" · ")
+    : voice?.sttEngine === "external" ? [
+      "外部转写",
+      external?.style === "deepseek" ? "DeepSeek" : external?.model,
+      modelEndpointLabel(external?.normalizedUrl || external?.baseUrl),
+    ].filter(Boolean).join(" · ")
     : voice ? "浏览器语音识别" : "等待引擎状态"
   const voiceData = voice?.sttEngine === "local" || voice?.sttEngine === "system"
     ? "音频在本机识别，回退时按浏览器识别的确认流程处理。"

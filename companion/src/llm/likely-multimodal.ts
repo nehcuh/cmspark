@@ -1,4 +1,5 @@
 import { lookupNativeVisionProbe } from "./native-vision-probe-cache"
+import type { LlmConfig } from "../config"
 
 export type NativeVisionMode = "auto" | "on" | "off"
 
@@ -25,7 +26,7 @@ export function likelyMultimodal(modelName: string | undefined | null): boolean 
 
 /**
  * Composer attachments + screenshot rail: honor explicit override, else name
- * heuristic, else keyed {url,model} probe cache. Unkeyed `detected` is ignored.
+ * keyed {url,model} probe, else name heuristic. Unkeyed `detected` is ignored.
  */
 export function resolveNativeVision(opts: {
   modelName?: string | null
@@ -39,13 +40,11 @@ export function resolveNativeVision(opts: {
     raw === true || raw === "on" ? "on" : raw === false || raw === "off" ? "off" : "auto"
   if (mode === "on") return true
   if (mode === "off") return false
-  if (likelyMultimodal(opts.modelName)) return true
-  // Unkeyed `detected` is display-only (C1). Routing uses the {url,model} cache.
   void opts.detected
-  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") === true
+  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") ?? likelyMultimodal(opts.modelName)
 }
 
-type VisionLike = {
+type VisionLike = Pick<LlmConfig, "protocol" | "auth_style" | "client_header_profile" | "claude_code_compat_version" | "extra_headers" | "anthropic_version"> & {
   enabled?: boolean
   base_url: string
   api_key: string
@@ -57,23 +56,19 @@ type VisionLike = {
   cache_ttl_seconds?: number
 }
 
-type LlmLike = {
+type LlmLike = Pick<LlmConfig, "protocol" | "auth_style" | "client_header_profile" | "claude_code_compat_version" | "extra_headers" | "anthropic_version"> & {
   base_url: string
   api_key: string
   model_name: string
-  protocol?: string
   native_vision?: NativeVisionMode | boolean | null
 }
 
 /**
  * Screenshot / analyze_image rail. Prefer the main LLM when it can see images
- * (override / heuristic / probe). Anthropic Messages stays on the vision rail
- * (that pipeline is OpenAI-compatible only).
+ * (override / heuristic / probe).
  */
 export function visionConfigForAnalyze(llm: LlmLike, vision?: VisionLike | null): VisionLike | null {
-  const useNative =
-    (llm.protocol || "openai") !== "anthropic" &&
-    resolveNativeVision({
+  const useNative = resolveNativeVision({
       modelName: llm.model_name,
       baseUrl: llm.base_url,
       mode: llm.native_vision,
@@ -84,6 +79,12 @@ export function visionConfigForAnalyze(llm: LlmLike, vision?: VisionLike | null)
       base_url: llm.base_url,
       api_key: llm.api_key,
       model_name: llm.model_name,
+      protocol: llm.protocol,
+      auth_style: llm.auth_style,
+      client_header_profile: llm.client_header_profile,
+      claude_code_compat_version: llm.claude_code_compat_version,
+      extra_headers: llm.extra_headers,
+      anthropic_version: llm.anthropic_version,
       timeout_ms: vision?.timeout_ms ?? 30000,
       max_tokens: vision?.max_tokens ?? 1024,
       fallback: vision?.fallback ?? "metadata",
