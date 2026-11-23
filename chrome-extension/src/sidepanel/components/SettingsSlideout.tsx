@@ -2,9 +2,16 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
+import type { AgentState } from "../store/agentStore"
 import { prepareSettingsSubmission } from "../utils/settings-draft"
 import { CHAT_OUTPUT_LIMIT_MAX, isChatOutputLimit } from "../utils/normalize-config"
 import type { LLMConfig, SecurityAuditEntry } from "../types"
+
+type LocalSettingKey = "asrRefinerEnabled" | "sendShortcut" | "showReasoningMode" | "exportIncludeReasoning" | "voiceInputEnabled" | "voiceDictationMode" | "chatDictationLanguage" | "dictationHotkeyEnabled" | "dictationHotkeyChord" | "voiceSoundEffects" | "voiceRealtimeStreaming"
+type LocalSettingsDraft = Partial<Pick<AgentState, LocalSettingKey>>
+type VoicePrefsDraft = Partial<Record<"autoFallbackToBrowser" | "modelPrewarm" | "postprocessFillers" | "postprocessLowercase" | "postprocessStripPunct", boolean>>
+type ComputerDraft = { pythonMode?: "isolated" | "system"; downloadSource?: "auto" | "modelscope" | "hf-mirror" | "huggingface"; variant?: "2b" | "4b" | "8b" }
+type FooterControl = { dirty: boolean; busy: boolean; save: (known?: ModelCenterState) => void | Promise<boolean | ModelCenterState>; error?: string }
 import { Modal } from "./ui/Modal"
 import { connectionLabel, tokens } from "../ui/tokens"
 import { effectiveReasoningEffort, modelSpec, modelSuggestions, reasoningWireEffort, type ReasoningEffort } from "../utils/reasoning-effort"
@@ -20,6 +27,7 @@ import { SettingsNavRow, SettingsPage } from "./SettingsPage"
 import { SettingsModelUses } from "./SettingsModelUses"
 import { ModelCenterControls } from "./ModelCenterControls"
 import { MeetingExternalAsrSettings } from "./MeetingExternalAsrSettings"
+import type { ModelCenterState } from "../utils/model-center"
 import {
   resolveSettingsDestination,
   SETTINGS_CATEGORIES,
@@ -200,6 +208,9 @@ export function SettingsSlideout() {
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
   // Path B M0: engine radio is UI draft until ready model + explicit "启用本机转写".
   const [engineSelection, setEngineDraft] = useState<"browser" | "local" | "system" | "external" | null>(null)
+  const [enginePrivacyAck, setEnginePrivacyAck] = useState(false)
+  const [enginePending, setEnginePending] = useState(false)
+  const engineSaveRef = useRef<string | null>(null)
   const committedEngine = state.voiceModel?.sttEngine
   const engineDraft = engineSelection ?? committedEngine ?? "browser"
   const [externalPrivacyAck, setExternalPrivacyAck] = useState(false)
@@ -207,6 +218,29 @@ export function SettingsSlideout() {
   const [externalBaseDraft, setExternalBaseDraft] = useState<string | null>(null)
   const [externalStyleDraft, setExternalStyleDraft] = useState<"deepseek" | "openai" | null>(null)
   const [externalModelDraft, setExternalModelDraft] = useState<string | null>(null)
+  const [computerDraft, setComputerDraft] = useState<ComputerDraft>({})
+  const [localDraft, setLocalDraft] = useState<LocalSettingsDraft>({})
+  const [localSaving, setLocalSaving] = useState(false)
+  const [localSaveError, setLocalSaveError] = useState<string | null>(null)
+  const [localSaved, setLocalSaved] = useState(false)
+  const [footerNotice, setFooterNotice] = useState<string | null>(null)
+  const localSavingRef = useRef(false)
+  const [footerWaiting, setFooterWaiting] = useState(false)
+  const [footerRunning, setFooterRunning] = useState(false)
+  const footerRunningRef = useRef(false)
+  const [footerAckTick, setFooterAckTick] = useState(0)
+  const footerQueueRef = useRef<{ id: string; ackRevision: string | null } | null>(null)
+  const afterConfigRef = useRef<() => void>(() => {})
+  const [meetingFooter, setMeetingFooter] = useState<FooterControl | null>(null)
+  const reportMeetingFooter = useCallback((control: FooterControl | null) => setMeetingFooter(control), [])
+  const [profileFooter, setProfileFooter] = useState<FooterControl | null>(null)
+  const reportProfileFooter = useCallback((control: FooterControl | null) => setProfileFooter(control), [])
+  const [minutesFooter, setMinutesFooter] = useState<FooterControl | null>(null)
+  const reportMinutesFooter = useCallback((control: FooterControl | null) => setMinutesFooter(control), [])
+  const [lcuFooter, setLcuFooter] = useState<FooterControl | null>(null)
+  const reportLcuFooter = useCallback((control: FooterControl | null) => setLcuFooter(control), [])
+  const [envFooter, setEnvFooter] = useState<FooterControl | null>(null)
+  const reportEnvFooter = useCallback((control: FooterControl | null) => setEnvFooter(control), [])
   const [externalPending, setExternalPending] = useState(false)
   const [externalSaved, setExternalSaved] = useState(false)
   const externalSaveRef = useRef<{ id: string; style: typeof externalStyleDraft; base: typeof externalBaseDraft; model: typeof externalModelDraft; key: string } | null>(null)
@@ -217,6 +251,9 @@ export function SettingsSlideout() {
   voicePendingDownloadRef.current = voicePendingDownload
   /** 模型下载源输入草稿；null = 未编辑，跟随 voiceModel 镜像。 */
   const [voiceEndpointDraft, setVoiceEndpointDraft] = useState<string | null>(null)
+  const [voicePrefsDraft, setVoicePrefsDraft] = useState<VoicePrefsDraft>({})
+  const [voicePrefsPending, setVoicePrefsPending] = useState(false)
+  const voicePrefsRef = useRef<{ id: string; prefs: VoicePrefsDraft; endpoint: string | null } | null>(null)
   const [settingsRoute, setSettingsRoute] = useState<SettingsRoute>({ view: "home" })
   const activeCategory = settingsRoute.view === "home" ? undefined : settingsRoute.category
   const activeDestination = settingsRoute.view === "destination" ? settingsRoute.destination : undefined
@@ -354,6 +391,8 @@ export function SettingsSlideout() {
     setEngineDraft(null)
   }, [state.settingsOpen, committedEngine])
 
+  useEffect(() => { setEnginePrivacyAck(false) }, [engineSelection])
+
   useEffect(() => {
     if (state.voiceModelError && engineSelection === "browser" && committedEngine && committedEngine !== "browser") {
       setEngineDraft(null)
@@ -453,7 +492,29 @@ export function SettingsSlideout() {
   }, [state.settingsOpen, state.configHydratedFromCompanion, dispatch])
 
   useEffect(() => {
-    const onMessage = (message: { type?: string; id?: string; error?: string }) => {
+    const onMessage = (message: { type?: string; id?: string; error?: string; config_revision?: string }) => {
+      if (footerQueueRef.current && message.id === footerQueueRef.current.id && message.type === "config.updated") {
+        footerQueueRef.current.ackRevision = typeof message.config_revision === "string" ? message.config_revision : null
+        setFooterAckTick(value => value + 1)
+      }
+      if (engineSaveRef.current && message.id === engineSaveRef.current && (message.type === "voice.model.state" || message.type === "error")) {
+        engineSaveRef.current = null
+        setEnginePending(false)
+        if (message.type === "error") dispatch({ type: "SET_VOICE_MODEL_ERROR", error: message.error || "听写引擎没有切换。" })
+      }
+      const prefs = voicePrefsRef.current
+      if (prefs && message.id === prefs.id && (message.type === "voice.model.state" || message.type === "error")) {
+        voicePrefsRef.current = null
+        setVoicePrefsPending(false)
+        if (message.type === "voice.model.state") {
+          setVoicePrefsDraft(current => {
+            const next = { ...current }
+            for (const key of Object.keys(prefs.prefs) as Array<keyof VoicePrefsDraft>) if (current[key] === prefs.prefs[key]) delete next[key]
+            return next
+          })
+          setVoiceEndpointDraft(value => value === prefs.endpoint ? null : value)
+        } else dispatch({ type: "SET_VOICE_MODEL_ERROR", error: message.error || "本机听写设置没有保存。" })
+      }
       const pending = externalSaveRef.current
       if (!pending || message.id !== pending.id) return
       if (message.type === "voice.model.state") {
@@ -473,6 +534,53 @@ export function SettingsSlideout() {
     chrome.runtime.onMessage.addListener(onMessage)
     return () => chrome.runtime.onMessage.removeListener(onMessage)
   }, [dispatch])
+
+  useEffect(() => {
+    const queue = footerQueueRef.current
+    if (!footerWaiting || !queue) return
+    if (queue.ackRevision && queue.ackRevision === state.configRevision && state.settingsSave.status === "saved") {
+      footerQueueRef.current = null
+      setFooterWaiting(false)
+      afterConfigRef.current()
+    } else if (["unknown", "conflict", "review"].includes(state.settingsSave.status)) {
+      footerQueueRef.current = null
+      setFooterWaiting(false)
+      setLocalSaveError("部分设置尚未保存，请先处理配置回执或冲突，再重新保存。")
+    }
+  }, [footerWaiting, footerAckTick, state.settingsSave, state.configRevision])
+
+  useEffect(() => {
+    if (!footerWaiting) return
+    const timer = window.setTimeout(() => {
+      const queue = footerQueueRef.current
+      if (!queue) return
+      footerQueueRef.current = null
+      setFooterWaiting(false)
+      dispatch({ type: "SETTINGS_SAVE_UNKNOWN", id: queue.id, error: "等待配置保存回执超时" })
+      setLocalSaveError("配置保存结果未知，其余设置草稿已保留。")
+    }, 15000)
+    return () => window.clearTimeout(timer)
+  }, [footerWaiting, dispatch])
+
+  useEffect(() => {
+    if (!enginePending) return
+    const timer = window.setTimeout(() => {
+      engineSaveRef.current = null
+      setEnginePending(false)
+      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: "听写引擎切换结果未知，请核对当前配置。" })
+    }, 15000)
+    return () => window.clearTimeout(timer)
+  }, [enginePending, dispatch])
+
+  useEffect(() => {
+    if (!voicePrefsPending) return
+    const timer = window.setTimeout(() => {
+      voicePrefsRef.current = null
+      setVoicePrefsPending(false)
+      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: "本机听写设置保存结果未知，草稿已保留。" })
+    }, 15000)
+    return () => window.clearTimeout(timer)
+  }, [voicePrefsPending, dispatch])
 
   useEffect(() => {
     if (!externalPending) return
@@ -520,11 +628,25 @@ export function SettingsSlideout() {
   const budget = calculateChatOutputBudget(effectiveContextWindow(config.context_window).effective, spec, config.max_tokens, config.reasoning_effort)
   const saveBlocked = settingsSaveDisabled(state.configHydratedFromCompanion) || !draft ||
     !state.configRevision || state.connectionState !== "connected" || !!state.settingsSave.pending ||
-    state.settingsSave.status === "unknown" || Object.keys(draft?.conflicts ?? {}).length > 0
+    state.settingsSave.status === "unknown" || state.immediateSave?.status === "sending" || state.immediateSave?.status === "accepted" || Object.keys(draft?.conflicts ?? {}).length > 0
   const hasEdits = Object.keys(draft?.dirty ?? {}).length > 0
   const savingExternal = activeDestination === "input-dictation-engine" && engineDraft === "external"
+  const localValues = { ...state, ...localDraft }
+  const localHasEdits = Object.keys(localDraft).length > 0
+  const editLocal = <K extends LocalSettingKey>(key: K, value: AgentState[K]) => {
+    setLocalSaveError(null)
+    setLocalSaved(false)
+    setLocalDraft(current => {
+      const next = { ...current }
+      if (value === state[key]) delete next[key]
+      else Object.assign(next, { [key]: value })
+      return next
+    })
+  }
   const externalHasEdits = externalStyleDraft !== null || externalBaseDraft !== null ||
     externalModelDraft !== null || externalKeyDraft.length > 0
+  const voicePrefsHasEdits = voiceEndpointDraft !== null || Object.keys(voicePrefsDraft).length > 0
+  const engineHasEdits = engineSelection !== null && engineSelection !== committedEngine
 
   const handleSaveExternal = () => {
     if (externalSaveRef.current || state.connectionState !== "connected" || !externalHasEdits) return
@@ -559,10 +681,162 @@ export function SettingsSlideout() {
     }
   }
 
-  const handleSave = () => {
+  const handleSaveLocal = async () => {
+    if (!localHasEdits || localSavingRef.current) return
+    const submitted = { ...localDraft }
+    const names: Record<LocalSettingKey, string> = {
+      asrRefinerEnabled: "asrRefinerEnabled", sendShortcut: "sendShortcut", showReasoningMode: "cmspark.ui.show_reasoning",
+      exportIncludeReasoning: "cmspark.ui.export_include_reasoning", voiceInputEnabled: "voiceInputEnabled",
+      voiceDictationMode: "voiceDictationMode", chatDictationLanguage: "chatDictationLanguage",
+      dictationHotkeyEnabled: "dictationHotkeyEnabled", dictationHotkeyChord: "dictationHotkeyChord",
+      voiceSoundEffects: "voice_sound_effects", voiceRealtimeStreaming: "voiceRealtimeStreaming",
+    }
+    const values = Object.fromEntries((Object.keys(submitted) as LocalSettingKey[]).map(key => [names[key], submitted[key]]))
+    localSavingRef.current = true
+    setLocalSaving(true)
+    setLocalSaveError(null)
+    setLocalSaved(false)
+    try {
+      if (submitted.sendShortcut !== undefined) {
+        if (state.connectionState !== "connected") throw new Error("Companion 未连接，快捷键草稿已保留。")
+        const revision = await new Promise<string>((resolve, reject) => {
+          const id = `shortcut-config-get:${crypto.randomUUID()}`
+          let done = false
+          const finish = (revision?: string, error?: string) => {
+            if (done) return
+            done = true
+            window.clearTimeout(timer)
+            chrome.runtime.onMessage.removeListener(listener)
+            revision ? resolve(revision) : reject(new Error(error || "无法读取当前配置版本，快捷键草稿已保留。"))
+          }
+          const listener = (message: { id?: string; type?: string; config_revision?: string; error?: string }) => {
+            if (message.id !== id) return
+            if (message.type === "config.updated") finish(message.config_revision)
+            else if (message.type === "error") finish(undefined, message.error)
+          }
+          const timer = window.setTimeout(() => finish(), 15000)
+          chrome.runtime.onMessage.addListener(listener)
+          try {
+            chrome.runtime.sendMessage({ type: "config.get", id }, response => {
+              const error = chrome.runtime.lastError?.message || (response?.ok === false ? response.error : "")
+              if (error) finish(undefined, error)
+            })
+          } catch (error) { finish(undefined, error instanceof Error ? error.message : String(error)) }
+        })
+        const id = `settings-save:${crypto.randomUUID()}`
+        await new Promise<void>((resolve, reject) => {
+          let done = false
+          const finish = (error?: string) => {
+            if (done) return
+            done = true
+            window.clearTimeout(timer)
+            chrome.runtime.onMessage.removeListener(listener)
+            error ? reject(new Error(error)) : resolve()
+          }
+          const listener = (message: { id?: string; type?: string; error?: string; config_applied_revision?: string; config_revision?: string; config?: { summoner?: { send_shortcut?: string } } }) => {
+            if (message.id !== id) return
+            if (message.type === "config.conflict") finish("快捷键保存发生配置冲突，草稿已保留。")
+            else if (message.type === "error") finish(message.error || "快捷键未保存。")
+            else if (message.type === "config.updated") {
+              if (message.config_applied_revision && message.config_applied_revision === message.config_revision && message.config?.summoner?.send_shortcut === submitted.sendShortcut) finish()
+              else finish("快捷键保存结果无法确认，草稿已保留。")
+            }
+          }
+          const timer = window.setTimeout(() => finish("快捷键保存结果未知，请核对后重试。"), 15000)
+          chrome.runtime.onMessage.addListener(listener)
+          try {
+            chrome.runtime.sendMessage({ type: "config.set", id, config_revision: revision, config: { summoner: { send_shortcut: submitted.sendShortcut } } }, response => {
+              const error = chrome.runtime.lastError?.message || (response?.ok === false ? response.error : "")
+              if (error) finish(error)
+            })
+          } catch (error) { finish(error instanceof Error ? error.message : String(error)) }
+        })
+      }
+      await chrome.storage.local.set(values)
+      if (submitted.asrRefinerEnabled !== undefined) dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: submitted.asrRefinerEnabled, persist: false })
+      if (submitted.sendShortcut !== undefined) dispatch({ type: "SET_SEND_SHORTCUT", shortcut: submitted.sendShortcut, persist: false })
+      if (submitted.showReasoningMode !== undefined) dispatch({ type: "SET_SHOW_REASONING_MODE", mode: submitted.showReasoningMode, persist: false })
+      if (submitted.exportIncludeReasoning !== undefined) dispatch({ type: "SET_EXPORT_INCLUDE_REASONING", enabled: submitted.exportIncludeReasoning, persist: false })
+      if (submitted.voiceInputEnabled !== undefined) dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: submitted.voiceInputEnabled, persist: false })
+      if (submitted.voiceDictationMode !== undefined) dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: submitted.voiceDictationMode, persist: false })
+      if (submitted.chatDictationLanguage !== undefined) dispatch({ type: "SET_CHAT_DICTATION_LANGUAGE", language: submitted.chatDictationLanguage, persist: false })
+      if (submitted.dictationHotkeyEnabled !== undefined) dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: submitted.dictationHotkeyEnabled, persist: false })
+      if (submitted.dictationHotkeyChord !== undefined) dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: submitted.dictationHotkeyChord, persist: false })
+      if (submitted.voiceSoundEffects !== undefined) dispatch({ type: "SET_VOICE_SOUND_EFFECTS", enabled: submitted.voiceSoundEffects, persist: false })
+      if (submitted.voiceRealtimeStreaming !== undefined) dispatch({ type: "SET_VOICE_REALTIME_STREAMING", enabled: submitted.voiceRealtimeStreaming, persist: false })
+      setLocalDraft(current => {
+        const next = { ...current }
+        for (const key of Object.keys(submitted) as LocalSettingKey[]) if (current[key] === submitted[key]) delete next[key]
+        return next
+      })
+      setLocalSaved(true)
+    } catch (error) {
+      setLocalSaveError(error instanceof Error && submitted.sendShortcut !== undefined ? error.message : "本机设置未保存，草稿已保留，请重试。")
+    } finally {
+      localSavingRef.current = false
+      setLocalSaving(false)
+    }
+  }
+
+  const handleSaveVoicePrefs = () => {
+    if (voicePrefsRef.current || !voicePrefsHasEdits || state.connectionState !== "connected") return
+    const id = `voice-prefs-save:${crypto.randomUUID()}`
+    const submitted = { id, prefs: { ...voicePrefsDraft }, endpoint: voiceEndpointDraft }
+    voicePrefsRef.current = submitted
+    setVoicePrefsPending(true)
+    dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
+    try {
+      chrome.runtime.sendMessage({ type: "voice.model.set_prefs", source: "settings", id, ...submitted.prefs,
+        ...(submitted.endpoint !== null ? { modelDownloadEndpoint: submitted.endpoint.trim() } : {}) }, (response: unknown) => {
+        const parsed = parseVoiceSettingsSendResponse(response, chrome.runtime.lastError?.message ?? null)
+        if (parsed.ok === false && voicePrefsRef.current?.id === id) {
+          voicePrefsRef.current = null
+          setVoicePrefsPending(false)
+          dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
+        }
+      })
+    } catch (error) {
+      voicePrefsRef.current = null
+      setVoicePrefsPending(false)
+      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  const modelState = state.voiceModel
+  const localReady = !!modelState && [modelState.localModelId, modelState.recommendedModelId].some(id => modelState.models[id]?.status === "ready")
+  const systemReady = state.voiceSystemState?.platform === "win32" && state.voiceSystemState?.helper?.ok === true && state.voiceSystemState?.systemSpeech?.available === true
+  const engineReady = engineSelection === "browser" || (engineSelection === "local" && localReady) ||
+    (engineSelection === "system" && systemReady) ||
+    (engineSelection === "external" && externalPrivacyAck && modelState?.external?.keyConfigured === true && !externalHasEdits)
+  const handleSaveEngine = (explicitEnable = false) => {
+    if (!engineSelection || !engineReady || !engineHasEdits || engineSaveRef.current || state.connectionState !== "connected") return
+    if (!explicitEnable && (engineSelection === "local" || engineSelection === "system") && !enginePrivacyAck) return
+    const id = `voice-engine-save:${crypto.randomUUID()}`
+    engineSaveRef.current = id
+    setEnginePending(true)
+    dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
+    try {
+      chrome.runtime.sendMessage({ type: "voice.model.set_engine", source: "settings", id, engine: engineSelection,
+        ...(engineSelection === "external" ? { privacy_ack_external_v1: true } : engineSelection === "local" || engineSelection === "system" ? { privacy_ack_v2: true } : {}) }, (response: unknown) => {
+        const parsed = parseVoiceSettingsSendResponse(response, chrome.runtime.lastError?.message ?? null)
+        if (parsed.ok === false && engineSaveRef.current === id) {
+          engineSaveRef.current = null
+          setEnginePending(false)
+          dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
+        }
+      })
+    } catch (error) {
+      engineSaveRef.current = null
+      setEnginePending(false)
+      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  const handleSave = (queueRest = false) => {
     if (saveBlocked || !hasEdits || !draft || !state.configRevision || draft.revision !== state.configRevision) return
     const id = `settings-save:${crypto.randomUUID()}`
     const submission = prepareSettingsSubmission(draft, id)
+    if (queueRest) { footerQueueRef.current = { id, ackRevision: null }; setFooterWaiting(true) }
     dispatch({ type: "BEGIN_SETTINGS_SAVE", submission })
     chrome.runtime.sendMessage({ type: "config.set", id, config_revision: submission.revision, config: submission.patch }, (response) => {
       // This callback only reports transport admission, never persistence.
@@ -570,12 +844,125 @@ export function SettingsSlideout() {
     })
   }
 
+  const editComputer = <K extends keyof ComputerDraft>(key: K, value: NonNullable<ComputerDraft[K]>) => {
+    const model = state.computerModel
+    const committed = key === "pythonMode" ? model?.pythonMode ?? model?.preflight?.pythonMode ?? "isolated" : key === "downloadSource" ? model?.downloadSource ?? "auto" : model?.variant ?? "2b"
+    setComputerDraft(current => {
+      const next = { ...current }
+      if (value === committed) delete next[key]
+      else Object.assign(next, { [key]: value })
+      return next
+    })
+    setLocalSaveError(null)
+  }
+  const computerHasEdits = Object.keys(computerDraft).length > 0
+  const canSaveComputer = computerHasEdits && state.connectionState === "connected" && state.computerModel?.modelStatus !== "downloading"
+  const saveComputerDraft = async (): Promise<boolean> => {
+    const entries = Object.entries(computerDraft) as Array<[keyof ComputerDraft, string]>
+    for (const [key, value] of entries) {
+      const id = `computer-settings:${crypto.randomUUID()}`
+      const field = key === "pythonMode" ? "mode" : key
+      const type = key === "pythonMode" ? "computer.model.set_python_mode" : key === "downloadSource" ? "computer.model.set_download_source" : "computer.model.set_variant"
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let done = false
+          const finish = (error?: string) => {
+            if (done) return
+            done = true
+            window.clearTimeout(timer)
+            chrome.runtime.onMessage.removeListener(listener)
+            error ? reject(new Error(error)) : resolve()
+          }
+          const listener = (message: { id?: string; type?: string; error?: string; [key: string]: unknown }) => {
+            if (message.id !== id) return
+            if (message.type === "error") finish(message.error || "本机模型设置未保存。")
+            else if (message.type === "computer.model.state") {
+              if (message[key] === value) finish()
+              else finish("本机模型设置回执与所选值不一致，请核对后重试。")
+            }
+          }
+          const timer = window.setTimeout(() => finish("本机模型设置保存结果未知，请核对后重试。"), 15000)
+          chrome.runtime.onMessage.addListener(listener)
+          try {
+            chrome.runtime.sendMessage({ type, source: "settings", id, [field]: value }, response => {
+              const error = chrome.runtime.lastError?.message || (response?.ok === false ? response.error : "")
+              if (error) finish(error)
+            })
+          } catch (error) { finish(error instanceof Error ? error.message : String(error)) }
+        })
+        setComputerDraft(current => {
+          if (current[key] !== value) return current
+          const next = { ...current }; delete next[key]; return next
+        })
+      } catch (error) {
+        setLocalSaveError(error instanceof Error ? error.message : String(error))
+        return false
+      }
+    }
+    setFooterNotice("本机视觉模型设置已保存。")
+    return true
+  }
+  const canSaveConfig = hasEdits && !saveBlocked && draft?.revision === state.configRevision
+  const canSaveExternal = externalHasEdits && state.connectionState === "connected" && !externalPending
+  const canSaveLocal = localHasEdits && !localSaving
+  const canSaveMeeting = !!meetingFooter?.dirty && !meetingFooter.busy
+  const canSaveProfile = !!profileFooter?.dirty && !profileFooter.busy
+  const canSaveMinutes = !!minutesFooter?.dirty && !minutesFooter.busy
+  const canSaveLcu = !!lcuFooter?.dirty && !lcuFooter.busy
+  const canSaveEnv = !!envFooter?.dirty && !envFooter.busy
+  const canSaveVoicePrefs = voicePrefsHasEdits && state.connectionState === "connected" && !voicePrefsPending
+  const canSaveEngine = !!modelState && engineHasEdits && engineReady && state.connectionState === "connected" && !enginePending &&
+    (engineSelection !== "local" && engineSelection !== "system" || enginePrivacyAck)
+  const footerDisabled = footerWaiting || footerRunning || localSaving || externalPending || voicePrefsPending || enginePending || !(canSaveConfig || canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveVoicePrefs || canSaveEngine)
+  const saveRemaining = async () => {
+    if (footerRunningRef.current) return
+    footerRunningRef.current = true
+    setFooterRunning(true)
+    try {
+      const profileResult = canSaveProfile ? await profileFooter?.save() : undefined
+      if (profileResult === false) return
+      const known = profileResult && typeof profileResult === "object" ? profileResult : undefined
+      if (canSaveMinutes && (await minutesFooter?.save(known)) === false) return
+      if (canSaveProfile || canSaveMinutes) setFooterNotice("模型配置已保存并核对。")
+      if (canSaveComputer && !(await saveComputerDraft())) return
+      if (canSaveExternal) handleSaveExternal()
+      if (canSaveLocal) await handleSaveLocal()
+      if (canSaveMeeting) {
+        if ((await meetingFooter?.save()) === false) return
+        setFooterNotice("会议转写设置已保存并核对。")
+      }
+      if (canSaveLcu) lcuFooter?.save()
+      if (canSaveEnv) envFooter?.save()
+      if (canSaveVoicePrefs) handleSaveVoicePrefs()
+      if (canSaveEngine) handleSaveEngine()
+    } finally {
+      footerRunningRef.current = false
+      setFooterRunning(false)
+    }
+  }
+  afterConfigRef.current = () => { void saveRemaining() }
+  const handleFooterSave = () => {
+    setFooterNotice(null)
+    if (canSaveConfig) {
+      const other = canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveVoicePrefs || canSaveEngine
+      handleSave(other)
+      return
+    }
+    void saveRemaining()
+  }
+
+  const stageNested = (key: "acp" | "coding_handoff" | "embedded_terminal", patch: Record<string, unknown>) => {
+    const current = (config as unknown as Record<string, unknown>)[key]
+    dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { [key]: { ...(current && typeof current === "object" ? current : {}), ...patch } } as Partial<LLMConfig> })
+  }
+
   const submitImmediate = (patch: Partial<LLMConfig>, audit?: SecurityAuditEntry | null, confirmation_phrase?: string) => {
     if (state.connectionState !== "connected" || !state.configRevision) {
       setImmediateNotice("尚未连接到 Companion，这次设置没有发送")
       return
     }
-    if (state.immediateSave?.status === "sending" || state.immediateSave?.status === "accepted") {
+    const pendingPatch = state.settingsSave.pending?.patch
+    if ((pendingPatch && Object.keys(patch).some(key => Object.hasOwn(pendingPatch, key))) || state.immediateSave?.status === "sending" || state.immediateSave?.status === "accepted") {
       setImmediateNotice("上一次设置还在等待确认")
       return
     }
@@ -892,7 +1279,7 @@ export function SettingsSlideout() {
   }
 
   const handleShortcutChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    dispatch({ type: "SET_SEND_SHORTCUT", shortcut: e.target.value as any })
+    editLocal("sendShortcut", e.target.value as AgentState["sendShortcut"])
   }
 
   const handleTest = () => {
@@ -941,7 +1328,7 @@ export function SettingsSlideout() {
   return (
     <Modal
       open={state.settingsOpen}
-      onClose={() => dispatch({ type: "TOGGLE_SETTINGS" })}
+      onClose={() => { if (!footerWaiting && !footerRunning) dispatch({ type: "TOGGLE_SETTINGS" }) }}
       overlayStyle={styles.backdrop}
       panelStyle={styles.panel}
       panelClassName="cm-settings-panel"
@@ -950,7 +1337,7 @@ export function SettingsSlideout() {
         <div className="cm-settings-content" onFocusCapture={event => { lastSettingsFocus.current = event.target as HTMLElement }} {...(licenseDoorShouldOpen(state.computerModelLicenseDoor) ? { inert: "" } : {})}>
         <div className="cm-settings-header" style={styles.header}>
           <h3 style={{ margin: 0, fontSize: 15 }}>设置</h3>
-          <button type="button" aria-label="关闭设置" className="cm-icon-button" style={styles.closeBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>✕</button>
+          <button type="button" aria-label="关闭设置" className="cm-icon-button" style={styles.closeBtn} disabled={footerWaiting || footerRunning} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>✕</button>
         </div>
 
         <div className="cm-settings-status">
@@ -964,7 +1351,7 @@ export function SettingsSlideout() {
             {settingsCategories.map(category => <button type="button" key={category} aria-current={activeCategory === category ? "page" : undefined}
               onClick={() => selectSettingsCategory(category)}>{SETTINGS_CATEGORIES[category].title}</button>)}
           </nav>
-          <div ref={settingsBody} className="cm-settings-body" style={styles.body}>
+          <div ref={settingsBody} className="cm-settings-body" style={styles.body} {...(footerWaiting || footerRunning ? { inert: "" } : {})}>
             {settingsRoute.view !== "home" && <button type="button" className="cm-settings-back" onClick={goBackInSettings}>
               <span aria-hidden="true">‹</span> {settingsRoute.view === "category" ? "返回设置首页" : `返回${SETTINGS_CATEGORIES[settingsRoute.category].title}`}
             </button>}
@@ -1637,15 +2024,15 @@ export function SettingsSlideout() {
           </SettingsPage>
 
           <SettingsPage id="model-profiles" active={activeDestination === "model-profiles"}>
-            <ModelCenterControls active={activeDestination === "model-profiles" && settingsInteractive} />
+            <ModelCenterControls active={activeDestination === "model-profiles" && settingsInteractive} onFooterSave={reportProfileFooter} />
           </SettingsPage>
 
           <SettingsPage id="model-meeting-minutes" active={activeDestination === "model-meeting-minutes"}>
-            <ModelCenterControls active={activeDestination === "model-meeting-minutes" && settingsInteractive} mode="meeting" />
+            <ModelCenterControls active={activeDestination === "model-meeting-minutes" && settingsInteractive} mode="meeting" onFooterSave={reportMinutesFooter} />
           </SettingsPage>
 
           <SettingsPage id="model-meeting-transcribe" active={activeDestination === "model-meeting-transcribe"}>
-            <MeetingExternalAsrSettings active={activeDestination === "model-meeting-transcribe" && settingsInteractive} />
+            <MeetingExternalAsrSettings active={activeDestination === "model-meeting-transcribe" && settingsInteractive} onFooterSave={reportMeetingFooter} />
           </SettingsPage>
 
           <SettingsPage id="model-activity" active={activeDestination === "model-activity"}>
@@ -1666,11 +2053,12 @@ export function SettingsSlideout() {
             <select
               style={styles.input}
               id="settings-reasoning-display"
-              value={state.showReasoningMode || "auto_live"}
+              value={localValues.showReasoningMode || "auto_live"}
+              disabled={localSaving}
               onChange={(e) => {
                 const v = e.target.value
                 if (v === "always_collapsed" || v === "auto_live" || v === "always_open") {
-                  dispatch({ type: "SET_SHOW_REASONING_MODE", mode: v })
+                  editLocal("showReasoningMode", v)
                 }
               }}
             >
@@ -1690,7 +2078,8 @@ export function SettingsSlideout() {
             <select
               style={styles.select}
               id="settings-send-shortcut"
-              value={state.sendShortcut || "Enter"}
+              value={localValues.sendShortcut || "Enter"}
+              disabled={localSaving}
               onChange={handleShortcutChange}
             >
               <option value="Enter">Enter</option>
@@ -1713,10 +2102,9 @@ export function SettingsSlideout() {
                   <input
                     type="checkbox"
                     style={{ marginTop: 2 }}
-                    checked={state.dictationHotkeyEnabled === true}
-                    onChange={(e) =>
-                      dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: e.target.checked })
-                    }
+                    checked={localValues.dictationHotkeyEnabled === true}
+                    disabled={localSaving}
+                    onChange={(e) => editLocal("dictationHotkeyEnabled", e.target.checked)}
                   />
                   <span>
                     启用按住说话
@@ -1731,20 +2119,17 @@ export function SettingsSlideout() {
                   <div style={{ marginBottom: 2 }}>组合键（按键盘录制或点预设）</div>
                   <HotkeyCaptureField
                     active={activeDestination === "input-shortcuts" && settingsInteractive}
-                    value={state.dictationHotkeyChord || DICTATION_HOTKEY_DEFAULT_CHORD}
-                    disabled={!state.dictationHotkeyEnabled}
-                    onChange={(chord) =>
-                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord })
-                    }
+                    value={localValues.dictationHotkeyChord || DICTATION_HOTKEY_DEFAULT_CHORD}
+                    disabled={localSaving || !localValues.dictationHotkeyEnabled}
+                    onChange={(chord) => editLocal("dictationHotkeyChord", chord)}
                   />
                 </div>
                 <label style={{ display: "flex", gap: 8, marginTop: 8, fontSize: 12, cursor: "pointer" }}>
                   <input
                     type="checkbox"
-                    checked={state.voiceSoundEffects !== false}
-                    onChange={(e) =>
-                      dispatch({ type: "SET_VOICE_SOUND_EFFECTS", enabled: e.target.checked })
-                    }
+                    checked={localValues.voiceSoundEffects !== false}
+                    disabled={localSaving}
+                    onChange={(e) => editLocal("voiceSoundEffects", e.target.checked)}
                   />
                   听写状态音效（开始/停止/完成；误触静默）
                 </label>
@@ -1755,8 +2140,9 @@ export function SettingsSlideout() {
           <div style={styles.field}>
             <label style={styles.label} htmlFor="chat-dictation-language">聊天听写语言</label>
             <select id="chat-dictation-language" data-testid="chat-dictation-language" style={styles.select}
-              value={state.chatDictationLanguage}
-              onChange={e => dispatch({ type: "SET_CHAT_DICTATION_LANGUAGE", language: normalizeChatDictationLanguage(e.target.value) })}>
+              value={localValues.chatDictationLanguage}
+              disabled={localSaving}
+              onChange={e => editLocal("chatDictationLanguage", normalizeChatDictationLanguage(e.target.value))}>
               <option value="zh-CN">中文（普通话）</option>
               <option value="en-US">English (US)</option>
             </select>
@@ -1777,10 +2163,9 @@ export function SettingsSlideout() {
             >
               <input
                 type="checkbox"
-                checked={state.voiceInputEnabled !== false}
-                onChange={(e) =>
-                  dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: e.target.checked })
-                }
+                checked={localValues.voiceInputEnabled !== false}
+                disabled={localSaving}
+                onChange={(e) => editLocal("voiceInputEnabled", e.target.checked)}
               />
               在输入框显示麦克风（听写进草稿，不自动发送）
             </label>
@@ -1800,14 +2185,12 @@ export function SettingsSlideout() {
                 <input
                   type="checkbox"
                   style={{ marginTop: 2 }}
-                  checked={state.voiceRealtimeStreaming !== false}
-                  onChange={(e) =>
-                    dispatch({
-                      type: "SET_VOICE_REALTIME_STREAMING",
-                      enabled: e.target.checked,
-                      preferContinuous: e.target.checked,
-                    })
-                  }
+                  checked={localValues.voiceRealtimeStreaming !== false}
+                  disabled={localSaving}
+                  onChange={(e) => {
+                    editLocal("voiceRealtimeStreaming", e.target.checked)
+                    if (e.target.checked) editLocal("voiceDictationMode", "continuous")
+                  }}
                 />
                 <span>
                   <strong>实时出字</strong>
@@ -1820,7 +2203,7 @@ export function SettingsSlideout() {
                   </span>
                 </span>
               </label>
-              {state.voiceRealtimeStreaming !== false &&
+              {localValues.voiceRealtimeStreaming !== false &&
                 state.voiceModel?.sttEngine === "local" && (
                   <div
                     style={{
@@ -1843,10 +2226,9 @@ export function SettingsSlideout() {
                 <input
                   type="radio"
                   name="voiceDictationMode"
-                  checked={(state.voiceDictationMode || "classic") === "classic"}
-                  onChange={() =>
-                    dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: "classic" })
-                  }
+                  checked={(localValues.voiceDictationMode || "classic") === "classic"}
+                  disabled={localSaving}
+                  onChange={() => editLocal("voiceDictationMode", "classic")}
                 />
                 经典短听（默认 · 最长约 45 秒）
               </label>
@@ -1854,10 +2236,9 @@ export function SettingsSlideout() {
                 <input
                   type="radio"
                   name="voiceDictationMode"
-                  checked={state.voiceDictationMode === "continuous"}
-                  onChange={() =>
-                    dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: "continuous" })
-                  }
+                  checked={localValues.voiceDictationMode === "continuous"}
+                  disabled={localSaving}
+                  onChange={() => editLocal("voiceDictationMode", "continuous")}
                 />
                 连续听写（可选 · 最长默认 15 分钟）
               </label>
@@ -1888,10 +2269,9 @@ export function SettingsSlideout() {
                 <input
                   type="checkbox"
                   style={{ marginTop: 2 }}
-                  checked={state.asrRefinerEnabled === true}
-                  onChange={(e) =>
-                    dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: e.target.checked })
-                  }
+                  checked={localValues.asrRefinerEnabled === true}
+                  disabled={localSaving}
+                  onChange={(e) => editLocal("asrRefinerEnabled", e.target.checked)}
                 />
                 <span>
                   <strong>ASR 纠错</strong>
@@ -1967,16 +2347,6 @@ export function SettingsSlideout() {
                   : engineDraft === "system" || committedSystem
                     ? "system"
                     : "browser"
-
-              /** Persist 模型下载源 via voice.model.set_prefs; store mirror re-drives input on ok. */
-              const saveVoiceEndpoint = () => {
-                const value = (voiceEndpointDraft ?? "").trim()
-                clearVoiceErr()
-                sendVoice(
-                  { type: "voice.model.set_prefs", modelDownloadEndpoint: value },
-                  { onOk: () => setVoiceEndpointDraft(null) },
-                )
-              }
 
               const renderModelRow = (modelId: WhisperSettingsModelId, isRecommended: boolean) => {
                 const entry = voiceModel?.models?.[modelId]
@@ -2165,13 +2535,7 @@ export function SettingsSlideout() {
                         type="radio"
                         name="voice-stt-engine"
                         checked={engineDraft === "browser"}
-                        onChange={() => {
-                          setEngineDraft("browser")
-                          if (committedLocal || committedSystem || committedExternal) {
-                            clearVoiceErr()
-                            sendVoice({ type: "voice.model.set_engine", engine: "browser" })
-                          }
-                        }}
+                        onChange={() => setEngineDraft("browser")}
                         style={{ marginTop: 2 }}
                       />
                       <span>
@@ -2265,15 +2629,8 @@ export function SettingsSlideout() {
                         <button
                           type="button"
                           style={styles.secondaryBtn}
-                          disabled={committedExternal || !externalPrivacyAck || !externalView?.keyConfigured}
-                          onClick={() => {
-                            clearVoiceErr()
-                            sendVoice({
-                              type: "voice.model.set_engine",
-                              engine: "external",
-                              privacy_ack_external_v1: true,
-                            })
-                          }}
+                          disabled={enginePending || committedExternal || !externalPrivacyAck || !externalView?.keyConfigured || externalHasEdits}
+                          onClick={() => handleSaveEngine(true)}
                         >
                           {committedExternal ? "外部转写已启用" : "启用外部转写"}
                         </button>
@@ -2458,14 +2815,8 @@ export function SettingsSlideout() {
                             <input
                               type="checkbox"
                               style={{ marginTop: 2 }}
-                              checked={voiceModel.autoFallbackToBrowser !== false}
-                              onChange={(e) => {
-                                clearVoiceErr()
-                                sendVoice({
-                                  type: "voice.model.set_prefs",
-                                  autoFallbackToBrowser: e.target.checked,
-                                })
-                              }}
+                              checked={voicePrefsDraft.autoFallbackToBrowser ?? (voiceModel.autoFallbackToBrowser !== false)}
+                              onChange={(e) => setVoicePrefsDraft(current => ({ ...current, autoFallbackToBrowser: e.target.checked }))}
                             />
                             <span>
                               <strong>{VOICE_AUTO_FALLBACK_LABEL}</strong>
@@ -2478,11 +2829,8 @@ export function SettingsSlideout() {
                           <label style={{ display: "flex", gap: 8, marginTop: 8, fontSize: 12, cursor: "pointer" }}>
                             <input
                               type="checkbox"
-                              checked={voiceModel.modelPrewarm === true}
-                              onChange={(e) => {
-                                clearVoiceErr()
-                                sendVoice({ type: "voice.model.set_prefs", modelPrewarm: e.target.checked })
-                              }}
+                              checked={voicePrefsDraft.modelPrewarm ?? (voiceModel.modelPrewarm === true)}
+                              onChange={(e) => setVoicePrefsDraft(current => ({ ...current, modelPrewarm: e.target.checked }))}
                             />
                             启动时预热活动模型（默认关；失败只显示微标）
                           </label>
@@ -2499,11 +2847,8 @@ export function SettingsSlideout() {
                             <label key={key} style={{ display: "flex", gap: 8, marginTop: 4, fontSize: 12, cursor: "pointer" }}>
                               <input
                                 type="checkbox"
-                                checked={voiceModel[key] === true}
-                                onChange={(e) => {
-                                  clearVoiceErr()
-                                  sendVoice({ type: "voice.model.set_prefs", [key]: e.target.checked })
-                                }}
+                                checked={voicePrefsDraft[key] ?? (voiceModel[key] === true)}
+                                onChange={(e) => setVoicePrefsDraft(current => ({ ...current, [key]: e.target.checked }))}
                               />
                               {label}
                             </label>
@@ -2521,12 +2866,6 @@ export function SettingsSlideout() {
                               }
                               placeholder={VOICE_DOWNLOAD_ENDPOINT_PLACEHOLDER}
                               onChange={(e) => setVoiceEndpointDraft(e.target.value)}
-                              onBlur={() => {
-                                if (voiceEndpointDraft != null) saveVoiceEndpoint()
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" && voiceEndpointDraft != null) saveVoiceEndpoint()
-                              }}
                             />
                             <div style={{ ...styles.helpText, marginTop: 4 }}>
                               {VOICE_DOWNLOAD_ENDPOINT_HINT}
@@ -2554,7 +2893,6 @@ export function SettingsSlideout() {
                               onClick={() => {
                                 clearVoiceErr()
                                 setEngineDraft("browser")
-                                sendVoice({ type: "voice.model.set_engine", engine: "browser" })
                               }}
                             >
                               {BTN_SWITCH_BROWSER}
@@ -2573,20 +2911,13 @@ export function SettingsSlideout() {
                                   }
                                 : {}),
                             }}
-                            disabled={!canEnableLocal}
+                            disabled={enginePending || !canEnableLocal}
                             title={
                               canEnableLocal
                                 ? "将听写引擎切换为本机 Whisper（需已下载就绪模型）"
                                 : "请先下载推荐模型 medium（或任一就绪型号）后再启用"
                             }
-                            onClick={() => {
-                              clearVoiceErr()
-                              sendVoice({
-                                type: "voice.model.set_engine",
-                                engine: "local",
-                                privacy_ack_v2: true,
-                              })
-                            }}
+                            onClick={() => handleSaveEngine(true)}
                           >
                             {BTN_ENABLE_LOCAL}
                           </button>
@@ -2630,7 +2961,6 @@ export function SettingsSlideout() {
                               onClick={() => {
                                 clearVoiceErr()
                                 setEngineDraft("browser")
-                                sendVoice({ type: "voice.model.set_engine", engine: "browser" })
                               }}
                             >
                               {BTN_SWITCH_BROWSER}
@@ -2649,20 +2979,13 @@ export function SettingsSlideout() {
                                   }
                                 : {}),
                             }}
-                            disabled={!systemProbeGreen}
+                            disabled={enginePending || !systemProbeGreen}
                             title={
                               systemProbeGreen
                                 ? "将听写引擎切换为 Windows 系统语音识别（本机离线）"
                                 : SYSTEM_UNAVAILABLE_REASON_LABEL
                             }
-                            onClick={() => {
-                              clearVoiceErr()
-                              sendVoice({
-                                type: "voice.model.set_engine",
-                                engine: "system",
-                                privacy_ack_v2: true,
-                              })
-                            }}
+                            onClick={() => handleSaveEngine(true)}
                           >
                             {BTN_ENABLE_SYSTEM}
                           </button>
@@ -2824,6 +3147,10 @@ export function SettingsSlideout() {
                   <p style={{ fontSize: 11, color: tokens.textMuted, margin: "8px 0 0", lineHeight: 1.45 }}>
                     {privacyCopyForEngine(privacyEngine)}
                   </p>
+                  {engineHasEdits && (engineSelection === "local" || engineSelection === "system") && <label style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <input type="checkbox" checked={enginePrivacyAck} onChange={event => setEnginePrivacyAck(event.target.checked)} />
+                    我已阅读上述音频处理说明，同意启用所选听写引擎。
+                  </label>}
 
                   {state.voiceModelError && (
                     <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
@@ -2856,7 +3183,7 @@ export function SettingsSlideout() {
           </SettingsPage>
 
           <SettingsPage id="privacy-secrets" active={activeDestination === "privacy-secrets"}>
-          <UserEnvSection />
+          <UserEnvSection active={activeDestination === "privacy-secrets" && settingsInteractive} onFooterSave={reportEnvFooter} />
           </SettingsPage>
 
           <SettingsPage id="privacy-autonomy" active={activeDestination === "privacy-autonomy"} badge={elevatedTrust ? (
@@ -3514,7 +3841,7 @@ export function SettingsSlideout() {
           </SettingsPage>
 
           <SettingsPage id="tools-lcu" active={activeDestination === "tools-lcu"}>
-          <LcuSettingsSection />
+          <LcuSettingsSection active={activeDestination === "tools-lcu" && settingsInteractive} onFooterSave={reportLcuFooter} />
           </SettingsPage>
 
           <SettingsPage id="tools-coding" active={activeDestination === "tools-coding"}>
@@ -3522,7 +3849,7 @@ export function SettingsSlideout() {
             acpEnabled={!!(config as { acp?: { enabled?: boolean } }).acp?.enabled}
             maxConcurrentSessions={(config as { acp?: { max_concurrent_sessions?: 1 | 2 | 3 | 4 } }).acp?.max_concurrent_sessions ?? 1}
             onChangeMaxConcurrentSessions={value => {
-              submitImmediate({ acp: { max_concurrent_sessions: value } } as Partial<LLMConfig>)
+              stageNested("acp", { max_concurrent_sessions: value })
             }}
             acpAgents={state.acpAgents}
             autoSuggest={
@@ -3538,23 +3865,23 @@ export function SettingsSlideout() {
                 ?.local_terminal_app || "auto"
             }
             onToggleAutoSuggest={(v) => {
-              submitImmediate({ coding_handoff: { auto_suggest: v } } as Partial<LLMConfig>)
+              stageNested("coding_handoff", { auto_suggest: v })
             }}
             onToggleOpenLocalTerminal={(v) => {
-              submitImmediate({ coding_handoff: { open_local_terminal: v } } as Partial<LLMConfig>)
+              stageNested("coding_handoff", { open_local_terminal: v })
             }}
             embeddedTerminal={
               (config as { embedded_terminal?: { enabled?: boolean } }).embedded_terminal
                 ?.enabled === true
             }
             onToggleEmbeddedTerminal={(v) => {
-              submitImmediate({ embedded_terminal: { enabled: v } } as Partial<LLMConfig>)
+              stageNested("embedded_terminal", { enabled: v })
             }}
             onChangeLocalTerminalApp={(v) => {
-              submitImmediate({ coding_handoff: { local_terminal_app: v } } as Partial<LLMConfig>)
+              stageNested("coding_handoff", { local_terminal_app: v })
             }}
             onToggleAcp={(v) => {
-              submitImmediate({ acp: { enabled: v } } as Partial<LLMConfig>)
+              stageNested("acp", { enabled: v })
               // Refresh agent list after master switch (list is independent of enabled)
               chrome.runtime.sendMessage({ type: "acp.list" }, () => {
                 void chrome.runtime.lastError
@@ -3710,7 +4037,7 @@ export function SettingsSlideout() {
                     : {}),
                 }}
                 onClick={() => {
-                  submitImmediate({ persist_full_tool_history: !config.persist_full_tool_history } as Partial<LLMConfig>)
+                  dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { persist_full_tool_history: !config.persist_full_tool_history } as Partial<LLMConfig> })
                 }}
               >
                 {config.persist_full_tool_history ? "已开启" : "默认关闭"}
@@ -3728,10 +4055,9 @@ export function SettingsSlideout() {
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
               <input
                 type="checkbox"
-                checked={state.exportIncludeReasoning === true}
-                onChange={(e) =>
-                  dispatch({ type: "SET_EXPORT_INCLUDE_REASONING", enabled: e.target.checked })
-                }
+                checked={localValues.exportIncludeReasoning === true}
+                disabled={localSaving}
+                onChange={(e) => editLocal("exportIncludeReasoning", e.target.checked)}
               />
               导出 Markdown 时包含思考过程
             </label>
@@ -3811,7 +4137,7 @@ export function SettingsSlideout() {
             const runAction = (action: string) => {
               if (action === "重置熔断") send({ type: "computer.model.reset_circuit_breaker", source: "settings" })
               else if (action === "删除并重新下载") setModelDeleteArmed(true)
-              else {
+              else if (!computerHasEdits) {
                 dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
                 send({ type: "computer.model.download", source: "settings" })
               }
@@ -3825,7 +4151,7 @@ export function SettingsSlideout() {
                       ...styles.toggleBtn,
                       ...(modelEnabled ? { background: tokens.accent, color: tokens.userBubbleText, borderColor: tokens.accent } : {}),
                     }}
-                    disabled={disabledReason !== null}
+                    disabled={disabledReason !== null || computerHasEdits}
                     onClick={toggle}
                   >
                     {modelEnabled ? "已开启" : "已关闭"}
@@ -4151,7 +4477,7 @@ export function SettingsSlideout() {
                     ] as const
                   ).map((opt) => {
                     const active =
-                      (model?.pythonMode || model?.preflight?.pythonMode || "isolated") === opt.id
+                      (computerDraft.pythonMode ?? model?.pythonMode ?? model?.preflight?.pythonMode ?? "isolated") === opt.id
                     return (
                       <button
                         key={opt.id}
@@ -4165,12 +4491,7 @@ export function SettingsSlideout() {
                         }}
                         disabled={model === null || model.modelStatus === "downloading"}
                         onClick={() => {
-                          dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
-                          send({
-                            type: "computer.model.set_python_mode",
-                            mode: opt.id,
-                            source: "settings",
-                          })
+                          editComputer("pythonMode", opt.id)
                         }}
                       >
                         <div style={{ fontWeight: 600, fontSize: 11 }}>
@@ -4182,7 +4503,7 @@ export function SettingsSlideout() {
                     )
                   })}
                 </div>
-                {(model?.pythonMode || model?.preflight?.pythonMode) === "system" && (
+                {(computerDraft.pythonMode ?? model?.pythonMode ?? model?.preflight?.pythonMode) === "system" && (
                   <div style={{ marginTop: 6 }}>
                     <div style={{ ...styles.helpText, fontSize: 10, color: tokens.textSecondary, marginBottom: 4 }}>
                       当前全局解释器：
@@ -4197,7 +4518,7 @@ export function SettingsSlideout() {
                     <button
                       type="button"
                       style={styles.secondaryBtn}
-                      disabled={model === null || model.modelStatus === "downloading"}
+                      disabled={computerHasEdits || model === null || model.modelStatus === "downloading"}
                       title="用系统对话框选择 python / python3 可执行文件"
                       onClick={() => {
                         dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
@@ -4232,7 +4553,7 @@ export function SettingsSlideout() {
                             : {}),
                         }}
                         disabled={
-                          model === null ||
+                          computerHasEdits || model === null ||
                           model.modelStatus === "downloading" ||
                           mode === "system"
                         }
@@ -4249,7 +4570,7 @@ export function SettingsSlideout() {
                   <button
                     type="button"
                     style={styles.secondaryBtn}
-                    disabled={model === null || model.modelStatus === "downloading"}
+                    disabled={computerHasEdits || model === null || model.modelStatus === "downloading"}
                     title="安装下载与推理所需组件"
                     onClick={() => {
                       dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
@@ -4271,7 +4592,7 @@ export function SettingsSlideout() {
                       { id: "huggingface", label: "Hugging Face" },
                     ] as const
                   ).map((s) => {
-                    const active = (model?.downloadSource || "auto") === s.id
+                    const active = (computerDraft.downloadSource ?? model?.downloadSource ?? "auto") === s.id
                     return (
                       <button
                         key={s.id}
@@ -4285,12 +4606,7 @@ export function SettingsSlideout() {
                         }}
                         disabled={model === null || model.modelStatus === "downloading"}
                         onClick={() => {
-                          dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
-                          send({
-                            type: "computer.model.set_download_source",
-                            downloadSource: s.id,
-                            source: "settings",
-                          })
+                          editComputer("downloadSource", s.id)
                         }}
                       >
                         {s.label}
@@ -4310,7 +4626,7 @@ export function SettingsSlideout() {
                 <div style={{ ...styles.helpText, marginTop: 8, fontWeight: 600 }}>模型规模</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
                   {(["2b", "4b", "8b"] as const).map((v) => {
-                    const active = (model?.variant || "2b") === v
+                    const active = (computerDraft.variant ?? model?.variant ?? "2b") === v
                     const tip = QWEN_VL_VARIANT_TIPS[v]!
                     const rec = model?.recommendedVariant === v
                     return (
@@ -4327,8 +4643,7 @@ export function SettingsSlideout() {
                         disabled={model === null || model.modelStatus === "downloading"}
                         title={tip.tip}
                         onClick={() => {
-                          dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
-                          send({ type: "computer.model.set_variant", variant: v, source: "settings" })
+                          editComputer("variant", v)
                         }}
                       >
                         {tip.label}
@@ -4355,17 +4670,19 @@ export function SettingsSlideout() {
                   {statusLine.text}
                   {statusLine.detail ? ` ${statusLine.detail}` : ""}
                   {statusLine.action ? (
-                    <button style={{ ...styles.secondaryBtn, marginLeft: 8 }} onClick={() => runAction(statusLine.action!)}>
+                    <button style={{ ...styles.secondaryBtn, marginLeft: 8 }} disabled={computerHasEdits && statusLine.action !== "重置熔断"} onClick={() => runAction(statusLine.action!)}>
                       {statusLine.action}
                     </button>
                   ) : null}
                 </div>
+                {computerHasEdits && <div style={styles.helpText}>请先保存本机模型设置，再下载模型。</div>}
                 {/* 管理按钮行:下载 / 删除(两步确认)/ 重置熔断(disabled 态) */}
                 <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
                   <button
                     style={styles.secondaryBtn}
                     disabled={
                       model === null ||
+                      computerHasEdits ||
                       model.modelStatus === "downloading" ||
                       model.modelStatus === "ready" ||
                       // Fail-closed: only enable when Companion explicitly says canDownload
@@ -4426,15 +4743,29 @@ export function SettingsSlideout() {
 
         <div className="cm-settings-footer" style={styles.footer}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
-            <span className="cm-settings-save-scope">{savingExternal
-              ? `保存外部转写配置。启用转写需另行确认。${hasEdits ? "其他设置草稿请在对应页面保存。" : ""}`
-              : "保存当前设置草稿。独立表单和授权有各自的提交按钮。"}</span>
-            {savingExternal && state.voiceModelError && <span role="alert">{modelProbeErrorLabel(state.voiceModelError) || state.voiceModelError}</span>}
-            {savingExternal && externalPending && <span role="status">正在等待外部转写配置保存回执…</span>}
-            {savingExternal && externalSaved && !externalHasEdits && <span role="status">外部转写配置已保存</span>}
+            <span className="cm-settings-save-scope">保存当前设置草稿。授权与独立表单需要各自确认。</span>
+            {(hasEdits || computerHasEdits || localHasEdits || externalHasEdits || voicePrefsHasEdits || engineHasEdits || meetingFooter?.dirty || profileFooter?.dirty || minutesFooter?.dirty || lcuFooter?.dirty || envFooter?.dirty) && <span role="status">有未保存的修改</span>}
+            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter].some(control => control?.dirty && control.busy) && <span role="status">部分设置仍在等待连接或回执，草稿已保留。</span>}
+            {engineHasEdits && (engineSelection === "local" || engineSelection === "system") && !enginePrivacyAck && <span role="status">启用听写引擎前，请先勾选音频处理说明。</span>}
+            {engineHasEdits && engineSelection === "external" && externalHasEdits && <span role="status">先保存外部转写配置，再保存引擎选择。</span>}
+            {engineHasEdits && engineSelection === "external" && !externalPrivacyAck && <span role="status">启用外部转写前，请先勾选音频发送说明。</span>}
+            {engineHasEdits && engineSelection === "external" && !externalHasEdits && externalPrivacyAck && modelState?.external?.keyConfigured && <span role="status">外部转写配置已保存，点击保存启用该引擎。</span>}
+            {(savingExternal || externalHasEdits || voicePrefsHasEdits) && state.voiceModelError && <span role="alert">{modelProbeErrorLabel(state.voiceModelError) || state.voiceModelError}</span>}
+            {localSaveError && <span role="alert">{localSaveError}</span>}
+            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter].map((control, index) => control?.error ? <span role="alert" key={index}>{control.error}</span> : null)}
+            {localSaving && <span role="status">正在保存本机设置…</span>}
+            {footerWaiting && <span role="status">正在按顺序保存设置，请等待配置回执…</span>}
+            {footerRunning && <span role="status">正在提交其余设置…</span>}
+            {localSaved && !localHasEdits && <span role="status">本机设置已保存</span>}
+            {footerNotice && <span role="status">{footerNotice}</span>}
+            {state.userEnvStatus === "已保存" && <span role="status">环境变量已保存</span>}
+            {externalPending && <span role="status">正在等待外部转写配置保存回执…</span>}
+            {voicePrefsPending && <span role="status">正在等待本机听写设置保存回执…</span>}
+            {enginePending && <span role="status">正在等待听写引擎切换回执…</span>}
+            {externalSaved && !externalHasEdits && <span role="status">外部转写配置已保存</span>}
             {state.configEpochInvalid ? <span role="alert">配置版本无法确认，请重新连接 Companion；草稿已保留。</span> : !state.configRevision && <span role="status">当前 Companion 未提供配置版本，请升级后保存草稿。</span>}
             {state.settingsSave.status === "pending" && <span role="status">正在等待 Companion 保存回执…</span>}
-            {!savingExternal && state.settingsSave.status === "saved" && <span role="status">已保存</span>}
+            {state.settingsSave.status === "saved" && <span role="status">对话设置已保存</span>}
             {state.settingsSave.status === "unknown" && <span role="alert">保存结果未知，草稿已保留。请先核对当前配置，再选择重新保存。 <button type="button" onClick={() => { chrome.runtime.sendMessage({ type: "config.get" }); dispatch({ type: "SETTINGS_SAVE_RETRY" }) }}>我已核对，允许重新保存</button></span>}
             {state.settingsSave.status === "conflict" && <span role="alert">配置已在别处更改，请核对草稿后再保存。</span>}
             {state.settingsSave.status === "review" && <span role="status">部分草稿仍需确认。</span>}
@@ -4456,14 +4787,14 @@ export function SettingsSlideout() {
           <button
             style={{
               ...styles.saveBtn,
-              ...((savingExternal ? state.connectionState !== "connected" || !externalHasEdits || externalPending : saveBlocked || !hasEdits)
+              ...(footerDisabled
                 ? { opacity: 0.5, cursor: "not-allowed" }
                 : {}),
             }}
             className="cm-settings-save"
-            onClick={savingExternal ? handleSaveExternal : handleSave}
-            disabled={savingExternal ? state.connectionState !== "connected" || !externalHasEdits || externalPending : saveBlocked || !hasEdits}
-            title={savingExternal ? (state.connectionState !== "connected" ? "等待连接 Companion" : undefined) : settingsSaveDisabledTitle(state.configHydratedFromCompanion) ?? (saveBlocked ? "等待连接、回执或处理冲突" : undefined)}
+            onClick={handleFooterSave}
+            disabled={footerDisabled}
+            title={footerDisabled ? settingsSaveDisabledTitle(state.configHydratedFromCompanion) ?? (saveBlocked ? "等待连接、回执或处理冲突" : undefined) : undefined}
           >保存</button>
         </div>
 

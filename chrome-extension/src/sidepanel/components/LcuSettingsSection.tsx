@@ -65,7 +65,7 @@ function validState(value: unknown): value is LcuState {
     ["unsupported_platform", "invalid_command", "missing_lcu", "detected_unverified"].includes(s.detection)
 }
 
-export function LcuSettingsSection() {
+export function LcuSettingsSection({ active = true, onFooterSave }: { active?: boolean; onFooterSave?: (control: { dirty: boolean; busy: boolean; save: () => void; error?: string } | null) => void }) {
   const { state: agent, dispatch } = useAgentStore()
   const [state, setState] = useState<LcuState | null>(null)
   const [command, setCommand] = useState("")
@@ -90,6 +90,18 @@ export function LcuSettingsSection() {
       }
     })
   }
+
+  useEffect(() => {
+    if (!onFooterSave) return
+    const dirty = !!state && command !== (state.command ?? "")
+    onFooterSave(dirty ? {
+      dirty: true,
+      busy: busy || agent.connectionState !== "connected" || state?.detection === "unsupported_platform",
+      error,
+      save: () => send("computer.lcu.configure", { command: command.trim() || null }),
+    } : null)
+    return () => onFooterSave(null)
+  }, [active, command, state, busy, error, agent.connectionState, onFooterSave])
 
   useEffect(() => {
     live.current = true

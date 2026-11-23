@@ -556,28 +556,29 @@ export type AgentAction =
   | { type: "SET_PROCESSING_STATUS"; status: string | null }
   | { type: "SET_TEST_RESULT"; result: string | null }
   | { type: "SET_TEST_VISION_RESULT"; result: string | null }
-  | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
+  | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut; persist?: boolean }
   | {
       type: "SET_SHOW_REASONING_MODE"
       mode: "always_collapsed" | "auto_live" | "always_open"
       persist?: boolean
     }
-  | { type: "SET_EXPORT_INCLUDE_REASONING"; enabled: boolean }
-  | { type: "SET_VOICE_INPUT_ENABLED"; enabled: boolean }
+  | { type: "SET_EXPORT_INCLUDE_REASONING"; enabled: boolean; persist?: boolean }
+  | { type: "SET_VOICE_INPUT_ENABLED"; enabled: boolean; persist?: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V1"; ack: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V2"; ack: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
-  | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
+  | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous"; persist?: boolean }
   | { type: "SET_CHAT_DICTATION_LANGUAGE"; language: ChatDictationLanguage; persist?: boolean }
-  | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
-  | { type: "SET_DICTATION_HOTKEY_ENABLED"; enabled: boolean }
-  | { type: "SET_DICTATION_HOTKEY_CHORD"; chord: string }
-  | { type: "SET_VOICE_SOUND_EFFECTS"; enabled: boolean }
+  | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean; persist?: boolean }
+  | { type: "SET_DICTATION_HOTKEY_ENABLED"; enabled: boolean; persist?: boolean }
+  | { type: "SET_DICTATION_HOTKEY_CHORD"; chord: string; persist?: boolean }
+  | { type: "SET_VOICE_SOUND_EFFECTS"; enabled: boolean; persist?: boolean }
   | {
       type: "SET_VOICE_REALTIME_STREAMING"
       enabled: boolean
       /** When true and enabling, also switch dictation mode to continuous (user toggle only). */
       preferContinuous?: boolean
+      persist?: boolean
     }
   | { type: "SET_MEETING_CAPTURE_ACTIVE"; active: boolean }
   | { type: "SET_DICTATION_CAPTURE_ACTIVE"; active: boolean }
@@ -1945,14 +1946,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_TEST_VISION_RESULT":
       return { ...state, testVisionResult: action.result }
     case "SET_SEND_SHORTCUT":
-      chrome.storage.local.set({ sendShortcut: action.shortcut })
-      try {
-        chrome.runtime.sendMessage({
-          type: "config.set",
-          config: { summoner: { send_shortcut: action.shortcut } },
-        })
-      } catch {
-        /* overlay reads companion; local storage still wins in the side panel */
+      if (action.persist !== false) chrome.storage.local.set({ sendShortcut: action.shortcut })
+      if (action.persist !== false) {
+        try {
+          chrome.runtime.sendMessage({ type: "config.set", config: { summoner: { send_shortcut: action.shortcut } } })
+        } catch { /* older callers retain best-effort synchronization */ }
       }
       return { ...state, sendShortcut: action.shortcut }
     case "SET_SHOW_REASONING_MODE": {
@@ -1961,10 +1959,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, showReasoningMode: mode }
     }
     case "SET_EXPORT_INCLUDE_REASONING":
-      chrome.storage.local.set({ "cmspark.ui.export_include_reasoning": action.enabled })
+      if (action.persist !== false) chrome.storage.local.set({ "cmspark.ui.export_include_reasoning": action.enabled })
       return { ...state, exportIncludeReasoning: action.enabled }
     case "SET_VOICE_INPUT_ENABLED":
-      chrome.storage.local.set({ voiceInputEnabled: action.enabled })
+      if (action.persist !== false) chrome.storage.local.set({ voiceInputEnabled: action.enabled })
       return { ...state, voiceInputEnabled: action.enabled }
     case "SET_VOICE_PRIVACY_ACK_V1":
       chrome.storage.local.set({ voice_privacy_ack_v1: action.ack })
@@ -1981,24 +1979,24 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, dictationCaptureActive: action.active === true }
     case "SET_VOICE_DICTATION_MODE": {
       const mode = action.mode === "continuous" ? "continuous" : "classic"
-      chrome.storage.local.set({ voiceDictationMode: mode })
+      if (action.persist !== false) chrome.storage.local.set({ voiceDictationMode: mode })
       return { ...state, voiceDictationMode: mode }
     }
     case "SET_ASR_REFINER_ENABLED":
-      chrome.storage.local.set({ asrRefinerEnabled: action.enabled })
+      if (action.persist !== false) chrome.storage.local.set({ asrRefinerEnabled: action.enabled })
       return { ...state, asrRefinerEnabled: action.enabled }
     case "SET_DICTATION_HOTKEY_ENABLED":
-      chrome.storage.local.set({ dictationHotkeyEnabled: action.enabled === true })
+      if (action.persist !== false) chrome.storage.local.set({ dictationHotkeyEnabled: action.enabled === true })
       return { ...state, dictationHotkeyEnabled: action.enabled === true }
     case "SET_VOICE_SOUND_EFFECTS":
-      chrome.storage.local.set({ voice_sound_effects: action.enabled !== false })
+      if (action.persist !== false) chrome.storage.local.set({ voice_sound_effects: action.enabled !== false })
       return { ...state, voiceSoundEffects: action.enabled !== false }
     case "SET_DICTATION_HOTKEY_CHORD": {
       const chord =
         typeof action.chord === "string" && action.chord.trim()
           ? action.chord.trim()
           : "Control+Shift+Space"
-      chrome.storage.local.set({ dictationHotkeyChord: chord })
+      if (action.persist !== false) chrome.storage.local.set({ dictationHotkeyChord: chord })
       return { ...state, dictationHotkeyChord: chord }
     }
     case "SET_CHAT_DICTATION_LANGUAGE":
@@ -2006,10 +2004,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, chatDictationLanguage: action.language }
     case "SET_VOICE_REALTIME_STREAMING": {
       const enabled = action.enabled === true
-      chrome.storage.local.set({ voiceRealtimeStreaming: enabled })
+      if (action.persist !== false) chrome.storage.local.set({ voiceRealtimeStreaming: enabled })
       // User toggle only: pair with continuous (do not force on storage hydrate).
       if (enabled && action.preferContinuous === true) {
-        chrome.storage.local.set({ voiceDictationMode: "continuous" })
+        if (action.persist !== false) chrome.storage.local.set({ voiceDictationMode: "continuous" })
         return {
           ...state,
           voiceRealtimeStreaming: true,

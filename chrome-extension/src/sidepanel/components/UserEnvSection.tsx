@@ -1,8 +1,8 @@
 // ADR-019 Settings section: 环境变量（Secrets）
 // Companion is the sole source of truth. UI only shows names + mask (*** / 已配置).
-// Each row saves independently via user_env.set — not the bottom config Save.
+// Each row can save independently; the footer can submit all edited values.
 
-import { useEffect, useState, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { Modal } from "./ui/Modal"
@@ -90,7 +90,7 @@ const panelStyle: CSSProperties = {
   boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
 }
 
-export function UserEnvSection() {
+export function UserEnvSection({ active = true, onFooterSave }: { active?: boolean; onFooterSave?: (control: { dirty: boolean; busy: boolean; save: () => void; error?: string } | null) => void }) {
   const { state, dispatch } = useAgentStore()
   const connected = state.connectionState === "connected"
   const keys = state.userEnv?.keys ?? []
@@ -101,6 +101,7 @@ export function UserEnvSection() {
   const [localError, setLocalError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const pending = useRef<{ id: string; added: { name: string; value: string } | null; updates: Record<string, string>; timer: number } | null>(null)
 
   // Refresh redacted list whenever settings opens while connected.
   useEffect(() => {
@@ -108,21 +109,32 @@ export function UserEnvSection() {
     chrome.runtime.sendMessage({ type: "user_env.list" })
   }, [state.settingsOpen, connected])
 
-  // Clear draft values only after companion confirms success (never re-show plaintext).
-  // Keep drafts on reject so the user can correct without retyping the name/value.
   useEffect(() => {
-    if (state.userEnvStatus === "已保存") {
-      setNewName("")
-      setNewValue("")
-      setUpdateValues({})
+    const onMessage = (message: { id?: string; type?: string; error?: string }) => {
+      const request = pending.current
+      if (!request || message.id !== request.id || (message.type !== "user_env.updated" && message.type !== "error")) return
+      window.clearTimeout(request.timer)
+      pending.current = null
       setBusy(false)
+      if (message.type === "error") {
+        setLocalError(message.error || "环境变量未保存，请重试。")
+        return
+      }
+      if (request.added) {
+        setNewName(current => current === request.added?.name ? "" : current)
+        setNewValue(current => current === request.added?.value ? "" : current)
+      }
+      setUpdateValues(current => {
+        const next = { ...current }
+        for (const [name, value] of Object.entries(request.updates)) if (current[name] === value) delete next[name]
+        return next
+      })
       setDeleteTarget(null)
+      dispatch({ type: "SET_USER_ENV_STATUS", status: "已保存" })
     }
-  }, [state.userEnvStatus, state.userEnv?.updated_at, state.userEnv?.count])
-
-  useEffect(() => {
-    if (state.userEnvError) setBusy(false)
-  }, [state.userEnvError])
+    chrome.runtime.onMessage.addListener(onMessage)
+    return () => { chrome.runtime.onMessage.removeListener(onMessage); if (pending.current) window.clearTimeout(pending.current.timer); pending.current = null }
+  }, [dispatch])
 
   const disabled = !connected || busy
 
@@ -130,6 +142,35 @@ export function UserEnvSection() {
     setLocalError(null)
     dispatch({ type: "SET_USER_ENV_ERROR", error: null })
     dispatch({ type: "SET_USER_ENV_STATUS", status: null })
+  }
+
+  const sendMutation = (type: "user_env.set" | "user_env.delete", payload: Record<string, unknown>, added: { name: string; value: string } | null, updates: Record<string, string>) => {
+    if (pending.current || !connected) return
+    const id = `user-env-save:${crypto.randomUUID()}`
+    const timer = window.setTimeout(() => {
+      if (pending.current?.id !== id) return
+      pending.current = null
+      setBusy(false)
+      setLocalError("环境变量保存结果未知，草稿已保留，请核对后重试。")
+    }, 15000)
+    pending.current = { id, added, updates, timer }
+    setBusy(true)
+    try {
+      chrome.runtime.sendMessage({ type, id, ...payload }, (response?: { ok?: boolean; error?: string }) => {
+        if (pending.current?.id !== id) return
+        if (chrome.runtime.lastError || response?.ok !== true) {
+          window.clearTimeout(timer)
+          pending.current = null
+          setBusy(false)
+          setLocalError(chrome.runtime.lastError?.message || response?.error || "未连接到 Companion，请重试。")
+        }
+      })
+    } catch {
+      window.clearTimeout(timer)
+      pending.current = null
+      setBusy(false)
+      setLocalError("未连接到 Companion，请重试。")
+    }
   }
 
   const handleAdd = () => {
@@ -146,11 +187,7 @@ export function UserEnvSection() {
     }
     // Empty string is a legal value (ADR R6); only delete goes through user_env.delete.
     const name = newName.trim()
-    setBusy(true)
-    chrome.runtime.sendMessage({
-      type: "user_env.set",
-      vars: { [name]: newValue },
-    })
+    sendMutation("user_env.set", { vars: { [name]: newValue } }, { name: newName, value: newValue }, {})
     // Do NOT clear drafts until ack — Gate2 nit: keep input on server reject.
   }
 
@@ -166,12 +203,34 @@ export function UserEnvSection() {
       setLocalError("请输入新值（*** 表示未改动）")
       return
     }
-    setBusy(true)
-    chrome.runtime.sendMessage({
-      type: "user_env.set",
-      vars: { [name]: value },
-    })
+    sendMutation("user_env.set", { vars: { [name]: value } }, null, { [name]: value })
   }
+
+  const handleSaveAll = () => {
+    clearFeedback()
+    const vars = { ...updateValues }
+    if (Object.values(vars).some(value => value === USER_ENV_MASK)) {
+      setLocalError("请输入新值（*** 表示未改动）")
+      return
+    }
+    if (newName || newValue) {
+      const nameError = validateUserEnvKeyName(newName)
+      if (nameError) { setLocalError(nameError); return }
+      if (newValue === USER_ENV_MASK) { setLocalError("请输入真实密钥值（*** 表示未改动）"); return }
+      const name = newName.trim()
+      if (Object.hasOwn(vars, name)) { setLocalError("同一个变量有两处修改，请保留一处。") ; return }
+      vars[name] = newValue
+    }
+    if (!Object.keys(vars).length) return
+    sendMutation("user_env.set", { vars }, newName || newValue ? { name: newName, value: newValue } : null, { ...updateValues })
+  }
+
+  useEffect(() => {
+    if (!onFooterSave) return
+    const dirty = !!newName || !!newValue || Object.keys(updateValues).length > 0
+    onFooterSave(dirty ? { dirty: true, busy: disabled, error: localError || state.userEnvError || undefined, save: handleSaveAll } : null)
+    return () => onFooterSave(null)
+  }, [active, newName, newValue, updateValues, disabled, localError, state.userEnvError, onFooterSave])
 
   const requestDelete = (name: string) => {
     clearFeedback()
@@ -181,11 +240,7 @@ export function UserEnvSection() {
   const confirmDelete = () => {
     if (!deleteTarget) return
     const name = deleteTarget
-    setBusy(true)
-    chrome.runtime.sendMessage({
-      type: "user_env.delete",
-      keys: [name],
-    })
+    sendMutation("user_env.delete", { keys: [name] }, null, {})
   }
 
   const fillChip = (chip: string) => {

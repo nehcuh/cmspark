@@ -790,7 +790,7 @@ export function CodingAgentPanel({
       setTerminalNotice("尚未连接到 Companion，这次设置没有发送")
       return
     }
-    if (state.immediateSave?.status === "sending" || state.immediateSave?.status === "accepted") {
+    if ((state.settingsSave.pending && Object.hasOwn(state.settingsSave.pending.patch, "coding_handoff")) || state.immediateSave?.status === "sending" || state.immediateSave?.status === "accepted") {
       setTerminalNotice("上一次设置还在等待确认")
       return
     }
@@ -814,7 +814,7 @@ export function CodingAgentPanel({
       }
       dispatch({ type: "IMMEDIATE_SAVE_ACCEPTED", id })
     })
-  }, [dispatch, state.connectionState, state.configRevision, state.immediateSave])
+  }, [dispatch, state.connectionState, state.configRevision, state.immediateSave, state.settingsSave])
 
   const onApply = () => {
     if (!session?.sessionId || !codingSessionBelongsToThread(session, state.activeThreadId)) return

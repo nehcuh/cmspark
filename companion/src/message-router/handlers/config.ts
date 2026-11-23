@@ -133,6 +133,13 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       }
       // Normalize: if caller sends flat LLM fields, nest them under llm
       const normalized: any = {}
+      if (cfg.summoner !== undefined) {
+        const shortcut = cfg.summoner?.send_shortcut
+        if (shortcut !== "Enter" && shortcut !== "Cmd+Enter" && shortcut !== "Ctrl+Enter") {
+          return stampSettingsSaveId({ type: "error", error: "INVALID_SEND_SHORTCUT" })
+        }
+        normalized.summoner = { ...getConfig().summoner, send_shortcut: shortcut }
+      }
       if (cfg.llm) {
         normalized.llm = sanitizeConfig({ ...cfg.llm })
         if (isMaskedApiKey(normalized.llm.api_key)) delete normalized.llm.api_key

@@ -346,14 +346,28 @@ function configSetCallback(ui: ReturnType<typeof harness>) {
 /** Invoke the real config.set callback. A missing callback is a recorded failure, not a skip. */
 function deliverConfigSet(ui: ReturnType<typeof harness>, response: any, outcome: "accepted" | "unknown", auditBaseline = 0) {
   const gaps = ui.receiptGaps()
+  const draftSubmission = !!ui.state().settingsSave.pending
   const callback = configSetCallback(ui)
   if (typeof callback !== "function") gaps.push("did not invoke config.set callback")
   else callback(response)
   if (!ui.state().settingsOpen) gaps.push("settings closed")
-  if (ui.state().settingsSave.status === "saved" || ui.state().settingsSave.status === "unknown") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
-  if (ui.state().immediateSave?.status !== outcome) gaps.push(`immediateSave=${String(ui.state().immediateSave?.status)}`)
+  if (draftSubmission) {
+    const expected = outcome === "accepted" ? "pending" : "unknown"
+    if (ui.state().settingsSave.status !== expected) gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+  } else {
+    if (ui.state().settingsSave.status === "saved" || ui.state().settingsSave.status === "unknown") gaps.push(`settingsSave.status=${ui.state().settingsSave.status}`)
+    if (ui.state().immediateSave?.status !== outcome) gaps.push(`immediateSave=${String(ui.state().immediateSave?.status)}`)
+  }
   if (ui.state().securityAuditLog.length !== auditBaseline) gaps.push(`audit=${ui.state().securityAuditLog.length}`)
   return gaps
+}
+
+function submitDraft(ui: ReturnType<typeof harness>) {
+  assert.equal(ui.configSets().length, 0, "editing must not send config before 保存")
+  const view = ui.renderSlideout()
+  const button = ui.find(view, node => node.type === "button" && node.props.className === "cm-settings-save", "save")
+  assert.equal(button.props.disabled, false)
+  button.props.onClick()
 }
 
 function rejectedReceipt(ui: ReturnType<typeof harness>, mode: "ok-false" | "last-error") {
@@ -452,8 +466,9 @@ test("transport ok does not turn coding suggestions off before a snapshot", () =
   ready(ui, { coding_handoff: { auto_suggest: true, open_local_terminal: false, local_terminal_app: "auto" } })
   const section = ui.handoffUi()
   ui.checkbox(section, codingHandoffCopy.settingsAutoSuggest).props.onChange({ target: { checked: false } })
+  submitDraft(ui)
   const gaps = acceptedReceipt(ui)
-  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAutoSuggest).props.checked !== true) gaps.push("checkbox left the snapshot")
+  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAutoSuggest).props.checked !== false) gaps.push("draft not shown")
   if (ui.state().config.coding_handoff.auto_suggest !== true) gaps.push("state.config left the snapshot")
   assert.deepEqual(gaps, [])
 })
@@ -463,8 +478,9 @@ test("a refused embedded-terminal toggle does not show the terminal as enabled",
   ready(ui, { embedded_terminal: { enabled: false } })
   const section = ui.handoffUi()
   ui.checkbox(section, codingHandoffCopy.settingsEmbeddedTerminal).props.onChange({ target: { checked: true } })
+  submitDraft(ui)
   const gaps = rejectedReceipt(ui, "last-error")
-  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsEmbeddedTerminal).props.checked !== false) gaps.push("checkbox left the snapshot")
+  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsEmbeddedTerminal).props.checked !== true) gaps.push("draft not retained")
   if (ui.state().config.embedded_terminal?.enabled !== false) gaps.push("state.config left the snapshot")
   assert.deepEqual(gaps, [])
 })
@@ -504,8 +520,9 @@ test("accepted transport does not open the local terminal or change its app befo
   ready(ui, { coding_handoff: { auto_suggest: true, open_local_terminal: false, local_terminal_app: "auto" } })
   let section = ui.handoffUi()
   ui.checkbox(section, codingHandoffCopy.settingsOpenLocalTerminal).props.onChange({ target: { checked: true } })
+  submitDraft(ui)
   const gaps = acceptedReceipt(ui)
-  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsOpenLocalTerminal).props.checked !== false) gaps.push("checkbox left the snapshot")
+  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsOpenLocalTerminal).props.checked !== true) gaps.push("draft not shown")
   if (ui.state().config.coding_handoff.open_local_terminal !== false) gaps.push("open_local_terminal left the snapshot")
   assert.deepEqual(gaps, [])
 })
@@ -518,9 +535,10 @@ test("accepted transport does not change the local terminal app before a snapsho
     .find((node: any) => ui.rows(node).some((option: any) => option.props?.value === "Terminal"))
   assert.ok(select, "local terminal app select")
   select.props.onChange({ target: { value: "Terminal" } })
+  submitDraft(ui)
   const gaps = acceptedReceipt(ui)
   if (ui.state().config.coding_handoff.local_terminal_app !== "auto") gaps.push("local_terminal_app left the snapshot")
-  if (ui.rows(ui.handoffUi()).some((node: any) => node.type === "select" && node.props.value === "Terminal")) gaps.push("terminal app select left the snapshot")
+  if (!ui.rows(ui.handoffUi()).some((node: any) => node.type === "select" && node.props.value === "Terminal")) gaps.push("terminal app draft missing")
   assert.deepEqual(gaps, [])
 })
 
@@ -528,9 +546,10 @@ test("accepted transport does not enable ACP before a snapshot", () => {
   const ui = harness()
   ready(ui, { acp: { enabled: false, max_concurrent_sessions: 1 } })
   ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAcpEnabled).props.onChange({ target: { checked: true } })
+  submitDraft(ui)
   const gaps = acceptedReceipt(ui)
   if (ui.state().config.acp.enabled !== false) gaps.push("state.config.acp.enabled left the snapshot")
-  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAcpEnabled).props.checked !== false) gaps.push("checkbox left the snapshot")
+  if (ui.checkbox(ui.handoffUi(), codingHandoffCopy.settingsAcpEnabled).props.checked !== true) gaps.push("draft not shown")
   assert.deepEqual(gaps, [])
 })
 
@@ -582,11 +601,13 @@ test("a late concurrency callback does not replace a newer snapshot", () => {
   const select = ui.find(section, node => node.type === "select" && node.props["aria-label"] === "编程接力并发上限", "concurrency")
   assert.equal(String(select.props.value), "1")
   select.props.onChange({ target: { value: "2" } })
+  submitDraft(ui)
   ui.dispatch({ type: "SET_CONFIG_SNAPSHOT", config: { ...ui.state().config, acp: { enabled: false, max_concurrent_sessions: 3 } }, revision: "epoch:2" })
   ui.replyLast({ type: "config.updated", config: { acp: { max_concurrent_sessions: 2 } } })
   const again = ui.find(ui.handoffUi(), node => node.type === "select" && node.props["aria-label"] === "编程接力并发上限", "concurrency after late reply")
-  assert.equal(String(again.props.value), "3")
+  assert.equal(String(again.props.value), "2")
   assert.equal(ui.state().config.acp.max_concurrent_sessions, 3)
+  assert.equal(ui.state().settingsDraft?.conflicts.acp, true)
 })
 
 test("concurrency config.set carries the existing save id and revision", () => {
@@ -594,6 +615,7 @@ test("concurrency config.set carries the existing save id and revision", () => {
   ready(ui, { acp: { enabled: false, max_concurrent_sessions: 1 } })
   const select = ui.find(ui.handoffUi(), node => node.type === "select" && node.props["aria-label"] === "编程接力并发上限", "concurrency")
   select.props.onChange({ target: { value: "2" } })
+  submitDraft(ui)
   const gaps = acceptedReceipt(ui)
   if (ui.state().config.acp.max_concurrent_sessions !== 1) gaps.push("limit left the snapshot")
   assert.deepEqual(gaps, [])
@@ -801,11 +823,12 @@ test("accepted transport does not mark full tool history saved before a snapshot
   const host = hosts.sort((left: any, right: any) => textOf(left).length - textOf(right).length)[0]
   assert.ok(host, "full tool history control")
   ui.rows(host).find((node: any) => node.type === "button").props.onClick()
+  submitDraft(ui)
   const gaps = acceptedReceipt(ui)
   if (ui.state().config.persist_full_tool_history) gaps.push("persist flag left the snapshot")
   const shown = ui.rows(ui.renderSlideout()).filter((node: any) => textOf(node).includes("保存完整操作史") && ui.rows(node).some((child: any) => child.type === "button"))
     .sort((left: any, right: any) => textOf(left).length - textOf(right).length)[0]
-  if (textOf(ui.rows(shown).find((node: any) => node.type === "button")) !== "默认关闭") gaps.push("history button left the snapshot")
+  if (textOf(ui.rows(shown).find((node: any) => node.type === "button")) !== "已开启") gaps.push("history draft missing")
   assert.deepEqual(gaps, [])
 })
 
@@ -904,7 +927,9 @@ test("concurrency transport ok alone leaves the previous limit in place", () => 
   ready(ui, { acp: { enabled: false, max_concurrent_sessions: 1 } })
   const select = ui.find(ui.handoffUi(), node => node.type === "select" && node.props["aria-label"] === "编程接力并发上限", "concurrency")
   select.props.onChange({ target: { value: "4" } })
+  submitDraft(ui)
   ui.replyLast({ ok: true })
   const again = ui.find(ui.handoffUi(), node => node.type === "select" && node.props["aria-label"] === "编程接力并发上限", "concurrency unchanged")
-  assert.equal(String(again.props.value), "1")
+  assert.equal(String(again.props.value), "4")
+  assert.equal(ui.state().config.acp.max_concurrent_sessions, 1)
 })

@@ -6,32 +6,51 @@ import { tokens } from "../ui/tokens"
 type ProfileForm = { name: string; base_url: string; model_name: string; api_key: string; protocol: "openai" | "anthropic" }
 const emptyForm: ProfileForm = { name: "", base_url: "", model_name: "", api_key: "", protocol: "openai" }
 
-export function ModelCenterControls({ active, mode = "profiles" }: { active: boolean; mode?: "profiles" | "meeting" }) {
+export function ModelCenterControls({ active, mode = "profiles", onFooterSave }: { active: boolean; mode?: "profiles" | "meeting"; onFooterSave?: (control: { dirty: boolean; busy: boolean; save: (known?: ModelCenterState) => Promise<boolean | ModelCenterState>; error?: string } | null) => void }) {
   const { state } = useAgentStore()
   const connected = state.connectionState === "connected"
   const [snapshot, setSnapshot] = useState<ModelCenterState | null>(null)
+  const snapshotRef = useRef<ModelCenterState | null>(null)
+  snapshotRef.current = snapshot
   const [error, setError] = useState("")
   const [status, setStatus] = useState("")
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState<ProfileForm>(emptyForm)
   const [pending, setPending] = useState<ModelCenterAction | null>(null)
+  const pendingRef = useRef<ModelCenterAction | null>(null)
+  pendingRef.current = pending
   const [selected, setSelected] = useState("")
   const request = useRef<AbortController | null>(null)
-  const run = useCallback(async (save?: { action: ModelCenterAction; config_revision: string }) => {
+  const formRef = useRef<HTMLFormElement>(null)
+  const formDirty = Object.keys(emptyForm).some(key => form[key as keyof ProfileForm] !== emptyForm[key as keyof ProfileForm])
+  const run = useCallback(async (save?: { action: ModelCenterAction; config_revision: string }, known?: ModelCenterState) => {
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
     setBusy(true); setError(""); setStatus("")
     try {
-      const next = await requestModelCenter(controller.signal, save)
-      if (controller.signal.aborted) return
-      setSnapshot(next)
-      setSelected((mode === "meeting" ? next.model_center.meeting_minutes_profile_id : next.model_center.chat_profile_id) ?? "")
+      let next: ModelCenterState
       if (save) {
-        setPending(null); setForm(emptyForm)
+        const expected = known ?? snapshotRef.current
+        const latest = await requestModelCenter(controller.signal)
+        if (!expected || JSON.stringify(expected.model_center) !== JSON.stringify(latest.model_center)) {
+          snapshotRef.current = latest
+          setSnapshot(latest)
+          throw new Error("模型配置已在别处更改，请核对后重试。")
+        }
+        next = await requestModelCenter(controller.signal, { action: save.action, config_revision: latest.config_revision })
+      } else next = await requestModelCenter(controller.signal)
+      if (controller.signal.aborted) return
+      snapshotRef.current = next
+      setSnapshot(next)
+      if (save || !pendingRef.current) setSelected((mode === "meeting" ? next.model_center.meeting_minutes_profile_id : next.model_center.chat_profile_id) ?? "")
+      if (save) {
+        setPending(previous => previous === save.action ? null : previous)
+        if (save.action.kind === "create") setForm(emptyForm)
         setStatus("已保存并核对配置。")
         if (save.action.kind === "bind" && save.action.scope === "chat") void chrome.runtime.sendMessage({ type: "config.get" }).catch(() => {})
       }
+      return next
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "未确认配置结果。")
     } finally {
@@ -39,10 +58,10 @@ export function ModelCenterControls({ active, mode = "profiles" }: { active: boo
     }
   }, [mode])
   useEffect(() => {
-    if (active && connected) void run()
-    else { setBusy(false); setForm(old => ({ ...old, api_key: "" })); setPending(null) }
-    return () => { request.current?.abort(); request.current = null }
-  }, [active, connected, run])
+    if (active && connected && !request.current) void run()
+    else if (!state.settingsOpen || !connected) { setForm(old => ({ ...old, api_key: "" })); setPending(null) }
+  }, [active, connected, run, state.settingsOpen])
+  useEffect(() => () => { request.current?.abort(); request.current = null }, [])
 
   const view = snapshot?.model_center
   const boundId = mode === "meeting" ? view?.meeting_minutes_profile_id : view?.chat_profile_id
@@ -50,17 +69,46 @@ export function ModelCenterControls({ active, mode = "profiles" }: { active: boo
   const target = view?.profiles.find(p => p.id === selected)
   const customCurrent = state.companionConfig?.model_name || "未配置"
   const selectedScope = mode === "meeting" ? "meeting_minutes" : "chat"
-  const submit = (action: ModelCenterAction) => {
-    if (!connected || busy || !snapshot) return
-    void run({ action, config_revision: snapshot.config_revision })
+  const submit = (action: ModelCenterAction, known?: ModelCenterState): Promise<ModelCenterState | false> => {
+    if (!connected || busy || !snapshotRef.current) return Promise.resolve(false)
+    return run({ action, config_revision: snapshotRef.current.config_revision }, known).then(next => next || false)
+  }
+  const createAction = (): ModelCenterAction | null => {
+    const { name, protocol, base_url, model_name, api_key } = form
+    if (name.trim() && base_url.trim() && model_name.trim()) {
+      return { kind: "create", name: name.trim(), provider: { protocol, base_url: base_url.trim(), model_name: model_name.trim(), ...(api_key.trim() ? { api_key: api_key.trim() } : {}) } }
+    }
+    return null
   }
   const create = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const { name, protocol, base_url, model_name, api_key } = form
-    if (name.trim() && base_url.trim() && model_name.trim()) {
-      submit({ kind: "create", name: name.trim(), provider: { protocol, base_url: base_url.trim(), model_name: model_name.trim(), ...(api_key.trim() ? { api_key: api_key.trim() } : {}) } })
-    }
+    const action = createAction()
+    if (action) void submit(action)
   }
+
+  const pendingSave = pending?.kind === "bind" || ((pending?.kind === "rename" || pending?.kind === "save_current") && !!pending.name.trim())
+  useEffect(() => {
+    if (!onFooterSave) return
+    const dirty = pendingSave || (mode === "profiles" && formDirty)
+    onFooterSave(dirty ? { dirty: true, busy: busy || !connected || !snapshot, error,
+      save: async (known?: ModelCenterState) => {
+        let latest: ModelCenterState | undefined = known
+        if (pendingSave && pending) {
+          const result = await submit(pending, latest)
+          if (!result) return false
+          latest = result
+        }
+        if (mode === "profiles" && formDirty) {
+          const action = createAction()
+          if (!action || !formRef.current?.checkValidity()) { setError("请返回文本模型配置，填写完整且有效的模型信息。") ; return false }
+          const result = await submit(action, latest)
+          if (!result) return false
+          latest = result
+        }
+        return latest ?? true
+      } } : null)
+    return () => onFooterSave(null)
+  }, [active, mode, form, formDirty, pending, pendingSave, busy, connected, snapshot, error, onFooterSave])
 
   return <div style={styles.root} data-model-center={mode}>
     <p style={styles.note}>{mode === "meeting" ? "纪要模型接收你确认的逐字稿、模板和参考笔记。更换模型只影响之后生成的纪要。" : "连接模型服务后，可在不同场景复用。一项配置包含服务地址、协议和模型名称。"}</p>
@@ -76,7 +124,11 @@ export function ModelCenterControls({ active, mode = "profiles" }: { active: boo
       <p style={styles.note}>当前 {bound ? bound.name + " · " + bound.model_name : (mode === "meeting" ? "继承默认对话 · " : "当前配置 · ") + customCurrent}</p>
       {bound && <p style={styles.note}>{bound.base_url}</p>}
       <label style={styles.field}>选择模型
-        <select value={selected} onChange={event => { setSelected(event.target.value); setPending(null) }} style={styles.input}>
+        <select value={selected} onChange={event => {
+          const next = event.target.value
+          setSelected(next)
+          setPending(next === (boundId ?? "") ? null : { kind: "bind", scope: selectedScope, profile_id: next || null })
+        }} style={styles.input}>
           <option value="">{mode === "meeting" ? "继承默认对话模型" : "保留当前配置（取消关联）"}</option>
           {view.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model_name}</option>)}
         </select>
@@ -86,11 +138,11 @@ export function ModelCenterControls({ active, mode = "profiles" }: { active: boo
         <p style={styles.note}>{target ? target.name + " · " + target.model_name + " · " + target.base_url : mode === "meeting" ? "继承默认对话模型" : "取消关联，保留当前对话模型"}</p>
         <p style={styles.note}>{mode === "meeting" ? "用于这之后的纪要生成。" : "用于默认对话，以及复用默认模型的看图、听写纠错、活动提取、后台摘要和设置助手。"}{mode === "profiles" && !view.meeting_minutes_profile_id ? "会议纪要也会继承此项。" : ""}</p>
         <button type="button" onClick={() => submit(pending)}>确认切换</button>{" "}
-        <button type="button" onClick={() => setPending(null)}>取消</button>
+        <button type="button" onClick={() => { setPending(null); setSelected(boundId ?? "") }}>取消</button>
       </div>}
     </fieldset>}
     {mode === "profiles" && view && <>
-      <form onSubmit={create}>
+      <form ref={formRef} onSubmit={create}>
         <fieldset style={styles.group} disabled={busy || !connected}>
           <legend>添加文本模型</legend>
           <label style={styles.field}>配置名称<input style={styles.input} maxLength={80} required value={form.name} onChange={e => setForm(old => ({ ...old, name: e.target.value }))} /></label>
