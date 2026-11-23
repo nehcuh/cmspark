@@ -129,14 +129,14 @@ const PROBE_PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
 /** After a successful text probe, check whether the endpoint accepts an image part. */
-export async function probeNativeVision(input: LlmProbeInput): Promise<boolean> {
+export async function probeNativeVision(input: LlmProbeInput): Promise<boolean | null> {
   const protocol = normalizeProtocol(input.protocol)
   const model = (input.model_name || "").trim()
   const key = input.api_key || ""
   const base = String(input.base_url || "").replace(/\/+$/, "")
-  if (!model || !key || !base) return false
+  if (!model || !key || !base) return null
   const { assertLlmEndpointAllowedAsync } = await import("../security")
-  if (await assertLlmEndpointAllowedAsync(input.base_url)) return false
+  if (await assertLlmEndpointAllowedAsync(input.base_url)) return null
   const timeout = 8000
   try {
     const headers = buildRequestHeaders({
@@ -168,9 +168,16 @@ export async function probeNativeVision(input: LlmProbeInput): Promise<boolean> 
       }),
       signal: AbortSignal.timeout(timeout),
     })
-    return response.ok
+    if (response.ok) return true
+    if (response.status === 400 || response.status === 415 || response.status === 422) {
+      const error = await response.text()
+      if (/(?:image|vision|multimodal).{0,80}(?:not support|unsupported|does not support|only text)|(?:not support|unsupported).{0,80}(?:image|vision|multimodal)/i.test(error)) {
+        return false
+      }
+    }
+    return null
   } catch {
-    return false
+    return null
   }
 }
 

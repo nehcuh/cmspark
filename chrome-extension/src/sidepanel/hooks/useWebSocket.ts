@@ -922,7 +922,7 @@ export function useWebSocket() {
                     ? " · 主模型端点接受图片输入"
                     : msg.native_vision === false
                       ? " · 主模型未通过图片输入测试"
-                      : ""
+                      : " · 图片输入测试未能确认，请稍后重试"
                 }`
               : `连接失败: ${msg.error || "未知错误"}`,
           })

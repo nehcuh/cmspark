@@ -6,6 +6,7 @@ import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { isChatOutputLimit } from "../../llm/output-budget"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
+import { resolveNativeVision } from "../../llm/likely-multimodal"
 import { probeVisionConnection } from "../../llm/vision-pipeline"
 import { isPlaceholderVisionKey } from "../../llm/vision-reuse-inherit"
 import {
@@ -503,12 +504,12 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       const probe = await probeLlmConnection(testConfig)
       if (probe.ok) {
         const nativeVision = await probeNativeVision(testConfig)
-        rememberNativeVisionProbe(testConfig.base_url, testConfig.model_name, nativeVision)
+        if (nativeVision !== null) rememberNativeVisionProbe(testConfig.base_url, testConfig.model_name, nativeVision)
         const overrideMode = override?.native_vision
         const nativeMode = overrideMode === "auto" || overrideMode === "on" || overrideMode === "off"
           ? overrideMode : config.llm.native_vision
-        const visionFallback = rest.test_vision_fallback === true && config.vision?.enabled &&
-          (nativeMode === "off" || (nativeMode !== "on" && !nativeVision))
+        const useMainVision = resolveNativeVision({ baseUrl: testConfig.base_url, modelName: testConfig.model_name, mode: nativeMode })
+        const visionFallback = rest.test_vision_fallback === true && config.vision?.enabled && !useMainVision
           ? await testVision(config.vision)
           : undefined
         return {

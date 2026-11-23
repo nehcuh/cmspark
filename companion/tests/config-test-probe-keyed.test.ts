@@ -116,7 +116,9 @@ test("config.test probes the saved vision model only when needed", async () => {
           assert.equal(body.messages[0].content[1].type, protocol === "anthropic" ? "image" : "image_url")
         }
         requests.push(isImage ? "main image" : "main text")
-        return new Response(null, { status: (isImage ? acceptsImage : mainWorks) ? 200 : 400 })
+        return new Response(isImage && !acceptsImage ? "image input is not supported" : null, {
+          status: (isImage ? acceptsImage : mainWorks) ? 200 : 400,
+        })
       }
       const result = await handleMessage({
         type: "config.test",
@@ -126,6 +128,36 @@ test("config.test probes the saved vision model only when needed", async () => {
       assert.equal(result.ok, mainWorks)
       assert.deepEqual(requests, ["main text", ...(mainWorks ? ["main image"] : []), ...(expectedFallback ? ["separate vision"] : [])])
       assert.deepEqual(result.vision_fallback, expectedFallback ? { ok: true, model: "separate-vision" } : undefined)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+    clearNativeVisionProbe()
+  }
+})
+
+test("transient image probe failures keep the existing main-model route", async () => {
+  const originalFetch = globalThis.fetch
+  saveConfig({ vision: {
+    enabled: true, base_url: "http://127.0.0.1:8/v1", model_name: "fallback", api_key: "fixture",
+    timeout_ms: 30000, max_tokens: 1024, fallback: "metadata", cache_ttl_seconds: 0,
+  } }, { visionKey: true })
+  try {
+    for (const status of [429, 503]) {
+      clearNativeVisionProbe()
+      let calls = 0
+      globalThis.fetch = async (_url, options) => {
+        calls++
+        const body = JSON.parse(String(options?.body))
+        return new Response(null, { status: Array.isArray(body.messages[0].content) ? status : 200 })
+      }
+      const result = await handleMessage({
+        type: "config.test", test_vision_fallback: true,
+        llm_override: { model_name: "gpt-4o", native_vision: "auto" },
+      } as any, {} as any)
+      assert.equal(result.native_vision, null)
+      assert.equal(result.vision_fallback, undefined)
+      assert.equal(lookupNativeVisionProbe(TEST_BASE_URL, "gpt-4o"), undefined)
+      assert.equal(calls, 2)
     }
   } finally {
     globalThis.fetch = originalFetch
