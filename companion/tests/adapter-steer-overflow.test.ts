@@ -571,13 +571,18 @@ test("a second reasoning-only exhaustion leaves no failed assistant history", as
 test("context exhaustion or a broken reasoning-only stream never persists a failed draft", async () => {
   const broken: CreateHandler = async function* () {
     yield { type: "reasoning", text: "trace" }
+    yield { type: "reasoning", text: "", replace: true }
     throw new Error("Premature close")
   }
   const context: CreateHandler = async function* () {
     yield { type: "reasoning", text: "trace" }
     yield { type: "done", finish_reason: "model_context_window_exceeded" }
   }
-  for (const handlers of [[context], [reasoningOnlyLimit, context], [broken, broken]]) {
+  const contextError: CreateHandler = async function* () {
+    yield { type: "reasoning", text: "trace" }
+    throw Object.assign(new Error("context_length_exceeded"), { code: "context_length_exceeded" })
+  }
+  for (const handlers of [[context], [contextError], [reasoningOnlyLimit, context], [broken, broken]]) {
     resetState()
     const params = buildMockParams("test-sn-reason-interrupted")
     createHandlers = [...handlers]

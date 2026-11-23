@@ -1,6 +1,6 @@
 import type { LlmConfig } from "../config"
 import { isBenignStreamTailClose } from "./transport-error"
-import { classifyGenerationLimit } from "./overflow"
+import { classifyGenerationLimit, isContextOverflowError } from "./overflow"
 import type { CanonicalChatMessage, CanonicalStreamEvent, LlmProvider, StreamChatParams } from "./provider"
 import { effortLevels, modelSpec, reasoningWireEffort } from "./reasoning-effort"
 
@@ -44,6 +44,7 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
     const stop = new AbortController()
     const signal = params.signal ? AbortSignal.any([params.signal, stop.signal]) : stop.signal
     let hasAnswerOrTool = false
+    let sawReasoning = false
     let chars = 0
     let tail = ""
     let nextCheck = 8192
@@ -56,6 +57,7 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
       })) {
         if ((event.type === "token" && event.text.trim()) || event.type === "tool_call_delta") hasAnswerOrTool = true
         if (event.type === "reasoning" && !hasAnswerOrTool) {
+          sawReasoning ||= event.text.length > 0
           chars = (event.replace ? 0 : chars) + event.text.length
           tail = ((event.replace ? "" : tail) + event.text).slice(-8192)
           if (event.replace) nextCheck = 8192
@@ -70,19 +72,20 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
         } else if (event.type === "usage") {
           completionTokens = event.completion_tokens ?? completionTokens
           reasoningTokens = event.reasoning_tokens ?? reasoningTokens
+          sawReasoning ||= (reasoningTokens ?? 0) > 0
         } else if (event.type === "done" && !hasAnswerOrTool) {
           const limit = classifyGenerationLimit(event.finish_reason, {
             officialOpenAI: spec?.provider === "OpenAI", sentTokens: params.max_tokens, completionTokens,
           })
-          if (limit === "context_window" && (chars > 0 || (reasoningTokens ?? 0) > 0 || attempt > 0)) {
+          if (limit === "context_window" && (sawReasoning || attempt > 0)) {
             throw new ReasoningRecoveryError("已到模型上下文上限，本轮未生成正文或工具调用。")
           }
           const emptyEnd = event.finish_reason == null || event.finish_reason === "stop" || event.finish_reason === "end_turn"
-          if (emptyEnd && (attempt > 0 || chars > 0 || (reasoningTokens ?? 0) > 0)) {
+          if (emptyEnd && (attempt > 0 || sawReasoning)) {
             cause = "empty"
             break
           }
-          if (limit === "output_budget" || (limit === "length" && (chars > 0 || (reasoningTokens ?? 0) > 0))) {
+          if (limit === "output_budget" || (limit === "length" && sawReasoning)) {
             cause = "limit"
             break
           }
@@ -90,7 +93,12 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
         yield event
       }
     } catch (error) {
-      if (params.signal?.aborted || hasAnswerOrTool || !chars || !isBenignStreamTailClose(error)) throw error
+      if (params.signal?.aborted || (error instanceof Error && error.name === "AbortError") || hasAnswerOrTool || !sawReasoning) throw error
+      const code = (error as { code?: unknown } | null)?.code
+      if (classifyGenerationLimit(code) === "context_window" || isContextOverflowError(error instanceof Error ? error.message : String(error))) {
+        throw new ReasoningRecoveryError("已到模型上下文上限，本轮未生成正文或工具调用。")
+      }
+      if (!isBenignStreamTailClose(error)) throw error
       cause = "transport"
     } finally {
       // Also closes a live HTTP stream when the outer consumer stops early.
