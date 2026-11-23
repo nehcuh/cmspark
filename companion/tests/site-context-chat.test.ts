@@ -7,8 +7,10 @@ import { siteTargetFromBrowser } from "../src/site-context/target"
 import { recordSiteOpFailure, peekSiteOpBan } from "../src/tool/site-op-memory"
 import { siteExperienceIdentity } from "../src/skills/site-experience-identity"
 
-for (const initialTab of [123, undefined]) {
-test(`real chat loop refreshes site knowledge and experience (initial tab ${initialTab ?? "legacy hint"})`, async () => {
+for (const mode of ["current tab", "legacy hint", "manual sources"]) {
+const manual = mode === "manual sources"
+const initialTab = mode === "legacy hint" ? undefined : 123
+test(`real chat loop applies context options (${mode})`, async () => {
   const root = mkdtempSync(join(tmpdir(), "cmspark-context-chat-"))
   const previous = process.env.CMSPARK_DATA_DIR
   process.env.CMSPARK_DATA_DIR = root
@@ -21,7 +23,7 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
     const { chatCreate } = await import("../src/llm/adapter")
     const { default: OpenAI } = await import("openai")
     const manager = new ThreadManager()
-    const thread = manager.create("cross site", `context-chat-${initialTab ?? "legacy"}`)
+    const thread = manager.create("cross site", `context-chat-${mode.replaceAll(" ", "-")}`)
     const engine = new SkillEngine()
     engine.bindThreadManager(manager)
     const dir = join(root, "skills")
@@ -31,6 +33,7 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
       ["site-b", "b.test", "Inspect the product record. SITE_B_451"],
       ["site-a-decoy", "a.test", "Holiday scheduling only. IRRELEVANT_451"],
       ["manual-c", "c.test", "MANUAL_C_451"],
+      ["pinned-other", "c.test", "PINNED_OTHER_887"],
     ]) {
       engine.createExperienceSkill(name, "site_knowledge", host, ["manual"], {
         id: name, category: "tip", content: marker, recorded_at: new Date().toISOString(),
@@ -43,7 +46,11 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
       recorded_at: new Date().toISOString(), confirmed_at: null, stale: false, stale_reason: "", replaced_by: "", schema_version: 1,
     })
     engine.refresh()
-    manager.update(thread.id, { active_knowledge_ids: ["manual-c"], knowledge_selection_mode: "auto" })
+    if (manual) {
+      engine.importSkill("---\nname: picked-local\ndescription: Picked local workflow\n---\nPICKED_SKILL_887")
+      engine.importSkill("---\nname: other-local\ndescription: Another local workflow\n---\nOTHER_SKILL_887")
+    }
+    manager.update(thread.id, { active_knowledge_ids: manual ? ["pinned-other"] : ["manual-c"], knowledge_selection_mode: "auto" })
     // Match the router's real cache producer (includes initial site knowledge).
     const initialSkills = await engine.resolveSkillIdsForThread(thread.id, "auto", "inspect", "a.test")
     assert.ok(initialSkills.includes("site-a"))
@@ -71,8 +78,10 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
     await chatCreate({
       threadId: thread.id, message: "inspect", skillIds: [], knowledgeIds: [],
       siteContextTabId: initialTab, hostname: "a.test",
-      contextSelection: { kind: "thread", skillMode: "auto", knowledgeMode: "auto", cachedMatchedSkillIds: initialSkills },
-      resolveSiteTarget: async (id: number) => { assert.equal(id, 123); return siteTargetFromBrowser(id, actualUrl, Date.now()) },
+      contextSelection: { kind: "thread", skillMode: "auto", knowledgeMode: "auto", cachedMatchedSkillIds: initialSkills,
+        ...(manual ? { chat: { include_page: false, automatic_knowledge: false, knowledge_ids: ["manual-c"], skill_ids: ["picked-local"] } } : {}),
+      },
+      resolveSiteTarget: async (id: number) => { assert.equal(manual, false, "disabled page context must remain disabled after navigation"); assert.equal(id, 123); return siteTargetFromBrowser(id, actualUrl, Date.now()) },
       config: { base_url: "http://localhost:9999", api_key: "test", model_name: "test", temperature: 0, context_window: 128000 },
       threadManager: manager, skillEngine: engine, historyStore: { record: () => 0 } as any,
       sendToExtension: (frame: any) => { if (frame.type === "chat.done" && frame.message_id) completed.push(frame) },
@@ -81,7 +90,7 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
         if (args.tabId === 999) return { success: false, error: "TAB_LOCKED", data: { error_code: "TAB_LOCKED" } }
         if (name === "navigate") { actualUrl = "https://b.test/next"; return { success: true } }
         assert.equal(name, "get_page_text")
-        assert.ok(peekSiteOpBan(thread.id, "click", { tabId: 123, text: "PERSISTED_451" }, "https://b.test").banned,
+        assert.equal(peekSiteOpBan(thread.id, "click", { tabId: 123, text: "PERSISTED_451" }, "https://b.test").banned, !manual,
           "successful target discovery must restore selected persisted experience, including legacy clients")
         rmSync(join(dir, "site-b.md"))
         engine.refresh()
@@ -90,12 +99,12 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
       },
     } as any)
     assert.equal(requests.length, 5)
-    assert.ok(requests[0].includes("SITE_A_451"))
+    assert.equal(requests[0].includes("SITE_A_451"), !manual)
     assert.ok(!requests[0].includes("SITE_B_451"))
     assert.ok(!requests[0].includes("IRRELEVANT_451"))
-    assert.equal(requests[0].includes("SECRET_LOCATOR_451"), initialTab !== undefined)
-    assert.ok(requests[2].includes("SITE_A_451"), "failed tab must not retarget context")
-    assert.ok(requests[3].includes("SITE_B_451"))
+    assert.equal(requests[0].includes("SECRET_LOCATOR_451"), initialTab !== undefined && !manual)
+    assert.equal(requests[2].includes("SITE_A_451"), !manual, "failed tab must not retarget context")
+    assert.equal(requests[3].includes("SITE_B_451"), !manual)
     assert.ok(!requests[3].includes("SITE_A_451"), "cached router union must not preserve old site knowledge")
     assert.ok(!requests[4].includes("SITE_B_451"))
     assert.ok(!requests[4].includes("SITE_A_451"))
@@ -103,6 +112,13 @@ test(`real chat loop refreshes site knowledge and experience (initial tab ${init
     for (const prompt of requests) {
       assert.ok(prompt.includes("MANUAL_C_451"))
       assert.ok(prompt.includes("SECURITY FOOTER (non-overrideable)"))
+      if (manual) {
+        assert.ok(prompt.includes("picked-local"))
+        assert.ok(!prompt.includes("other-local"))
+        assert.ok(!prompt.includes("Current browser target"))
+        assert.ok(!prompt.includes("PERSISTED_451"))
+        assert.ok(!prompt.includes("PINNED_OTHER_887"))
+      }
     }
     const final = manager.getMessages(thread.id).find(row => row.content === "done")
     assert.ok(final)

@@ -32,6 +32,7 @@ function harness() {
   const effectQueue: Array<() => void> = []
   const flush = () => { while (effectQueue.length) effectQueue.shift()!() }
   const react: any = {
+    useSyncExternalStore: (_subscribe: unknown, read: () => unknown) => read(),
     createContext: (value: any) => { const context: any = { current: value }; context.Provider = { context }; return context },
     useContext: (context: any) => context.current,
     useState: (initial: any) => {

@@ -704,7 +704,20 @@ function setupMessageHandlers() {
 
 /** Sync dispatch for extension UI → SW messages. Returns whether the channel is kept open. */
 function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sender?: chrome.runtime.MessageSender): boolean {
+    if (["chat.send", "chat.regenerate", "file.upload"].includes(message?.type) &&
+        message.chat_context !== undefined && !wsClient.supportsChatContext()) {
+      const error = "当前 Companion 不支持对话上下文控制，请更新 Companion 后重试。"
+      const threadId = message.threadId || message.thread_id
+      if (message.type !== "file.upload") {
+        void chrome.runtime.sendMessage({ type: "chat.error", thread_id: threadId, error }).catch(() => {})
+      }
+      sendResponse({ ok: false, error })
+      return true
+    }
     switch (message?.type) {
+      case "chat.context.support":
+        sendResponse({ supported: wsClient.supportsChatContext() })
+        return true
       case "activity.state":
       case "activity.apps":
     case "activity.preview":
@@ -805,6 +818,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
                   message: message.message,
                   skill_ids: message.skillIds,
                   clientMessageId,
+                  chat_context: message.chat_context,
                   ...(message.enqueue === true ? { enqueue: true } : {}),
                   ...(context || {}),
                   ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
@@ -816,6 +830,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
             echoUser(true)
           }
           sendResponse({ ok: sent })
+        }
+        if (message.steer === true || message.chat_context?.include_page === false) {
+          sendCreate()
+          return true
         }
         // Site-knowledge hostname is best-effort; never stall chat.create on tabs.query.
         withHostnameBudget(() => getActiveTabContext())
@@ -867,6 +885,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
             ...(message.uploadId ? { upload_id: message.uploadId, part_count: message.partCount } : {}),
             message: message.message || "",
             skill_ids: message.skillIds || [],
+            chat_context: message.chat_context,
             // F1/F2: companion echoes this as chat.user client_message_id so the
             // panel's optimistic upload bubble is adopted by exact id.
             ...(typeof message.clientMessageId === "string" && message.clientMessageId
@@ -929,6 +948,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           })
         }
 
+        if (message.chat_context?.include_page === false) {
+          doSend()
+          return true
+        }
         withHostnameBudget(() => getActiveTabContext())
           .then((hostname) => {
             doSend(hostname || undefined)
@@ -969,12 +992,17 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
             thread_id: message.thread_id,
             message_id: message.message_id,
             message: message.message,
+            chat_context: message.chat_context,
             ...(context || {}),
           })
           if (!sent) {
             chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法重新生成" })
           }
           sendResponse({ ok: sent })
+        }
+        if (message.chat_context?.include_page === false) {
+          sendRegen()
+          return true
         }
         withHostnameBudget(() => getActiveTabContext())
           .then((hostname) => sendRegen(hostname))

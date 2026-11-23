@@ -1190,6 +1190,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                   ...authOkProtocolFields(),
                   negotiated_protocol_version: nego.negotiated,
                   file_upload_parts: 1,
+                  chat_context_controls: 1,
                 }),
               )
               ws.send(JSON.stringify({ type: "connected" }))

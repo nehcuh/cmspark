@@ -53,6 +53,7 @@ import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, isMaskedApiKey, getConfigDir } from "./config"
 import { getModulesConfigSnapshot } from "./capability/module-snapshot"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
+import type { ChatContextInput } from "./llm/chat-context"
 import {
   MAX_NEXT_RUN,
   MAX_STEER,
@@ -385,7 +386,8 @@ export function followUpCreateFromQueue(
   message: string,
   surface: unknown,
   clientMessageId?: string,
-): {
+  context?: ChatContextInput,
+): ChatContextInput & {
   type: "chat.create"
   thread_id: string
   message: string
@@ -397,6 +399,7 @@ export function followUpCreateFromQueue(
     thread_id: threadId,
     message,
     ...(clientMessageId ? { clientMessageId } : {}),
+    ...context,
     __cmspark_surface: surface === "summoner" ? "summoner" : "tray",
   }
 }
@@ -476,7 +479,7 @@ async function drainNextRun(
   const queued = takeNextRun(threadId)
   if (!queued) return null
   return handleMessage(
-    followUpCreateFromQueue(threadId, queued.text, session?.surface, queued.clientMessageId),
+    followUpCreateFromQueue(threadId, queued.text, session?.surface, queued.clientMessageId, queued.context),
     services,
     session,
   )
@@ -1318,7 +1321,14 @@ async function dispatchMessage(
           typeof rest.clientMessageId === "string" && rest.clientMessageId
             ? rest.clientMessageId
             : undefined
-        if (!enqueueNextRun(rest.thread_id, text, enqueueId)) {
+        const context: ChatContextInput | undefined = rest.chat_context && {
+          chat_context: rest.chat_context,
+          skill_ids: rest.skill_ids,
+          context_tab_id: rest.context_tab_id,
+          hostname: rest.hostname,
+          url: rest.url,
+        }
+        if (!enqueueNextRun(rest.thread_id, text, enqueueId, undefined, context)) {
           return {
             type: "error",
             error: "queue_full",
@@ -1421,17 +1431,20 @@ async function dispatchMessage(
 
         // Resolve skill IDs based on mode
         // hostname: site_knowledge auto-load only (extension SW sets it; not a trust gate)
-        const currentHostname = normalizeChatHostname(rest.hostname, rest.url)
-        const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
+        const currentHostname = rest.chat_context?.include_page === false
+          ? undefined : normalizeChatHostname(rest.hostname, rest.url)
+        const resolvedSkillIds = rest.chat_context?.skill_ids ?? await services.skillEngine.resolveSkillIdsForThread(
           rest.thread_id,
           skillMode,
           rest.message,
           currentHostname,
+          undefined, rest.chat_context?.automatic_knowledge !== false,
         )
 
         assertNativeCurrent()
         // Resolve knowledge IDs based on mode (#273 Wave A: query 打分 + 智能匹配开关)
-        const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
+        const resolvedKnowledgeIds = rest.chat_context?.automatic_knowledge === false
+          ? rest.chat_context.knowledge_ids || [] : services.skillEngine.resolveKnowledgeIdsForThread(
           rest.thread_id,
           knowledgeMode,
           currentHostname,
@@ -1443,7 +1456,7 @@ async function dispatchMessage(
         const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
 
         // For auto mode, notify about auto-matched skills
-        if (skillMode === "auto") {
+        if (skillMode === "auto" && rest.chat_context?.skill_ids === undefined) {
           const matched = await services.skillEngine.matchSkills(rest.message)
           assertNativeCurrent()
           const domainMatches = matched.filter(m => m.confidence >= 20)
@@ -1550,7 +1563,7 @@ async function dispatchMessage(
           contextRefsSegment,
           hostname: currentHostname,
           siteContextTabId: rest.context_tab_id,
-          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds },
+          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds, chat: rest.chat_context },
           resolveSiteTarget: (tabId, signal) => resolveBrowserSiteTarget(session.executeTool, rest.thread_id, tabId, signal),
           runStats,
         })
@@ -2116,14 +2129,17 @@ async function dispatchMessage(
         const skillMode = threadAfterPin?.skill_selection_mode || "auto"
         const knowledgeMode = threadAfterPin?.knowledge_selection_mode || threadForConfig?.knowledge_selection_mode || "auto"
         const knowledgeSmartMatch = (threadAfterPin ?? threadForConfig)?.knowledge_smart_match !== false
-        const uploadHostname = normalizeChatHostname(rest.hostname, rest.url)
-        const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
+        const uploadHostname = rest.chat_context?.include_page === false
+          ? undefined : normalizeChatHostname(rest.hostname, rest.url)
+        const resolvedSkillIds = rest.chat_context?.skill_ids ?? await services.skillEngine.resolveSkillIdsForThread(
           thread_id,
           skillMode,
           userMessage,
           uploadHostname,
+          undefined, rest.chat_context?.automatic_knowledge !== false,
         )
-        const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
+        const resolvedKnowledgeIds = rest.chat_context?.automatic_knowledge === false
+          ? rest.chat_context.knowledge_ids || [] : services.skillEngine.resolveKnowledgeIdsForThread(
           thread_id,
           knowledgeMode,
           uploadHostname,
@@ -2182,7 +2198,7 @@ async function dispatchMessage(
           signal: uploadController.signal,
           hostname: uploadHostname,
           siteContextTabId: rest.context_tab_id,
-          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds },
+          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds, chat: rest.chat_context },
           resolveSiteTarget: (tabId, signal) => resolveBrowserSiteTarget(session.executeTool, rest.thread_id, tabId, signal),
         })
         logger.info("file.upload.chat_done", { thread_id })
@@ -2530,16 +2546,19 @@ async function dispatchMessage(
         const knowledgeSmartMatch = thread?.knowledge_smart_match !== false
 
         // Resolve skill IDs based on mode
-        const currentHostname = normalizeChatHostname(rest.hostname, rest.url)
-        const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
+        const currentHostname = rest.chat_context?.include_page === false
+          ? undefined : normalizeChatHostname(rest.hostname, rest.url)
+        const resolvedSkillIds = rest.chat_context?.skill_ids ?? await services.skillEngine.resolveSkillIdsForThread(
           thread_id,
           skillMode,
           userMsg.content,
           currentHostname,
+          undefined, rest.chat_context?.automatic_knowledge !== false,
         )
 
         // Resolve knowledge IDs based on mode (#273 Wave A: query 打分 + 智能匹配开关)
-        const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
+        const resolvedKnowledgeIds = rest.chat_context?.automatic_knowledge === false
+          ? rest.chat_context.knowledge_ids || [] : services.skillEngine.resolveKnowledgeIdsForThread(
           thread_id,
           knowledgeMode,
           currentHostname,
@@ -2551,7 +2570,7 @@ async function dispatchMessage(
         const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
 
         // For auto mode, notify about auto-matched skills
-        if (skillMode === "auto") {
+        if (skillMode === "auto" && rest.chat_context?.skill_ids === undefined) {
           const matched = await services.skillEngine.matchSkills(userMsg.content)
           const domainMatches = matched.filter(m => m.confidence >= 20)
           if (domainMatches.length > 0) {
@@ -2588,7 +2607,7 @@ async function dispatchMessage(
           skipUserMessage: true,
           hostname: currentHostname,
           siteContextTabId: rest.context_tab_id,
-          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds },
+          contextSelection: { kind: "thread", skillMode, knowledgeMode, extraSkillIds: rest.skill_ids || [], cachedMatchedSkillIds: allSkillIds, chat: rest.chat_context },
           resolveSiteTarget: (tabId, signal) => resolveBrowserSiteTarget(session.executeTool, rest.thread_id, tabId, signal),
         })
       } catch (e: any) {

@@ -190,6 +190,8 @@ export type BuildPromptKnowledgeOpts = {
   includeKnowledgeBlocks?: boolean
   /** Authenticated chat only. Enables grounded auto selection and message excerpts. */
   chatKnowledge?: boolean
+  explicitKnowledgeIds?: string[]
+  knowledgeFromSkills?: boolean
   /** 空 query + 智能匹配开的 auto 退化：每篇只注入 description。 */
   knowledgeDescriptionOnly?: boolean
   /** Wave B 路由上下文（缺省从 thread 记录推导；测试/评测可显式覆盖）。 */
@@ -1607,6 +1609,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     smartMatch: boolean
     routeByGroup: boolean
     allowAutomatic?: (skill: Skill) => boolean
+    explicitKnowledgeIds?: string[]
   }): KnowledgeRoutingPlan | null {
     if (!args.routeByGroup) return null
     if (args.mode !== "auto") return null
@@ -1625,6 +1628,10 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       for (const s of eligiblePool) byId.set(s.id || s.name, s)
 
       const pinnedAll = this.getActiveKnowledgeForThread(args.threadId)
+      for (const id of args.explicitKnowledgeIds || []) {
+        const doc = this.get(id)
+        if (doc && this.isKnowledgeDoc(doc) && !pinnedAll.some(pinned => pinned.name === doc.name)) pinnedAll.push(doc)
+      }
       const pinnedNames = new Set(pinnedAll.map(s => s.name))
       const idSet = new Set(args.knowledgeIds)
       // ① pinned（resolve 的输出顺序 = getActiveKnowledgeForThread 顺序）
@@ -1824,6 +1831,10 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const chatKnowledge = opts?.chatKnowledge === true
     const groundedAuto = chatKnowledge && opts.knowledgeMode === "auto"
     const pinnedNames = new Set(chatKnowledge ? this.getActiveKnowledgeForThread(threadId).map(doc => doc.name) : [])
+    for (const id of opts?.explicitKnowledgeIds || []) {
+      const doc = this.get(id)
+      if (doc && this.isKnowledgeDoc(doc)) pinnedNames.add(doc.name)
+    }
     const terms = groundedAuto && opts.knowledgeSmartMatch !== false ? knowledgeQueryTerms(query || "") : new Set<string>()
     const siteNames = new Set(groundedAuto && hostname ? this.getBySite(hostname).map(doc => doc.name) : [])
     const autoHits = new Map<string, GroundedKnowledgeHit | undefined>()
@@ -1906,7 +1917,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     }
 
     const promptSkills = skills.filter(s => this.isSkillDoc(s))
-    const experienceSkills = skills.filter(s => this.isKnowledgeDoc(s))
+    const experienceSkills = opts?.knowledgeFromSkills === false ? [] : skills.filter(s => this.isKnowledgeDoc(s))
 
     // Experience skills: inject entry summaries directly (no use_skill needed)
     for (const s of experienceSkills) {
@@ -1945,6 +1956,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
           mode: opts?.knowledgeMode ?? routingThread?.knowledge_selection_mode ?? "auto",
           smartMatch: opts?.knowledgeSmartMatch ?? (routingThread?.knowledge_smart_match !== false),
           routeByGroup: opts?.knowledgeRouteByGroup ?? (routingThread?.knowledge_route_by_group === true),
+          explicitKnowledgeIds: opts?.explicitKnowledgeIds,
           allowAutomatic: groundedAuto ? doc => pinnedNames.has(doc.name) || !!automaticHit(doc) : undefined,
         })
       }

@@ -4,6 +4,7 @@ import { openWorkbench } from "../navigation/open-workbench"
 
 import { useState, useRef, useEffect, type CSSProperties } from "react"
 import { ThreadList } from "./ThreadList"
+import { ChatContextControls } from "./ChatContextControls"
 import { useAgentStore } from "../store/agentStore"
 import type { ConnectionState, CapabilityLevel } from "../types"
 import {
@@ -338,6 +339,7 @@ export function StatusRail({
           <span style={railStyles.connLabel}>{connLabel}</span>
         </span>
       )}
+      <ChatContextControls compact={compact} />
       <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
         <button
           type="button"
@@ -538,6 +540,7 @@ export function StatusRail({
 
 const railStyles: Record<string, CSSProperties> = {
   rail: {
+    position: "relative",
     display: "flex",
     alignItems: "center",
     justifyContent: "flex-start",
