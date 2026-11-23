@@ -198,3 +198,20 @@ test("OpenAI settings show the stored model", () => {
   const input = ui.rows(labels[0]).find((node) => node.type === "input")
   assert.equal(input?.props.value, "kept-model")
 })
+
+test("background forwards external dictation settings to Companion", () => {
+  const source = fs.readFileSync(path.resolve("src/background/index.ts"), "utf8")
+  const start = source.indexOf('case "voice.model.get_state"')
+  const end = source.indexOf('case "voice.ptt.page_chord"', start)
+  const calls: unknown[] = []
+  const message = { type: "voice.external.set", style: "deepseek", source: "settings", apiKey: "fixture-key" }
+  const code = ts.transpileModule(`(() => { switch (message.type) { ${source.slice(start, end)} } })()`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText
+  vm.runInNewContext(code, {
+    message,
+    wsClient: { send: (frame: unknown) => { calls.push(frame); return true } },
+    sendResponse: (response: { ok: boolean }) => { assert.equal(response.ok, true) },
+  })
+  assert.deepEqual(calls, [message])
+})

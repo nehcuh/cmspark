@@ -128,13 +128,9 @@ export async function probeLlmConnection(input: LlmProbeInput): Promise<LlmProbe
 const PROBE_PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
-/**
- * After a successful text probe: does this OpenAI-compatible endpoint accept an image part?
- * Anthropic is skipped (name heuristic already treats Claude as multimodal).
- */
+/** After a successful text probe, check whether the endpoint accepts an image part. */
 export async function probeNativeVision(input: LlmProbeInput): Promise<boolean> {
   const protocol = normalizeProtocol(input.protocol)
-  if (protocol === "anthropic") return true
   const model = (input.model_name || "").trim()
   const key = input.api_key || ""
   const base = String(input.base_url || "").replace(/\/+$/, "")
@@ -145,28 +141,28 @@ export async function probeNativeVision(input: LlmProbeInput): Promise<boolean> 
   try {
     const headers = buildRequestHeaders({
       baseUrl: input.base_url,
-      protocol: "openai",
+      protocol,
       apiKey: key,
       auth_style: normalizeAuthStyle(input.auth_style),
       client_header_profile: normalizeProfile(input.client_header_profile),
+      claude_code_compat_version: input.claude_code_compat_version,
+      anthropic_version: input.anthropic_version,
       extra_headers: input.extra_headers,
     })
-    const response = await fetch(`${base}/chat/completions`, {
+    const image = protocol === "anthropic"
+      ? { type: "image", source: { type: "base64", media_type: "image/png", data: PROBE_PNG_B64 } }
+      : { type: "image_url", image_url: { url: `data:image/png;base64,${PROBE_PNG_B64}` } }
+    const url = protocol === "anthropic" ? resolveAnthropicMessagesUrl(input.base_url) : `${base}/chat/completions`
+    const response = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify({
         model,
-        max_tokens: 4,
+        max_tokens: 16,
         messages: [
           {
             role: "user",
-            content: [
-              { type: "text", text: "ok" },
-              {
-                type: "image_url",
-                image_url: { url: `data:image/png;base64,${PROBE_PNG_B64}` },
-              },
-            ],
+            content: [{ type: "text", text: "Reply OK" }, image],
           },
         ],
       }),

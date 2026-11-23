@@ -22,16 +22,15 @@ test("S1.2 装配 is the chip above the field, not a capsule icon", () => {
   assert.ok(!/畅所欲问/.test(app))
 })
 
-test("S1.3 settings lives in ⋯ only; pin is left thumbtack", () => {
+test("S1.3 the compact rail moves the capability pin into ⋯", () => {
   const rail = src("src/sidepanel/components/StatusRail.tsx")
   const list = src("src/sidepanel/components/ThreadList.tsx")
   assert.ok(!/aria-label="设置"/.test(rail), "left gear removed — ⋯ owns 设置")
   const more = rail.slice(rail.indexOf("<span>设置</span>") - 400, rail.indexOf("<span>设置</span>"))
   assert.match(more, /connectionState !== "connected" \? "connection" : "model"/)
   assert.ok(!/title="设置"/.test(list), "history drawer no longer duplicates 设置")
-  const badge = src("src/sidepanel/ui/ModeBadge.tsx")
-  assert.match(badge, /IconPin/)
-  assert.match(badge, /whisper \? IconPin/)
+  assert.match(rail, /compact \? \(\s*<button[^>]+aria-label="新对话"/)
+  assert.match(rail, /compact && \(\s*<button[^>]+role="menuitemcheckbox"[^>]+aria-checked=\{pinned\}/)
 })
 
 test("S1.4 ComposeDrawer has no ⋯编排 dead link", () => {

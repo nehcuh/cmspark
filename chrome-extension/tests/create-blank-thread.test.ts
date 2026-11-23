@@ -30,6 +30,7 @@ function nodes(source: ts.SourceFile, predicate: (node: ts.Node) => boolean): ts
 function actualBlankCreation(sentToSocket = true) {
   const parse = (file: string) => ts.createSourceFile(file, readFileSync(join(process.cwd(), "src", file), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   const list = parse("sidepanel/components/ThreadList.tsx"), rail = parse("sidepanel/components/StatusRail.tsx"), background = parse("background/index.ts")
+  const frame = parse("sidepanel/components/WorkspaceFrame.tsx")
   const fn = (source: ts.SourceFile, name: string) => unique(nodes(source, n => ts.isFunctionDeclaration(n) && n.name?.text === name)).getText(source)
   const clause = (source: ts.SourceFile, label: string) => unique(nodes(source, n => ts.isCaseClause(n) && ts.isStringLiteral(n.expression) && n.expression.text === label)).getText(source)
   const button = unique(nodes(rail, n => ts.isJsxOpeningElement(n) && n.tagName.getText(rail) === "button" && n.attributes.properties.some(a => ts.isJsxAttribute(a) && a.name.getText(rail) === "className" && a.initializer && ts.isStringLiteral(a.initializer) && a.initializer.text.includes("cm-header-new")))) as ts.JsxOpeningElement
@@ -38,6 +39,7 @@ function actualBlankCreation(sentToSocket = true) {
   const clickExpression = click.initializer.expression.getText(rail)
   const emit = (text: string) => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
   const explicit = emit(fn(list, "createBlankThread") + "\n" + fn(list, "generateShortId"))
+  const action = emit(fn(frame, "newThread"))
   const receive = emit('globalThis.receive = (message, sendResponse) => { switch(message.type) {' + clause(background, "thread.create") + '} };')
   let clock = 10000, random = 0
   class FixedDate extends Date { constructor() { super(clock) } static override now() { return clock } }
@@ -49,6 +51,8 @@ function actualBlankCreation(sentToSocket = true) {
   const page = () => {
     const context: Record<string, unknown> = { exports: {}, Date: FixedDate, Math: math, dispatch: (action: any) => { if (action.type === "ADD_THREAD") added.push(action.thread) }, chrome: { runtime: { sendMessage: deliver } }, creatingBlankThreadRef: { current: false }, activeThreadRef: { current: null } }
     context.createBlankThread = vm.runInNewContext(explicit + "; exports.createBlankThread", context, { timeout: 2000 })
+    Object.assign(context, { navigate() {}, afterNavigation() {}, focusComposer() {} })
+    context.onNewThread = vm.runInNewContext(action + "; newThread", context, { timeout: 2000 })
     const actualClick = vm.runInNewContext("(" + clickExpression + ")", context, { timeout: 2000 })
     return { click: () => actualClick() }
   }

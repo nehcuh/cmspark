@@ -34,7 +34,7 @@ function isWorkbenchPage(page: unknown): page is "today" | typeof workbenchActio
 export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays }: {
   children: ReactNode
   level?: CapabilityLevel
-  top?: ReactNode
+  top?: (actions: { compact: boolean; onNewThread: () => void }) => ReactNode
   bottom?: ReactNode
   overlays?: ReactNode
 }) {
@@ -152,6 +152,12 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   function focusComposer() {
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".cm-composer-dock textarea")?.focus())
   }
+  function newThread() {
+    navigate("chat")
+    createBlankThread(dispatch)
+    afterNavigation()
+    focusComposer()
+  }
   useEffect(() => {
     let current = true, opening = false
     const isCurrent = () => current && destinationOwnerRef.current === destinationOwner
@@ -186,7 +192,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
     return () => { current = false; window.removeEventListener("cmspark:open-workspace-destination", openDestination) }
   }, [dispatch, full, destinationOwner, state.settingsOpen, state.activeThreadId, state.activeThreadSelectionRevision, state.pendingSecurityConfirmations.length, state.computerTask])
   const openResource = (panel: Parameters<typeof openPanelForce>[0]) => { navigate("chat"); openPanelForce(panel) }
-  const navProps = { full, destination: visibleView, onView: navigate, level, onNavigate: afterNavigation, focusComposer }
+  const navProps = { full, destination: visibleView, onView: navigate, level, onNavigate: afterNavigation, focusComposer, onNewThread: newThread }
   const navigation = (projectProps?: Pick<Parameters<typeof WorkspaceNavigation>[0], "onSnapshot" | "onOpenProject" | "sessionDetails">) => (
     <div ref={navRef} className="cm-sidebar-navigation" id="cm-sidebar-navigation" role={wide ? undefined : "dialog"} aria-label={wide ? undefined : "工作区导航"} hidden={!navVisible}
       onKeyDown={event => {
@@ -200,9 +206,10 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   )
   const mode = wide ? "resident" : "layered"
   const shellClass = `cm-workspace cm-workspace-r3${full ? " cm-workspace-full" : ""}${wide ? "" : " cm-workspace-layered"}`
+  const header = top?.({ compact: !wide, onNewThread: newThread })
   if (!full) return <>
     <style>{personalWorkspaceCSS}</style>
-    <ProjectNavigationRoot mode={mode} surface={surface} shellClass={shellClass} top={top}
+    <ProjectNavigationRoot mode={mode} surface={surface} shellClass={shellClass} top={header}
       bottom={bottom} overlays={overlays} renderNavigation={navigation}
       onSelectThread={() => { afterNavigation(); focusComposer() }}>{children}</ProjectNavigationRoot>
   </>
@@ -210,7 +217,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
     <style>{personalWorkspaceCSS}</style>
     {wide && navigation()}
     <main className="cm-workspace-main cm-shell-column" aria-label="个人工作台">
-      {top}
+      {header}
       {!wide && navigation()}
       {openingError && <p role="alert" className="cm-personal-fieldnote">{openingError}</p>}
       {full && <nav className="cm-personal-mobile-nav" aria-label="工作中心页面">{WORKSPACE_DESTINATIONS.map(item => <button type="button" key={item.id} aria-current={visibleView === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>{item.label}</button>)}<button type="button" disabled={state.pendingSecurityConfirmations.length > 0 || !!state.computerTask && ["running", "paused"].includes(state.computerTask.status)} onClick={() => { navigate("chat"); dispatch({ type: "SET_SETTINGS_OPEN", open: true }) }}>设置</button></nav>}
@@ -247,8 +254,9 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   </div>
 }
 
-function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, level, onSnapshot, onOpenProject, focusComposer, sessionDetails }: {
+function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, onNewThread, level, onSnapshot, onOpenProject, focusComposer, sessionDetails }: {
   sessionDetails?: ReactNode; onNavigate: () => void; focusComposer: () => void; onClose?: () => void; full: boolean; destination: WorkspaceDestination; onView: (view: WorkspaceDestination) => void; level: CapabilityLevel
+  onNewThread: () => void
 } & Pick<Parameters<typeof ProjectPanel>[0], "onSnapshot" | "onOpenProject">) {
   const { state, dispatch } = useAgentStore()
   const { activePanel, openPanelForce, closePanel } = useContextPanelHost()
@@ -286,7 +294,7 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, l
       {onClose && <button type="button" className="cm-icon-button" aria-label="关闭导航" onClick={onClose}>×</button>}
     </div>
     {full && <nav className="cm-workspace-destinations" aria-label="主要功能">{WORKSPACE_DESTINATIONS.map(item => <button type="button" className="cm-nav-item" key={item.id} aria-current={destination === item.id ? "page" : undefined} onClick={() => { onView(item.id); onNavigate() }}>{item.label}</button>)}</nav>}
-    <button type="button" className="cm-nav-new" onClick={() => { onView("chat"); createBlankThread(dispatch); onNavigate(); focusComposer() }}><IconNewChat size={17} />新对话</button>
+    <button type="button" className="cm-nav-new" onClick={onNewThread}><IconNewChat size={17} />新对话</button>
     <ProjectPanel filter={projectFilter} onFilter={setProjectFilter} onSnapshot={onSnapshot}
       onOpenProject={id => { setProjectFilter(id); onOpenProject?.(id); setConversationsOpen(true) }} />
     {!compact && <>

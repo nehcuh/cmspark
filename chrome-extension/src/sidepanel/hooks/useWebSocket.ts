@@ -903,7 +903,15 @@ export function useWebSocket() {
           })
           break
 
-        case "config.testResult":
+        case "config.testResult": {
+          const vision = msg.vision_fallback
+          dispatch({
+            type: "SET_TEST_VISION_RESULT",
+            result: vision ? vision.ok
+              ? `视觉模型连接成功 ✓ (${vision.model || ""})`
+              : `视觉模型连接失败：${vision.error || "未知错误"}`
+              : null,
+          })
           dispatch({
             type: "SET_TEST_RESULT",
             result: msg.ok
@@ -911,9 +919,9 @@ export function useWebSocket() {
                   msg.native_vision === true
                     // Probe only proves the endpoint accepted an image part
                     // (HTTP 200) — not true multimodal quality (M3-copy).
-                    ? " · 端点接受图片输入（截图/附图走主模型）"
+                    ? " · 主模型端点接受图片输入"
                     : msg.native_vision === false
-                      ? " · 未探测到看图（截图仍走视觉轨，可在下方强制开启）"
+                      ? " · 主模型未通过图片输入测试"
                       : ""
                 }`
               : `连接失败: ${msg.error || "未知错误"}`,
@@ -928,6 +936,7 @@ export function useWebSocket() {
             }
           }
           break
+        }
 
         case "openSettings":
           // Popup "设置" button opened the side panel — land on the settings view.

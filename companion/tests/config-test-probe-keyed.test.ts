@@ -84,3 +84,50 @@ test("config.test llm_override echoes the override key, not the saved one", asyn
     clearNativeVisionProbe()
   }
 })
+
+test("config.test probes the saved vision model only when needed", async () => {
+  const visionUrl = "http://127.0.0.1:8/v1"
+  const vision = {
+    enabled: true, base_url: visionUrl, model_name: "separate-vision", api_key: "sk-vision-test",
+    timeout_ms: 30000, max_tokens: 1024, fallback: "metadata" as const, cache_ttl_seconds: 0,
+  }
+  const originalFetch = globalThis.fetch
+  try {
+    for (const { mainWorks, acceptsImage, enabled, mode, expectedFallback, protocol = "openai" } of [
+      { mainWorks: true, acceptsImage: true, enabled: true, mode: "auto", expectedFallback: false },
+      { mainWorks: true, acceptsImage: false, enabled: true, mode: "auto", expectedFallback: true },
+      { mainWorks: true, acceptsImage: true, enabled: true, mode: "auto", expectedFallback: false, protocol: "anthropic" },
+      { mainWorks: true, acceptsImage: false, enabled: true, mode: "auto", expectedFallback: true, protocol: "anthropic" },
+      { mainWorks: true, acceptsImage: true, enabled: true, mode: "off", expectedFallback: true },
+      { mainWorks: true, acceptsImage: false, enabled: false, mode: "auto", expectedFallback: false },
+      { mainWorks: false, acceptsImage: false, enabled: true, mode: "auto", expectedFallback: false },
+    ]) {
+      saveConfig({ vision: { ...vision, enabled } }, { visionKey: true })
+      const requests: string[] = []
+      globalThis.fetch = async (url, options) => {
+        const body = JSON.parse(String(options?.body))
+        if (String(url).startsWith(visionUrl)) {
+          requests.push("separate vision")
+          return Response.json({ choices: [{ message: { content: "A pixel." }, finish_reason: "stop" }] })
+        }
+        const isImage = Array.isArray(body.messages[0].content)
+        if (isImage) {
+          assert.equal(body.messages[0].content[1].type, protocol === "anthropic" ? "image" : "image_url")
+        }
+        requests.push(isImage ? "main image" : "main text")
+        return new Response(null, { status: (isImage ? acceptsImage : mainWorks) ? 200 : 400 })
+      }
+      const result = await handleMessage({
+        type: "config.test",
+        test_vision_fallback: true,
+        llm_override: { native_vision: mode, protocol },
+      } as any, {} as any)
+      assert.equal(result.ok, mainWorks)
+      assert.deepEqual(requests, ["main text", ...(mainWorks ? ["main image"] : []), ...(expectedFallback ? ["separate vision"] : [])])
+      assert.deepEqual(result.vision_fallback, expectedFallback ? { ok: true, model: "separate-vision" } : undefined)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+    clearNativeVisionProbe()
+  }
+})

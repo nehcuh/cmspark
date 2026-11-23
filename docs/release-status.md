@@ -1,6 +1,10 @@
 # 版本与交付状态
 
-源码开发版本 **1.6.0（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码开发版本 **1.6.1（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+
+## 1.6.0
+
+2026-11-22 发布，标签指向 `84c88647`，共有 19 项公开附件。[v1.6.0 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.6.0)
 
 ## 1.5.0
 

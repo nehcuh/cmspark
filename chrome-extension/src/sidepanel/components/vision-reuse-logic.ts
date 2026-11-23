@@ -29,8 +29,8 @@ export const VISION_COPY = {
     "Key 仅在视觉 Key 未配置/占位时由 Companion 继承主 Key（已有专用视觉 Key 不会被覆盖）。确定？",
   needsKeyPaste:
     "主模型 API Key 未在界面显示（仅 Companion 已保存或为掩码）。已写入 URL/Model；" +
-    "保存时 Companion 会在端点匹配且视觉 Key 占位时继承主 Key。建议保存后点「测试视觉模型连接」。",
-  postReuseTestHint: "建议立即测试视觉连接，确认端点可用后再用于截图分析。",
+    "保存时 Companion 会在端点匹配且视觉 Key 占位时继承主 Key。",
+  postReuseTestHint: "保存后可通过「测试模型连接」验证图片输入。",
   fallbackPassthrough:
     "视觉轨会把截断 base64 塞进说明；只有主模型走原生看图时才能看见像素",
   fallbackMetadata: "仅元数据（推荐）",

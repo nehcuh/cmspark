@@ -1,9 +1,9 @@
 import { openWorkbench } from "../navigation/open-workbench"
 // StatusRail — Zone A (UIUX v2 PR1)
-// Mode badge + pin · connection (token colors) · thread switcher · ⋯ menu
+// Compact new conversation · connection · thread switcher · ⋯ menu
 
 import { useState, useRef, useEffect, type CSSProperties } from "react"
-import { ThreadList, createBlankThread } from "./ThreadList"
+import { ThreadList } from "./ThreadList"
 import { useAgentStore } from "../store/agentStore"
 import type { ConnectionState, CapabilityLevel } from "../types"
 import {
@@ -30,12 +30,16 @@ import {
   IconAlert,
   IconSpinner,
   IconMore,
+  IconNewChat,
+  IconPin,
   IconExternal,
   CompanionMark,
 } from "../ui/icons"
 import { disarmAllFlags, trustStatusChip, trustStatusChipShort } from "./autopilot-tier"
 
 export function StatusRail({
+  compact,
+  onNewThread,
   connectionState,
   capabilityLevel,
   badgeLabel,
@@ -46,6 +50,8 @@ export function StatusRail({
   onPopout,
   canPopout,
 }: {
+  compact: boolean
+  onNewThread: () => void
   connectionState: ConnectionState
   capabilityLevel: CapabilityLevel
   badgeLabel: string
@@ -224,13 +230,13 @@ export function StatusRail({
     >
       <button type="button" className="cm-icon-button cm-navigation-toggle" aria-label="打开工作区导航" aria-haspopup="dialog" onClick={() => window.dispatchEvent(new Event("cmspark:toggle-navigation"))}><IconList size={16} /><span style={{ fontSize: 12 }}>导航</span></button>
       {window.location.pathname !== "/tabs/workspace.html" && <button type="button" className="cm-icon-button cm-workbench-launch" aria-label="个人工作台" title="打开个人工作台" disabled={state.pendingSecurityConfirmations.length > 0 || ["running", "paused"].includes(state.computerTask?.status ?? "")} onClick={() => void openWorkbench("today")}><span className="cm-workbench-prefix">个人</span>工作台</button>}
-      <ModeBadge
-        level={capabilityLevel}
-        label={badgeLabel}
-        pinned={pinned}
-        onTogglePin={togglePin}
-        whisper
-      />
+      {compact ? (
+        <button type="button" className="cm-icon-button cm-header-new" title="新对话" aria-label="新对话" onClick={onNewThread}>
+          <IconNewChat size={19} />
+        </button>
+      ) : (
+        <ModeBadge level={capabilityLevel} label={badgeLabel} pinned={pinned} onTogglePin={togglePin} whisper />
+      )}
       {/* Brand point (small CompanionMark) — #321 PR-3: resident, no longer hidden
           on cruise / disconnect. Decorative (CompanionMark stays aria-hidden). */}
       <div className="cm-rail-brand" style={railStyles.brand} title="CMspark" aria-label="CMspark">
@@ -241,7 +247,6 @@ export function StatusRail({
         chrome.runtime.sendMessage({ type: "thread.select", threadId: parentId })
       }} />
       <div style={railStyles.cluster}>
-      <button type="button" className="cm-icon-button cm-header-new" title="新对话" aria-label="新对话" onClick={() => createBlankThread(dispatch)}>+</button>
       <button
         type="button"
         style={{
@@ -432,6 +437,15 @@ export function StatusRail({
             <div role="presentation" style={railStyles.menuGroupLabel}>
               能力
             </div>
+            {compact && (
+              <button type="button" role="menuitemcheckbox" aria-checked={pinned} style={railStyles.menuItem} onClick={() => {
+                togglePin()
+                closeMenu()
+              }}>
+                <IconPin size={14} />
+                <span>锁定「{badgeLabel}」能力</span>
+              </button>
+            )}
             <button type="button" role="menuitem" style={railStyles.menuItem} onClick={() => {
               closeMenu()
               window.dispatchEvent(new CustomEvent("cmspark:open-coding-handoff"))

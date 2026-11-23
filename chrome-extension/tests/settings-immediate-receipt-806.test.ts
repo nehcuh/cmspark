@@ -641,22 +641,15 @@ test("a matched main-save snapshot with no draft is unknown", () => {
   assert.equal(next.settingsOpen, true)
 })
 
-test("a clean draft matched through the main save mode closes settings", () => {
+test("a clean draft leaves Save disabled and settings open", () => {
   const ui = harness()
   ready(ui, { model_name: "old" })
   assert.equal(Object.keys(ui.state().settingsDraft.dirty).length, 0)
-  ui.dispatch({ type: "BEGIN_SETTINGS_SAVE", submission: { id: "settings-save:clean", revision: "epoch:1", patch: {}, generations: {} } })
-  assert.equal(ui.state().settingsSave.status, "pending")
-  ui.dispatch({
-    type: "SET_CONFIG_SNAPSHOT",
-    config: { ...ui.state().config },
-    revision: "epoch:2",
-    id: "settings-save:clean",
-    appliedRevision: "epoch:2",
-  })
-  assert.equal(ui.state().settingsSave.status, "saved")
-  ui.renderSlideout()
-  assert.equal(ui.state().settingsOpen, false)
+  const save = ui.find(ui.renderSlideout(), node => node.type === "button" && node.props.className === "cm-settings-save", "save")
+  assert.equal(save.props.disabled, true)
+  save.props.onClick()
+  assert.equal(ui.state().settingsSave.status, "idle")
+  assert.equal(ui.state().settingsOpen, true)
 })
 
 test("designed immediate confirmation records one audit after effect flush", () => {
@@ -731,7 +724,7 @@ test("effect flush records one confirmation only after render", () => {
   assert.equal(timing.repeat, 1)
 })
 
-test("a confirmed main save still closes settings", () => {
+test("a confirmed main save keeps settings open for another save", () => {
   const ui = harness()
   ready(ui, { model_name: "old" })
   ui.dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { model_name: "kept" } })
@@ -745,8 +738,32 @@ test("a confirmed main save still closes settings", () => {
     id: "settings-save:owned-uuid",
     appliedRevision: "epoch:2",
   })
-  ui.renderSlideout()
-  assert.equal(ui.state().settingsOpen, false)
+  assert.equal(ui.state().settingsSave.status, "saved")
+  assert.equal(ui.state().settingsOpen, true)
+  assert.equal(Object.keys(ui.state().settingsDraft.dirty).length, 0)
+  ui.dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { model_name: "next" } })
+  ui.find(ui.renderSlideout(), node => node.type === "button" && node.props.className === "cm-settings-save", "save again").props.onClick()
+  assert.equal(ui.state().settingsSave.pending?.revision, "epoch:2")
+  assert.equal(ui.state().settingsSave.pending?.patch.model_name, "next")
+})
+
+test("the model test clears an earlier fallback error and submits one sequential probe", () => {
+  const ui = harness()
+  ready(ui, { vision_enabled: true })
+  const socket = ui.errorSocket()
+  socket.send({ type: "config.testResult", ok: true, native_vision: false, vision_fallback: { ok: false, error: "旧结果" } })
+  assert.match(ui.state().testVisionResult, /旧结果/)
+
+  ui.find(ui.renderSlideout(), node => node.type === "button" && node.props.children === "测试模型连接", "model test").props.onClick()
+  const requests = ui.messages.filter(message => message.type === "config.test" || message.type === "config.testVision")
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].type, "config.test")
+  assert.equal(requests[0].testVisionFallback, true)
+  assert.equal(ui.state().testVisionResult, null)
+
+  socket.send({ type: "config.testResult", ok: true, native_vision: true })
+  assert.match(ui.state().testResult, /主模型端点接受图片输入/)
+  assert.equal(ui.state().testVisionResult, null)
 })
 
 test("immediate confirmation keeps drafts open and does not borrow the main save result", () => {

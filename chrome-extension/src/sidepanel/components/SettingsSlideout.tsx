@@ -199,7 +199,9 @@ export function SettingsSlideout() {
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
   // Path B M0: engine radio is UI draft until ready model + explicit "启用本机转写".
-  const [engineDraft, setEngineDraft] = useState<"browser" | "local" | "system" | "external">("browser")
+  const [engineSelection, setEngineDraft] = useState<"browser" | "local" | "system" | "external" | null>(null)
+  const committedEngine = state.voiceModel?.sttEngine
+  const engineDraft = engineSelection ?? committedEngine ?? "browser"
   const [externalPrivacyAck, setExternalPrivacyAck] = useState(false)
   const [externalKeyDraft, setExternalKeyDraft] = useState("")
   const [externalBaseDraft, setExternalBaseDraft] = useState<string | null>(null)
@@ -313,16 +315,11 @@ export function SettingsSlideout() {
     // Do not blank voiceModelError here — get_state / WS lastDownloadError hydrates it.
     setVoicePendingDownload(null)
     setVoiceEndpointDraft(null)
-    chrome.runtime.sendMessage({ type: "voice.model.get_state" }, (resp: unknown) => {
-      const lastErr =
-        typeof chrome.runtime.lastError?.message === "string"
-          ? chrome.runtime.lastError.message
-          : null
-      const parsed = parseVoiceSettingsSendResponse(resp, lastErr)
-      if (parsed.ok === false) {
-        dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
-      }
-    })
+    setExternalPrivacyAck(false)
+    setExternalKeyDraft("")
+    setExternalBaseDraft(null)
+    setExternalStyleDraft(null)
+    setExternalModelDraft(null)
     // #259: Windows SAPI probe (win32 → helper/System.Speech rows; other → no-op).
     chrome.runtime.sendMessage({ type: "voice.system.state" })
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
@@ -335,25 +332,24 @@ export function SettingsSlideout() {
     })
   }, [state.settingsOpen])
 
-  // Path B M0: sync engine draft from companion SoT when state arrives.
-  // - sttEngine local → pull draft to local (committed)
-  // - companion local→browser (delete active / set_engine) → reset draft browser
-  // - selecting local radio alone never writes set_engine (draft until enable)
-  // - do not clobber local draft while companion still reports browser
-  const prevVoiceEngineRef = useRef<"browser" | "local" | "system" | "external" | null>(null)
   useEffect(() => {
-    const eng = state.voiceModel?.sttEngine
-    if (!eng) return
-    if (eng === "local" || eng === "system" || eng === "external") {
-      setEngineDraft(eng)
-    } else if (
-      (prevVoiceEngineRef.current === "local" || prevVoiceEngineRef.current === "system") &&
-      eng === "browser"
-    ) {
-      setEngineDraft("browser")
-    }
-    prevVoiceEngineRef.current = eng
-  }, [state.voiceModel?.sttEngine])
+    if (!state.settingsOpen || state.connectionState !== "connected") return
+    chrome.runtime.sendMessage({ type: "voice.model.get_state" }, (resp: unknown) => {
+      const lastErr =
+        typeof chrome.runtime.lastError?.message === "string"
+          ? chrome.runtime.lastError.message
+          : null
+      const parsed = parseVoiceSettingsSendResponse(resp, lastErr)
+      if (parsed.ok === false) {
+        dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
+      }
+    })
+  }, [state.settingsOpen, state.connectionState, dispatch])
+
+  // Reopen on the committed engine and follow changes confirmed by Companion.
+  useEffect(() => {
+    setEngineDraft(null)
+  }, [state.settingsOpen, committedEngine])
 
   // Clear local pending-download once companion reports downloading/ready or progress.
   useEffect(() => {
@@ -447,13 +443,6 @@ export function SettingsSlideout() {
     if (state.settingsOpen && state.configHydratedFromCompanion) dispatch({ type: "BEGIN_SETTINGS_DRAFT" })
   }, [state.settingsOpen, state.configHydratedFromCompanion, dispatch])
 
-  useEffect(() => {
-    if (state.settingsOpen && state.settingsSave.status === "saved") {
-      dispatch({ type: "END_SETTINGS_DRAFT" })
-      dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-    }
-  }, [state.settingsOpen, state.settingsSave.status, dispatch])
-
   const immediateSave = state.immediateSave
   const immediateConfigRef = useRef(state.config)
   const immediateSaveRef = useRef(immediateSave)
@@ -491,14 +480,10 @@ export function SettingsSlideout() {
   const saveBlocked = settingsSaveDisabled(state.configHydratedFromCompanion) || !draft ||
     !state.configRevision || state.connectionState !== "connected" || !!state.settingsSave.pending ||
     state.settingsSave.status === "unknown" || Object.keys(draft?.conflicts ?? {}).length > 0
+  const hasEdits = Object.keys(draft?.dirty ?? {}).length > 0
 
   const handleSave = () => {
-    if (saveBlocked || !draft || !state.configRevision || draft.revision !== state.configRevision) return
-    if (!Object.keys(draft.dirty).length) {
-      dispatch({ type: "END_SETTINGS_DRAFT" })
-      dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-      return
-    }
+    if (saveBlocked || !hasEdits || !draft || !state.configRevision || draft.revision !== state.configRevision) return
     const id = `settings-save:${crypto.randomUUID()}`
     const submission = prepareSettingsSubmission(draft, id)
     dispatch({ type: "BEGIN_SETTINGS_SAVE", submission })
@@ -834,21 +819,14 @@ export function SettingsSlideout() {
   }
 
   const handleTest = () => {
-    // Reset both result channels — main LLM test always runs, vision test runs
-    // only when the user has enabled 截图视觉分析. Showing both side-by-side
-    // (instead of overwriting one result) lets the user see e.g. "主 API ✓ /
-    // 视觉 ✗" without re-clicking.
     dispatch({ type: "SET_TEST_RESULT", result: "测试中..." })
-    if (config.vision_enabled) {
-      dispatch({ type: "SET_TEST_VISION_RESULT", result: "测试视觉模型中..." })
-    } else {
-      dispatch({ type: "SET_TEST_VISION_RESULT", result: null })
-    }
+    dispatch({ type: "SET_TEST_VISION_RESULT", result: null })
     // Pass unsaved UI fields so the probe uses the same protocol/profile/url as Save.
     // api_key only when the user typed a real key; otherwise companion uses stored key.
     const llmOverride: Record<string, string> = {
       base_url: config.base_url,
       model_name: config.model_name,
+      native_vision: config.native_vision || "auto",
       protocol: config.protocol === "anthropic" ? "anthropic" : "openai",
       client_header_profile:
         config.protocol === "anthropic" && config.client_header_profile === "claude_code_compat"
@@ -858,10 +836,11 @@ export function SettingsSlideout() {
     if (config.api_key && config.api_key !== "***") {
       llmOverride.api_key = config.api_key
     }
-    chrome.runtime.sendMessage({ type: "config.test", llmOverride })
-    if (config.vision_enabled) {
-      chrome.runtime.sendMessage({ type: "config.testVision" })
-    }
+    chrome.runtime.sendMessage({ type: "config.test", llmOverride, testVisionFallback: config.vision_enabled }, (response) => {
+      if (chrome.runtime.lastError || !response?.ok) {
+        dispatch({ type: "SET_TEST_RESULT", result: `连接失败：${chrome.runtime.lastError?.message || response?.error || "Companion 未连接"}` })
+      }
+    })
   }
 
   const openKnowledgeSettings = async () => {
@@ -1574,14 +1553,7 @@ export function SettingsSlideout() {
                   </>
                 )}
 
-              <div style={styles.field}>
-                <button style={styles.testBtn} onClick={() => {
-                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中...（请先保存配置）" })
-                  chrome.runtime.sendMessage({ type: "config.testVision" })
-                }}>
-                  测试视觉模型连接
-                </button>
-              </div>
+              <p style={styles.helpText}>需要验证独立视觉模型时，「测试模型连接」会使用已保存的视觉配置。</p>
               </>
             )
           })()}
@@ -2118,7 +2090,7 @@ export function SettingsSlideout() {
                         checked={engineDraft === "browser"}
                         onChange={() => {
                           setEngineDraft("browser")
-                          if (committedLocal || committedSystem) {
+                          if (committedLocal || committedSystem || committedExternal) {
                             clearVoiceErr()
                             sendVoice({ type: "voice.model.set_engine", engine: "browser" })
                           }
@@ -2130,8 +2102,6 @@ export function SettingsSlideout() {
                         <span style={{ color: tokens.textMuted, fontSize: 12 }}> — {ENGINE_BROWSER_HINT}</span>
                       </span>
                     </label>
-                    <details className="cm-settings-extra" open={engineDraft === "external" || undefined}>
-                      <summary>{externalView?.keyConfigured || committedExternal ? "外部转写已配置" : "其他能力"}</summary>
                     <label
                       style={{
                         display: "flex",
@@ -2229,7 +2199,7 @@ export function SettingsSlideout() {
                         <button
                           type="button"
                           style={styles.secondaryBtn}
-                          disabled={!externalPrivacyAck}
+                          disabled={committedExternal || !externalPrivacyAck || !externalView?.keyConfigured}
                           onClick={() => {
                             clearVoiceErr()
                             sendVoice({
@@ -2243,7 +2213,6 @@ export function SettingsSlideout() {
                         </button>
                       </div>
                     ) : null}
-                    </details>
                     <label
                       style={{
                         display: "flex",
@@ -4391,12 +4360,13 @@ export function SettingsSlideout() {
 
         <div className="cm-settings-footer" style={styles.footer}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
-            <span className="cm-settings-save-scope">保存配置草稿；独立表单与授权需分别提交。</span>
+            <span className="cm-settings-save-scope">保存当前设置草稿。独立表单和授权有各自的提交按钮。</span>
             {state.configEpochInvalid ? <span role="alert">配置版本无法确认，请重新连接 Companion；草稿已保留。</span> : !state.configRevision && <span role="status">当前 Companion 未提供配置版本，请升级后保存草稿。</span>}
             {state.settingsSave.status === "pending" && <span role="status">正在等待 Companion 保存回执…</span>}
+            {state.settingsSave.status === "saved" && <span role="status">已保存</span>}
             {state.settingsSave.status === "unknown" && <span role="alert">保存结果未知，草稿已保留。请先核对当前配置，再选择重新保存。 <button type="button" onClick={() => { chrome.runtime.sendMessage({ type: "config.get" }); dispatch({ type: "SETTINGS_SAVE_RETRY" }) }}>我已核对，允许重新保存</button></span>}
             {state.settingsSave.status === "conflict" && <span role="alert">配置已在别处更改，请核对草稿后再保存。</span>}
-            {state.settingsSave.status === "review" && <span role="status">部分草稿仍需确认，未自动关闭。</span>}
+            {state.settingsSave.status === "review" && <span role="status">部分草稿仍需确认。</span>}
             {draft && Object.keys(draft.conflicts).map(key => <span role="alert" key={key}>字段 {key} 已变化，选择保留哪一份： <button type="button" onClick={() => dispatch({ type: "RESOLVE_SETTINGS_CONFLICT", key: key as keyof LLMConfig, choice: "mine" })}>保留我的编辑</button> <button type="button" onClick={() => dispatch({ type: "RESOLVE_SETTINGS_CONFLICT", key: key as keyof LLMConfig, choice: "remote" })}>使用当前配置</button></span>)}
             {state.testResult && (
               <span style={{
@@ -4411,21 +4381,19 @@ export function SettingsSlideout() {
               }}>{state.testVisionResult}</span>
             )}
           </div>
-          <button style={styles.testBtn} onClick={handleTest}>
-            {config.vision_enabled ? "测试模型连接（含视觉）" : "测试模型连接"}
-          </button>
+          <button style={styles.testBtn} onClick={handleTest}>测试模型连接</button>
           <button
             style={{
               ...styles.saveBtn,
-              ...(saveBlocked
+              ...(saveBlocked || !hasEdits
                 ? { opacity: 0.5, cursor: "not-allowed" }
                 : {}),
             }}
             className="cm-settings-save"
             onClick={handleSave}
-            disabled={saveBlocked}
+            disabled={saveBlocked || !hasEdits}
             title={settingsSaveDisabledTitle(state.configHydratedFromCompanion) ?? (saveBlocked ? "等待连接、回执或处理冲突" : undefined)}
-          >保存并关闭</button>
+          >保存</button>
         </div>
 
         {state.companionConfig && (
