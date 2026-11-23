@@ -692,7 +692,8 @@ export type AgentAction =
   | { type: "SET_VOICE_ACCELERATION_EXECUTION"; execution: VoiceWhisperExecution }
   | { type: "SET_VOICE_SYSTEM_STATE"; systemState: VoiceSystemState | null }
   | { type: "SET_VOICE_MODEL_PROGRESS"; progress: VoiceModelProgress | null }
-  | { type: "SET_VOICE_BINARY_PROGRESS"; progress: VoiceBinaryProgress | null }
+  | { type: "SET_VOICE_BINARY_PROGRESS"; progress: VoiceBinaryProgress }
+  | { type: "CLEAR_VOICE_BINARY_PROGRESS"; backend: VoiceBinaryProgress["backend"] }
   | { type: "SET_VOICE_BINARY_ERROR"; error: VoiceBinaryError | null }
   | { type: "SET_VOICE_MODEL_ERROR"; error: string | null }
   | { type: "NOTE_BROWSER_TOOL"; at?: number }
@@ -2452,10 +2453,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, voiceModelProgress: action.progress }
     case "SET_VOICE_BINARY_PROGRESS": {
       const current = state.voiceBinaryProgress
-      if (current && action.progress && current.backend === action.progress.backend &&
+      if (current && current.backend === action.progress.backend &&
           (current.phase === "cancelling" || action.progress.phase === undefined)) return state
       return { ...state, voiceBinaryProgress: action.progress }
     }
+    case "CLEAR_VOICE_BINARY_PROGRESS":
+      return state.voiceBinaryProgress?.backend === action.backend
+        ? { ...state, voiceBinaryProgress: null }
+        : state
     case "SET_VOICE_BINARY_ERROR":
       return {
         ...state,

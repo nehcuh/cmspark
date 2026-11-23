@@ -2039,12 +2039,12 @@ export function useWebSocket() {
         }
 
         case "voice.binary.cancel.result": {
-          if (msg.ok !== true) break
           const backend = parseVoiceBinaryBackend(msg.backend)
-          if (msg.status === "cancelling" && backend) {
+          if (msg.ok !== true || !backend) break
+          if (msg.status === "cancelling") {
             dispatch({ type: "SET_VOICE_BINARY_PROGRESS", progress: { backend, phase: "cancelling" } })
           } else if (msg.status === "not-running") {
-            dispatch({ type: "SET_VOICE_BINARY_PROGRESS", progress: null })
+            dispatch({ type: "CLEAR_VOICE_BINARY_PROGRESS", backend })
             chrome.runtime.sendMessage({ type: "voice.model.get_state", source: "settings" })
           }
           break

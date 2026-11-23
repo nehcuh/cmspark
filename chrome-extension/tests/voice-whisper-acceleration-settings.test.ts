@@ -7,7 +7,12 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { WhisperAccelerationSettings } from "../src/sidepanel/components/WhisperAccelerationSettings"
 import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
 import type { VoiceModelState, VoiceWhisperAcceleration, VoiceWhisperGpuBackend } from "../src/sidepanel/types"
-import { parseVoiceBinaryProgress, parseWhisperAcceleration, parseWhisperExecution } from "../src/sidepanel/voice/whisper-acceleration-state"
+import {
+  parseVoiceBinaryBackend,
+  parseVoiceBinaryProgress,
+  parseWhisperAcceleration,
+  parseWhisperExecution,
+} from "../src/sidepanel/voice/whisper-acceleration-state"
 
 const acceleration: VoiceWhisperAcceleration = {
   supported: true,
@@ -168,6 +173,26 @@ test("a cancelled legacy CPU install can be reattempted when the binary is still
     type: "SET_VOICE_MODEL_STATE", modelState: { ...modelState(), binary: { status: "not_found" } },
   })
   assert.equal(settled.voiceBinaryProgress, null)
+})
+
+test("a cancel rejection clears only progress for the requested backend", () => {
+  const legacyCpu = parseVoiceBinaryBackend(undefined)
+  if (legacyCpu !== "cpu") throw new Error("Legacy cancellation must identify CPU")
+  const cuda = { type: "CLEAR_VOICE_BINARY_PROGRESS", backend: "cuda" } as const
+  const cpu = { type: "CLEAR_VOICE_BINARY_PROGRESS", backend: legacyCpu } as const
+  for (const phase of ["download", "cancelling"] as const) {
+    const vulkan = {
+      ...initialState,
+      voiceBinaryProgress: { backend: "vulkan", phase, receivedBytes: 41, totalBytes: 100, file: "vulkan.exe" } as const,
+    }
+    assert.equal(agentReducer(vulkan, cuda), vulkan)
+    assert.equal(agentReducer(vulkan, cpu), vulkan)
+  }
+  const runningCuda = { ...initialState, voiceBinaryProgress: { backend: "cuda" } as const }
+  assert.equal(agentReducer(runningCuda, cpu), runningCuda)
+  assert.equal(agentReducer(runningCuda, cuda).voiceBinaryProgress, null)
+  const runningCpu = { ...initialState, voiceBinaryProgress: { backend: "cpu" } as const }
+  assert.equal(agentReducer(runningCpu, cpu).voiceBinaryProgress, null)
 })
 
 function render(
