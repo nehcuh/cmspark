@@ -12,6 +12,8 @@ export interface ModelCenterConfig {
   profiles: TextModelProfile[]
   chat_profile_id: string | null
   meeting_minutes_profile_id: string | null
+  /** Absent in older configurations. An explicit configured_vision binding reuses the vision service. */
+  meeting_visual_profile_id?: string | null
 }
 
 const MODEL_FIELDS = [

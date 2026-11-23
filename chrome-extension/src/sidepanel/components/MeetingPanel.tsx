@@ -12,6 +12,9 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { meetingSourceRangeLabel, meetingCaptureErrorMessage, meetingCaptureStopLabel } from "../voice/meeting-continuous-pcm"
 import { createPanelMeetingCapture } from "../voice/meeting-panel-continuous"
+import { MeetingVisualReview, MinutesWithFrameLinks } from "./MeetingVisualReview"
+import type { FrameCaptureStatus } from "../voice/meeting-frame-sampler"
+import type { FrameSource } from "../voice/meeting-visual-client"
 import { chooseDesktopMeetingInput } from "../voice/meeting-desktop-input"
 import {
   detectLocalMediaCapture,
@@ -153,6 +156,9 @@ export function MeetingPanel(props: {
   const [liveTarget, setLiveTarget] = useState<ReturnType<typeof meetingAsrState>>(null)
   const [liveLang, setLiveLang] = useState("zh")
   const [inputSource, setInputSource] = useState<"microphone" | "desktop">("microphone")
+  const [retainFrames, setRetainFrames] = useState(false)
+  const [frameStatus, setFrameStatus] = useState<FrameCaptureStatus | null>(null)
+  const [frameFocus, setFrameFocus] = useState<{ source: FrameSource; serial: number } | null>(null)
   const [includeMicrophone, setIncludeMicrophone] = useState(true)
   const [chooseDesktop, setChooseDesktop] = useState<(() => void) | null>(null)
   const [desktopMessage, setDesktopMessage] = useState("")
@@ -180,6 +186,7 @@ export function MeetingPanel(props: {
   } | null>(null)
   const [meetingId, setMeetingId] = useState<string | null>(null)
   useEffect(() => { props.onMeetingSelected?.(!!meetingId) }, [meetingId, props.onMeetingSelected])
+  useEffect(() => { setFrameFocus(null); setFrameStatus(null) }, [meetingId])
   const [status, setStatus] = useState<string>("")
   const [taskBusy, setBusy] = useState(false)
   const [loadingMeeting, setLoadingMeeting] = useState(false)
@@ -291,7 +298,7 @@ export function MeetingPanel(props: {
     setCapturePhase(p)
   }, [])
 
-  const contextKey = JSON.stringify([props.active !== false, props.meetingId, props.purpose, state.activeThreadId, state.activeThreadSelectionRevision, state.codingHistoryConnectionRevision, liveTarget?.configIdentity, companionConnected, audioScope])
+  const contextKey = JSON.stringify([props.active !== false, props.meetingId, props.purpose, state.activeThreadId, state.activeThreadSelectionRevision, state.codingHistoryConnectionRevision, liveTarget?.configIdentity, companionConnected, audioScope, retainFrames])
   const currentContext = useRef(contextKey)
   currentContext.current = contextKey
   useEffect(() => {
@@ -619,7 +626,8 @@ export function MeetingPanel(props: {
     try {
       chrome.runtime.sendMessage({ type: "meeting.generate_minutes", v: 1, id, meeting_id: request.meetingId,
         text: request.text, reference_notes: request.notes, reference_name: request.name,
-        template_md: request.template || undefined, consent_token: request.prepared.consent_token }, reply => {
+        template_md: request.template || undefined, consent_token: request.prepared.consent_token,
+        visual_frames_confirmed: request.prepared.material.visual_frames }, reply => {
         if (chrome.runtime.lastError || reply?.ok === false || reply?.sent === false) reportUnconfirmed()
       })
     } catch { reportUnconfirmed() }
@@ -730,6 +738,7 @@ export function MeetingPanel(props: {
 
   const startContinuousCapture = (id: string, speaker: string, liveAsr: string) => {
     destroyAdapter()
+    setFrameStatus(null)
     const owner = { actor: null as unknown as ReturnType<typeof createPanelMeetingCapture>, id,
       seen: new Set<string>(), wanted: 0, synced: -1, syncing: null as Promise<void> | null }
     continuousRef.current = owner
@@ -773,6 +782,7 @@ export function MeetingPanel(props: {
           })
         }),
         report: message => { if (current()) setDesktopMessage(message) },
+        onFrameStatus: retainFrames ? value => { if (current()) setFrameStatus(value) } : undefined,
       } : undefined,
       canAcquire: () => current() && currentContext.current === startupContext.current,
       onStarted: meeting => {
@@ -2051,6 +2061,8 @@ export function MeetingPanel(props: {
         </select></label>}
         {desktopInput && <label><input type="checkbox" checked={includeMicrophone} disabled={capturing || busy}
           onChange={event => { setPendingTarget(null); setIncludeMicrophone(event.target.checked) }} /> 同时录制我的麦克风</label>}
+        {desktopInput && <label><input type="checkbox" checked={retainFrames} disabled={capturing || busy}
+          onChange={e => setRetainFrames(e.target.checked)} /> 保留画面要点（本机）</label>}
         <label>字幕语言 <select value={liveLang} disabled={capturing} onChange={event => setLiveLang(event.target.value)}>
           <option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option>
         </select></label>
@@ -2101,6 +2113,20 @@ export function MeetingPanel(props: {
 
       {desktopInput && <p>视频含所选声音，保存在工作台的「录屏」中。若窗口未提供声音，可选择整个屏幕并共享系统声音。系统声音也可能包含其他应用和通知。</p>}
       {desktopMessage && <p role="status">{desktopMessage}</p>}
+      {capturing && desktopInput && retainFrames && <>
+        {frameStatus && <p role="status">已保存 {frameStatus.saved} 张
+          {frameStatus.lastTimeMs != null && ` · 最后一张 ${formatElapsed(frameStatus.lastTimeMs)}`}
+          {frameStatus.state === "limit" ? " · 已达本场留存上限" : frameStatus.state === "unavailable" ? " · 画面采样不可用" : ""}
+          {frameStatus.skippedBusy > 0 && ` · 写入期间跳过 ${frameStatus.skippedBusy} 次`}
+          {(frameStatus.encodeErrors + frameStatus.writeErrors + frameStatus.oversized + frameStatus.notReady + frameStatus.empty) > 0 &&
+            ` · 未就绪 ${frameStatus.notReady}，空帧 ${frameStatus.empty}，编码失败 ${frameStatus.encodeErrors}，写入失败 ${frameStatus.writeErrors}，超限 ${frameStatus.oversized}`}</p>}
+        <button type="button" disabled={capturePhase !== "recording" || frameStatus?.state !== "sampling"}
+          onClick={() => continuousRef.current?.actor.markFrame()}>标记当前画面</button>
+      </>}
+      {meetingId && props.active !== false && !capturing && !closing && !loadingMeeting && <MeetingVisualReview
+        key={meetingId + ":" + state.codingHistoryConnectionRevision} meetingId={meetingId} connected={companionConnected}
+        focus={frameFocus} openSettings={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model-meeting-visual" })}
+        onChange={() => { if (minutesMd) setMinutesStale(true); if (minutesConfirmation) cancelMinutesConfirmation() }} />}
       {chooseDesktop && capturePhase === "starting" && <button type="button" style={btnStyle(true)} onClick={chooseDesktop}>选择窗口或整个屏幕</button>}
       {pendingTarget && externalLive && <section aria-label="确认实时会议转写">
         <p>将本次会议的{audioScope}按段发送到 {liveTarget?.normalizedUrl}，模型 {liveTarget?.model}。停止后处理已收音频，取消会停止后续发送。</p>
@@ -2409,6 +2435,7 @@ export function MeetingPanel(props: {
         <span style={{ overflowWrap: "anywhere" }}>{minutesConfirmation.prepared.target.profile_name || minutesConfirmation.prepared.target.model_name} · {minutesConfirmation.prepared.target.base_url}</span>
         {minutesConfirmation.prepared.target.profile_name && <span>模型 {minutesConfirmation.prepared.target.model_name}</span>}
         <span>会发送逐字稿 {minutesConfirmation.prepared.material.transcript_chars} 字、纪要模板{minutesConfirmation.prepared.material.template_chars ? `（自定义 ${minutesConfirmation.prepared.material.template_chars} 字）` : "（默认）"}{minutesConfirmation.prepared.material.reference_chars ? `、参考笔记 ${minutesConfirmation.prepared.material.reference_chars} 字` : ""}。</span>
+        {!!minutesConfirmation.prepared.material.visual_frames && <p>另发送 {minutesConfirmation.prepared.material.visual_frames} 条画面证据文字，共 {minutesConfirmation.prepared.material.visual_chars} 字。时间点 · {minutesConfirmation.prepared.material.visual_sources?.map(f => formatElapsed(f.timeMs)).join("、")}</p>}
         <details><summary>预览本次文字</summary>
           <div style={{ maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
             <strong>逐字稿</strong><div>{minutesConfirmation.text}</div>
@@ -2452,7 +2479,7 @@ export function MeetingPanel(props: {
               overflow: "auto",
             }}
           >
-            {minutesMd}
+            <MinutesWithFrameLinks text={minutesMd} sources={minutesDetails?.visual_sources} open={source => setFrameFocus(old => ({ source, serial: (old?.serial ?? 0) + 1 }))} />
           </pre>
           {typeof minutesDetails?.corrected_transcript === "string" && <details data-testid="meeting-corrected-transcript">
             <summary>校正稿（独立于原始转写）</summary><pre style={materialPre}>{minutesDetails.corrected_transcript}</pre>

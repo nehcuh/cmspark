@@ -1,5 +1,6 @@
 import { claimWorkbenchCapture } from "./workbench-capture-owner"
 import { recordingStore, type ScreenRecording } from "./workbench-recording-store"
+import { startMeetingFrameSampler, type RecordingFrameOptions } from "./meeting-frame-sampler"
 
 export type ScreenPhase = "choosing" | "recording" | "finishing"
 
@@ -47,12 +48,12 @@ export async function recordWorkbenchScreen(
 /** Capture already selected and owned tracks, flushing the last local write before resolving. */
 export async function recordScreenTracks(
   tracks: MediaStreamTrack[], signal: AbortSignal, report: (phase: ScreenPhase, message: string) => void,
-  label: string, meetingId?: string,
+  label: string, meetingId?: string, frames?: RecordingFrameOptions, captureId?: string,
 ): Promise<ScreenRecording> {
   checkPending(signal)
   const recorder = new MediaRecorder(new MediaStream(tracks), { mimeType: "video/webm" })
   let row: ScreenRecording = {
-    id: crypto.randomUUID(), ...(meetingId && { meetingId }), started: Date.now(), mime: recorder.mimeType, chunks: 0,
+    id: captureId ?? crypto.randomUUID(), ...(meetingId && { meetingId }), started: Date.now(), mime: recorder.mimeType, chunks: 0,
     bytes: 0, elapsedMs: 0, state: "open", detail: "",
   }
   try { await recordingStore.save(row) }
@@ -70,7 +71,10 @@ export async function recordScreenTracks(
   let discard = false
   let writeFailed = false
   const started = performance.now()
+  let sampler: ReturnType<typeof startMeetingFrameSampler> | undefined
+  let frameStatus: ScreenRecording["frameStatus"]
   const stop = (message: string, interrupted: boolean) => {
+    sampler?.stop()
     if (interrupted || !detail) detail = message
     partial ||= interrupted
     if (recorder.state !== "inactive") recorder.stop()
@@ -99,7 +103,7 @@ export async function recordScreenTracks(
     }
     writes = writes.then(async () => {
       try {
-        if (!writeFailed) row = await recordingStore.append(row, data, elapsed)
+        if (!writeFailed) row = await recordingStore.append(frameStatus ? { ...row, frameStatus } : row, data, elapsed)
       } catch (error) {
         discard = writeFailed = true
         stop(storageError(error), true)
@@ -114,9 +118,18 @@ export async function recordScreenTracks(
   try {
     try { recorder.start(1000) }
     catch (error) { await recordingStore.remove(row.id); throw error }
+    if (frames && meetingId) {
+      sampler = startMeetingFrameSampler(tracks[0], meetingId, row.id, started, status => {
+        frameStatus = status
+        frames.report(status)
+      })
+      frames.bindMark(sampler.mark)
+    }
     report("recording", label)
     await stopped
+    sampler?.stop()
     await writes
+    if (sampler) row = { ...row, frameStatus: await sampler.finish() }
     if (!row.bytes) {
       partial = true
       detail = detail ? `${detail}，没有写入视频分块` : "没有写入视频分块"
@@ -130,6 +143,7 @@ export async function recordScreenTracks(
     if (meetingId && typeof window !== "undefined") window.dispatchEvent(new Event("cmspark:screen-recording-saved"))
     return row
   } finally {
+    sampler?.stop()
     signal.removeEventListener("abort", abort)
     tracks.forEach(track => track.removeEventListener("ended", sourceEnded))
   }

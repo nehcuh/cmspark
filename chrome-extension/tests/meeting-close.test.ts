@@ -39,6 +39,17 @@ test("minutes preflight waits for the correlated destination and does not send g
   assert.equal(h.listeners.size, 0)
 })
 
+test("minutes consent rejects a visual material receipt whose source count cannot be confirmed", async () => {
+  const h = harness()
+  const preparing = h.persistence.prepareMinutes(owner, {})
+  h.emit({ id: h.sent[0].id, type: "meeting.minutes_prepared", consent_token: "token",
+    target: { model_name: "minutes", base_url: "https://model.invalid" },
+    material: { transcript_chars: 4, reference_chars: 0, reference_name: "", template_chars: 0,
+      visual_frames: 2, visual_chars: 80, visual_sources: [] } })
+  await rejects(preparing, /核对/)
+  assert.equal(h.sent.length, 1)
+})
+
 test("a rejected current transcript never advances to reference saving or generation", async () => {
   const h = harness()
   let generated = false

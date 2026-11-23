@@ -3795,6 +3795,12 @@ async function dispatchMessage(
     case "meeting.diarize.upload_end":
     case "meeting.auto_diarize":
     case "meeting.translation.list":
+    case "meeting.visual.list":
+    case "meeting.visual.prepare":
+    case "meeting.visual.execute":
+    case "meeting.visual.cancel":
+    case "meeting.visual.remove":
+    case "meeting.visual.recover":
     case "meeting.translation.prepare":
     case "meeting.translation.run":
     case "meeting.translation.cancel":
@@ -3807,6 +3813,7 @@ async function dispatchMessage(
           origin: session?.origin,
           peerId: session?.panelId,
           send: session?.sendToExtension,
+          isCurrentSession: session?.isCurrentSession,
           surface: session?.surface,
         },
         {

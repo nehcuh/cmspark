@@ -6,7 +6,7 @@ import { tokens } from "../ui/tokens"
 type ProfileForm = { name: string; base_url: string; model_name: string; api_key: string; protocol: "openai" | "anthropic" }
 const emptyForm: ProfileForm = { name: "", base_url: "", model_name: "", api_key: "", protocol: "openai" }
 
-export function ModelCenterControls({ active, mode = "profiles", onFooterSave }: { active: boolean; mode?: "profiles" | "meeting"; onFooterSave?: (control: { dirty: boolean; busy: boolean; save: (known?: ModelCenterState) => Promise<boolean | ModelCenterState>; error?: string } | null) => void }) {
+export function ModelCenterControls({ active, mode = "profiles", onFooterSave }: { active: boolean; mode?: "profiles" | "meeting" | "visual"; onFooterSave?: (control: { dirty: boolean; busy: boolean; save: (known?: ModelCenterState) => Promise<boolean | ModelCenterState>; error?: string } | null) => void }) {
   const { state } = useAgentStore()
   const connected = state.connectionState === "connected"
   const [snapshot, setSnapshot] = useState<ModelCenterState | null>(null)
@@ -43,7 +43,7 @@ export function ModelCenterControls({ active, mode = "profiles", onFooterSave }:
       if (controller.signal.aborted) return
       snapshotRef.current = next
       setSnapshot(next)
-      if (save || !pendingRef.current) setSelected((mode === "meeting" ? next.model_center.meeting_minutes_profile_id : next.model_center.chat_profile_id) ?? "")
+      if (save || !pendingRef.current) setSelected((mode === "meeting" ? next.model_center.meeting_minutes_profile_id : mode === "visual" ? next.model_center.meeting_visual_profile_id : next.model_center.chat_profile_id) ?? "")
       if (save) {
         setPending(previous => previous === save.action ? null : previous)
         if (save.action.kind === "create") setForm(emptyForm)
@@ -64,11 +64,12 @@ export function ModelCenterControls({ active, mode = "profiles", onFooterSave }:
   useEffect(() => () => { request.current?.abort(); request.current = null }, [])
 
   const view = snapshot?.model_center
-  const boundId = mode === "meeting" ? view?.meeting_minutes_profile_id : view?.chat_profile_id
-  const bound = view?.profiles.find(p => p.id === boundId)
-  const target = view?.profiles.find(p => p.id === selected)
+  const boundId = mode === "meeting" ? view?.meeting_minutes_profile_id : mode === "visual" ? view?.meeting_visual_profile_id : view?.chat_profile_id
+  const legacy = view?.configured_vision && { ...view.configured_vision, name: "已配置的视觉服务" }
+  const bound = boundId === "configured_vision" ? legacy : view?.profiles.find(p => p.id === boundId)
+  const target = selected === "configured_vision" ? legacy : view?.profiles.find(p => p.id === selected)
   const customCurrent = state.companionConfig?.model_name || "未配置"
-  const selectedScope = mode === "meeting" ? "meeting_minutes" : "chat"
+  const selectedScope = mode === "meeting" ? "meeting_minutes" : mode === "visual" ? "meeting_visual" : "chat"
   const submit = (action: ModelCenterAction, known?: ModelCenterState): Promise<ModelCenterState | false> => {
     if (!connected || busy || !snapshotRef.current) return Promise.resolve(false)
     return run({ action, config_revision: snapshotRef.current.config_revision }, known).then(next => next || false)
@@ -111,7 +112,7 @@ export function ModelCenterControls({ active, mode = "profiles", onFooterSave }:
   }, [active, mode, form, formDirty, pending, pendingSave, busy, connected, snapshot, error, onFooterSave])
 
   return <div style={styles.root} data-model-center={mode}>
-    <p style={styles.note}>{mode === "meeting" ? "纪要模型接收你确认的逐字稿、模板和参考笔记。更换模型只影响之后生成的纪要。" : "连接模型服务后，可在不同场景复用。一项配置包含服务地址、协议和模型名称。"}</p>
+    <p style={styles.note}>{mode === "visual" ? "选择支持图片输入的模型。每次识别前可预览所选画面、相邻转写和接收地址。" : mode === "meeting" ? "纪要模型接收你确认的逐字稿、模板和参考笔记。更换模型只影响之后生成的纪要。" : "连接模型服务后，可在不同场景复用。一项配置包含服务地址、协议和模型名称。"}</p>
     {!connected && <p role="status">连接 Companion 后可查看和管理模型。</p>}
     {connected && <>
       <button type="button" onClick={() => void run()} disabled={busy}>刷新配置</button>
@@ -120,8 +121,8 @@ export function ModelCenterControls({ active, mode = "profiles", onFooterSave }:
     {error && <p role="alert">{error}</p>}
     {status && <p role="status">{status}</p>}
     {view && <fieldset style={styles.group} disabled={busy || !connected}>
-      <legend>{mode === "meeting" ? "会议纪要用什么模型" : "默认对话模型"}</legend>
-      <p style={styles.note}>当前 {bound ? bound.name + " · " + bound.model_name : (mode === "meeting" ? "继承默认对话 · " : "当前配置 · ") + customCurrent}</p>
+      <legend>{mode === "meeting" ? "会议纪要用什么模型" : mode === "visual" ? "会议画面理解" : "默认对话模型"}</legend>
+      <p style={styles.note}>当前 {bound ? bound.name + " · " + bound.model_name : mode === "visual" ? boundId ? "所选服务未就绪" : "关闭" : (mode === "meeting" ? "继承默认对话 · " : "当前配置 · ") + customCurrent}</p>
       {bound && <p style={styles.note}>{bound.base_url}</p>}
       <label style={styles.field}>选择模型
         <select value={selected} onChange={event => {
@@ -129,14 +130,15 @@ export function ModelCenterControls({ active, mode = "profiles", onFooterSave }:
           setSelected(next)
           setPending(next === (boundId ?? "") ? null : { kind: "bind", scope: selectedScope, profile_id: next || null })
         }} style={styles.input}>
-          <option value="">{mode === "meeting" ? "继承默认对话模型" : "保留当前配置（取消关联）"}</option>
+          <option value="">{mode === "visual" ? "关闭画面理解" : mode === "meeting" ? "继承默认对话模型" : "保留当前配置（取消关联）"}</option>
+          {mode === "visual" && legacy && <option value="configured_vision">{legacy.name} · {legacy.model_name}</option>}
           {view.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model_name}</option>)}
         </select>
       </label>
       <button type="button" disabled={selected === (boundId ?? "")} onClick={() => setPending({ kind: "bind", scope: selectedScope, profile_id: selected || null })}>预览切换</button>
       {pending?.kind === "bind" && <div style={styles.preview}>
-        <p style={styles.note}>{target ? target.name + " · " + target.model_name + " · " + target.base_url : mode === "meeting" ? "继承默认对话模型" : "取消关联，保留当前对话模型"}</p>
-        <p style={styles.note}>{mode === "meeting" ? "用于这之后的纪要生成。" : "用于默认对话，以及复用默认模型的看图、听写纠错、活动提取、后台摘要和设置助手。"}{mode === "profiles" && !view.meeting_minutes_profile_id ? "会议纪要也会继承此项。" : ""}</p>
+        <p style={styles.note}>{target ? target.name + " · " + target.model_name + " · " + target.base_url : mode === "visual" ? "关闭画面理解" : mode === "meeting" ? "继承默认对话模型" : "取消关联，保留当前对话模型"}</p>
+        <p style={styles.note}>{mode === "visual" ? "图片输入能力将在实际处理所选画面时验证。" : mode === "meeting" ? "用于这之后的纪要生成。" : "用于默认对话，以及复用默认模型的看图、听写纠错、活动提取、后台摘要和设置助手。"}{mode === "profiles" && !view.meeting_minutes_profile_id ? "会议纪要也会继承此项。" : ""}</p>
         <button type="button" onClick={() => submit(pending)}>确认切换</button>{" "}
         <button type="button" onClick={() => { setPending(null); setSelected(boundId ?? "") }}>取消</button>
       </div>}
@@ -166,9 +168,9 @@ export function ModelCenterControls({ active, mode = "profiles", onFooterSave }:
       <ul style={styles.list}>{view.profiles.map(profile => <li key={profile.id} style={styles.group}>
         <strong>{profile.name}</strong>
         <p style={styles.note}>{profile.model_name} · {profile.base_url}</p>
-        <p style={styles.note}>{profile.has_key ? "已配置密钥" : "未配置密钥"}{view.chat_profile_id === profile.id ? " · 当前用于对话" : ""}{view.meeting_minutes_profile_id === profile.id ? " · 当前用于会议纪要" : ""}</p>
+        <p style={styles.note}>{profile.has_key ? "已配置密钥" : "未配置密钥"}{view.chat_profile_id === profile.id ? " · 当前用于对话" : ""}{view.meeting_minutes_profile_id === profile.id ? " · 当前用于会议纪要" : ""}{view.meeting_visual_profile_id === profile.id ? " · 当前用于会议画面" : ""}</p>
         <button type="button" disabled={busy || !connected} onClick={() => setPending({ kind: "rename", profile_id: profile.id, name: profile.name })}>重命名</button>{" "}
-        <button type="button" disabled={busy || !connected || view.chat_profile_id === profile.id || view.meeting_minutes_profile_id === profile.id} onClick={() => setPending({ kind: "remove", profile_id: profile.id })}>移除</button>
+        <button type="button" disabled={busy || !connected || view.chat_profile_id === profile.id || view.meeting_minutes_profile_id === profile.id || view.meeting_visual_profile_id === profile.id} onClick={() => setPending({ kind: "remove", profile_id: profile.id })}>移除</button>
         {pending?.kind === "rename" && pending.profile_id === profile.id && <label style={styles.field}>新名称
           <input style={styles.input} maxLength={80} value={pending.name} onChange={e => setPending({ ...pending, name: e.target.value })} />
           <button type="button" disabled={busy || !pending.name.trim()} onClick={() => submit(pending)}>确认重命名</button>

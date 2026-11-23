@@ -10,6 +10,7 @@ import { startSummonerWebServer, stopSummonerWebServer, SUMMONER_WEB_DISPATCH_AL
 import { assertSummonerAllowed } from "../src/ws/summoner-acl"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
 import { deleteMeeting, loadMeeting } from "../src/meeting/meeting-store"
+import { writeMeetingVisualEvidence } from "../src/meeting/meeting-visual-store"
 import { SUMMONER_MEETING_WORKFLOW_JS } from "../src/summoner/meeting-workflow"
 
 function workflowContext(api: (path: string, options?: any) => Promise<any>, fastTimers = false) {
@@ -132,6 +133,23 @@ test("#492 native reference HTTP uses actual handlers, bounded files and exact A
     const generated = await post("/api/meeting/minutes", { id, privacy_ack_v1: true, consent_token: prepared.data.consent_token })
     assert.equal(generated.data.type, "meeting.minutes_result")
     assert.match(generated.data.minutes.raw_md, /原生末段/)
+    writeMeetingVisualEvidence(id, { meetingId: id, recordingId: "native-recording", frameId: "native-frame",
+      timeMs: 4500, sha256: "b".repeat(64), mime: "image/png", width: 800, height: 600, status: "completed",
+      model: "image-fixture", profileId: "fixture", endpoint: "http://127.0.0.1", analyzedAt: "2026-11-24T00:00:00.000Z",
+      recognizedText: "2.35", description: "表中数值", uncertainties: [] })
+    const enhanced = await post("/api/meeting/minutes/prepare", { id, privacy_ack_v1: true })
+    const ui = workflowContext(async () => { throw new Error("confirmation must not generate") })
+    ui.prepared = enhanced.data
+    vm.runInContext('$("meetingMinutesCancel").focus = function(){}', ui)
+    const confirmed = vm.runInContext("confirmMeetingMinutes(prepared)", ui)
+    assert.match(ui.$("meetingMinutesMaterial").textContent, /1 张画面/)
+    assert.match(ui.$("meetingMinutesDestination").textContent, /minutes-fixture/)
+    ui.$("meetingMinutesSend").onclick()
+    assert.equal(await confirmed, true)
+    const withVisual = await post("/api/meeting/minutes", { id, privacy_ack_v1: true, consent_token: enhanced.data.consent_token,
+      visual_frames_confirmed: enhanced.data.material.visual_frames })
+    assert.equal(withVisual.data.type, "meeting.minutes_result")
+    assert.equal(dispatched.at(-1)?.visual_frames_confirmed, 1)
     const saved = await post("/api/meeting/reference", { id, reference_notes: imported.data.reference.text, reference_name: "notes.md", tool: "not-allowed" })
     assert.equal(saved.data.type, "meeting.updated")
     assert.equal(loadMeeting(id)?.reference_notes, "Python 用于本项目")

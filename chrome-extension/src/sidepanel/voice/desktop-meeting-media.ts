@@ -1,13 +1,14 @@
 import { claimWorkbenchCapture } from "./workbench-capture-owner"
 import type { ScreenRecording } from "./workbench-recording-store"
 import { recordScreenTracks } from "./workbench-screen-capture"
+import type { RecordingFrameOptions } from "./meeting-frame-sampler"
 
 export interface DesktopMeetingMedia {
   /** Same mixed signal as the recorder, with an independently stoppable track for ASR. */
   audio: MediaStream
   /** Ends immediately on source loss or cancellation, before final IndexedDB writes. */
   signal: AbortSignal
-  startRecording(meetingId: string, onStarted: () => void): Promise<ScreenRecording>
+  startRecording(meetingId: string, onStarted: () => void, frames?: RecordingFrameOptions, captureId?: string): Promise<ScreenRecording>
   close(reason?: "stop" | "interrupted"): void
 }
 
@@ -121,14 +122,14 @@ export async function openDesktopMeetingMedia(owner: AbortSignal, includeMicroph
     return {
       audio, signal,
       close(reason = "stop") { end(reason === "stop" ? "stop" : "桌面会议采集已中断") },
-      async startRecording(meetingId, onStarted) {
+      async startRecording(meetingId, onStarted, frames, captureId) {
         if (writing || signal.aborted) throw new Error("本次桌面录屏无法再次开始")
         writing = true
         try {
           return await recordScreenTracks([video, movieAudio], signal, (phase, message) => {
             if (phase === "recording") onStarted()
             if (phase === "finishing" && !signal.aborted) end(message)
-          }, "正在录制桌面会议", meetingId)
+          }, "正在录制桌面会议", meetingId, frames, captureId)
         } finally {
           end("桌面录屏已结束")
           writing = false

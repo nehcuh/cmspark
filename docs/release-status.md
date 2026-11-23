@@ -1,6 +1,10 @@
 # 版本与交付状态
 
-源码版本 **1.7.2（已于 2026-11-23 正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码开发版本 **1.8.0（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+
+## 1.8.0
+
+会议画面证据进入发布准备。设计、覆盖范围和数据流见[会议画面证据](superpowers/specs/meeting-visual-evidence.md)。
 
 ## 1.7.2
 

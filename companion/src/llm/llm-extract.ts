@@ -58,6 +58,8 @@ export async function llmExtract(params: {
   temperatureCap?: number
   /** Request timeout ms (default 60s). */
   timeout?: number
+  /** Explicit opt-out for a compatible local provider when the caller has selected no reasoning. */
+  reasoningEffort?: "none"
   /** Optional parent abort (chat.stop) — combined with timeout when available. */
   signal?: AbortSignal
 }): Promise<string> {
@@ -78,6 +80,7 @@ export async function llmExtract(params: {
         ? parentSignal
         : timeoutSignal
   const result = await provider.complete({
+    ...(params.reasoningEffort ? { reasoning_effort: params.reasoningEffort } : {}),
     temperature: Math.min(config.temperature, temperatureCap),
     model: config.model_name,
     signal,

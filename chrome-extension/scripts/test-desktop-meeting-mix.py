@@ -11,6 +11,17 @@ from playwright.sync_api import sync_playwright
 
 
 def verify(result, both):
+    assert result["remainingFrames"] == 0, result
+    assert len(result["evidence"]) == int(both), result
+    if both:
+        image = result["evidence"][0]
+        assert image["recordingId"] == "fixture-both-capture" and image["validHash"], result
+        assert image["mime"] == "image/jpeg" and image["timeMs"] >= 1000, result
+        assert image["red"] > 210 and image["blue"] > 210, image
+        assert (image["width"], image["height"]) == (160, 90), image
+        assert result["coverage"]["lastTimeMs"] == image["timeMs"] and result["coverage"]["saved"] == 1, result
+    else:
+        assert result.get("coverage") is None, result
     assert result["micOpens"] == int(both), result
     assert result["samples"] >= 32000 and result["bytes"] > 0 and result["chunks"] >= 1, result
     for name in ("pcm", "webm"):
@@ -46,6 +57,12 @@ def main():
                     content_type="text/html", body='<button>Start synthetic fixture</button><script src="mix.js"></script>'
                 ))
                 results = {}
+                page.goto("http://127.0.0.1/fixture#store")
+                page.get_by_role("button").click()
+                page.wait_for_function("window.result")
+                results["store"] = page.evaluate("window.result")
+                assert results["store"] == dict(recovered="legacy", afterDelete=1, foreign="closed", stale="closed",
+                                                first="saved", duplicate="duplicate", complete=True), results
                 for mode in ("both", "shared-only"):
                     page.goto("http://127.0.0.1/fixture?mode=" + mode + "#" + mode)
                     page.get_by_role("button").click()
@@ -53,6 +70,13 @@ def main():
                     result = page.evaluate("window.result")
                     verify(result, mode == "both")
                     results[mode] = result
+                page.goto("http://127.0.0.1/fixture#heartbeat")
+                page.get_by_role("button").click()
+                page.wait_for_function("window.result", timeout=75000)
+                heartbeat = page.evaluate("window.result")
+                assert heartbeat["count"] == 2 and heartbeat["duplicates"] == 1 and len(set(heartbeat["digests"])) == 2, heartbeat
+                assert heartbeat["times"][1] - heartbeat["times"][0] >= 60000, heartbeat
+                results["heartbeat"] = heartbeat
                 print(json.dumps({"chrome": browser.version, "fixture": "synthetic", "modes": results}))
             finally:
                 browser.close()

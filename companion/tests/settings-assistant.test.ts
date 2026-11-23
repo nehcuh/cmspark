@@ -76,7 +76,7 @@ test("a combined budget and effort proposal saves both nested fields in one writ
 test("explicit named meeting model switches with revision checks and a real receipt", async () => {
   const profile = { id: "7d2ea1a5-a560-4877-bc06-fb2bbfc67494", name: "会议 A", model_name: "minutes-model", base_url: "https://provider.test/v1", has_key: true }
   let revision = "epoch:1", bound: string | null = null, modelCalls = 0, writes = 0
-  const models = () => ({ config_revision: revision, model_center: { chat_profile_id: null, meeting_minutes_profile_id: bound, profiles: [profile] } })
+  const models = () => ({ config_revision: revision, model_center: { configured_vision: null, meeting_visual_profile_id: null, chat_profile_id: null, meeting_minutes_profile_id: bound, profiles: [profile] } })
   const service = new SettingsAssistant({
     read: () => ({ voice: { meetingAsr: { mode: "local" } } }),
     save: async () => assert.fail("profile binding must use the model-center writer"),
@@ -109,7 +109,7 @@ test("default model switch preview shows dependent uses and the meeting inherita
     const service = new SettingsAssistant({
       read: () => ({}), save: async () => assert.fail("proposal never saves"), extract: async () => assert.fail("explicit model name is resolved locally"),
       models: () => ({ config_revision: "epoch:1", model_center: {
-        chat_profile_id: null, meeting_minutes_profile_id: independent ? profile.id : null, profiles: [profile],
+        configured_vision: null, meeting_visual_profile_id: null, chat_profile_id: null, meeting_minutes_profile_id: independent ? profile.id : null, profiles: [profile],
       } }),
     })
     const { proposal } = await service.handle({ type: "settings.assistant.propose", id: "default", text: "默认对话改用快速" }, "panel")

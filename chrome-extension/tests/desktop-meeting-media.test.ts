@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { openDesktopMeetingMedia } from "../src/sidepanel/voice/desktop-meeting-media"
 import { recordingStore, type ScreenRecording } from "../src/sidepanel/voice/workbench-recording-store"
+import type { FrameCaptureStatus } from "../src/sidepanel/voice/meeting-frame-sampler"
 
 class Track extends EventTarget {
   readyState = "live"
@@ -130,6 +131,28 @@ mediaTest("listen-only records actual shared sound at unity gain and never reque
   assert.match(row.detail, /断开/)
   assert.equal(row.bytes, 4)
   assert.equal(h.mic.readyState, "live")
+})
+
+mediaTest("an unavailable image sampler allows recording; revocation still flushes the final audio/video block", async t => {
+  const h = fixture(t)
+  const media = await openDesktopMeetingMedia(new AbortController().signal, false)
+  let coverage: FrameCaptureStatus | undefined
+  let mark: (() => void) | undefined
+  // This environment has a recorder and the selected streams but no DOM canvas.
+  const row = await media.startRecording("fixture-meeting", () => {
+    assert.equal(coverage?.state, "unavailable")
+    assert.equal(h.video.readyState, "live")
+    mark?.()
+    h.video.dispatchEvent(new Event("ended"))
+  }, { report(value) { coverage = value }, bindMark(fn) { mark = fn } }, "fixture-capture")
+  assert.equal(h.pickerOpens(), 1)
+  assert.equal(h.micOpens(), 0)
+  assert.equal(row.id, "fixture-capture")
+  assert.equal(row.frameStatus?.state, "unavailable")
+  assert.equal(row.frameStatus?.saved, 0)
+  assert.equal(row.bytes, 4)
+  assert.equal(row.state, "partial")
+  assert.equal(h.video.readyState, "ended")
 })
 
 mediaTest("desktop without shared sound rejects before mic, recordings or ASR", async t => {

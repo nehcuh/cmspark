@@ -252,7 +252,13 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     var target=prepared.target,material=prepared.material;
     var sheet=$("meetingMinutesConfirm"),cancel=$("meetingMinutesCancel"),send=$("meetingMinutesSend");
     $("meetingMinutesDestination").textContent=(target.profile_name?target.profile_name+" · ":"")+target.model_name+" · "+target.base_url;
-    $("meetingMinutesMaterial").textContent="将发送转写 "+material.transcript_chars+" 字"+(material.reference_chars?"、参考笔记 "+material.reference_chars+" 字"+(material.reference_name?"（"+material.reference_name+"）":""):"");
+    var visual="";
+    if(material.visual_frames!==undefined || material.visual_chars!==undefined || material.visual_sources!==undefined){
+      if(!Number.isSafeInteger(material.visual_frames) || material.visual_frames<1 || !Number.isSafeInteger(material.visual_chars) || material.visual_chars<1 ||
+          !Array.isArray(material.visual_sources) || material.visual_sources.length!==material.visual_frames)throw new Error("无法核对纪要画面材料");
+      visual="、"+material.visual_frames+" 张画面的识别文字、说明及不确定项（含来源共 "+material.visual_chars+" 字）";
+    }
+    $("meetingMinutesMaterial").textContent="将发送转写 "+material.transcript_chars+" 字"+(material.reference_chars?"、参考笔记 "+material.reference_chars+" 字"+(material.reference_name?"（"+material.reference_name+"）":""):"")+visual;
     sheet.hidden=false;
     return new Promise(function(resolve){
       function finish(confirmed){
@@ -275,7 +281,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
       if(!await confirmMeetingMinutes(prepared)){meetingSay("已取消发送会议材料");$("meetingHint").textContent="会议材料已保存";return}
       if($("meetingReferenceNotes").value!==saved.reference_notes || meetingReferenceName!==saved.reference_name)throw new Error("参考笔记已修改，请重新核对并确认");
       meetingSay("正在生成纪要…");$("meetingHint").textContent="正在生成纪要…";
-      var d=await meetingPost("/api/meeting/minutes",{id:id,privacy_ack_v1:true,consent_token:prepared.consent_token});
+      var d=await meetingPost("/api/meeting/minutes",{id:id,privacy_ack_v1:true,consent_token:prepared.consent_token,visual_frames_confirmed:prepared.material.visual_frames});
       var md=d.minutes&&(d.minutes.raw_md||d.minutes.md);
       if(!md)throw new Error("纪要生成失败：未返回正文");
       $("meetingMinutes").hidden=false;$("meetingMinutes").innerHTML="<p>会议纪要 · AI 草稿，请核对</p>"+renderMd(md);renderMeetingEvidence(d.minutes);

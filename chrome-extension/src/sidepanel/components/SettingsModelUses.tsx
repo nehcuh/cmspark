@@ -59,6 +59,8 @@ export function SettingsModelUses({ active, onOpen }: { active: boolean; onOpen:
   const minutes = !currentBindings ? "等待配置状态" : !minutesId ? `继承对话模型 · ${main}`
     : minutesProfile?.has_key ? [minutesProfile.name, minutesProfile.model_name, modelEndpointLabel(minutesProfile.base_url)].filter(Boolean).join(" · ")
     : "独立纪要模型未就绪"
+  const visualId = currentBindings?.meeting_visual_profile_id
+  const visual = visualId === "configured_vision" ? currentBindings?.configured_vision : currentBindings?.profiles.find(profile => profile.id === visualId)
   const meetingEngine = connected && meetingAsr?.mode === "external"
     ? [meetingAsr.ready ? "导入用外部转写" : "外部转写未就绪", meetingAsr.model, modelEndpointLabel(meetingAsr.normalizedUrl)].filter(Boolean).join(" · ")
     : connected && meetingAsr ? "本机转写" : "录制音频在本机转写"
@@ -69,6 +71,7 @@ export function SettingsModelUses({ active, onOpen }: { active: boolean; onOpen:
     { id: "input-asr-refiner", title: "听写纠错", current: state.asrRefinerEnabled ? `继承对话模型 · ${main}` : "已关闭", description: "启用后，按听写的确认流程发送转写文本。" },
     { id: "input-dictation-engine", title: "聊天听写", current: engine, description: voiceData },
     { id: "model-meeting-transcribe", title: "会议转写", current: meetingEngine, description: "导入音频可选择外部转写，提交前核对本次音频和目标。" },
+    { id: "model-meeting-visual", title: "会议画面理解", current: !currentBindings ? "等待配置状态" : visual?.model_name ?? (visualId ? "所选服务未就绪" : "已关闭"), description: "确认后，向所选模型发送截图和相邻转写。" },
     { id: "model-meeting-minutes", title: "会议纪要", current: minutes, description: "长会议适合能稳定处理长文本并按模板输出的模型。确认后发送逐字稿、模板和所选参考笔记。" },
     { id: "model-activity", title: "活动提取", current: activityTarget ?? "打开活动记录核对目标", description: "取决于活动设置，可使用本机 OCR、文本模型或视觉模型。" },
     { id: "model-local", title: "本机模型", current: local ? `Qwen3-VL ${local.variant} · ${local.modelEnabled ? "已启用" : "未启用"}` : "等待本机状态", description: "本机处理视觉定位。下载、许可和启用分别操作。" },

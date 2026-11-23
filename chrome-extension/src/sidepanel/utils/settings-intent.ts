@@ -28,6 +28,7 @@ const LOCAL_SETTINGS_SEARCH = [
   { destination: "model-chat", label: "默认对话模型、输出上限与思考强度", aliases: ["思考强度", "默认模型", "对话模型", "单次输出上限", "输出上限", "输出预算", "上下文"] },
   { destination: "model-vision", label: "看图模型", aliases: ["看图", "看图模型", "视觉模型"] },
   { destination: "model-meeting-transcribe", label: "会议转写", aliases: ["会议转写", "会议外部转写", "会议录音识别"] },
+  { destination: "model-meeting-visual", label: "会议画面理解", aliases: ["会议画面", "会议截图模型"] },
   { destination: "model-meeting-minutes", label: "会议纪要模型", aliases: ["纪要模型", "会议纪要模型", "摘要模型"] },
   { destination: "model-local", label: "本机模型", aliases: ["本机模型", "下载模型", "whisper", "本机视觉"] },
   { destination: "input-dictation-engine", label: "聊天听写引擎", aliases: ["听写引擎", "外部转写", "语音识别"] },

@@ -355,6 +355,8 @@ uv run --no-project --with playwright python companion/scripts/test-web-surfaces
 
 ## #471 设置与召唤器交互
 
+会议画面留存的 Chrome 回归入口是 `uv run --no-project --with playwright python chrome-extension/scripts/test-desktop-meeting-mix.py`。该用例核对录屏与 PCM 音轨、JPEG 哈希、旧库迁移、数字变化兜底与删除。图表、滚动代码、表格识别和纪要回查的模型实测见[会议画面证据验收](audit/meeting-visual-evidence-20261124.md)。
+
 在 `nvm use 22` 后，从仓库根运行 `uv run --no-project --with playwright python chrome-extension/scripts/test-settings-pages-ui.py` 与 `uv run --no-project --with playwright python companion/scripts/test-summoner-workspace-ui.py`。使用本机 Chrome headless、真实 React/HTML 和隔离传输，覆盖四档宽度、分类草稿与深链、语音迟到回调取消、隐藏快捷键录制、许可焦点隔离及召唤器输入操作顺序；不会改写已安装程序或真实配置。
 
 模型中心回归覆盖命名连接、不同用途选择、旧模型继承、配置版本冲突和密钥脱敏。会议用例覆盖准备接收方、取消、显式确认和权限失效。先编译 Companion 测试产物，再运行 `uv run --no-project --with playwright python chrome-extension/scripts/test-meeting-workflow-ui.py --external-asr --artifacts <目录>`，可核对实际浏览器的导入、分段、取消、HTTP 429 与已完成段保留。转写服务是受控夹具。真实服务的识别准确率需要单独验收。

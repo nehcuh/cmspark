@@ -14,6 +14,7 @@ import { validateProjectRequest } from "../threads/project-store"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import { validMeetingAsrMessage } from "../voice/external-asr-meeting"
 import { validTranslationRequest } from "../meeting/meeting-translation"
+import { validVisualMessage } from "../meeting/meeting-visual-schema"
 import { validBinaryDriftMessage } from "../apps/binary-drift-state"
 import { validateActivityMessage } from "../activity"
 import { validateSettingsAssistantMessage } from "../settings-assistant"
@@ -76,10 +77,14 @@ function meetingMinutesSchema(m: any): WsValidationResult {
   if (m.consent_token !== undefined && (m.type !== "meeting.generate_minutes" || typeof m.consent_token !== "string" || m.consent_token.length !== 36)) {
     return { valid: false, error: "Invalid minutes consent token" }
   }
+  if (m.visual_frames_confirmed !== undefined && (m.type !== "meeting.generate_minutes" ||
+      !Number.isSafeInteger(m.visual_frames_confirmed) || m.visual_frames_confirmed < 1 || m.visual_frames_confirmed > 240)) {
+    return { valid: false, error: "Invalid confirmed visual frame count" }
+  }
   return { valid: true }
 }
 
-export function validateWsMessage(msg: any): WsValidationResult {
+export function validateWsMessage(msg: any, rawBytes?: number): WsValidationResult {
   if (!msg || typeof msg !== "object" || Array.isArray(msg)) {
     return { valid: false, error: "Message must be an object" }
   }
@@ -103,7 +108,15 @@ export function validateWsMessage(msg: any): WsValidationResult {
   }
 
   // Known message types with required field validation
+  const visualSchema = (m: any): WsValidationResult => validVisualMessage(m, rawBytes)
+    ? { valid: true } : { valid: false, error: "Invalid meeting visual request" }
   const validators: Record<string, (m: any) => WsValidationResult> = {
+    "meeting.visual.prepare": (m) => visualSchema(m),
+    "meeting.visual.execute": (m) => visualSchema(m),
+    "meeting.visual.cancel": (m) => visualSchema(m),
+    "meeting.visual.list": (m) => visualSchema(m),
+    "meeting.visual.remove": (m) => visualSchema(m),
+    "meeting.visual.recover": (m) => visualSchema(m),
     "activity.state": (m) => personalWorkspaceSchema(m),
     "activity.apps": (m) => personalWorkspaceSchema(m),
     "activity.preview": (m) => personalWorkspaceSchema(m),
