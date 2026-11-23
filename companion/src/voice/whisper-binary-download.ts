@@ -346,8 +346,17 @@ async function extractZipWithTar(zipPath: string, outDir: string, signal?: Abort
   await mkdir(outDir, { recursive: true })
   try {
     await new Promise<void>((resolve, reject) => {
-      execFile("tar", ["-xf", zipPath, "-C", outDir], { signal, windowsHide: true, shell: false },
-        (error) => error ? reject(error) : resolve())
+      let resultError: Error | null = null
+      const child = execFile("tar", ["-xf", zipPath, "-C", outDir], { signal, windowsHide: true, shell: false },
+        (error) => { resultError = error })
+      // AbortSignal invokes execFile's callback before Windows releases all
+      // native file handles. Cleanup must wait for the actual close event.
+      child.once("error", (error) => { resultError = error })
+      child.once("close", (code, killedBy) => {
+        if (resultError) reject(resultError)
+        else if (code === 0) resolve()
+        else reject(new Error(`tar exited ${code ?? killedBy ?? "unknown"}`))
+      })
     })
   } catch (err) {
     checkInstallationAbort(signal)

@@ -1,4 +1,6 @@
-import test from "node:test"
+import test, { mock } from "node:test"
+import childProcess from "node:child_process"
+import { EventEmitter } from "node:events"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs"
@@ -131,4 +133,26 @@ test("cancelling a partially staged GPU install removes its owned staging files"
     assert.equal(existsSync(path.join(destDir, ".install-staging")), false)
     assert.equal(existsSync(path.join(destDir, "cmspark-whisper-win-x64.exe")), false)
   } finally { rmSync(f.root, { recursive: true, force: true }) }
+})
+
+test("archive cancellation waits for native close before returning to cleanup", async () => {
+  const f = fixture()
+  const controller = new AbortController()
+  let closed = false
+  let closeTimer: ReturnType<typeof setTimeout> | undefined
+  // Windows Node emits the abort callback before child close; a live tar can
+  // still hold files that the install cleanup must not attempt to remove yet.
+  const stub = mock.method(childProcess, "execFile", ((_file: unknown, _argv: unknown, _options: unknown, callback: (e: Error) => void) => {
+    const child = new EventEmitter()
+    queueMicrotask(() => { controller.abort(); callback(new Error("aborted before close")) })
+    closeTimer = setTimeout(() => { closed = true; child.emit("close", null, "SIGTERM") }, 75)
+    return child
+  }) as typeof childProcess.execFile)
+  try {
+    await assert.rejects(downloadWhisperBinary({
+      arch: "win-x64-vulkan", destDir: path.join(f.root, "installed"), manifest: f.manifest,
+      bundledArchivePath: f.archivePath, signal: controller.signal,
+    }), (e: unknown) => e instanceof WhisperBinaryDownloadError && e.reason === "aborted")
+    assert.equal(closed, true, "native file handles must be released before temporary cleanup")
+  } finally { stub.mock.restore(); clearTimeout(closeTimer); rmSync(f.root, { recursive: true, force: true }) }
 })
