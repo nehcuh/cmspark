@@ -4,7 +4,7 @@ import { registrySummaryFromMessage, type RegistryDiscoverySummary } from "../ut
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, VoiceSystemState, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
+import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceBinaryError, VoiceBinaryProgress, VoiceModelState, VoiceModelProgress, VoiceSystemState, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
@@ -408,12 +408,8 @@ export interface AgentState {
   /** 最后一条 voice.model.progress(无 model 仍 downloading 时由 reducer 清除)。 */
   voiceModelProgress: VoiceModelProgress | null
   /** voice.binary.progress — cmspark-whisper runtime download. */
-  voiceBinaryProgress: {
-    phase?: string
-    receivedBytes?: number
-    totalBytes?: number
-    file?: string
-  } | null
+  voiceBinaryProgress: VoiceBinaryProgress | null
+  voiceBinaryError: VoiceBinaryError | null
   /** 最后一条 voice.model.* 错误(family:"voice.model" 路由)。 */
   voiceModelError: string | null
   /** UI Mode P0: last browser CDP tool activity timestamp (ms) for L1 quiescence. */
@@ -695,15 +691,8 @@ export type AgentAction =
   | { type: "SET_VOICE_MODEL_STATE"; modelState: VoiceModelState }
   | { type: "SET_VOICE_SYSTEM_STATE"; systemState: VoiceSystemState | null }
   | { type: "SET_VOICE_MODEL_PROGRESS"; progress: VoiceModelProgress | null }
-  | {
-      type: "SET_VOICE_BINARY_PROGRESS"
-      progress: {
-        phase?: string
-        receivedBytes?: number
-        totalBytes?: number
-        file?: string
-      } | null
-    }
+  | { type: "SET_VOICE_BINARY_PROGRESS"; progress: VoiceBinaryProgress | null }
+  | { type: "SET_VOICE_BINARY_ERROR"; error: VoiceBinaryError | null }
   | { type: "SET_VOICE_MODEL_ERROR"; error: string | null }
   | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
@@ -898,6 +887,7 @@ export const initialState: AgentState = {
   voiceSystemState: null,
   voiceModelProgress: null,
   voiceBinaryProgress: null,
+  voiceBinaryError: null,
   voiceModelError: null,
   lastBrowserToolAt: null,
   modePin: null,
@@ -2428,6 +2418,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         Object.values(action.modelState.models).some((m) => m.status === "downloading") ||
         action.modelState.diarizeModel?.status === "downloading"
       const binaryReady = action.modelState.binary?.status === "ready"
+      const binaryProgress = state.voiceBinaryProgress
+      const acceleration = action.modelState.acceleration
+      const keepBinaryProgress = binaryProgress && (acceleration
+        ? acceleration.downloadingBackend === binaryProgress.backend
+        : binaryProgress.backend === "cpu" && binaryProgress.phase !== "cancelling" && !binaryReady)
       const external = action.modelState.external
         ? (({ apiKey: _apiKey, ...view }) => view)(action.modelState.external as VoiceModelState["external"] & { apiKey?: string })
         : undefined
@@ -2435,15 +2430,25 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         voiceModel: external ? { ...action.modelState, external } : action.modelState,
         voiceModelProgress: anyDownloading ? state.voiceModelProgress : null,
-        voiceBinaryProgress: binaryReady ? null : state.voiceBinaryProgress,
+        voiceBinaryProgress: keepBinaryProgress ? binaryProgress : null,
       }
     }
     case "SET_VOICE_SYSTEM_STATE":
       return { ...state, voiceSystemState: action.systemState }
     case "SET_VOICE_MODEL_PROGRESS":
       return { ...state, voiceModelProgress: action.progress }
-    case "SET_VOICE_BINARY_PROGRESS":
+    case "SET_VOICE_BINARY_PROGRESS": {
+      const current = state.voiceBinaryProgress
+      if (current && action.progress && current.backend === action.progress.backend &&
+          (current.phase === "cancelling" || action.progress.phase === undefined)) return state
       return { ...state, voiceBinaryProgress: action.progress }
+    }
+    case "SET_VOICE_BINARY_ERROR":
+      return {
+        ...state,
+        voiceBinaryError: action.error,
+        voiceBinaryProgress: action.error?.backend === state.voiceBinaryProgress?.backend ? null : state.voiceBinaryProgress,
+      }
     case "SET_VOICE_MODEL_ERROR":
       return { ...state, voiceModelError: action.error }
     case "NOTE_BROWSER_TOOL":
