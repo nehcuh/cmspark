@@ -366,6 +366,7 @@ test('476 workspace teardown inverse rejects changes inside each ordered teardow
  for(const value of [source,source.replace(/\r?\n/g,'\r\n')]){
   assert.doesNotThrow(()=>inverse(value))
   for(const [original,changed] of [
+   ['/private/tmp/cm476-', '/private/tmp/changed-'],
    ['workspaceDone=resolve','workspaceDone=()=>{}'],
    ['workspaceDone()/*WORKSPACE_TEARDOWN_END*/','void 0/*WORKSPACE_TEARDOWN_END*/'],
    ['[workspaceReceiptsComplete,uiDone]','[workspaceReceiptsComplete]'],

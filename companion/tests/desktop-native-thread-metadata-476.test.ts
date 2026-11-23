@@ -173,7 +173,9 @@ function sameWorkspaceSelection705(expected:ReturnType<typeof captureWorkspaceSe
 test('#476 actual native workspace picker binds canonical root, reopens lists/reads and cancels the second OS picker',{skip:!['darwin','win32'].includes(process.platform),timeout:45000},async t=>{
  const uiDeadline=Date.now()+45000
  return withSurface650(t,async(t,surfaceLease/*OBS788_BEGIN*/,observeSurface788/*OBS788_END*/)=>{
-  const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-workspace-476-'))),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
+/*WORKSPACE_PATH_BEGIN*/  // XCTest synthesizes a key event per path character. Keep the owned macOS
+  // fixture in the canonical short temp directory to reduce actual input time.
+/*WORKSPACE_PATH_END*/  const dir=fs.realpathSync(fs.mkdtempSync(/*WORKSPACE_TEARDOWN_BEGIN*/process.platform==='darwin'?'/private/tmp/cm476-':path.join(os.tmpdir(),'native-workspace-476-')/*WORKSPACE_TEARDOWN_END*/)),old=process.env.CMSPARK_DATA_DIR;process.env.CMSPARK_DATA_DIR=dir
   const requestedRoot=path.join(dir,'selected');fs.mkdirSync(requestedRoot);const root=fs.realpathSync(requestedRoot),expectedSelection=captureWorkspaceSelection705(root);fs.writeFileSync(path.join(root,'hello.txt'),'owned workspace text')
   const {SecurityConfirmationManager}=await import('../src/security-confirmation'),{parseNativeWorkspaceDiagnostic705,parseNativeWorkspaceCancel705}=await import('./helpers/desktop-workspace-picker-476')
   const threads=new ThreadManager();threads.create('owned workspace','native-workspace-A');threads.create('untouched sibling','native-workspace-B')

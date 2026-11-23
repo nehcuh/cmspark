@@ -37,6 +37,7 @@ function restoreInitialFixture826(raw) {
   return value.replace(/\n/g, eol)
 }
 function restoreInitialOwnedInput826(raw) {
+  raw = restoreWorkspaceTeardown(raw)
   if (!raw.includes('/*OWNED_INPUT826_')) return raw
   const eol = raw.includes('\r\n') ? '\r\n' : '\n'
   let value = raw.replace(/\r\n/g, '\n')
@@ -49,21 +50,25 @@ function restoreInitialOwnedInput826(raw) {
 function restoreWorkspaceTeardown(raw) {
   const begin = '/*WORKSPACE_TEARDOWN_BEGIN*/'
   const end = '/*WORKSPACE_TEARDOWN_END*/'
-  if (!raw.includes(begin) && !raw.includes(end)) return raw
+  if (!raw.includes(begin) && !raw.includes(end) && !raw.includes('/*WORKSPACE_PATH_')) return raw
   const eol = raw.includes('\r\n') ? '\r\n' : '\n'
   const prior = [
+    '',
+    "path.join(os.tmpdir(),'native-workspace-476-')",
     '',
     "channel.revokeHost('owned-native-workspace-476')",
     "   assertionSite=2;assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_WORKSPACE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_WORKSPACE_NATIVE_DEADLINE')),{once:true}))]),0)\n" +
       "   if(uiDone){assertionSite=3;assert.equal((await uiDone).ok,true,'owned acknowledged UI runner must genuinely close quiescent')}\n",
   ]
   const expected = [
+    'b3e1fe725ead3d85bbac31098e11a7f812225adef249057cb96a0c6afd2ae48c',
+    'b7c8757243f1cfee628940985e85dc8c4685385308f9c8f449cee3d0b218087f',
     'a33b28d44008d5640275965fd0ec6c79cb7f576d8b3e2ffc1371f67514c469d9',
     'dc7d55f881406a8bdaba8faad2c64bb67b8f429e8d3e4cd99ab0db4557ece876',
     'f96c612701d79f67300252ff592753e06e9c7a5547f83be4efbaf17f87121b9b',
   ]
   let restored = 0
-  const value = raw.replace(/\/\*WORKSPACE_TEARDOWN_BEGIN\*\/[\s\S]*?\/\*WORKSPACE_TEARDOWN_END\*\//g, block => {
+  const value = raw.replace(/\/\*WORKSPACE_(TEARDOWN|PATH)_BEGIN\*\/[\s\S]*?\/\*WORKSPACE_\1_END\*\//g, block => {
     const digest = createHash('sha256').update(block.replace(/\r\n/g, '\n')).digest('hex')
     assert.equal(digest, expected[restored], 'WORKSPACE_TEARDOWN_SOURCE')
     return prior[restored++].replace(/\n/g, eol)
@@ -73,7 +78,6 @@ function restoreWorkspaceTeardown(raw) {
 }
 
 function restoreObservation826(kind, raw) {
-  if (kind === 'native') raw = restoreWorkspaceTeardown(raw)
   raw = require('./workspace-query-101-inverse.cjs').restoreWorkspaceQuery101(kind, raw)
   if (kind === 'native') raw = restoreInitialOwnedInput826(raw)
   if (!raw.includes('/*OBS826_')) return raw
