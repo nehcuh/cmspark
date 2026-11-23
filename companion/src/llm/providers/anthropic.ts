@@ -5,7 +5,6 @@
 
 import type { LlmConfig } from "../../config"
 import { logger } from "../../logger"
-import { GatewayReasoningFragments } from "./reasoning-fragments"
 import { isCompatibilityGateway, reasoningSupport, reasoningParams } from "../reasoning-effort"
 import { providerModelLimits } from "../output-budget"
 import { throwIfLlmEndpointBlocked } from "../../security"
@@ -248,18 +247,6 @@ export async function* parseAnthropicSseStream(
   let finishReason: string | null | undefined
   let emittedUsage = false
   const live = new Map<number, LiveAnthropicBlock>()
-  const fragments = new Map<number, GatewayReasoningFragments>()
-  function* reasoning(index: number, value: string): Generator<CanonicalStreamEvent> {
-    if (gateway && !fragments.has(index)) fragments.set(index, new GatewayReasoningFragments())
-    const text = fragments.get(index)?.push(value) ?? value
-    if (text) yield { type: "reasoning", text }
-  }
-  function* finishBlock(index: number): Generator<CanonicalStreamEvent> {
-    const text = fragments.get(index)?.flush()
-    fragments.delete(index)
-    if (text) yield { type: "reasoning", text }
-  }
-
   const processEvent = function* (
     eventName: string | undefined,
     data: string,
@@ -274,10 +261,6 @@ export async function* parseAnthropicSseStream(
 
     const type = (parsed.type as string) || eventName || ""
 
-    if (type === "content_block_stop") {
-      yield* finishBlock(typeof parsed.index === "number" ? parsed.index : 0)
-      return
-    }
     if (type === "content_block_start") {
       const index = typeof parsed.index === "number" ? parsed.index : 0
       const block = parsed.content_block as
@@ -296,7 +279,7 @@ export async function* parseAnthropicSseStream(
         }
       } else if (block.type === "thinking") {
         if (!gateway) live.set(index, { type: "thinking", thinking: block.thinking ?? "", ...(block.signature !== undefined ? { signature: block.signature } : {}) })
-        if (block.thinking) yield* reasoning(index, block.thinking)
+        if (block.thinking) yield { type: "reasoning", text: block.thinking }
       } else if (block.type === "redacted_thinking" && typeof block.data === "string") {
         if (!gateway) live.set(index, { type: "redacted_thinking", data: block.data })
       } else if (block.type === "text") {
@@ -348,12 +331,12 @@ export async function* parseAnthropicSseStream(
         (delta.type === "thinking_delta" || delta.type === "thinking") &&
         delta.thinking
       ) {
-        yield* reasoning(index, delta.thinking)
+        yield { type: "reasoning", text: delta.thinking }
         return
       }
       // Some gateways emit plain thinking field without type
       if (delta.thinking && !delta.text && !delta.partial_json) {
-        yield* reasoning(index, delta.thinking)
+        yield { type: "reasoning", text: delta.thinking }
       }
       return
     }
@@ -497,7 +480,6 @@ export async function* parseAnthropicSseStream(
   }
   yield* flushEvent()
 
-  for (const index of fragments.keys()) yield* finishBlock(index)
   const blocks = Array.from(live).sort(([a], [b]) => a - b).map(([, block]) => block)
   // Only replay provider-native blocks for a completed tool step. Raw signatures
   // and redacted data never enter history, UI frames or recovery requests.

@@ -6,7 +6,6 @@ import { initDataDir, type LlmConfig } from "../src/config"
 import { HistoryStore } from "../src/history/store"
 import { ThreadManager } from "../src/threads/thread-manager"
 import { SkillEngine } from "../src/skills/skill-engine"
-import { GatewayReasoningFragments } from "../src/llm/providers/reasoning-fragments"
 import { streamChatWithRecovery } from "../src/llm/reasoning-recovery"
 import type { CanonicalStreamEvent, LlmProvider, StreamChatParams } from "../src/llm/provider"
 
@@ -18,12 +17,24 @@ const think = (thinking: string) => ({ type: "content_block_delta", index: 0, de
 const token = (text: string) => ({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text } })
 const end = (stop_reason: string) => ({ type: "message_delta", delta: { stop_reason }, usage: { output_tokens: 32768 } })
 
-test("gateways preserve ordinary deltas, prefix pairs and completed snapshots", () => {
-  for (const [chunks, result] of [
-    [["甲", "甲", "乙"], "甲甲乙"], [["甲", "甲乙"], "甲甲乙"], [["甲", "甲乙", "甲乙丙", "甲乙丙"], "甲乙丙"],
-  ] as const) {
-    const fragments = new GatewayReasoningFragments()
-    assert.equal(chunks.map(s => fragments.push(s)).join("") + fragments.flush(), result)
+test("chat completions preserve prefix-shaped deltas and append only the suffix of full snapshots", async t => {
+  const { OpenAIProvider } = await import("../src/llm/providers/openai")
+  const provider = new OpenAIProvider({ ...config, protocol: "openai" })
+  const pieces = ["I think ", "I think that ", "I think that means "]
+  for (const field of ["delta", "message"]) {
+    const expected = field === "delta" ? pieces.join("") : pieces.at(-1)!
+    const choices = [...pieces.map(s => ({ [field]: { reasoning_content: s } })),
+      { message: { reasoning_content: expected }, delta: { content: "done" }, finish_reason: "stop" }]
+    const mock = t.mock.method((provider as any).client.chat.completions, "create", async function* () {
+      for (const choice of choices) yield { choices: [choice] }
+    })
+    try {
+      let reasoning = ""
+      for await (const ev of provider.streamChat({messages: [{role: "user", content: "fixture"}]})) {
+        if (ev.type === "reasoning") reasoning += ev.text
+      }
+      assert.equal(reasoning, expected)
+    } finally { mock.mock.restore() }
   }
 })
 
@@ -53,7 +64,7 @@ test("reasoning-only exhaustion through chatCreate retries once, with clean hist
       assert.deepEqual(calls[0].messages, calls[1].messages)
       assert.notEqual(calls[0].system, calls[1].system)
       assert.equal(sent.filter(f => f.type === "chat.reasoning" && f.retrying).length, 1)
-      assert.ok(sent.some(f => f.type === "chat.reasoning" && f.content === "failed trace fragment"))
+      assert.ok(sent.some(f => f.type === "chat.reasoning" && f.content === "failedfailed tracefailed trace fragment"))
       const assistants = tm.getMessages(thread.id).filter(m => m.role === "assistant")
       assert.deepEqual(assistants.map(m => m.content), succeeds ? ["final answer"] : [])
       assert.ok(assistants.every(m => !m.reasoning_content))

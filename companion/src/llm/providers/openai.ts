@@ -19,8 +19,7 @@ import { throwIfLlmEndpointBlocked } from "../../security"
 import { isBenignStreamTailClose } from "../transport-error"
 import { cleanCompanionUserAgent } from "./headers"
 import { streamOpenAIResponses } from "./openai-responses"
-import { GatewayReasoningFragments } from "./reasoning-fragments"
-import { isCompatibilityGateway, reasoningParams, reasoningWireEffort } from "../reasoning-effort"
+import { reasoningParams, reasoningWireEffort } from "../reasoning-effort"
 import { LLM_MAX_TOKENS_DEFAULT } from "./anthropic-convert"
 import { providerModelLimits } from "../output-budget"
 
@@ -79,7 +78,7 @@ export class OpenAIProvider implements LlmProvider {
       signal: params.signal,
     })
 
-    const fragments = isCompatibilityGateway(this.config.protocol, this.config.base_url) ? new GatewayReasoningFragments() : undefined
+    let streamedReasoning = ""
     let finishReason: string | null | undefined
 
     try {
@@ -103,17 +102,21 @@ export class OpenAIProvider implements LlmProvider {
           }
         }
 
-        if (fragments && (delta?.content || delta?.tool_calls)) {
-          const pending = fragments.flush()
-          if (pending) yield { type: "reasoning", text: pending }
-        }
         if (delta?.content) {
           yield { type: "token", text: delta.content }
         }
 
+        // A delta may legitimately repeat prior text. Only a full message is a snapshot.
         if (delta?.reasoning_content) {
-          const text = fragments?.push(delta.reasoning_content) ?? delta.reasoning_content
-          if (text) yield { type: "reasoning", text }
+          streamedReasoning += delta.reasoning_content
+          yield { type: "reasoning", text: delta.reasoning_content }
+        }
+        const snapshot = (choice as { message?: { reasoning_content?: unknown } } | undefined)?.message?.reasoning_content
+        if (typeof snapshot === "string" && snapshot.length > streamedReasoning.length) {
+          if (!snapshot.startsWith(streamedReasoning)) throw new Error("Gateway returned conflicting reasoning snapshots")
+          const text = snapshot.slice(streamedReasoning.length)
+          streamedReasoning = snapshot
+          yield { type: "reasoning", text }
         }
 
         if (delta?.tool_calls) {
@@ -141,8 +144,6 @@ export class OpenAIProvider implements LlmProvider {
       if (finishReason == null || !isBenignStreamTailClose(err)) throw err
     }
 
-    const pending = fragments?.flush()
-    if (pending) yield { type: "reasoning", text: pending }
     yield { type: "done", finish_reason: finishReason ?? null }
   }
 
