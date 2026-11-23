@@ -150,6 +150,9 @@ function inverse(text: string, kind: 'scope' | 'gui' | 'apps') {
   const eol = text.includes('\r\n') ? '\r\n' : '\n'
   const replace = (before: string, after: string) => { before = before.replace(/\n/g, eol); after = after.replace(/\n/g, eol); assert.equal(text.split(before).length, 2, before); text = text.replace(before, after) }
   if (kind === 'scope') {
+    const controlReader = one(text, /(  static string ReadControl\(string file\) \{[\s\S]*?\r?\n  \}\r?\n)/g)
+    text = text.replace(controlReader, '')
+    replace('string raw = ReadControl(file);', 'string raw = File.ReadAllText(file, Encoding);')
     const mapper = one(text, /(  static string SetupInputReason\(string message\) \{[\s\S]*?\r?\n  \}\r?\n)/g)
     text = text.replace(mapper, '')
     replace('} catch (Exception error) {\n          if (window == InitialWindow) Observe("INPUT_REFUSED");', '} catch {\n          if (window == InitialWindow) Observe("INPUT_REFUSED");')

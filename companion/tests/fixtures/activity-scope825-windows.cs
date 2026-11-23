@@ -124,6 +124,12 @@ static class ActivityScope825Fixture {
     if (!focus.IsKeyboardFocused) return ReadyResult(window, false, "NO_KEYBOARD_FOCUS");
     return ReadyResult(window, true, "QUALIFIED");
   }
+  static string ReadControl(string file) {
+    // The owner publishes a closed snapshot by atomic rename. Share replacement,
+    // while still rejecting handles that can write to the snapshot being read.
+    using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+    using (var reader = new StreamReader(stream, Encoding)) return reader.ReadToEnd();
+  }
   static void Write(string name, object data) {
     string file = Path.Combine(Root, name), pending = file + ".pending";
     File.WriteAllText(pending, Json.Serialize(data), Encoding); File.Move(pending, file);
@@ -207,7 +213,7 @@ static class ActivityScope825Fixture {
       timer.Tick += delegate {
         try {
           string file = Path.Combine(Root, "control.json"); if (!File.Exists(file)) return;
-          string raw = File.ReadAllText(file, Encoding); if (raw == LastControl) return; LastControl = raw;
+          string raw = ReadControl(file); if (raw == LastControl) return; LastControl = raw;
           var command = Json.Deserialize<System.Collections.Generic.Dictionary<string, object>>(raw);
           string action = (string)command["command"];
           if (action == "resize") { Current.Width += 80; Current.UpdateLayout(); ReceiptWindow = Current; PendingReceipt = "ack.json"; CheckCurrentReceipt(); }
