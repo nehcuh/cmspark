@@ -9,6 +9,7 @@ import {
   LOCAL_STT_SAMPLE_RATE,
 } from "./local-stt-detect"
 import { float32ToS16lePcm, resampleFloat32Mono } from "./pcm-encode"
+import { microphoneConstraints } from "./microphone-device"
 
 export type PcmStreamCaptureOpts = {
   signal?: AbortSignal
@@ -252,7 +253,7 @@ export async function startPcmStreamCapture(
 
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      audio: await microphoneConstraints(),
     })
 
     source = ctx.createMediaStreamSource(stream)

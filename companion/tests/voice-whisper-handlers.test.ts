@@ -149,7 +149,7 @@ test("get_state: shape includes models/binary/budget/whisperRoot", async () => {
   assert.equal(r.type, "voice.model.state")
   assert.equal(r.sttEngine, "browser")
   assert.equal(r.localModelId, "medium")
-  assert.equal(r.recommendedModelId, "medium")
+  assert.ok(["small", "medium"].includes(r.recommendedModelId))
   assert.ok(r.models)
   assert.ok(r.models.small)
   assert.ok(r.models.medium)

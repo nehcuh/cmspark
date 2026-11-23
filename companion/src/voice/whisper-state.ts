@@ -2,6 +2,7 @@
 // Handlers own mutation; this module is pure observation over config + disk.
 
 import * as path from "node:path"
+import { detectWhisperHardware, recommendWhisper, type WhisperHardware } from "./whisper-hardware"
 
 import { getConfig, DATA_DIR } from "../config"
 import { defaultVoiceExternal, externalStateView } from "./external-asr-config"
@@ -14,7 +15,6 @@ import {
 } from "./binary-resolve"
 import { whisperPinResolveOpts } from "./whisper-binary-pins"
 import {
-  RECOMMENDED_WHISPER_MODEL,
   WHISPER_MODEL_IDS,
   type WhisperModelId,
 } from "./whisper-catalog"
@@ -45,6 +45,7 @@ export interface VoiceModelStatePayload {
   sttEngine: "browser" | "local" | "system" | "external"
   localModelId: WhisperModelId
   recommendedModelId: WhisperModelId
+  hardware: WhisperHardware
   models: Record<
     string,
     { status: WhisperModelProbeStatus; bytesOnDisk?: number; error?: string }
@@ -239,11 +240,13 @@ export async function buildVoiceModelState(
     external: cfg.external ?? defaultVoiceExternal(),
   })
 
+  const hardware = detectWhisperHardware()
   return {
     type: "voice.model.state",
     sttEngine,
     localModelId,
-    recommendedModelId: RECOMMENDED_WHISPER_MODEL,
+    recommendedModelId: recommendWhisper(hardware),
+    hardware,
     models,
     diarizeModel,
     binary: opts.binary ?? resolveBinaryForState({ companionRoots: opts.companionRoots }),

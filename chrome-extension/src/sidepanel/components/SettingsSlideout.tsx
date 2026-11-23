@@ -28,6 +28,7 @@ import { SettingsModelUses } from "./SettingsModelUses"
 import { ModelCenterControls } from "./ModelCenterControls"
 import { MeetingExternalAsrSettings } from "./MeetingExternalAsrSettings"
 import type { ModelCenterState } from "../utils/model-center"
+import { MicrophoneDeviceSelect } from "./MicrophoneDeviceSelect"
 import {
   resolveSettingsDestination,
   SETTINGS_CATEGORIES,
@@ -90,7 +91,7 @@ import {
   ENGINE_SYSTEM_HINT,
   ENGINE_SYSTEM_LABEL,
   OTHER_MODELS_TOGGLE,
-  OTHER_WHISPER_MODEL_IDS,
+  WHISPER_SETTINGS_MODEL_IDS,
   RECOMMENDED_ROW_PREFIX,
   RECOMMENDED_WHISPER_MODEL_ID,
   SYSTEM_UNAVAILABLE_REASON_LABEL,
@@ -2335,7 +2336,8 @@ export function SettingsSlideout() {
                   })
                 }
               }
-              const recommendedId = RECOMMENDED_WHISPER_MODEL_ID
+              const proposedId = voiceModel?.recommendedModelId
+              const recommendedId: WhisperSettingsModelId = WHISPER_SETTINGS_MODEL_IDS.find(id => id === proposedId) ?? RECOMMENDED_WHISPER_MODEL_ID
               const activeId = voiceModel?.localModelId || recommendedId
               const recEntry = voiceModel?.models?.[recommendedId]
               const recReady = recEntry?.status === "ready"
@@ -2386,7 +2388,7 @@ export function SettingsSlideout() {
                         {isRecommended ? `${RECOMMENDED_ROW_PREFIX}: ${modelId}` : modelId}
                         {modelId === "large-v3-turbo" ? (
                           <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}>
-                            仅终稿识别（无实时出字）；可能较慢，推荐先用 medium
+                            仅终稿识别（无实时出字）；速度取决于识别后端
                           </div>
                         ) : null}
                         {isActive ? " · 活动" : ""}
@@ -2519,6 +2521,7 @@ export function SettingsSlideout() {
 
               return (
                 <>
+                  <MicrophoneDeviceSelect />
                   <div style={{ marginTop: 12 }}>
                     <div style={{ ...styles.label, marginBottom: 6 }}>{ENGINE_SECTION_LABEL}</div>
                     <label
@@ -2722,6 +2725,10 @@ export function SettingsSlideout() {
                         </div>
                       )}
 
+                      {voiceModel?.hardware && <div style={styles.helpText}>
+                        本机：{voiceModel.hardware.cpu} · {voiceModel.hardware.logicalCores} 逻辑核心 · {voiceModel.hardware.memoryGB} GB 内存。
+                        建议仅参考硬件资源；实际速度取决于识别后端。模型需自行下载和启用。
+                      </div>}
                       {renderModelRow(recommendedId, true)}
 
                       <button
@@ -2740,9 +2747,7 @@ export function SettingsSlideout() {
                         {OTHER_MODELS_TOGGLE} {otherWhisperOpen ? "▾" : "▸"}
                       </button>
                       {otherWhisperOpen &&
-                        OTHER_WHISPER_MODEL_IDS.map((id) =>
-                          renderModelRow(id as WhisperSettingsModelId, false),
-                        )}
+                        WHISPER_SETTINGS_MODEL_IDS.filter(id => id !== recommendedId).map(id => renderModelRow(id, false))}
 
                       {voiceModel && (
                         <>
@@ -2915,7 +2920,7 @@ export function SettingsSlideout() {
                             title={
                               canEnableLocal
                                 ? "将听写引擎切换为本机 Whisper（需已下载就绪模型）"
-                                : "请先下载推荐模型 medium（或任一就绪型号）后再启用"
+                                : `请先下载推荐模型 ${recommendedId}（或任一就绪型号）后再启用`
                             }
                             onClick={() => handleSaveEngine(true)}
                           >
@@ -2925,7 +2930,7 @@ export function SettingsSlideout() {
                       </div>
                       {!committedLocal && !canEnableLocal && voiceModel && (
                         <div style={{ ...styles.helpText, marginTop: 4, color: tokens.warning }}>
-                          请先下载推荐型号 medium（或就绪后启用）。选择「本机转写」仅为预览，不会立刻切换引擎。
+                          请先下载推荐型号 {recommendedId}（或就绪后启用）。选择「本机转写」仅为预览，不会立刻切换引擎。
                         </div>
                       )}
                     </div>

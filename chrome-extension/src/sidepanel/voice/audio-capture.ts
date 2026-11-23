@@ -6,6 +6,7 @@
 
 import { LOCAL_STT_MAX_RECORD_MS } from "./local-stt-detect"
 import { encodeMonoFloatToWav16k } from "./pcm-encode"
+import { microphoneConstraints } from "./microphone-device"
 
 export type StartCaptureOpts = {
   /** Hard cap; default LOCAL_STT_MAX_RECORD_MS (45s). */
@@ -66,11 +67,7 @@ export async function startCapture(opts: StartCaptureOpts = {}): Promise<Capture
   }
 
   const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-    },
+    audio: await microphoneConstraints(),
   })
 
   const mimeType = pickRecorderMime()
