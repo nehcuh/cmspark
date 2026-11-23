@@ -368,19 +368,19 @@ export function useWebSocket() {
       ],
       (result) => {
         if (result.sendShortcut) {
-          dispatch({ type: "SET_SEND_SHORTCUT", shortcut: result.sendShortcut })
+          dispatch({ type: "SET_SEND_SHORTCUT", shortcut: result.sendShortcut, persist: false })
         }
         if (typeof result.voiceInputEnabled === "boolean") {
-          dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: result.voiceInputEnabled })
+          dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: result.voiceInputEnabled, persist: false })
         }
         const srm = result["cmspark.ui.show_reasoning"]
         if (srm === "always_collapsed" || srm === "auto_live" || srm === "always_open") {
-          dispatch({ type: "SET_SHOW_REASONING_MODE", mode: srm })
+          dispatch({ type: "SET_SHOW_REASONING_MODE", mode: srm, persist: false })
         }
         if (typeof result["cmspark.ui.export_include_reasoning"] === "boolean") {
           dispatch({
             type: "SET_EXPORT_INCLUDE_REASONING",
-            enabled: result["cmspark.ui.export_include_reasoning"],
+            enabled: result["cmspark.ui.export_include_reasoning"], persist: false,
           })
         }
         if (result.voice_privacy_ack_v1 === true) {
@@ -393,27 +393,27 @@ export function useWebSocket() {
           dispatch({ type: "SET_VOICE_PRIVACY_ACK_V3", ack: true })
         }
         if (result.voiceDictationMode === "continuous" || result.voiceDictationMode === "classic") {
-          dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: result.voiceDictationMode })
+          dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: result.voiceDictationMode, persist: false })
         }
         if (!languageChanged && result.chatDictationLanguage !== undefined) {
           dispatch({ type: "SET_CHAT_DICTATION_LANGUAGE", language: normalizeChatDictationLanguage(result.chatDictationLanguage), persist: false })
         }
         if (typeof result.asrRefinerEnabled === "boolean") {
-          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: result.asrRefinerEnabled })
+          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: result.asrRefinerEnabled, persist: false })
         }
         if (typeof result.dictationHotkeyEnabled === "boolean") {
-          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: result.dictationHotkeyEnabled })
+          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: result.dictationHotkeyEnabled, persist: false })
         }
         if (typeof result.dictationHotkeyChord === "string" && result.dictationHotkeyChord.trim()) {
-          dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: result.dictationHotkeyChord.trim() })
+          dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: result.dictationHotkeyChord.trim(), persist: false })
         }
         if (result.voice_sound_effects === false) {
-          dispatch({ type: "SET_VOICE_SOUND_EFFECTS", enabled: false })
+          dispatch({ type: "SET_VOICE_SOUND_EFFECTS", enabled: false, persist: false })
         }
         if (typeof result.voiceRealtimeStreaming === "boolean") {
           dispatch({
             type: "SET_VOICE_REALTIME_STREAMING",
-            enabled: result.voiceRealtimeStreaming,
+            enabled: result.voiceRealtimeStreaming, persist: false,
           })
         }
       },
@@ -1639,9 +1639,6 @@ export function useWebSocket() {
           if (msg.type === "user_env.list" && !Array.isArray(msg.keys)) break
           const pub = normalizeUserEnvPublic(msg)
           dispatch({ type: "SET_USER_ENV", userEnv: pub })
-          if (msg.type === "user_env.updated") {
-            dispatch({ type: "SET_USER_ENV_STATUS", status: "已保存" })
-          }
           break
         }
 

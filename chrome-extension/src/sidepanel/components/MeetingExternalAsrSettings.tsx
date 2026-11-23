@@ -40,10 +40,9 @@ export function useMeetingAsrState(active: boolean) {
   }, [])
   const refresh = useCallback(() => run({ type: "meeting.asr.get" }), [run])
   useEffect(() => {
-    if (active) void refresh()
-    else setBusy(false)
-    return () => { channelRef.current?.destroy(); channelRef.current = null }
+    if (active && !channelRef.current) void refresh()
   }, [active, refresh])
+  useEffect(() => () => { channelRef.current?.destroy(); channelRef.current = null }, [])
   return { snapshot, busy, error, refresh, save: run }
 }
 
@@ -56,15 +55,25 @@ type Draft = {
   identity: string
 }
 
-export function MeetingExternalAsrSettings({ active = true }: { active?: boolean }) {
+export function MeetingExternalAsrSettings({ active = true, onFooterSave }: { active?: boolean; onFooterSave?: (control: { dirty: boolean; busy: boolean; save: () => Promise<boolean>; error?: string } | null) => void }) {
   const { state } = useAgentStore()
   const connected = state.connectionState === "connected"
   const { snapshot, busy, error, refresh, save } = useMeetingAsrState(active && connected)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saved, setSaved] = useState(false)
+  const [validationError, setValidationError] = useState("")
+  const formRef = useRef<HTMLFormElement>(null)
   useEffect(() => {
-    if (!active || !connected) setDraft(previous => previous ? { ...previous, apiKey: "" } : previous)
-  }, [active, connected])
+    if (!onFooterSave) return
+    onFooterSave(draft ? { dirty: true, busy: busy || !connected, error: validationError || error, save: async () => {
+      if (!formRef.current?.checkValidity()) { setValidationError("请返回会议转写设置，填写完整且有效的信息。"); return false }
+      return submit()
+    } } : null)
+    return () => onFooterSave(null)
+  }, [active, draft, busy, connected, error, validationError, snapshot, onFooterSave])
+  useEffect(() => {
+    if (!state.settingsOpen || !connected) setDraft(previous => previous ? { ...previous, apiKey: "" } : previous)
+  }, [state.settingsOpen, connected])
 
   const fields = draft ?? (snapshot ? {
     mode: snapshot.mode, style: snapshot.style, baseUrl: snapshot.baseUrl,
@@ -74,9 +83,10 @@ export function MeetingExternalAsrSettings({ active = true }: { active?: boolean
   const update = (changes: Partial<Draft>) => {
     if (fields) setDraft({ ...fields, ...changes })
     setSaved(false)
+    setValidationError("")
   }
   const submit = async (clear = false) => {
-    if (!fields || !connected || busy) return
+    if (!fields || !connected || busy) return false
     const { mode, style, baseUrl, model, apiKey, identity } = fields
     setSaved(false)
     const changed = await save({
@@ -90,6 +100,7 @@ export function MeetingExternalAsrSettings({ active = true }: { active?: boolean
       } : {}),
     })
     if (changed) { setDraft(null); setSaved(true) }
+    return changed
   }
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -101,12 +112,13 @@ export function MeetingExternalAsrSettings({ active = true }: { active?: boolean
     {!connected && <p role="status">连接 Companion 后可管理导入音频的转写服务。</p>}
     {busy && <p role="status">正在核对转写设置…</p>}
     {error && <p role="alert">{error}</p>}
+    {validationError && <p role="alert">{validationError}</p>}
     {saved && <p role="status">已保存并核对会议转写设置。</p>}
     {snapshot && <p data-testid="meeting-asr-current" style={styles.target}>
       当前会议转写方式 · {snapshot.mode === "local" ? "本机转写" : snapshot.ready ? snapshot.model : "外部转写服务未就绪"}
       {snapshot.mode === "external" && snapshot.normalizedUrl && <><br />{snapshot.normalizedUrl}</>}
     </p>}
-    {fields && <form onSubmit={onSubmit} data-testid="meeting-asr-settings">
+    {fields && <form ref={formRef} onSubmit={onSubmit} data-testid="meeting-asr-settings">
       <fieldset disabled={!connected || busy} style={styles.group}>
         <legend>会议与导入录音</legend>
         <label style={styles.field}>转写方式

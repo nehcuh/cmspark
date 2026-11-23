@@ -3,6 +3,7 @@
 
 import { forwardSiteCounterSettings, noteSiteCounterUiSelection } from "./site-counter-settings"
 import { WSClient } from "./ws-client"
+import { forwardConfigGet } from "./config-get-forward"
 import { normalizeSavedChatOutputLimit } from "../sidepanel/utils/normalize-config"
 import { createCockpitNativeRelay, COCKPIT_NATIVE_PORT } from "./cockpit-native-bridge"
 import { projectMetadataSenderAllowed } from "./project-metadata"
@@ -1056,9 +1057,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
 
       case "config.get":
-        wsClient.send({ type: "config.get" })
-        // Response will come async through onMessage
-        sendResponse({ ok: true })
+        // The authoritative response arrives asynchronously and must retain the caller's ID.
+        sendResponse(forwardConfigGet(message, wsClient))
         return true
 
       // P0-2B WS pairing: store the shared secret (pasted from

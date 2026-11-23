@@ -238,7 +238,7 @@ export function createOutboundMcpServer(
   // token at wire time; else default (byte-identical to pre-#410 behavior).
   if (profiles) resolvedProfiles = [...profiles]
   const server = new Server(
-    { name: "cmspark-outbound", version: "1.6.2" },
+    { name: "cmspark-outbound", version: "1.6.3" },
     { capabilities: { tools: {} } },
   )
 
