@@ -3,7 +3,7 @@ import path from "node:path"
 
 import { getConfigDir } from "../config"
 import { defaultWhisperBinaryInstallDir, resolveWhisperArch } from "./binary-resolve"
-import { probeWhisperBinaryInstall } from "./whisper-binary-download"
+import { probeWhisperBinaryInstallAsync } from "./whisper-binary-download"
 import type { WhisperBinaryManifest } from "./whisper-binary-manifest"
 import {
   adapterLabel,
@@ -62,6 +62,7 @@ type WindowsRuntimeOptions = {
   arch?: string
   manifest?: WhisperBinaryManifest
   detectHardware?: () => Promise<WindowsWhisperHardware>
+  signal?: AbortSignal
 }
 
 export function isWhisperGpuBackend(backend: unknown): backend is WhisperGpuBackend {
@@ -81,16 +82,17 @@ export function whisperGpuInstallTarget(backend: WhisperGpuBackend, dataDir = ge
 
 function probeRuntime(backend: WhisperGpuBackend, opts: WindowsRuntimeOptions) {
   const target = whisperGpuInstallTarget(backend, opts.dataDir)
-  return probeWhisperBinaryInstall(target.destDir, target.arch, opts.manifest)
+  return probeWhisperBinaryInstallAsync(target.destDir, target.arch, opts.manifest, opts.signal)
 }
 
 /** Strict acceptance still uses the packaged pins and the private install layout. */
-export function verifiedWindowsWhisperRuntime(
+export async function verifiedWindowsWhisperRuntime(
   backend: WhisperGpuBackend,
   dataDir?: string,
-): Extract<WhisperRuntimeChoice, { binaryPath: string }> | undefined {
+  signal?: AbortSignal,
+): Promise<Extract<WhisperRuntimeChoice, { binaryPath: string }> | undefined> {
   if (!supportsWindowsWhisperAcceleration()) return undefined
-  const probe = probeRuntime(backend, { dataDir })
+  const probe = await probeRuntime(backend, { dataDir, signal })
   if (probe.status !== "ready" || !probe.primaryPath) return undefined
   return { backend, binaryPath: probe.primaryPath }
 }
@@ -108,14 +110,16 @@ function hardwareBlocker(backend: WhisperGpuBackend, hardware: WindowsWhisperHar
 }
 
 export async function selectWindowsWhisperRuntime(opts: WindowsRuntimeOptions = {}): Promise<WhisperRuntimeChoice> {
+  opts.signal?.throwIfAborted()
   if (!supportsWindowsWhisperAcceleration(opts.platform, opts.arch)) return { backend: "cpu" }
   const installed = WHISPER_GPU_BACKENDS.filter((backend) => existsSync(whisperGpuInstallTarget(backend, opts.dataDir).destDir))
   if (!installed.length) return { backend: "cpu" }
   const hardware = await (opts.detectHardware ?? getWindowsWhisperHardware)()
+  opts.signal?.throwIfAborted()
   for (const backend of installed) {
     if (hardwareBlocker(backend, hardware)) continue
     // Fresh verification before every use. The inventory cache never bypasses the file pins.
-    const probe = probeRuntime(backend, opts)
+    const probe = await probeRuntime(backend, opts)
     if (probe.status === "ready" && probe.primaryPath) return { backend, binaryPath: probe.primaryPath }
   }
   return { backend: "cpu" }
@@ -127,13 +131,14 @@ export async function inspectWhisperAcceleration(opts: WindowsRuntimeOptions = {
     return { supported: false, adapters: [], runtimes: { cuda: unsupported, vulkan: unsupported }, plannedBackend: "cpu" }
   }
   const hardware = await (opts.detectHardware ?? getWindowsWhisperHardware)()
-  function inspect(backend: WhisperGpuBackend): WhisperRuntimeStatus {
-    const probe = probeRuntime(backend, opts)
+  async function inspect(backend: WhisperGpuBackend): Promise<WhisperRuntimeStatus> {
+    const probe = await probeRuntime(backend, opts)
     const reason = probe.status === "incomplete" ? "runtime_incomplete" :
       hardwareBlocker(backend, hardware) ?? (probe.status === "absent" ? "runtime_missing" : undefined)
     return { status: probe.status, available: !reason, ...(reason ? { reason } : {}) }
   }
-  const runtimes = { cuda: inspect("cuda"), vulkan: inspect("vulkan") }
+  const [cuda, vulkan] = await Promise.all([inspect("cuda"), inspect("vulkan")])
+  const runtimes = { cuda, vulkan }
   return {
     supported: true,
     adapters: hardware.adapters,

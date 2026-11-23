@@ -88,6 +88,26 @@ test("incomplete GPU installs are ineligible and file changes are reverified", a
   assert.equal(snapshot.plannedBackend, "cpu")
 })
 
+test("runtime selection and state probing yield to the event loop during GPU file verification", async (t) => {
+  const fixture = runtimeFixture(t)
+  const entry = fixture.manifest.binaries["win-x64-cuda"]
+  assert.ok(entry?.kind === "file")
+  const dependency = entry.files.find((file) => file.name === "ggml-cuda.dll")!
+  const payload = Buffer.alloc(8 * 1024 * 1024, 17)
+  writeFileSync(path.join(fixture.dataDir, "bin", "whisper", "win-x64", "cuda", dependency.name), payload)
+  dependency.size = payload.length
+  dependency.sha256 = createHash("sha256").update(payload).digest("hex")
+  const opts = { ...fixture, detectHardware: async () => hardware([nvidia]) }
+  let loopTurn = false
+  setImmediate(() => { loopTurn = true })
+  assert.equal((await selectWindowsWhisperRuntime(opts)).backend, "cuda")
+  assert.equal(loopTurn, true, "automatic verification blocked the event loop")
+  loopTurn = false
+  setImmediate(() => { loopTurn = true })
+  assert.equal((await inspectWhisperAcceleration(opts)).runtimes.cuda.status, "ready")
+  assert.equal(loopTurn, true, "model-state verification blocked the event loop")
+})
+
 test("Windows ARM64 and other platforms do not probe GPU candidates", async () => {
   for (const [platform, arch] of [["win32", "arm64"], ["linux", "x64"], ["darwin", "arm64"]] as const) {
     const result = await inspectWhisperAcceleration({

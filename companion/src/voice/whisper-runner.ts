@@ -56,7 +56,7 @@ export type RunWhisperTranscribeOpts = {
     /** Internal acceptance entry. GPU choices always use the verified install. */
     strictBackend?: WhisperBackend
     /** Inject Windows selection for deterministic runner tests. */
-    selectRuntime?: () => Promise<WhisperRuntimeChoice>
+    selectRuntime?: (signal: AbortSignal) => Promise<WhisperRuntimeChoice>
   }
 }
 
@@ -163,12 +163,16 @@ export async function runWhisperTranscribe(opts: RunWhisperTranscribeOpts): Prom
 
   let runtime: WhisperRuntimeChoice = { backend: "cpu" }
   if (strict && strict !== "cpu") {
-    const verified = verifiedWindowsWhisperRuntime(strict, opts.acceleration?.dataDir)
+    const verified = await selectWithinDeadline(
+      (signal) => verifiedWindowsWhisperRuntime(strict, opts.acceleration?.dataDir, signal),
+      remaining(), timeoutMs, opts.signal,
+    )
+    remaining()
     if (!verified) throw new WhisperRunnerError("backend_unavailable", `verified Whisper ${strict} runtime unavailable`)
     runtime = verified
   } else if (!strict) {
     runtime = await selectWithinDeadline(
-      selectRuntime ?? (() => selectWindowsWhisperRuntime({ dataDir: opts.acceleration?.dataDir })),
+      selectRuntime ?? ((signal) => selectWindowsWhisperRuntime({ dataDir: opts.acceleration?.dataDir, signal })),
       remaining(), timeoutMs, opts.signal,
     )
   }
@@ -210,22 +214,31 @@ function timeoutError(timeoutMs: number): WhisperRunnerError {
   return new WhisperRunnerError("timeout", `whisper timed out after ${timeoutMs}ms`)
 }
 
-async function selectWithinDeadline(
-  select: () => Promise<WhisperRuntimeChoice>,
+async function selectWithinDeadline<T>(
+  select: (signal: AbortSignal) => Promise<T>,
   budget: number,
   timeoutMs: number,
   signal?: AbortSignal,
-): Promise<WhisperRuntimeChoice> {
+): Promise<T> {
+  const verification = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
   try {
     const stop = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(timeoutError(timeoutMs)), budget)
-      onAbort = () => reject(new WhisperRunnerError("aborted", "whisper aborted"))
+      const interrupt = (error: WhisperRunnerError) => {
+        reject(error)
+        verification.abort(error)
+      }
+      timer = setTimeout(() => interrupt(timeoutError(timeoutMs)), budget)
+      onAbort = () => interrupt(new WhisperRunnerError("aborted", "whisper aborted"))
       signal?.addEventListener("abort", onAbort, { once: true })
       if (signal?.aborted) onAbort()
     })
-    return await Promise.race([Promise.resolve().then(select), stop])
+    const selection = Promise.resolve().then(() => {
+      verification.signal.throwIfAborted()
+      return select(verification.signal)
+    })
+    return await Promise.race([selection, stop])
   } finally {
     clearTimeout(timer)
     if (onAbort) signal?.removeEventListener("abort", onAbort)
@@ -266,6 +279,11 @@ function runWhisperAttempt(
   // Windows loads whisper/ggml DLLs from the directory of the *executable*.
   // Explicit cwd keeps sibling DLLs resolvable even if process.cwd is elsewhere.
   const binaryDir = path.dirname(path.resolve(binaryPath))
+  const windowsGpu = process.platform === "win32" && backend !== "cpu"
+  // Win32 accepts case-insensitive environment keys. Drop all forms before setting PATH.
+  const parentEnv = windowsGpu
+    ? Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(?:PATH|GGML_BACKEND_PATH)$/i.test(key)))
+    : process.env
 
   if (opts.signal?.aborted) {
     throw new WhisperRunnerError("aborted", "whisper aborted before start")
@@ -329,11 +347,10 @@ function runWhisperAttempt(
           cwd: binaryDir,
           env: {
             // Inherit OS env (SystemRoot etc. required on Windows CRT) then override PATH
-            ...process.env,
-            ...(backend !== "cpu" ? { GGML_BACKEND_PATH: undefined } : {}),
+            ...parentEnv,
             PATH:
               process.platform === "win32"
-                ? [binaryDir, backend === "cpu" ? process.env.PATH : windowsSystemDirectory()].filter(Boolean).join(path.delimiter)
+                ? [binaryDir, windowsGpu ? windowsSystemDirectory() : process.env.PATH].filter(Boolean).join(path.delimiter)
                 : process.env.PATH,
             // macOS: ensure @loader_path sibling dylibs resolve even if rpath is odd
             ...(process.platform === "darwin"

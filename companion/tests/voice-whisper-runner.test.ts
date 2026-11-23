@@ -213,6 +213,30 @@ test("verified Windows CUDA runs without CPU flags and reports the chosen device
   assert.equal(result.execution?.device, "NVIDIA GeForce RTX 4080 SUPER")
 })
 
+test("Windows GPU child excludes inherited backend and alternate PATH names", {
+  skip: process.platform !== "win32",
+}, async (t) => {
+  const backendPath = process.env.GGML_BACKEND_PATH
+  delete process.env.GGML_BACKEND_PATH
+  process.env.ggml_backend_path = "/external/backend.dll"
+  t.after(() => {
+    delete process.env.ggml_backend_path
+    if (backendPath !== undefined) process.env.GGML_BACKEND_PATH = backendPath
+  })
+  let seenEnv: NodeJS.ProcessEnv | undefined
+  await runWhisperTranscribe({
+    ...cudaOpts,
+    execFileImpl: (_file, _args, options, cb) => {
+      seenEnv = options.env
+      queueMicrotask(() => cb(null, "heard", cudaDevice + cudaEvidence))
+      return { kill() { return true } } as ChildProcess
+    },
+  })
+  const names = Object.keys(seenEnv ?? {})
+  assert.deepEqual(names.filter((name) => /^ggml_backend_path$/i.test(name)), [])
+  assert.deepEqual(names.filter((name) => /^path$/i.test(name)), ["PATH"])
+})
+
 test("CUDA enumeration or successful CPU output alone triggers one explicit CPU retry", async () => {
   const attempts: Array<{ file: string; args: readonly string[]; timeout: number | undefined }> = []
   const result = await runWhisperTranscribe({
@@ -282,13 +306,21 @@ for (const failure of ["abort", "timeout", "model", "audio"] as const) {
   })
 }
 
-test("runtime selection shares the original deadline and aborts without spawning", async () => {
+test("runtime selection observes the original deadline and cancels verification without spawning", async () => {
   let spawned = false
+  let stoppedVerification = false
   await assert.rejects(
     runWhisperTranscribe({
       ...cudaOpts,
       timeoutMs: 15,
-      acceleration: { selectRuntime: () => new Promise((resolve) => setTimeout(() => resolve(cudaRuntime), 60)) },
+      acceleration: {
+        selectRuntime: (signal: AbortSignal) => new Promise((resolve) => {
+          signal?.addEventListener("abort", () => {
+            stoppedVerification = true
+            resolve(cudaRuntime)
+          }, { once: true })
+        }),
+      },
       execFileImpl: (_file, _args, _options, cb) => {
         spawned = true
         queueMicrotask(() => cb(null, "", ""))
@@ -297,5 +329,34 @@ test("runtime selection shares the original deadline and aborts without spawning
     }),
     (e: unknown) => e instanceof WhisperRunnerError && e.code === "timeout",
   )
+  assert.equal(stoppedVerification, true)
+  assert.equal(spawned, false)
+})
+
+test("an external abort cancels runtime verification without starting inference", async () => {
+  const cancellation = new AbortController()
+  let stoppedVerification = false
+  let spawned = false
+  await assert.rejects(
+    runWhisperTranscribe({
+      ...cudaOpts,
+      signal: cancellation.signal,
+      acceleration: {
+        selectRuntime: (signal: AbortSignal) => new Promise((resolve) => {
+          setImmediate(() => cancellation.abort())
+          signal?.addEventListener("abort", () => {
+            stoppedVerification = true
+            resolve(cudaRuntime)
+          }, { once: true })
+        }),
+      },
+      execFileImpl: () => {
+        spawned = true
+        throw new Error("must not start inference")
+      },
+    }),
+    (e: unknown) => e instanceof WhisperRunnerError && e.code === "aborted",
+  )
+  assert.equal(stoppedVerification, true)
   assert.equal(spawned, false)
 })
