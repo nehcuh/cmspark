@@ -1919,11 +1919,14 @@ export function useWebSocket() {
               }
             : undefined
           const localModelId = typeof msg.localModelId === "string" ? msg.localModelId : "medium"
+          const hw = msg.hardware as { cpu?: unknown; logicalCores?: unknown; memoryGB?: unknown } | undefined
           const modelState = {
             sttEngine: sttEngine as "browser" | "local" | "system" | "external",
             localModelId,
             recommendedModelId:
               typeof msg.recommendedModelId === "string" ? msg.recommendedModelId : "medium",
+            ...(hw && typeof hw.cpu === "string" && typeof hw.logicalCores === "number" && typeof hw.memoryGB === "number"
+              ? { hardware: { cpu: hw.cpu, logicalCores: hw.logicalCores, memoryGB: hw.memoryGB } } : {}),
             models,
             binary: {
               status: typeof binaryObj.status === "string" ? binaryObj.status : "not_found",
