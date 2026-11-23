@@ -4,7 +4,7 @@ import { registrySummaryFromMessage, type RegistryDiscoverySummary } from "../ut
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceBinaryError, VoiceBinaryProgress, VoiceModelState, VoiceModelProgress, VoiceSystemState, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
+import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceBinaryError, VoiceBinaryProgress, VoiceModelState, VoiceModelProgress, VoiceSystemState, VoiceWhisperExecution, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
@@ -689,6 +689,7 @@ export type AgentAction =
   | { type: "SET_COMPUTER_MODEL_LICENSE_DOOR"; door: ComputerModelLicenseDoor | null }
   | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
   | { type: "SET_VOICE_MODEL_STATE"; modelState: VoiceModelState }
+  | { type: "SET_VOICE_ACCELERATION_EXECUTION"; execution: VoiceWhisperExecution }
   | { type: "SET_VOICE_SYSTEM_STATE"; systemState: VoiceSystemState | null }
   | { type: "SET_VOICE_MODEL_PROGRESS"; progress: VoiceModelProgress | null }
   | { type: "SET_VOICE_BINARY_PROGRESS"; progress: VoiceBinaryProgress | null }
@@ -2426,12 +2427,24 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const external = action.modelState.external
         ? (({ apiKey: _apiKey, ...view }) => view)(action.modelState.external as VoiceModelState["external"] & { apiKey?: string })
         : undefined
+      const voiceModel = external ? { ...action.modelState, external } : action.modelState
+      const latest = state.voiceModel?.acceleration?.latest
       return {
         ...state,
-        voiceModel: external ? { ...action.modelState, external } : action.modelState,
+        voiceModel: latest && acceleration?.supported && acceleration.latest && latest.at > acceleration.latest.at
+          ? { ...voiceModel, acceleration: { ...acceleration, latest } }
+          : voiceModel,
         voiceModelProgress: anyDownloading ? state.voiceModelProgress : null,
         voiceBinaryProgress: keepBinaryProgress ? binaryProgress : null,
       }
+    }
+    case "SET_VOICE_ACCELERATION_EXECUTION": {
+      const voiceModel = state.voiceModel
+      const acceleration = voiceModel?.acceleration
+      if (!voiceModel || !acceleration?.supported) return state
+      const { execution } = action
+      if (acceleration.latest && execution.at < acceleration.latest.at) return state
+      return { ...state, voiceModel: { ...voiceModel, acceleration: { ...acceleration, latest: execution } } }
     }
     case "SET_VOICE_SYSTEM_STATE":
       return { ...state, voiceSystemState: action.systemState }

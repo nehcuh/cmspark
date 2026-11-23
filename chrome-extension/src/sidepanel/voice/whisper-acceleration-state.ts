@@ -82,7 +82,7 @@ function parseRuntime(value: unknown): VoiceWhisperRuntime | undefined {
   }
 }
 
-function parseExecution(value: unknown): VoiceWhisperExecution | undefined {
+export function parseWhisperExecution(value: unknown): VoiceWhisperExecution | undefined {
   const execution = record(value)
   if (!execution) return undefined
   const backend = parseBackend(execution.backend)
@@ -108,7 +108,7 @@ export function parseWhisperAcceleration(value: unknown): VoiceWhisperAccelerati
   const runtimes = { cuda, vulkan }
   if (plannedBackend !== "cpu" && (!snapshot.supported || !runtimes[plannedBackend].available)) return undefined
   const adapters = snapshot.adapters.map(parseAdapter).filter((adapter) => adapter !== undefined)
-  const latest = parseExecution(snapshot.latest)
+  const latest = parseWhisperExecution(snapshot.latest)
   const downloadingBackend = parseBackend(snapshot.downloadingBackend)
   return {
     supported: snapshot.supported, plannedBackend, adapters, runtimes,

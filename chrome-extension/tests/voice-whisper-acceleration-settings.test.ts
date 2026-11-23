@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { WhisperAccelerationSettings } from "../src/sidepanel/components/WhisperAccelerationSettings"
 import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
 import type { VoiceModelState, VoiceWhisperAcceleration, VoiceWhisperGpuBackend } from "../src/sidepanel/types"
-import { parseVoiceBinaryProgress, parseWhisperAcceleration } from "../src/sidepanel/voice/whisper-acceleration-state"
+import { parseVoiceBinaryProgress, parseWhisperAcceleration, parseWhisperExecution } from "../src/sidepanel/voice/whisper-acceleration-state"
 
 const acceleration: VoiceWhisperAcceleration = {
   supported: true,
@@ -78,6 +78,53 @@ function modelState(update?: VoiceWhisperAcceleration): VoiceModelState {
     ...(update ? { acceleration: update } : {}),
   }
 }
+
+const cudaExecution = {
+  backend: "cuda", device: "NVIDIA GeForce RTX 4080 SUPER", ms: 1200, at: 1_795_408_020_000,
+} as const
+
+test("an execution receipt updates only the history of the currently selected voice engine", () => {
+  for (const sttEngine of ["external", "browser"] as const) {
+    const voiceModel = { ...modelState(acceleration), sttEngine, localModelId: "small" }
+    const state = {
+      ...initialState,
+      voiceModel,
+      voiceModelProgress: { modelId: "medium", file: "model.bin", receivedBytes: 5, totalBytes: 100 },
+      voiceBinaryProgress: { backend: "vulkan", phase: "download" } as const,
+    }
+    const execution = parseWhisperExecution(cudaExecution)
+    if (!execution) throw new Error("Expected the bounded execution receipt")
+    const updated = agentReducer(state, { type: "SET_VOICE_ACCELERATION_EXECUTION", execution })
+    assert.deepEqual(updated, {
+      ...state,
+      voiceModel: { ...voiceModel, acceleration: { ...acceleration, latest: cudaExecution } },
+    })
+    assert.equal(updated.voiceModelProgress, state.voiceModelProgress)
+    assert.equal(updated.voiceBinaryProgress, state.voiceBinaryProgress)
+  }
+})
+
+test("an execution receipt requires valid native evidence and an existing acceleration snapshot", () => {
+  assert.equal(parseWhisperExecution({ ...cudaExecution, device: "\x00\u202E" }), undefined)
+  const action = { type: "SET_VOICE_ACCELERATION_EXECUTION", execution: cudaExecution } as const
+  assert.equal(agentReducer(initialState, action), initialState)
+  const legacy = { ...initialState, voiceModel: modelState() }
+  assert.equal(agentReducer(legacy, action), legacy)
+  const unsupported = { ...initialState, voiceModel: modelState({ ...acceleration, supported: false }) }
+  assert.equal(agentReducer(unsupported, action), unsupported)
+})
+
+test("stale execution receipts and full snapshots keep newer execution history", () => {
+  const state = { ...initialState, voiceModel: modelState({ ...acceleration, latest: cudaExecution }) }
+  const stale = { backend: "cpu", ms: 0, at: cudaExecution.at - 1 } as const
+  assert.equal(agentReducer(state, { type: "SET_VOICE_ACCELERATION_EXECUTION", execution: stale }), state)
+  const browser = { ...modelState({ ...acceleration, latest: stale }), sttEngine: "browser" as const }
+  const updated = agentReducer(state, { type: "SET_VOICE_MODEL_STATE", modelState: browser })
+  assert.deepEqual(updated.voiceModel, {
+    ...browser,
+    acceleration: { ...acceleration, latest: cudaExecution },
+  })
+})
 
 test("GPU progress survives a ready CPU snapshot and clears on GPU completion or cancellation", () => {
   const progress = { backend: "cuda", phase: "download", receivedBytes: 25, totalBytes: 100 } as const

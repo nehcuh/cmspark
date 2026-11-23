@@ -6,7 +6,13 @@ import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
 
 import { useEffect, useRef } from "react"
 import { normalizeChatDictationLanguage } from "../voice/detect"
-import { boundedVoiceLabel, parseVoiceBinaryBackend, parseVoiceBinaryProgress, parseWhisperAcceleration } from "../voice/whisper-acceleration-state"
+import {
+  boundedVoiceLabel,
+  parseVoiceBinaryBackend,
+  parseVoiceBinaryProgress,
+  parseWhisperAcceleration,
+  parseWhisperExecution,
+} from "../voice/whisper-acceleration-state"
 import { confirmationPreviewFromMessage } from "../utils/confirmation-preview"
 import { overlayStandbyFromError, useAgentStore, type AgentAction } from "../store/agentStore"
 import { decideActiveThreadList } from "../navigation/startup-destination"
@@ -1963,6 +1969,12 @@ export function useWebSocket() {
           } catch {
             /* best-effort mirror */
           }
+          break
+        }
+
+        case "voice.acceleration.execution": {
+          const execution = parseWhisperExecution(msg.execution)
+          if (execution) dispatch({ type: "SET_VOICE_ACCELERATION_EXECUTION", execution })
           break
         }
 
