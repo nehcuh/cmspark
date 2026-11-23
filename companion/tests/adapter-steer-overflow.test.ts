@@ -568,6 +568,26 @@ test("a second reasoning-only exhaustion leaves no failed assistant history", as
   assert.ok(!params.threadManager.getMessages(params.threadId).some(m => m.role === "assistant"))
 })
 
+test("context exhaustion or a broken reasoning-only stream never persists a failed draft", async () => {
+  const broken: CreateHandler = async function* () {
+    yield { type: "reasoning", text: "trace" }
+    throw new Error("Premature close")
+  }
+  const context: CreateHandler = async function* () {
+    yield { type: "reasoning", text: "trace" }
+    yield { type: "done", finish_reason: "model_context_window_exceeded" }
+  }
+  for (const handlers of [[context], [reasoningOnlyLimit, context], [broken, broken]]) {
+    resetState()
+    const params = buildMockParams("test-sn-reason-interrupted")
+    createHandlers = [...handlers]
+    await chatCreate(params)
+    assert.equal(streamParams.length, handlers.length)
+    assert.match(params.getSentMessages().find(m => m.type === "chat.error")?.error ?? "", /上下文上限|再次中断/)
+    assert.ok(!params.threadManager.getMessages(params.threadId).some(m => m.role === "assistant"))
+  }
+})
+
 test("a streamed context limit preserves partial text and tool history without executing the truncated batch", async () => {
   resetState()
   const calls: string[] = []

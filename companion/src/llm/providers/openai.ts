@@ -112,11 +112,11 @@ export class OpenAIProvider implements LlmProvider {
           yield { type: "reasoning", text: delta.reasoning_content }
         }
         const snapshot = (choice as { message?: { reasoning_content?: unknown } } | undefined)?.message?.reasoning_content
-        if (typeof snapshot === "string" && snapshot.length > streamedReasoning.length) {
-          if (!snapshot.startsWith(streamedReasoning)) throw new Error("Gateway returned conflicting reasoning snapshots")
-          const text = snapshot.slice(streamedReasoning.length)
+        if (typeof snapshot === "string" && snapshot !== streamedReasoning) {
+          const replace = !snapshot.startsWith(streamedReasoning)
+          const text = replace ? snapshot : snapshot.slice(streamedReasoning.length)
           streamedReasoning = snapshot
-          yield { type: "reasoning", text }
+          yield { type: "reasoning", text, ...(replace ? { replace: true } : {}) }
         }
 
         if (delta?.tool_calls) {

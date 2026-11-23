@@ -1770,7 +1770,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         } else if (ev.type === "reasoning") {
           // DeepSeek thinking / Anthropic thinking blocks → same internal slot.
           // Stream to UI so long reasoning rounds don't look like a stuck "思考中".
-          reasoningContent += ev.text
+          reasoningContent = ev.replace ? ev.text : reasoningContent + ev.text
           sendToExtension({
             type: "chat.reasoning",
             thread_id: threadId,
@@ -2832,7 +2832,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         throw e
       }
 
-      if (recoveringReasoning && !savedAssistantId) {
+      if ((recoveringReasoning || e instanceof ReasoningRecoveryError) && !savedAssistantId) {
         // A transport failure during the second stream must not restart the original step.
         const incomplete = toolCalls.some(call => call != null)
         if (assistantContent.trim() || incomplete) {

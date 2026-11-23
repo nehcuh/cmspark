@@ -22,7 +22,7 @@ test("chat completions preserve prefix-shaped deltas and append only the suffix 
   const provider = new OpenAIProvider({ ...config, protocol: "openai" })
   const pieces = ["I think ", "I think that ", "I think that means "]
   for (const field of ["delta", "message"]) {
-    const expected = field === "delta" ? pieces.join("") : pieces.at(-1)!
+    const expected = field === "delta" ? pieces.join("") : "改写"
     const choices = [...pieces.map(s => ({ [field]: { reasoning_content: s } })),
       { message: { reasoning_content: expected }, delta: { content: "done" }, finish_reason: "stop" }]
     const mock = t.mock.method((provider as any).client.chat.completions, "create", async function* () {
@@ -31,7 +31,7 @@ test("chat completions preserve prefix-shaped deltas and append only the suffix 
     try {
       let reasoning = ""
       for await (const ev of provider.streamChat({messages: [{role: "user", content: "fixture"}]})) {
-        if (ev.type === "reasoning") reasoning += ev.text
+        if (ev.type === "reasoning") reasoning = ev.replace ? ev.text : reasoning + ev.text
       }
       assert.equal(reasoning, expected)
     } finally { mock.mock.restore() }
@@ -103,7 +103,7 @@ test("partial answers, context overflow, incomplete tools and user cancellation 
   for (const [first, reason] of [
     [{ type: "token", text: "partial" }, "length"],
     [{ type: "tool_call_delta", index: 0, name: "read" }, "max_tokens"],
-    [{ type: "reasoning", text: "trace" }, "model_context_window_exceeded"],
+    [{ type: "token", text: "partial" }, "model_context_window_exceeded"],
   ] as const) {
     let attempts = 0
     const provider: LlmProvider = { async *streamChat() { attempts++; yield first; yield { type: "done", finish_reason: reason } }, complete: async () => ({ content: "" }) }

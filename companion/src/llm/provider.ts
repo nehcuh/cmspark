@@ -79,7 +79,7 @@ export type CanonicalStreamEvent =
       /** Incremental arguments JSON fragment. */
       arguments?: string
     }
-  | { type: "reasoning"; text: string }
+  | { type: "reasoning"; text: string; replace?: boolean }
   | {
       type: "usage"
       prompt_tokens?: number

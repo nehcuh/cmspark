@@ -1,4 +1,5 @@
 import type { LlmConfig } from "../config"
+import { isBenignStreamTailClose } from "./transport-error"
 import { classifyGenerationLimit } from "./overflow"
 import type { CanonicalChatMessage, CanonicalStreamEvent, LlmProvider, StreamChatParams } from "./provider"
 import { effortLevels, modelSpec, reasoningWireEffort } from "./reasoning-effort"
@@ -27,7 +28,7 @@ function recoveryMessages(messages: CanonicalChatMessage[]): CanonicalChatMessag
 
 export class ReasoningRecoveryError extends Error {}
 
-type RecoveryEvent = { type: "reasoning_reset"; cause: "loop" | "limit" | "empty"; effort?: string; chars: number; completionTokens?: number; reasoningTokens?: number }
+type RecoveryEvent = { type: "reasoning_reset"; cause: "loop" | "limit" | "empty" | "transport"; effort?: string; chars: number; completionTokens?: number; reasoningTokens?: number }
 
 /** Retry only this provider step. No tools are executed or history written here. */
 export async function* streamChatWithRecovery(provider: LlmProvider, params: StreamChatParams, config: LlmConfig):
@@ -55,8 +56,9 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
       })) {
         if ((event.type === "token" && event.text.trim()) || event.type === "tool_call_delta") hasAnswerOrTool = true
         if (event.type === "reasoning" && !hasAnswerOrTool) {
-          chars += event.text.length
-          tail = (tail + event.text).slice(-8192)
+          chars = (event.replace ? 0 : chars) + event.text.length
+          tail = ((event.replace ? "" : tail) + event.text).slice(-8192)
+          if (event.replace) nextCheck = 8192
           if (chars >= nextCheck) {
             nextCheck = chars + 512
             if (repeatedReasoningTail(tail)) {
@@ -72,6 +74,9 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
           const limit = classifyGenerationLimit(event.finish_reason, {
             officialOpenAI: spec?.provider === "OpenAI", sentTokens: params.max_tokens, completionTokens,
           })
+          if (limit === "context_window" && (chars > 0 || (reasoningTokens ?? 0) > 0 || attempt > 0)) {
+            throw new ReasoningRecoveryError("已到模型上下文上限，本轮未生成正文或工具调用。")
+          }
           const emptyEnd = event.finish_reason == null || event.finish_reason === "stop" || event.finish_reason === "end_turn"
           if (emptyEnd && (attempt > 0 || chars > 0 || (reasoningTokens ?? 0) > 0)) {
             cause = "empty"
@@ -84,6 +89,9 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
         }
         yield event
       }
+    } catch (error) {
+      if (params.signal?.aborted || hasAnswerOrTool || !chars || !isBenignStreamTailClose(error)) throw error
+      cause = "transport"
     } finally {
       // Also closes a live HTTP stream when the outer consumer stops early.
       stop.abort()
@@ -92,6 +100,7 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
     if (!cause) return
     if (attempt) throw new ReasoningRecoveryError(cause === "loop"
       ? "重试后模型仍在重复思考，已停止本轮生成。"
+      : cause === "transport" ? "模型在重试时再次中断，已停止本轮生成。"
       : cause === "empty" ? "重试后模型仍只返回了思考过程，已停止本轮生成。"
       : "重试后模型仍未在单次输出上限内给出正文或工具调用，已停止本轮生成。")
     yield { type: "reasoning_reset", cause, effort: lower, chars, completionTokens, reasoningTokens }
