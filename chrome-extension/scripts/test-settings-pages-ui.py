@@ -38,6 +38,11 @@ with tempfile.TemporaryDirectory() as out:
         page.wait_for_function('Boolean(window.dispatchUI)')
         page.evaluate("""() => {
             window.microphoneChoice = '';
+            window.micStorageListeners = new Set();
+            chrome.storage.onChanged = {
+                addListener: listener => window.micStorageListeners.add(listener),
+                removeListener: listener => window.micStorageListeners.delete(listener)
+            };
             const storage = chrome.storage.local, get = storage.get, set = storage.set;
             storage.get = (key, callback) => key === 'voiceMicrophoneDeviceId' && !callback
                 ? Promise.resolve({[key]:window.microphoneChoice}) : get(key, callback);
@@ -194,6 +199,10 @@ with tempfile.TemporaryDirectory() as out:
         page.wait_for_function("window.microphoneChoice === 'built-in'")
         page.evaluate("async () => { window.resolveMicEnumeration(); await new Promise(resolve => setTimeout(resolve, 0)) }")
         assert mic.input_value() == 'built-in'
+        page.evaluate("""() => { window.microphoneChoice = 'phone';
+            for (const listener of window.micStorageListeners)
+                listener({voiceMicrophoneDeviceId:{newValue:'phone'}}, 'local'); }""")
+        page.wait_for_function("document.querySelector('#voice-microphone-device').value === 'phone'")
         dictation.get_by_role('radio', name='本机转写', exact=False).check()
         dictation.get_by_text('推荐: small', exact=False).wait_for()
         dictation.get_by_text('本机：Test CPU', exact=False).wait_for()

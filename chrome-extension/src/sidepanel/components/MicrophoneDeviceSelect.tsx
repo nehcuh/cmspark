@@ -8,6 +8,7 @@ export function MicrophoneDeviceSelect() {
   const [saving, setSaving] = useState(false)
   const savingRef = useRef(false)
   const selectionRevision = useRef(0)
+  const changedWhileSaving = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     let active = true
@@ -35,20 +36,39 @@ export function MicrophoneDeviceSelect() {
     return () => { active = false; media?.removeEventListener?.("devicechange", refresh) }
   }, [])
 
+  useEffect(() => {
+    const changes = chrome.storage?.onChanged
+    if (!changes) return
+    const onChanged = (items: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== "local" || !items[MICROPHONE_DEVICE_KEY]) return
+      const value = items[MICROPHONE_DEVICE_KEY]?.newValue
+      const next = typeof value === "string" ? value : ""
+      selectionRevision.current += 1
+      if (savingRef.current) changedWhileSaving.current = next
+      else setSelected(next)
+    }
+    changes.addListener(onChanged)
+    return () => changes.removeListener(onChanged)
+  }, [])
+
   const change = async (value: string) => {
     if (savingRef.current) return
     savingRef.current = true
+    changedWhileSaving.current = undefined
     selectionRevision.current += 1
     setSaving(true)
     try {
       await chrome.storage.local.set({ [MICROPHONE_DEVICE_KEY]: value })
-      setSelected(value)
+      const stored = await chrome.storage.local.get(MICROPHONE_DEVICE_KEY)
+      setSelected(typeof stored[MICROPHONE_DEVICE_KEY] === "string" ? stored[MICROPHONE_DEVICE_KEY] : "")
       setError("")
     } catch {
       setError("麦克风选择未保存，请重试。")
     } finally {
       selectionRevision.current += 1
       savingRef.current = false
+      if (changedWhileSaving.current !== undefined) setSelected(changedWhileSaving.current)
+      changedWhileSaving.current = undefined
       setSaving(false)
     }
   }
