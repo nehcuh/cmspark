@@ -341,13 +341,18 @@ function checkInstallationAbort(signal?: AbortSignal): void {
   if (signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
 }
 
-async function extractZipWithTar(zipPath: string, outDir: string, signal?: AbortSignal): Promise<void> {
+async function extractZip(zipPath: string, outDir: string, signal?: AbortSignal): Promise<void> {
   checkInstallationAbort(signal)
   await mkdir(outDir, { recursive: true })
+  // GNU tar cannot read ZIP. Windows/macOS ship libarchive tar; bind Windows
+  // to its system helper so a Git GNU tar earlier on PATH cannot replace it.
+  const command = process.platform === "linux" ? "unzip" : process.platform === "win32"
+    ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "/usr/bin/tar"
+  const args = process.platform === "linux" ? ["-q", zipPath, "-d", outDir] : ["-xf", zipPath, "-C", outDir]
   try {
     await new Promise<void>((resolve, reject) => {
       let resultError: Error | null = null
-      const child = execFile("tar", ["-xf", zipPath, "-C", outDir], { signal, windowsHide: true, shell: false },
+      const child = execFile(command, args, { signal, windowsHide: true, shell: false },
         (error) => { resultError = error })
       // AbortSignal invokes execFile's callback before Windows releases all
       // native file handles. Cleanup must wait for the actual close event.
@@ -355,14 +360,14 @@ async function extractZipWithTar(zipPath: string, outDir: string, signal?: Abort
       child.once("close", (code, killedBy) => {
         if (resultError) reject(resultError)
         else if (code === 0) resolve()
-        else reject(new Error(`tar exited ${code ?? killedBy ?? "unknown"}`))
+        else reject(new Error(`ZIP extractor exited ${code ?? killedBy ?? "unknown"}`))
       })
     })
   } catch (err) {
     checkInstallationAbort(signal)
     throw new WhisperBinaryDownloadError(
       "extract-failed",
-      `tar extract failed: ${err instanceof Error ? err.message : String(err)}`,
+      `ZIP extract failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
 }
@@ -434,7 +439,7 @@ async function installFromZip(
       })
     }
     opts.onProgress?.({ phase: "extract", receivedBytes: 0, totalBytes: entry.extract.files.length })
-    await extractZipWithTar(zipPath, extractDir, opts.signal)
+    await extractZip(zipPath, extractDir, opts.signal)
 
     await mkdir(destDir, { recursive: true })
     rmSync(staging, { recursive: true, force: true })
