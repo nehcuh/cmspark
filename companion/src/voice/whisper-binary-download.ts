@@ -7,9 +7,12 @@ import { createHash } from "node:crypto"
 import {
   createReadStream,
   createWriteStream,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -17,11 +20,11 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { mkdir, rename, rm, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises"
 import { pipeline } from "node:stream/promises"
 import { Readable } from "node:stream"
 import path from "node:path"
-import { execFileSync } from "node:child_process"
+import { execFile, execFileSync } from "node:child_process"
 import * as os from "node:os"
 
 import { DATA_DIR } from "../config"
@@ -36,6 +39,7 @@ import {
   loadWhisperBinaryManifest,
   primaryWhisperBinaryDest,
   primaryWhisperBinarySha256,
+  whisperBinaryManifestCandidates,
   type WhisperBinaryArchEntry,
   type WhisperBinaryManifest,
 } from "./whisper-binary-manifest"
@@ -84,22 +88,38 @@ export type WhisperBinaryDownloadOpts = {
   dataDir?: string
   /** Skip re-download when primary exe already matches pin+files. */
   skipIfReady?: boolean
+  /** Trusted package resource, still verified against the archive and every file pin. */
+  bundledArchivePath?: string
 }
 
 export function packagingWhisperBinaryDir(companionRoot: string): string {
   return path.join(companionRoot, "dist", "bin")
 }
 
-async function sha256File(filePath: string): Promise<string> {
+async function sha256File(filePath: string, signal?: AbortSignal): Promise<string> {
   const hash = createHash("sha256")
-  for await (const chunk of createReadStream(filePath)) {
+  for await (const chunk of createReadStream(filePath, { signal })) {
     hash.update(chunk as Buffer)
   }
   return hash.digest("hex")
 }
 
 function sha256FileSync(filePath: string): string {
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex")
+  // cuBLAS can exceed 450 MB. Verification must not allocate each DLL in one buffer.
+  const hash = createHash("sha256")
+  const fd = openSync(filePath, "r")
+  const chunk = Buffer.allocUnsafe(1024 * 1024)
+  try {
+    let bytes: number
+    while ((bytes = readSync(fd, chunk, 0, chunk.length, null)) > 0) hash.update(chunk.subarray(0, bytes))
+    return hash.digest("hex")
+  } finally { closeSync(fd) }
+}
+
+function unlistedGpuNativeFile(arch: string, entries: string[], allowedNames: string[]): string | undefined {
+  if (arch !== "win-x64-cuda" && arch !== "win-x64-vulkan") return undefined
+  const allowed = new Set(allowedNames.map((name) => name.toLowerCase()))
+  return entries.find((name) => /\.(?:dll|exe)$/i.test(name) && !allowed.has(name.toLowerCase()))
 }
 
 /** Probe install dir readiness against manifest extract/files pins. */
@@ -130,6 +150,11 @@ export function probeWhisperBinaryInstall(
     entry.kind === "zip"
       ? entry.extract.files.map((f) => ({ name: f.dest, sha256: f.sha256, size: f.size }))
       : entry.files.map((f) => ({ name: f.name, sha256: f.sha256, size: f.size }))
+
+  let entries: string[]
+  try { entries = readdirSync(destDir) } catch { return { status: "incomplete", primaryPath, message: "cannot inspect runtime directory" } }
+  const extra = unlistedGpuNativeFile(arch, entries, files.map((f) => f.name))
+  if (extra) return { status: "incomplete", primaryPath, message: `unlisted native file ${extra}` }
 
   for (const f of files) {
     const p = path.join(destDir, f.name)
@@ -175,6 +200,49 @@ export function probeWhisperBinaryInstall(
     }
   }
 
+  return { status: "ready", primaryPath }
+}
+
+/** Full runtime validation for live GPU selection/state without blocking abort/WS timers. */
+export async function probeWhisperBinaryInstallAsync(
+  destDir: string,
+  arch: string,
+  manifest?: WhisperBinaryManifest,
+  signal?: AbortSignal,
+): Promise<{ status: "ready" | "absent" | "incomplete"; message?: string; primaryPath?: string }> {
+  signal?.throwIfAborted()
+  let entry: WhisperBinaryArchEntry | null
+  try {
+    entry = getWhisperBinaryArchEntry(arch, manifest ?? loadWhisperBinaryManifest())
+  } catch (error) {
+    return { status: "absent", message: error instanceof Error ? error.message : String(error) }
+  }
+  if (!entry) return { status: "absent", message: `no binary manifest entry for ${arch}` }
+  const primaryPath = path.join(destDir, primaryWhisperBinaryDest(arch, entry))
+  try { await stat(primaryPath) } catch { return { status: "absent", message: "primary executable missing" } }
+  const files = entry.kind === "zip" ? entry.extract.files.map((f) => ({ name: f.dest, ...f })) : entry.files
+  let entries: string[]
+  try { entries = await readdir(destDir) } catch { return { status: "incomplete", primaryPath, message: "cannot inspect runtime directory" } }
+  const extra = unlistedGpuNativeFile(arch, entries, files.map((f) => f.name))
+  if (extra) return { status: "incomplete", primaryPath, message: `unlisted native file ${extra}` }
+  const primaryPin = expectedWhisperSha256(arch)
+  for (const file of files) {
+    signal?.throwIfAborted()
+    const filePath = path.join(destDir, file.name)
+    try {
+      const actual = await stat(filePath)
+      if (!actual.isFile() || actual.size !== file.size) return { status: "incomplete", primaryPath, message: `size mismatch ${file.name}` }
+      const digest = await sha256File(filePath, signal)
+      if (digest !== file.sha256) return { status: "incomplete", primaryPath, message: `hash mismatch ${file.name}` }
+      if (filePath === primaryPath && primaryPin && digest !== primaryPin) {
+        return { status: "incomplete", primaryPath, message: `primary pin mismatch for ${arch}` }
+      }
+    } catch (error) {
+      signal?.throwIfAborted()
+      return { status: "incomplete", primaryPath, message: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  signal?.throwIfAborted()
   return { status: "ready", primaryPath }
 }
 
@@ -269,17 +337,37 @@ async function downloadToFile(
   await rename(partPath, destPath)
 }
 
-function extractZipWithTar(zipPath: string, outDir: string): void {
-  mkdirSync(outDir, { recursive: true })
+function checkInstallationAbort(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
+}
+
+async function extractZip(zipPath: string, outDir: string, signal?: AbortSignal): Promise<void> {
+  checkInstallationAbort(signal)
+  await mkdir(outDir, { recursive: true })
+  // GNU tar cannot read ZIP. Windows/macOS ship libarchive tar; bind Windows
+  // to its system helper so a Git GNU tar earlier on PATH cannot replace it.
+  const command = process.platform === "linux" ? "unzip" : process.platform === "win32"
+    ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "/usr/bin/tar"
+  const args = process.platform === "linux" ? ["-q", zipPath, "-d", outDir] : ["-xf", zipPath, "-C", outDir]
   try {
-    execFileSync("tar", ["-xf", zipPath, "-C", outDir], {
-      stdio: "pipe",
-      windowsHide: true,
+    await new Promise<void>((resolve, reject) => {
+      let resultError: Error | null = null
+      const child = execFile(command, args, { signal, windowsHide: true, shell: false },
+        (error) => { resultError = error })
+      // AbortSignal invokes execFile's callback before Windows releases all
+      // native file handles. Cleanup must wait for the actual close event.
+      child.once("error", (error) => { resultError = error })
+      child.once("close", (code, killedBy) => {
+        if (resultError) reject(resultError)
+        else if (code === 0) resolve()
+        else reject(new Error(`ZIP extractor exited ${code ?? killedBy ?? "unknown"}`))
+      })
     })
   } catch (err) {
+    checkInstallationAbort(signal)
     throw new WhisperBinaryDownloadError(
       "extract-failed",
-      `tar extract failed: ${err instanceof Error ? err.message : String(err)}`,
+      `ZIP extract failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
 }
@@ -324,19 +412,39 @@ async function installFromZip(
   mkdirSync(tmpRoot, { recursive: true })
   const zipPath = path.join(tmpRoot, "payload.zip")
   const extractDir = path.join(tmpRoot, "extract")
+  const staging = path.join(destDir, ".install-staging")
+  let ownsStaging = false
   try {
-    await downloadToFile(entry.url, zipPath, entry.size, entry.sha256, {
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-      fetchImpl: opts.fetchImpl,
-    })
+    // Vulkan ships as an optional, locally installable resource. An explicit
+    // install action is still required; a corrupt resource must fail closed.
+    const bundled = opts.bundledArchivePath ?? (opts.arch === "win-x64-vulkan"
+      ? whisperBinaryManifestCandidates().map((p) => path.join(path.dirname(p), "whisper-vulkan-win-x64.zip"))
+        .find((p) => existsSync(p))
+      : undefined)
+    if (bundled) {
+      if (opts.signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
+      await copyFile(bundled, zipPath)
+      if (statSync(zipPath).size !== entry.size) {
+        throw new WhisperBinaryDownloadError("size-mismatch", "bundled runtime archive size mismatch")
+      }
+      if (await sha256File(zipPath) !== entry.sha256) {
+        throw new WhisperBinaryDownloadError("hash-mismatch", "bundled runtime archive hash mismatch")
+      }
+      if (opts.signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
+    } else {
+      await downloadToFile(entry.url, zipPath, entry.size, entry.sha256, {
+        signal: opts.signal,
+        onProgress: opts.onProgress,
+        fetchImpl: opts.fetchImpl,
+      })
+    }
     opts.onProgress?.({ phase: "extract", receivedBytes: 0, totalBytes: entry.extract.files.length })
-    extractZipWithTar(zipPath, extractDir)
+    await extractZip(zipPath, extractDir, opts.signal)
 
     await mkdir(destDir, { recursive: true })
-    const staging = path.join(destDir, ".install-staging")
     rmSync(staging, { recursive: true, force: true })
     mkdirSync(staging, { recursive: true })
+    ownsStaging = true
 
     let i = 0
     for (const f of entry.extract.files) {
@@ -347,25 +455,28 @@ async function installFromZip(
         totalBytes: entry.extract.files.length,
         file: f.dest,
       })
+      checkInstallationAbort(opts.signal)
       const found = findExtractedFile(extractDir, f.src, entry.extract.stripPrefix || "")
       if (!found) {
         throw new WhisperBinaryDownloadError("extract-failed", `zip missing ${f.src}`)
       }
-      const buf = readFileSync(found)
-      if (buf.length !== f.size) {
+      const extracted = await stat(found)
+      if (extracted.size !== f.size) {
         throw new WhisperBinaryDownloadError(
           "size-mismatch",
-          `extracted ${f.src} size ${buf.length} != ${f.size}`,
+          `extracted ${f.src} size ${extracted.size} != ${f.size}`,
         )
       }
-      const digest = createHash("sha256").update(buf).digest("hex")
+      let digest: string
+      try { digest = await sha256File(found, opts.signal) } catch (error) { checkInstallationAbort(opts.signal); throw error }
       if (digest !== f.sha256) {
         throw new WhisperBinaryDownloadError("hash-mismatch", `extracted ${f.src} hash mismatch`)
       }
-      writeFileSync(path.join(staging, f.dest), buf)
+      await copyFile(found, path.join(staging, f.dest))
     }
 
     // Promote staging → dest (overwrite)
+    checkInstallationAbort(opts.signal)
     for (const f of entry.extract.files) {
       const from = path.join(staging, f.dest)
       const to = path.join(destDir, f.dest)
@@ -376,8 +487,6 @@ async function installFromZip(
       }
       renameSync(from, to)
     }
-    rmSync(staging, { recursive: true, force: true })
-
     const primaryName = primaryWhisperBinaryDest(opts.arch ?? resolveWhisperArch(), entry)
     const primary = path.join(destDir, primaryName)
     opts.onProgress?.({
@@ -388,6 +497,10 @@ async function installFromZip(
     })
     return primary
   } finally {
+    if (ownsStaging) {
+      // Only the staging directory created by this operation is eligible here.
+      try { await rm(staging, { recursive: true, force: true }) } catch { /* preserve original result/error */ }
+    }
     try {
       rmSync(tmpRoot, { recursive: true, force: true })
     } catch {
@@ -731,8 +844,13 @@ export async function downloadWhisperBinary(
     opts.destDir ??
     defaultWhisperBinaryInstallDir(arch, opts.dataDir ?? DATA_DIR)
 
+  const inspectInstall = async () => {
+    try { return await probeWhisperBinaryInstallAsync(destDir, arch, manifest, opts.signal) }
+    catch (error) { checkInstallationAbort(opts.signal); throw error }
+  }
+
   if (opts.skipIfReady !== false) {
-    const probe = probeWhisperBinaryInstall(destDir, arch, manifest)
+    const probe = await inspectInstall()
     if (probe.status === "ready" && probe.primaryPath) {
       return {
         primaryPath: probe.primaryPath,
@@ -760,7 +878,7 @@ export async function downloadWhisperBinary(
     primaryPath = await installFromFiles(entry, destDir, opts)
   }
 
-  const probe = probeWhisperBinaryInstall(destDir, arch, manifest)
+  const probe = await inspectInstall()
   if (probe.status !== "ready" || !probe.primaryPath) {
     throw new WhisperBinaryDownloadError(
       "extract-failed",

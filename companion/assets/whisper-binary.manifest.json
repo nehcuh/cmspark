@@ -42,6 +42,132 @@
           }
         ]
       }
+    },
+    "win-x64-cuda": {
+      "version": "whisper.cpp-v1.7.6-cuda12.4",
+      "sha256": "3fc4d3ebd9a678313de50c04d9e59c43117ae190f0cb7bff602d4aeefc4efe3d",
+      "kind": "zip",
+      "size": 443253884,
+      "extract": {
+        "stripPrefix": "Release/",
+        "files": [
+          {
+            "size": 480256,
+            "src": "whisper-cli.exe",
+            "dest": "cmspark-whisper-win-x64.exe",
+            "sha256": "b3b68bb1f3dfe6cef45fa5faf0d719ea6b06b5e99a590fdbf2e45f42489d4d4d"
+          },
+          {
+            "size": 1306112,
+            "src": "whisper.dll",
+            "dest": "whisper.dll",
+            "sha256": "19811565ddca5b14d11903e18d2dd5bf304f0184cfd5e2d54a11a8a0270bad77"
+          },
+          {
+            "size": 67584,
+            "src": "ggml.dll",
+            "dest": "ggml.dll",
+            "sha256": "45341f2839f2e3e1eeff66013dbc01c7597b98b06e42234231e2cf3c4780e0a6"
+          },
+          {
+            "size": 498688,
+            "src": "ggml-base.dll",
+            "dest": "ggml-base.dll",
+            "sha256": "3e1ba530930c874518014a0cf500a8a5328017fca4c31f9cef112050b5e9a73b"
+          },
+          {
+            "size": 506368,
+            "src": "ggml-cpu.dll",
+            "dest": "ggml-cpu.dll",
+            "sha256": "591b6dbc4f82892c944d0b9ad32139501622b2e82cb60835cd2ef44f3400eb5f"
+          },
+          {
+            "size": 53671424,
+            "src": "ggml-cuda.dll",
+            "dest": "ggml-cuda.dll",
+            "sha256": "12a2d70ea53e60899492f69ff10764f6b2f6d5eabb2b1c6c183eeb465223f541"
+          },
+          {
+            "size": 553984,
+            "src": "cudart64_12.dll",
+            "dest": "cudart64_12.dll",
+            "sha256": "d28e42265da7462162a54da6b7a99ea4fa2caf8139d862bb500db875d0b32dfc"
+          },
+          {
+            "size": 100033536,
+            "src": "cublas64_12.dll",
+            "dest": "cublas64_12.dll",
+            "sha256": "e40202fe4223c1cd2d2dce7beec59e1ed61c7801bd827309183be9b50e358f4c"
+          },
+          {
+            "size": 473551360,
+            "src": "cublasLt64_12.dll",
+            "dest": "cublasLt64_12.dll",
+            "sha256": "2a896460bef60ed57ef32b0875812f355a6984e671d638bb632f5e8c1d7a831f"
+          }
+        ]
+      },
+      "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.7.6/whisper-cublas-12.4.0-bin-x64.zip"
+    },
+    "win-x64-vulkan": {
+      "size": 7090825,
+      "extract": {
+        "files": [
+          {
+            "dest": "cmspark-whisper-win-x64.exe",
+            "src": "cmspark-whisper-win-x64.exe",
+            "size": 480256,
+            "sha256": "732760df0e6f5e178e275d324e74a40e949569c2b7cc0d323b1347865ad0ecf2"
+          },
+          {
+            "dest": "ggml-base.dll",
+            "src": "ggml-base.dll",
+            "size": 501248,
+            "sha256": "e5af3b3d8a578bea2a9a380d672be8fce4bcedcc9b44f69ef47c86ac2ae1c1eb"
+          },
+          {
+            "dest": "ggml-cpu.dll",
+            "src": "ggml-cpu.dll",
+            "size": 509952,
+            "sha256": "fbb943cbc2ae278575b5f59c16ffa928d5f366bc16d6f9e5570e3b26136a7e0a"
+          },
+          {
+            "dest": "ggml-vulkan.dll",
+            "src": "ggml-vulkan.dll",
+            "size": 22451712,
+            "sha256": "a6cf3961f2d4012b84a083995c78192e13cb58987528dc08900b6e413a6f2d6a"
+          },
+          {
+            "dest": "ggml.dll",
+            "src": "ggml.dll",
+            "size": 67584,
+            "sha256": "9b92761221d35e73487f588052a6a7d6d99b63b6b4681b1a68605a443a47f342"
+          },
+          {
+            "dest": "LICENSE.whisper.txt",
+            "src": "LICENSE.whisper.txt",
+            "size": 1078,
+            "sha256": "e562a2ddfaf8280537795ac5ecd34e3012b6582a147ef69ba6a6a5c08c84757d"
+          },
+          {
+            "dest": "whisper-vulkan.NOTICE.txt",
+            "src": "whisper-vulkan.NOTICE.txt",
+            "size": 1687,
+            "sha256": "1f62a6ae6570ccba4ed7c41a2970216abd8da0b8dca04ac9e4b05826247c6c97"
+          },
+          {
+            "dest": "whisper.dll",
+            "src": "whisper.dll",
+            "size": 1306112,
+            "sha256": "5f757092e59f1f27f2a501ebb6053e102217039785d2f3f5e9aa18b2b9e2e359"
+          }
+        ],
+        "stripPrefix": ""
+      },
+      "sha256": "7b40229c3a8544018b44f1bb5bf9fdcb21fe4292e24cbe58e085af1afd3eee33",
+      "version": "whisper.cpp-v1.7.6-vulkan",
+      "url": "https://raw.githubusercontent.com/nehcuh/cmspark/main/companion/assets/whisper-vulkan-win-x64.zip",
+      "kind": "zip"
     }
   }
 }

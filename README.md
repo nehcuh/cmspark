@@ -3,7 +3,7 @@
 > 对着**已经登录的 Chrome** 干活的本机手：热键召唤开口，危险走**确认台**，Codex / Claude Code / Grok 可**租同一只手**（Outbound MCP）。家是 **已登录 Chrome + 硬闸**，不是 Side Panel。  
 > 能力叠加：**默认**网页问答与页内操控；**按需** Skills / Knowledge / MCP / 任务包；**opt-in** 桌面 Computer Use 与企业模块。产品句：[PRODUCT.md](PRODUCT.md)。
 
-源码开发版本 **1.7.1（尚未正式发布）**；已发布安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
+源码开发版本 **1.7.2（尚未正式发布）**；已发布安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
 
 从插件弹窗或侧栏顶行选择 **个人工作台**，可以打开会议、录屏、实时转写、翻译、活动记录和待办。
 
@@ -697,6 +697,8 @@ build-package.bat
 
 验证：包内 `dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe` 或设置页「本机组件：已就绪」。
 
+Windows x64 可在聊天听写设置中主动安装 **CUDA** 或 **Vulkan** 组件。自动选择顺序为可用的 NVIDIA CUDA → Vulkan → CPU；AMD、Intel 和其他兼容显卡使用 Vulkan 候选路径。界面分别显示检测到的显卡、下次候选后端与最近一次实际执行设备；虚拟显示适配器不算 GPU 加速。GPU 失败会显示回退原因，继续用 CPU。操作与验证边界见[本机 GPU 加速](docs/meeting-and-dictation-user-guide.md#251-windows-显卡加速)。
+
 > 本地 Windows x64 SEA 构建固定使用 x64 Node.js 22.23.4。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。Office 引擎还需要匹配架构的 [Microsoft Visual C++ v14 runtime](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist)。
 
 #### 安装（注册后台服务）
@@ -1019,4 +1021,4 @@ cmspark/
 
 ---
 
-> **当前阶段（1.7.1）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。操作面：已完成工具步骤收成审计芯 · 舰队 Glance/Inspect · spawn kick · 子任务不摊成平级聊天 · collect_handback 散文研究报告算成功收取。Capture 默认 **1040×760**（紧凑 **360×420**）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· Darwin 内嵌终端（#432，默认关）· `search_threads`/`search_knowledge`（#439）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**（`node.exe` + `cmspark-agent.js`）；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**（#363 摘帽门未过）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（1.7.2）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。操作面：已完成工具步骤收成审计芯 · 舰队 Glance/Inspect · spawn kick · 子任务不摊成平级聊天 · collect_handback 散文研究报告算成功收取。Capture 默认 **1040×760**（紧凑 **360×420**）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· Darwin 内嵌终端（#432，默认关）· `search_threads`/`search_knowledge`（#439）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**（`node.exe` + `cmspark-agent.js`）；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**（#363 摘帽门未过）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。

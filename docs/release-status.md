@@ -1,6 +1,14 @@
 # 版本与交付状态
 
-源码开发版本 **1.7.1（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码开发版本 **1.7.2（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+
+## 1.7.2
+
+Windows x64 本机听写新增 CUDA / Vulkan 可选运行组件、显卡识别与实际执行状态。RTX 4080 SUPER 的同音频转写、CPU 回退和取消恢复见[实际验收记录](audit/windows-voice-gpu-20261123.md)。AMD / Intel 的实体卡执行仍待验证。正式发布和附件状态以 [v1.7.2 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.7.2) 为准；本功能不新增 Windows ARM64 或非 Windows GPU 支持承诺。
+
+## 1.7.1
+
+2026-11-23 正式发布，公开附件共 19 项。[v1.7.1 Release](https://github.com/nehcuh/cmspark/releases/tag/v1.7.1)
 
 ## 1.6.0
 

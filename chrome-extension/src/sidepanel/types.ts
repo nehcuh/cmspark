@@ -952,11 +952,65 @@ export interface VoiceExternalState {
   limitNote: "deepseek-docs" | "openai-file-cap" | "unprobed-local-default"
 }
 
+export type VoiceWhisperGpuBackend = "cuda" | "vulkan"
+export type VoiceWhisperBackend = "cpu" | VoiceWhisperGpuBackend
+export type VoiceWhisperFallbackReason = `${VoiceWhisperGpuBackend}_failed` | `${VoiceWhisperGpuBackend}_unproven`
+export type VoiceWhisperAvailabilityReason =
+  | "unsupported_platform" | "runtime_missing" | "runtime_incomplete"
+  | "inventory_unavailable" | "no_nvidia_adapter" | "no_physical_adapter"
+  | "cuda_driver_missing" | "vulkan_loader_missing"
+
+export interface VoiceWhisperAdapter {
+  name: string
+  vendor: "nvidia" | "amd" | "intel" | "other"
+  kind: "physical" | "virtual" | "unknown"
+  driverVersion?: string
+  driverIssue?: true
+  vramMB?: number
+}
+
+export interface VoiceWhisperRuntime {
+  status: "ready" | "absent" | "incomplete"
+  available: boolean
+  reason?: VoiceWhisperAvailabilityReason
+}
+
+export interface VoiceWhisperExecution {
+  backend: VoiceWhisperBackend
+  device?: string
+  fallbackReason?: VoiceWhisperFallbackReason
+  ms: number
+  at: number
+}
+
+export interface VoiceWhisperAcceleration {
+  supported: boolean
+  adapters: VoiceWhisperAdapter[]
+  runtimes: Record<VoiceWhisperGpuBackend, VoiceWhisperRuntime>
+  plannedBackend: VoiceWhisperBackend
+  latest?: VoiceWhisperExecution
+  downloadingBackend?: VoiceWhisperBackend
+}
+
+export interface VoiceBinaryProgress {
+  backend: VoiceWhisperBackend
+  phase?: "download" | "extract" | "verify" | "cancelling"
+  receivedBytes?: number
+  totalBytes?: number
+  file?: string
+}
+
+export interface VoiceBinaryError {
+  backend: VoiceWhisperBackend
+  message: string
+}
+
 export interface VoiceModelState {
   sttEngine: "browser" | "local" | "system" | "external"
   localModelId: string
   recommendedModelId: string
   hardware?: { cpu: string; logicalCores: number; memoryGB: number }
+  acceleration?: VoiceWhisperAcceleration
   models: Record<string, { status: VoiceModelStatus; bytesOnDisk?: number; error?: string }>
   binary: { status: string; path?: string; message?: string }
   diskBudgetMB: number

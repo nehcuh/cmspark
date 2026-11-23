@@ -8,10 +8,46 @@ import vm from 'node:vm'
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
 
 const file = path.resolve('tests/fixtures/activity-scope825-windows.cs'), source = fs.readFileSync(file, 'utf8')
 const { adaptSetup, inputLayout } = createRequire(__filename)(path.resolve('tests/helpers/activity-scope825-input-control.cjs'))
 const setup = adaptSetup(source)
+test('825 actual Windows control reader accepts atomic replacement handles without sharing writes', { skip: process.platform !== 'win32' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scope825-control-'))
+  const helper = source.match(/  static string ReadControl\(string file\) \{[\s\S]*?\r?\n  \}/)?.[0]
+    ?? `static string ReadControl(string file) { return ${source.match(/string raw = (File\.ReadAllText\(file, Encoding\));/)![1]}; }`
+  const harness = `using System; using System.IO; using System.Text; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
+class ControlReader {
+  static readonly UTF8Encoding Encoding = new UTF8Encoding(false);
+  ${helper}
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+  static int Main(string[] args) {
+    const string expected = "{\\\"command\\\":\\\"resize\\\"}";
+    File.WriteAllText(args[0], expected, Encoding);
+    using (var handle = CreateFile(args[0], 0x10000, 7, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+      if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception();
+      try { File.ReadAllText(args[0], Encoding); return 2; }
+      catch (IOException error) { if (error.HResult != unchecked((int)0x80070020)) throw; }
+      if (ReadControl(args[0]) != expected) return 3;
+    }
+    using (var writer = new FileStream(args[0], FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete)) {
+      try { ReadControl(args[0]); return 4; }
+      catch (IOException error) { if (error.HResult != unchecked((int)0x80070020)) throw; }
+    }
+    return 0;
+  }
+}`
+  try {
+    const input = path.join(dir, 'reader.cs'), output = path.join(dir, 'reader.exe')
+    fs.writeFileSync(input, harness)
+    const compiler = path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe')
+    const built = spawnSync(compiler, ['/nologo', '/out:' + output, input], { encoding: 'utf8', windowsHide: true, timeout: 10000 })
+    assert.equal(built.status, 0, built.stdout + built.stderr)
+    const ran = spawnSync(output, [path.join(dir, 'control.json')], { encoding: 'utf8', windowsHide: true, timeout: 10000 })
+    assert.equal(ran.status, 0, ran.stdout + ran.stderr)
+  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+})
 function one(pattern: RegExp): string {
   const matches = [...source.matchAll(pattern)]
   assert.equal(matches.length, 1, 'one actual fixture source boundary')

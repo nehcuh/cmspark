@@ -116,6 +116,7 @@ import {
   progressPercent,
   type WhisperSettingsModelId,
 } from "../voice/whisper-settings-copy"
+import { WhisperAccelerationSettings } from "./WhisperAccelerationSettings"
 import {
   externalCancelCopy,
   externalKeySaveCopy,
@@ -2342,6 +2343,11 @@ export function SettingsSlideout() {
                 }
               }
               const proposedId = voiceModel?.recommendedModelId
+              const binaryProgress = state.voiceBinaryProgress
+              const downloadingBinary = voiceModel?.acceleration?.downloadingBackend ?? binaryProgress?.backend
+              const modelDownloading = !!voicePendingDownload ||
+                Object.values(voiceModel?.models ?? {}).some((entry) => entry.status === "downloading") ||
+                voiceModel?.diarizeModel?.status === "downloading"
               const recommendedId: WhisperSettingsModelId = WHISPER_SETTINGS_MODEL_IDS.find(id => id === proposedId) ?? RECOMMENDED_WHISPER_MODEL_ID
               const activeId = voiceModel?.localModelId || recommendedId
               const recEntry = voiceModel?.models?.[recommendedId]
@@ -2734,6 +2740,20 @@ export function SettingsSlideout() {
                         本机：{voiceModel.hardware.cpu} · {voiceModel.hardware.logicalCores} 逻辑核心 · {voiceModel.hardware.memoryGB} GB 内存。
                         建议仅参考硬件资源；实际速度取决于识别后端。模型需自行下载和启用。
                       </div>}
+                      <WhisperAccelerationSettings
+                        acceleration={voiceModel?.acceleration}
+                        progress={binaryProgress}
+                        error={state.voiceBinaryError}
+                        modelDownloading={modelDownloading}
+                        onInstall={(backend) => {
+                          clearVoiceErr()
+                          sendVoice({ type: "voice.binary.download", backend })
+                        }}
+                        onCancel={(backend) => {
+                          clearVoiceErr()
+                          sendVoice({ type: "voice.binary.cancel", backend })
+                        }}
+                      />
                       {renderModelRow(recommendedId, true)}
 
                       <button
@@ -2762,12 +2782,13 @@ export function SettingsSlideout() {
                           <div style={{ ...styles.helpText, marginTop: 2 }}>
                             {binaryStatusLine(voiceModel.binary)}
                           </div>
-                          {canDownloadWhisperBinary(voiceModel.binary) && (
+                          {(canDownloadWhisperBinary(voiceModel.binary) || downloadingBinary === "cpu") && (
                             <div style={{ marginTop: 6 }}>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
                                 <button
                                   type="button"
                                   style={styles.secondaryBtn}
+                                  disabled={!!voiceModel.acceleration && !!downloadingBinary}
                                   onClick={() => {
                                     clearVoiceErr()
                                     sendVoice({ type: "voice.binary.download" })
@@ -2778,6 +2799,7 @@ export function SettingsSlideout() {
                                 <button
                                   type="button"
                                   style={styles.secondaryBtn}
+                                  disabled={(downloadingBinary !== undefined && downloadingBinary !== "cpu") || binaryProgress?.phase === "cancelling"}
                                   onClick={() => {
                                     clearVoiceErr()
                                     sendVoice({ type: "voice.binary.cancel" })
@@ -2792,22 +2814,18 @@ export function SettingsSlideout() {
                               </div>
                             </div>
                           )}
-                          {state.voiceBinaryProgress && (
+                          {binaryProgress?.backend === "cpu" && (
                             <div style={{ ...styles.helpText, marginTop: 4 }}>
-                              组件下载：{state.voiceBinaryProgress.phase}
-                              {typeof state.voiceBinaryProgress.totalBytes === "number" &&
-                              state.voiceBinaryProgress.totalBytes > 0
-                                ? ` ${Math.min(
-                                    100,
-                                    Math.floor(
-                                      (100 * (state.voiceBinaryProgress.receivedBytes || 0)) /
-                                        state.voiceBinaryProgress.totalBytes,
-                                    ),
-                                  )}%`
+                              组件下载：{binaryProgress.phase === "cancelling" ? "正在取消安装" : binaryProgress.phase ?? "正在准备安装"}
+                              {binaryProgress.totalBytes
+                                ? ` ${progressPercent(binaryProgress.receivedBytes ?? 0, binaryProgress.totalBytes)}%`
                                 : ""}
-                              {state.voiceBinaryProgress.file
-                                ? ` · ${state.voiceBinaryProgress.file}`
-                                : ""}
+                              {binaryProgress.file && ` · ${binaryProgress.file}`}
+                            </div>
+                          )}
+                          {state.voiceBinaryError?.backend === "cpu" && (
+                            <div role="alert" style={{ ...styles.helpText, marginTop: 4, color: tokens.danger }}>
+                              {state.voiceBinaryError.message}
                             </div>
                           )}
 

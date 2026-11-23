@@ -6,6 +6,13 @@ import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
 
 import { useEffect, useRef } from "react"
 import { normalizeChatDictationLanguage } from "../voice/detect"
+import {
+  boundedVoiceLabel,
+  parseVoiceBinaryBackend,
+  parseVoiceBinaryProgress,
+  parseWhisperAcceleration,
+  parseWhisperExecution,
+} from "../voice/whisper-acceleration-state"
 import { confirmationPreviewFromMessage } from "../utils/confirmation-preview"
 import { overlayStandbyFromError, useAgentStore, type AgentAction } from "../store/agentStore"
 import { decideActiveThreadList } from "../navigation/startup-destination"
@@ -1920,6 +1927,7 @@ export function useWebSocket() {
             : undefined
           const localModelId = typeof msg.localModelId === "string" ? msg.localModelId : "medium"
           const hw = msg.hardware as { cpu?: unknown; logicalCores?: unknown; memoryGB?: unknown } | undefined
+          const acceleration = parseWhisperAcceleration(msg.acceleration)
           const modelState = {
             sttEngine: sttEngine as "browser" | "local" | "system" | "external",
             localModelId,
@@ -1927,6 +1935,7 @@ export function useWebSocket() {
               typeof msg.recommendedModelId === "string" ? msg.recommendedModelId : "medium",
             ...(hw && typeof hw.cpu === "string" && typeof hw.logicalCores === "number" && typeof hw.memoryGB === "number"
               ? { hardware: { cpu: hw.cpu, logicalCores: hw.logicalCores, memoryGB: hw.memoryGB } } : {}),
+            ...(acceleration ? { acceleration } : {}),
             models,
             binary: {
               status: typeof binaryObj.status === "string" ? binaryObj.status : "not_found",
@@ -1960,6 +1969,12 @@ export function useWebSocket() {
           } catch {
             /* best-effort mirror */
           }
+          break
+        }
+
+        case "voice.acceleration.execution": {
+          const execution = parseWhisperExecution(msg.execution)
+          if (execution) dispatch({ type: "SET_VOICE_ACCELERATION_EXECUTION", execution })
           break
         }
 
@@ -2008,17 +2023,32 @@ export function useWebSocket() {
           })
           break
 
-        case "voice.binary.progress":
-          dispatch({
-            type: "SET_VOICE_BINARY_PROGRESS",
-            progress: {
-              phase: typeof msg.phase === "string" ? msg.phase : undefined,
-              receivedBytes: typeof msg.receivedBytes === "number" ? msg.receivedBytes : 0,
-              totalBytes: typeof msg.totalBytes === "number" ? msg.totalBytes : 0,
-              file: typeof msg.file === "string" ? msg.file : undefined,
-            },
-          })
+        case "voice.binary.progress": {
+          const progress = parseVoiceBinaryProgress(msg)
+          if (progress) dispatch({ type: "SET_VOICE_BINARY_PROGRESS", progress })
           break
+        }
+
+        case "voice.binary.download.result": {
+          const backend = parseVoiceBinaryBackend(msg.backend)
+          if (msg.ok === true && backend && (msg.status === "started" || msg.status === "already-running")) {
+            if (msg.status === "started") dispatch({ type: "SET_VOICE_BINARY_ERROR", error: null })
+            dispatch({ type: "SET_VOICE_BINARY_PROGRESS", progress: { backend } })
+          }
+          break
+        }
+
+        case "voice.binary.cancel.result": {
+          const backend = parseVoiceBinaryBackend(msg.backend)
+          if (msg.ok !== true || !backend) break
+          if (msg.status === "cancelling") {
+            dispatch({ type: "SET_VOICE_BINARY_PROGRESS", progress: { backend, phase: "cancelling" } })
+          } else if (msg.status === "not-running") {
+            dispatch({ type: "CLEAR_VOICE_BINARY_PROGRESS", backend })
+            chrome.runtime.sendMessage({ type: "voice.model.get_state", source: "settings" })
+          }
+          break
+        }
 
         case "mcp.server.status_changed": {
           const server = msg.server
@@ -2452,6 +2482,14 @@ export function useWebSocket() {
           }
           // Path B M0: voice.model.* 错误(family:"voice.model")→ 设置页语音区错误位。
           if (msg && typeof msg === "object" && msg.family === "voice.model") {
+            if (msg.code === "BINARY_DOWNLOAD_FAILED" || msg.error_code === "BINARY_DOWNLOAD_FAILED") {
+              const backend = parseVoiceBinaryBackend(msg.backend)
+              if (backend) dispatch({
+                type: "SET_VOICE_BINARY_ERROR",
+                error: { backend, message: boundedVoiceLabel(msg.error, 720) ?? "本机组件下载失败。" },
+              })
+              break
+            }
             dispatch({
               type: "SET_VOICE_MODEL_ERROR",
               error: typeof msg.error === "string" && msg.error ? msg.error : "Unknown voice.model error",

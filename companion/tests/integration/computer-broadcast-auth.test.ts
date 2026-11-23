@@ -19,8 +19,11 @@ import { WebSocketServer, WebSocket } from "ws"
 
 import {
   broadcastToClients,
+  seedExtensionWsAuthForTests,
   setupBroadcastAuthForTests,
 } from "../../src/server.js"
+import { recordWhisperExecution } from "../../src/voice/whisper-acceleration.js"
+import { observeVoiceAccelerationExecution } from "../../src/ws/lifecycle.js"
 
 let wss: WebSocketServer
 let serverA: WebSocket // authenticated panel
@@ -133,4 +136,30 @@ test("SRV-1: config.updated via broadcastToClients reaches auth client only; una
   assert.equal(recvA[0]?.type, "config.updated")
   assert.equal(recvA[0]?.source, "companion")
   assert.equal(recvB.length, 0, "pre-handshake peer must not receive config.updated")
+})
+
+test("inference publishes only execution metadata to authenticated extension peers", async (t) => {
+  t.after(observeVoiceAccelerationExecution())
+  const peers = [
+    { origin: "cmspark-tray://local", authenticated: true },
+    { origin: "https://example.test", authenticated: true },
+    { origin: "chrome-extension://malformed/path", authenticated: true },
+    { origin: "chrome-extension://prehandshake", authenticated: false },
+    { origin: "chrome-extension://sidepanel", authenticated: true },
+  ]
+  const messages = peers.map((_, index) => ({
+    type: "voice.acceleration.execution",
+    execution: { backend: "cpu" as const, ms: 25, at: index + 1 },
+  }))
+  for (const [index, { origin, authenticated }] of peers.entries()) {
+    seedExtensionWsAuthForTests(serverB, { origin, authenticated })
+    recordWhisperExecution(messages[index]!.execution)
+    broadcastToClients({ type: "mcp.servers.updated", marker: origin })
+  }
+  await settle()
+
+  assert.deepEqual(recvA.filter((message) => message.type !== "mcp.servers.updated"), messages)
+  assert.deepEqual(recvB.filter((message) => message.type !== "mcp.servers.updated"), [messages.at(-1)])
+  assert.deepEqual(recvB.filter((message) => message.type === "mcp.servers.updated").map((message) => message.marker),
+    peers.filter(({ authenticated }) => authenticated).map(({ origin }) => origin))
 })

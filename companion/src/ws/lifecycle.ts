@@ -66,6 +66,7 @@ import {
 import { getMcpManager, getMcpConfirmCache } from "../mcp"
 import { applyHardenedProcessPath } from "../process-path"
 import { scheduleWhisperPrewarm } from "../voice/whisper-prewarm"
+import { observeWhisperExecution } from "../voice/whisper-acceleration"
 import {
   getOrCreateSharedSecret,
   consumeSecretFreshlyGenerated,
@@ -406,6 +407,7 @@ export function applyConnectionCloseGracePeriod(closedWs?: WebSocket): void {
 /**
  * Broadcast a message to all AUTHENTICATED WebSocket clients (MCP status
  * updates, computer.task.event progress + preview JPEGs, config.updated).
+ * The extension scope also requires a valid chrome-extension origin.
  *
  * X3 (adversary WP2): outbound payloads turned sensitive in WP2 — per-step
  * desktop preview JPEGs ride this channel. The inbound gate (P0-2B) already
@@ -414,11 +416,13 @@ export function applyConnectionCloseGracePeriod(closedWs?: WebSocket): void {
  * inside the 5s handshake window (and reconnect indefinitely). Mirror the
  * inbound semantics: no completed auth.handshake, NO broadcasts.
  */
-export function broadcastToClients(data: any): void {
+export function broadcastToClients(data: any, recipients: "authenticated" | "extension" = "authenticated"): void {
   if (!wss) return
   const message = JSON.stringify(data)
   for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
+    const auth = wsAuth.get(client)
+    if (client.readyState === WebSocket.OPEN && auth?.authenticated === true &&
+        (recipients === "authenticated" || isChromeExtensionWsOrigin(auth.origin))) {
       try {
         client.send(message)
       } catch {
@@ -426,6 +430,13 @@ export function broadcastToClients(data: any): void {
       }
     }
   }
+}
+
+/** Publish inference results without probing models or rebuilding settings state. */
+export function observeVoiceAccelerationExecution(): () => void {
+  return observeWhisperExecution((execution) =>
+    broadcastToClients({ type: "voice.acceleration.execution", execution }, "extension"),
+  )
 }
 
 /** Origin used when tests seed an authenticated Chrome extension peer. */
@@ -791,6 +802,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     logger.info("server.listening", { port })
     // Explicit opt-in is persisted; opening a UI is not required for confirmed reminders.
     try { getActivityService().start() } catch { logger.warn("activity.start_failed") }
+    httpServer.once("close", observeVoiceAccelerationExecution())
     scheduleWhisperPrewarm()
     // P3a HUD spike: if tray is co-located in this process, run full in-process
     // open→hydrate→confirm→standby. Dual-process (normal tray + server) is driven

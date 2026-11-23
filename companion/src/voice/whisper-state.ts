@@ -1,11 +1,12 @@
 // Path B M0 — voice.model.state DTO assembly (probe + binary + disk budget).
-// Handlers own mutation; this module is pure observation over config + disk.
+// Handlers own mutation; this module observes voice config, disk and execution.
 
 import * as path from "node:path"
 import { detectWhisperHardware, recommendWhisper, type WhisperHardware } from "./whisper-hardware"
 
 import { getConfig, DATA_DIR } from "../config"
 import { defaultVoiceExternal, externalStateView } from "./external-asr-config"
+import { inspectWhisperAcceleration, type WhisperAccelerationState } from "./whisper-acceleration"
 import {
   allWhisperSearchRoots,
   resolveWhisperArch,
@@ -53,6 +54,7 @@ export interface VoiceModelStatePayload {
   /** #260 diarize speaker-embedding model (anonymous clustering only). */
   diarizeModel: { modelId: string; status: WhisperModelProbeStatus; bytesOnDisk?: number; error?: string }
   binary: { status: VoiceModelBinaryStatus; path?: string; message?: string }
+  acceleration?: WhisperAccelerationState
   /** SHARED budget across whisper root + diarize root (#260). */
   diskBudgetMB: number
   diskUsedMB: number
@@ -241,6 +243,7 @@ export async function buildVoiceModelState(
   })
 
   const hardware = detectWhisperHardware()
+  const acceleration = await inspectWhisperAcceleration()
   return {
     type: "voice.model.state",
     sttEngine,
@@ -250,6 +253,7 @@ export async function buildVoiceModelState(
     models,
     diarizeModel,
     binary: opts.binary ?? resolveBinaryForState({ companionRoots: opts.companionRoots }),
+    acceleration,
     diskBudgetMB: budgetMB,
     diskUsedMB: Math.round((occupied / (1024 * 1024)) * 10) / 10,
     whisperRoot: rootDir,

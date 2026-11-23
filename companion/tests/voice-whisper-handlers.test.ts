@@ -124,6 +124,87 @@ test("validateWsMessage: invalid modelId rejected", () => {
   )
 })
 
+test("binary download validation permits only optional CUDA or Vulkan", () => {
+  const msg = { type: "voice.binary.download", source: "settings" }
+  assert.equal(validateWsMessage(msg).valid, true)
+  assert.equal(validateWsMessage({ ...msg, backend: "cuda" }).valid, true)
+  assert.equal(validateWsMessage({ ...msg, backend: "vulkan" }).valid, true)
+  for (const backend of ["cpu", "DML", null, { arch: "win-x64-cuda" }]) {
+    assert.equal(validateWsMessage({ ...msg, backend }).valid, false)
+  }
+})
+
+test("binary cancel validation accepts only CPU, CUDA, Vulkan or a legacy omission", () => {
+  const msg = { type: "voice.binary.cancel", source: "settings" }
+  assert.equal(validateWsMessage(msg).valid, true)
+  for (const backend of ["cpu", "cuda", "vulkan"]) {
+    assert.equal(validateWsMessage({ ...msg, backend }).valid, true)
+  }
+  for (const backend of ["DML", null, { arch: "win-x64-cuda" }]) {
+    assert.equal(validateWsMessage({ ...msg, backend }).valid, false)
+  }
+})
+
+test("binary cancel belt rejects an invalid backend", async () => {
+  const result = await handleVoiceModelMessageRaw(
+    { type: "voice.binary.cancel", source: "settings", backend: "win-x64-cuda" }, EXT_CTX,
+  )
+  assert.equal(result.code, "INVALID_BACKEND")
+})
+
+test("binary download belt rejects invalid backends and GPU requests on unsupported platforms", async () => {
+  const msg = { type: "voice.binary.download", source: "settings" }
+  const deps = {
+    platform: "linux" as const,
+    downloadBinaryImpl: async () => { assert.fail("invalid request reached the downloader") },
+  }
+  const invalid = await handleVoiceModelMessageRaw({ ...msg, backend: "win-x64-cuda" }, EXT_CTX, deps)
+  assert.equal(invalid.code, "INVALID_BACKEND")
+  const unsupported = await handleVoiceModelMessageRaw({ ...msg, backend: "cuda" }, EXT_CTX, deps)
+  assert.equal(unsupported.code, "UNSUPPORTED_BACKEND")
+})
+
+test("Vulkan install accepts matching cancellation and ignores stale CUDA and legacy CPU cancellation", { timeout: 5_000 }, async (t) => {
+  resetVoiceConfig()
+  t.after(_resetVoiceModelHandlersForTests)
+  const messages: any[] = []
+  const ctx = { ...EXT_CTX, broadcast: (msg: unknown) => messages.push(msg) }
+  let finish!: () => void
+  let abortCount = 0
+  const finished = new Promise<void>((resolve) => { finish = resolve })
+  const response = await handleVoiceModelMessageRaw({
+    type: "voice.binary.download", source: "settings", backend: "vulkan",
+    arch: "win-x64-cuda", destDir: "ignore",
+  }, ctx, {
+    platform: "win32",
+    arch: "x64",
+    downloadBinaryImpl: async (opts) => {
+      assert.equal(opts?.arch, "win-x64-vulkan")
+      assert.equal(opts?.destDir, path.join(TEST_DATA_DIR, "bin", "whisper", "win-x64", "vulkan"))
+      opts?.onProgress?.({ phase: "download", totalBytes: 100, receivedBytes: 25 })
+      await new Promise<void>((resolve) => opts?.signal?.addEventListener("abort", () => {
+        abortCount++
+        resolve()
+      }, { once: true }))
+      finish()
+      return { primaryPath: "fixture", destDir: opts?.destDir ?? "", arch: "win-x64-vulkan", version: "fixture" }
+    },
+  })
+  assert.equal(response.status, "started")
+  assert.equal(response.backend, "vulkan")
+  assert.equal(messages.find((msg) => msg.type === "voice.binary.progress")?.backend, "vulkan")
+  const cancelRequest = { type: "voice.binary.cancel", source: "settings" }
+  const staleGpu = await handleVoiceModelMessageRaw({ ...cancelRequest, backend: "cuda" }, ctx)
+  assert.deepEqual(staleGpu, { type: "voice.binary.cancel.result", ok: true, status: "not-running", backend: "cuda" })
+  const legacyCpu = await handleVoiceModelMessageRaw(cancelRequest, ctx)
+  assert.deepEqual(legacyCpu, { type: "voice.binary.cancel.result", ok: true, status: "not-running", backend: "cpu" })
+  assert.equal(abortCount, 0)
+  const cancel = await handleVoiceModelMessageRaw({ ...cancelRequest, backend: "vulkan" }, ctx)
+  assert.deepEqual(cancel, { type: "voice.binary.cancel.result", ok: true, status: "cancelling", backend: "vulkan" })
+  await finished
+  assert.equal(abortCount, 1)
+})
+
 // --- handler belt (layer 2) ---------------------------------------------------
 
 test("belt: set_engine missing source → INVALID_SOURCE", async () => {

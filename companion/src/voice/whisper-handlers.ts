@@ -22,6 +22,12 @@ import { logger } from "../logger"
 import { getConfig, setVoiceFields } from "../config"
 import { defaultVoiceExternal, reduceExternalConfig } from "./external-asr-config"
 import {
+  isWhisperGpuBackend,
+  supportsWindowsWhisperAcceleration,
+  whisperGpuInstallTarget,
+  type WhisperBackend,
+} from "./whisper-acceleration"
+import {
   isWhisperModelId,
   RECOMMENDED_WHISPER_MODEL,
   type WhisperModelId,
@@ -64,6 +70,7 @@ export interface VoiceModelHandlerContext {
 /** Injectable deps for unit tests (download/delete/state seams). */
 export interface VoiceModelHandlerDeps {
   downloadImpl?: typeof downloadWhisperModel
+  downloadBinaryImpl?: typeof downloadWhisperBinary
   deleteImpl?: typeof deleteWhisperModel
   /** #260 diarize model seams. */
   downloadDiarizeImpl?: typeof downloadDiarizeModel
@@ -77,6 +84,7 @@ export interface VoiceModelHandlerDeps {
   rootDir?: string
   /** #259: system-engine seams (platform / helper resolve / System.Speech probe). */
   platform?: NodeJS.Platform
+  arch?: string
   resolveSapi?: typeof resolveWinSapiHelper
   probeSapi?: typeof probeWinSapiSystemSpeech
   /** Diarize root override (tests). */
@@ -88,7 +96,7 @@ export interface VoiceModelHandlerDeps {
 /** modelId widened to string: holds WhisperModelId or DIARIZE_MODEL_ID (#260). */
 type ActiveDownload = { modelId: string; kind: "whisper" | "diarize"; controller: AbortController }
 type ActiveDelete = { modelId: string }
-type ActiveBinaryDownload = { controller: AbortController }
+type ActiveBinaryDownload = { controller: AbortController; backend: WhisperBackend }
 
 let activeDownload: ActiveDownload | null = null
 let activeDelete: ActiveDelete | null = null
@@ -165,8 +173,11 @@ async function statePayload(
     ...(deps.rootDir ? { rootDir: deps.rootDir } : {}),
     ...(deps.diarizeRootDir ? { diarizeRootDir: deps.diarizeRootDir } : {}),
   }
-  if (deps.buildState) return deps.buildState(opts)
-  return buildVoiceModelState(opts)
+  const state = await (deps.buildState ?? buildVoiceModelState)(opts)
+  if (state.acceleration && activeBinaryDownload) {
+    return { ...state, acceleration: { ...state.acceleration, downloadingBackend: activeBinaryDownload.backend } }
+  }
+  return state
 }
 
 function resolveRoot(deps: VoiceModelHandlerDeps): string {
@@ -1011,11 +1022,19 @@ export async function handleVoiceModelMessage(
     }
 
     case "voice.binary.download": {
+      const requestedBackend: unknown = rest.backend
+      if (requestedBackend !== undefined && !isWhisperGpuBackend(requestedBackend)) {
+        return modelError("本机组件下载仅支持可选的 cuda 或 vulkan 后端。", { code: "INVALID_BACKEND" })
+      }
+      if (requestedBackend && !supportsWindowsWhisperAcceleration(deps.platform, deps.arch)) {
+        return modelError("本机组件的 GPU 后端仅在 Windows x64 上提供。", { code: "UNSUPPORTED_BACKEND" })
+      }
       if (activeBinaryDownload) {
         return {
           type: "voice.binary.download.result" as const,
           ok: true,
           status: "already-running",
+          backend: activeBinaryDownload.backend,
         }
       }
       if (activeDownload) {
@@ -1023,16 +1042,24 @@ export async function handleVoiceModelMessage(
           code: "DOWNLOAD_IN_PROGRESS",
         })
       }
+      const backend = requestedBackend ?? "cpu"
       const controller = new AbortController()
-      activeBinaryDownload = { controller }
-      void statePayload(deps).then((s) => ctx.broadcast?.(s))
+      const operation: ActiveBinaryDownload = { controller, backend }
+      activeBinaryDownload = operation
+      void statePayload(deps).then((s) => {
+        if (activeBinaryDownload === operation) ctx.broadcast?.(s)
+      }).catch(() => {})
       void (async () => {
         try {
-          const result = await downloadWhisperBinary({
+          const download = deps.downloadBinaryImpl ?? downloadWhisperBinary
+          const result = await download({
+            ...(requestedBackend ? whisperGpuInstallTarget(requestedBackend) : {}),
             signal: controller.signal,
             onProgress: (p) => {
+              if (activeBinaryDownload !== operation) return
               ctx.broadcast?.({
                 type: "voice.binary.progress",
+                backend,
                 phase: p.phase,
                 receivedBytes: p.receivedBytes,
                 totalBytes: p.totalBytes,
@@ -1041,55 +1068,67 @@ export async function handleVoiceModelMessage(
             },
           })
           logger.info("voice.binary.download.completed", {
+            backend,
             primary: result.primaryPath,
             version: result.version,
           })
         } catch (err) {
           if (err instanceof WhisperBinaryDownloadError && err.reason === "aborted") {
-            logger.info("voice.binary.download.cancelled", {})
+            logger.info("voice.binary.download.cancelled", { backend })
           } else if (err instanceof WhisperBinaryDownloadError && err.reason === "already-ready") {
             /* n/a */
           } else {
             const msg = err instanceof Error ? err.message : String(err)
-            logger.warn("voice.binary.download.failed", { error: msg })
-            ctx.broadcast?.(
+            logger.warn("voice.binary.download.failed", { backend, error: msg })
+            if (activeBinaryDownload === operation) ctx.broadcast?.(
               modelError(`本机组件下载失败：${msg}`, {
                 code: "BINARY_DOWNLOAD_FAILED",
+                backend,
               }),
             )
           }
         } finally {
-          activeBinaryDownload = null
-          try {
-            const state = await statePayload(deps)
-            ctx.broadcast?.(state)
-          } catch {
-            /* ignore */
+          if (activeBinaryDownload === operation) {
+            activeBinaryDownload = null
+            try {
+              const state = await statePayload(deps)
+              ctx.broadcast?.(state)
+            } catch {
+              /* ignore */
+            }
           }
         }
       })()
-      logger.info("voice.binary.download.started", {})
+      logger.info("voice.binary.download.started", { backend })
       return {
         type: "voice.binary.download.result" as const,
         ok: true,
         status: "started",
+        backend,
       }
     }
 
     case "voice.binary.cancel": {
-      if (!activeBinaryDownload) {
+      const requestedBackend: unknown = rest.backend
+      if (requestedBackend !== undefined && requestedBackend !== "cpu" && !isWhisperGpuBackend(requestedBackend)) {
+        return modelError("本机组件取消仅支持可选的 cpu、cuda 或 vulkan 后端。", { code: "INVALID_BACKEND" })
+      }
+      const backend = requestedBackend ?? "cpu"
+      if (activeBinaryDownload?.backend !== backend) {
         return {
           type: "voice.binary.cancel.result" as const,
           ok: true,
           status: "not-running",
+          backend,
         }
       }
       activeBinaryDownload.controller.abort()
-      logger.info("voice.binary.download.cancel_requested", {})
+      logger.info("voice.binary.download.cancel_requested", { backend })
       return {
         type: "voice.binary.cancel.result" as const,
         ok: true,
         status: "cancelling",
+        backend,
       }
     }
 
