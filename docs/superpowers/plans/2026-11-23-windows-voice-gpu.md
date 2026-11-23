@@ -4,7 +4,7 @@
 
 **Goal:** Ship Windows CUDA/Vulkan automatic local STT with honest device status and RTX 4080 SUPER evidence.
 **Architecture:** Isolated pinned runtime directories feed one selection/execution adapter around the existing runner. Existing model-state messages carry inventory and execution status.
-**Tech Stack:** Node 22.23.4 x64, TypeScript, whisper.cpp v1.7.6, CUDA 11.8 runtime, Vulkan, Windows PowerShell CIM.
+**Tech Stack:** Node 22.23.4 x64, TypeScript, whisper.cpp v1.7.6, CUDA 12.4 runtime, Vulkan, Windows PowerShell CIM.
 **Spec:** `docs/superpowers/specs/2026-11-23-windows-voice-gpu-design.md`
 
 ## Global constraints

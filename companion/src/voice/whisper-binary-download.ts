@@ -7,9 +7,12 @@ import { createHash } from "node:crypto"
 import {
   createReadStream,
   createWriteStream,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -17,7 +20,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs"
-import { mkdir, rename, rm, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, rename, rm, writeFile } from "node:fs/promises"
 import { pipeline } from "node:stream/promises"
 import { Readable } from "node:stream"
 import path from "node:path"
@@ -36,6 +39,7 @@ import {
   loadWhisperBinaryManifest,
   primaryWhisperBinaryDest,
   primaryWhisperBinarySha256,
+  whisperBinaryManifestCandidates,
   type WhisperBinaryArchEntry,
   type WhisperBinaryManifest,
 } from "./whisper-binary-manifest"
@@ -84,6 +88,8 @@ export type WhisperBinaryDownloadOpts = {
   dataDir?: string
   /** Skip re-download when primary exe already matches pin+files. */
   skipIfReady?: boolean
+  /** Trusted package resource, still verified against the archive and every file pin. */
+  bundledArchivePath?: string
 }
 
 export function packagingWhisperBinaryDir(companionRoot: string): string {
@@ -99,7 +105,15 @@ async function sha256File(filePath: string): Promise<string> {
 }
 
 function sha256FileSync(filePath: string): string {
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex")
+  // cuBLAS can exceed 450 MB. Verification must not allocate each DLL in one buffer.
+  const hash = createHash("sha256")
+  const fd = openSync(filePath, "r")
+  const chunk = Buffer.allocUnsafe(1024 * 1024)
+  try {
+    let bytes: number
+    while ((bytes = readSync(fd, chunk, 0, chunk.length, null)) > 0) hash.update(chunk.subarray(0, bytes))
+    return hash.digest("hex")
+  } finally { closeSync(fd) }
 }
 
 /** Probe install dir readiness against manifest extract/files pins. */
@@ -325,11 +339,29 @@ async function installFromZip(
   const zipPath = path.join(tmpRoot, "payload.zip")
   const extractDir = path.join(tmpRoot, "extract")
   try {
-    await downloadToFile(entry.url, zipPath, entry.size, entry.sha256, {
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-      fetchImpl: opts.fetchImpl,
-    })
+    // Vulkan ships as an optional, locally installable resource. An explicit
+    // install action is still required; a corrupt resource must fail closed.
+    const bundled = opts.bundledArchivePath ?? (opts.arch === "win-x64-vulkan"
+      ? whisperBinaryManifestCandidates().map((p) => path.join(path.dirname(p), "whisper-vulkan-win-x64.zip"))
+        .find((p) => existsSync(p))
+      : undefined)
+    if (bundled) {
+      if (opts.signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
+      await copyFile(bundled, zipPath)
+      if (statSync(zipPath).size !== entry.size) {
+        throw new WhisperBinaryDownloadError("size-mismatch", "bundled runtime archive size mismatch")
+      }
+      if (await sha256File(zipPath) !== entry.sha256) {
+        throw new WhisperBinaryDownloadError("hash-mismatch", "bundled runtime archive hash mismatch")
+      }
+      if (opts.signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
+    } else {
+      await downloadToFile(entry.url, zipPath, entry.size, entry.sha256, {
+        signal: opts.signal,
+        onProgress: opts.onProgress,
+        fetchImpl: opts.fetchImpl,
+      })
+    }
     opts.onProgress?.({ phase: "extract", receivedBytes: 0, totalBytes: entry.extract.files.length })
     extractZipWithTar(zipPath, extractDir)
 
