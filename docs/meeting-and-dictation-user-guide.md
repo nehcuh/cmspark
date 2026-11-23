@@ -77,6 +77,8 @@ OS 级全局热键（失焦仍按住）属后续增强。
 下载源默认 huggingface.co，网络受限时在 **设置 → 输入与交互 → 聊天听写 → 模型下载源** 改填镜像（如 `https://hf-mirror.com`），或设环境变量 `CMSPARK_HF_ENDPOINT`（优先级更高）。
 本机模型不可用时：默认**当次会话自动改用浏览器听写**并显示横幅（非静默、不改配置）；可在设置关闭「本机模型不可用时自动使用浏览器听写」。  
 
+聊天听写设置中的「麦克风」可为本机、系统和外部转写选择输入设备，修改后点击底部「保存」。浏览器听写使用 Chrome 的麦克风设置；会议采集使用其各自的输入设置。模型推荐参考本机内存与 CPU 核心数，实际速度取决于推理后端。
+
 打包：`build-package.bat` 在缺少 `companion/dist/bin/cmspark-whisper-win-x64.exe` 时会按 `assets/whisper-binary.manifest.json` **自动拉取**（`CMSPARK_WHISPER_AUTO_FETCH=0` 可关）。  
 Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.7.6) `whisper-bin-x64.zip` 对齐。
 
@@ -91,7 +93,7 @@ Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/rel
 | 定稿 | 约 **8s** 窗口结束一次 final（非整段等停） |
 | poll | 按上次推断耗时自适应（约 1.4–6s） |
 | **诚实边界** | **不是** decoder-token 真流式；medium 临时字会偏慢 |
-| **large-v3-turbo** | **无**渐进临时字（仅终稿）；CPU 上短音频也可能数十秒～数分钟；设置默认推荐 **medium** |
+| **large-v3-turbo** | **无**渐进临时字（仅终稿）；CPU 上短音频也可能耗时较长；设置根据硬件资源推荐模型 |
 
 浏览器听写路径：Web Speech 字级 interim（厂商云 STT 残留，见 v1 ack）。
 
