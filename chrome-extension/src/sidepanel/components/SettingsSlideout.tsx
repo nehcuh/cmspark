@@ -240,6 +240,8 @@ export function SettingsSlideout() {
   const reportMinutesFooter = useCallback((control: FooterControl | null) => setMinutesFooter(control), [])
   const [lcuFooter, setLcuFooter] = useState<FooterControl | null>(null)
   const reportLcuFooter = useCallback((control: FooterControl | null) => setLcuFooter(control), [])
+  const [microphoneFooter, setMicrophoneFooter] = useState<FooterControl | null>(null)
+  const reportMicrophoneFooter = useCallback((control: FooterControl | null) => setMicrophoneFooter(control), [])
   const [envFooter, setEnvFooter] = useState<FooterControl | null>(null)
   const reportEnvFooter = useCallback((control: FooterControl | null) => setEnvFooter(control), [])
   const [externalPending, setExternalPending] = useState(false)
@@ -910,11 +912,12 @@ export function SettingsSlideout() {
   const canSaveProfile = !!profileFooter?.dirty && !profileFooter.busy
   const canSaveMinutes = !!minutesFooter?.dirty && !minutesFooter.busy
   const canSaveLcu = !!lcuFooter?.dirty && !lcuFooter.busy
+  const canSaveMicrophone = !!microphoneFooter?.dirty && !microphoneFooter.busy
   const canSaveEnv = !!envFooter?.dirty && !envFooter.busy
   const canSaveVoicePrefs = voicePrefsHasEdits && state.connectionState === "connected" && !voicePrefsPending
   const canSaveEngine = !!modelState && engineHasEdits && engineReady && state.connectionState === "connected" && !enginePending &&
     (engineSelection !== "local" && engineSelection !== "system" || enginePrivacyAck)
-  const footerDisabled = footerWaiting || footerRunning || localSaving || externalPending || voicePrefsPending || enginePending || !(canSaveConfig || canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveVoicePrefs || canSaveEngine)
+  const footerDisabled = footerWaiting || footerRunning || localSaving || externalPending || voicePrefsPending || enginePending || !(canSaveConfig || canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveMicrophone || canSaveVoicePrefs || canSaveEngine)
   const saveRemaining = async () => {
     if (footerRunningRef.current) return
     footerRunningRef.current = true
@@ -934,6 +937,7 @@ export function SettingsSlideout() {
       }
       if (canSaveLcu) lcuFooter?.save()
       if (canSaveEnv) envFooter?.save()
+      if (canSaveMicrophone && (await microphoneFooter?.save()) === false) return
       if (canSaveVoicePrefs) handleSaveVoicePrefs()
       if (canSaveEngine) handleSaveEngine()
     } finally {
@@ -945,7 +949,7 @@ export function SettingsSlideout() {
   const handleFooterSave = () => {
     setFooterNotice(null)
     if (canSaveConfig) {
-      const other = canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveVoicePrefs || canSaveEngine
+      const other = canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveMicrophone || canSaveVoicePrefs || canSaveEngine
       handleSave(other)
       return
     }
@@ -2521,7 +2525,7 @@ export function SettingsSlideout() {
 
               return (
                 <>
-                  <MicrophoneDeviceSelect />
+                  <MicrophoneDeviceSelect onFooterSave={reportMicrophoneFooter} />
                   <div style={{ marginTop: 12 }}>
                     <div style={{ ...styles.label, marginBottom: 6 }}>{ENGINE_SECTION_LABEL}</div>
                     <label
@@ -4749,15 +4753,15 @@ export function SettingsSlideout() {
         <div className="cm-settings-footer" style={styles.footer}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
             <span className="cm-settings-save-scope">保存当前设置草稿。授权与独立表单需要各自确认。</span>
-            {(hasEdits || computerHasEdits || localHasEdits || externalHasEdits || voicePrefsHasEdits || engineHasEdits || meetingFooter?.dirty || profileFooter?.dirty || minutesFooter?.dirty || lcuFooter?.dirty || envFooter?.dirty) && <span role="status">有未保存的修改</span>}
-            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter].some(control => control?.dirty && control.busy) && <span role="status">部分设置仍在等待连接或回执，草稿已保留。</span>}
+            {(hasEdits || computerHasEdits || localHasEdits || externalHasEdits || voicePrefsHasEdits || engineHasEdits || meetingFooter?.dirty || profileFooter?.dirty || minutesFooter?.dirty || lcuFooter?.dirty || envFooter?.dirty || microphoneFooter?.dirty) && <span role="status">有未保存的修改</span>}
+            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter, microphoneFooter].some(control => control?.dirty && control.busy) && <span role="status">部分设置仍在等待连接或回执，草稿已保留。</span>}
             {engineHasEdits && (engineSelection === "local" || engineSelection === "system") && !enginePrivacyAck && <span role="status">启用听写引擎前，请先勾选音频处理说明。</span>}
             {engineHasEdits && engineSelection === "external" && externalHasEdits && <span role="status">先保存外部转写配置，再保存引擎选择。</span>}
             {engineHasEdits && engineSelection === "external" && !externalPrivacyAck && <span role="status">启用外部转写前，请先勾选音频发送说明。</span>}
             {engineHasEdits && engineSelection === "external" && !externalHasEdits && externalPrivacyAck && modelState?.external?.keyConfigured && <span role="status">外部转写配置已保存，点击保存启用该引擎。</span>}
             {(savingExternal || externalHasEdits || voicePrefsHasEdits) && state.voiceModelError && <span role="alert">{modelProbeErrorLabel(state.voiceModelError) || state.voiceModelError}</span>}
             {localSaveError && <span role="alert">{localSaveError}</span>}
-            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter].map((control, index) => control?.error ? <span role="alert" key={index}>{control.error}</span> : null)}
+            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter, microphoneFooter].map((control, index) => control?.error ? <span role="alert" key={index}>{control.error}</span> : null)}
             {localSaving && <span role="status">正在保存本机设置…</span>}
             {footerWaiting && <span role="status">正在按顺序保存设置，请等待配置回执…</span>}
             {footerRunning && <span role="status">正在提交其余设置…</span>}
