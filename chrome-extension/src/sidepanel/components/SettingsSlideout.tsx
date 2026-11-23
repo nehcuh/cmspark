@@ -28,6 +28,7 @@ import { SettingsModelUses } from "./SettingsModelUses"
 import { ModelCenterControls } from "./ModelCenterControls"
 import { MeetingExternalAsrSettings } from "./MeetingExternalAsrSettings"
 import type { ModelCenterState } from "../utils/model-center"
+import { MicrophoneDeviceSelect } from "./MicrophoneDeviceSelect"
 import {
   resolveSettingsDestination,
   SETTINGS_CATEGORIES,
@@ -90,7 +91,7 @@ import {
   ENGINE_SYSTEM_HINT,
   ENGINE_SYSTEM_LABEL,
   OTHER_MODELS_TOGGLE,
-  OTHER_WHISPER_MODEL_IDS,
+  WHISPER_SETTINGS_MODEL_IDS,
   RECOMMENDED_ROW_PREFIX,
   RECOMMENDED_WHISPER_MODEL_ID,
   SYSTEM_UNAVAILABLE_REASON_LABEL,
@@ -239,6 +240,8 @@ export function SettingsSlideout() {
   const reportMinutesFooter = useCallback((control: FooterControl | null) => setMinutesFooter(control), [])
   const [lcuFooter, setLcuFooter] = useState<FooterControl | null>(null)
   const reportLcuFooter = useCallback((control: FooterControl | null) => setLcuFooter(control), [])
+  const [microphoneFooter, setMicrophoneFooter] = useState<FooterControl | null>(null)
+  const reportMicrophoneFooter = useCallback((control: FooterControl | null) => setMicrophoneFooter(control), [])
   const [envFooter, setEnvFooter] = useState<FooterControl | null>(null)
   const reportEnvFooter = useCallback((control: FooterControl | null) => setEnvFooter(control), [])
   const [externalPending, setExternalPending] = useState(false)
@@ -909,11 +912,12 @@ export function SettingsSlideout() {
   const canSaveProfile = !!profileFooter?.dirty && !profileFooter.busy
   const canSaveMinutes = !!minutesFooter?.dirty && !minutesFooter.busy
   const canSaveLcu = !!lcuFooter?.dirty && !lcuFooter.busy
+  const canSaveMicrophone = !!microphoneFooter?.dirty && !microphoneFooter.busy
   const canSaveEnv = !!envFooter?.dirty && !envFooter.busy
   const canSaveVoicePrefs = voicePrefsHasEdits && state.connectionState === "connected" && !voicePrefsPending
   const canSaveEngine = !!modelState && engineHasEdits && engineReady && state.connectionState === "connected" && !enginePending &&
     (engineSelection !== "local" && engineSelection !== "system" || enginePrivacyAck)
-  const footerDisabled = footerWaiting || footerRunning || localSaving || externalPending || voicePrefsPending || enginePending || !(canSaveConfig || canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveVoicePrefs || canSaveEngine)
+  const footerDisabled = footerWaiting || footerRunning || localSaving || externalPending || voicePrefsPending || enginePending || !(canSaveConfig || canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveMicrophone || canSaveVoicePrefs || canSaveEngine)
   const saveRemaining = async () => {
     if (footerRunningRef.current) return
     footerRunningRef.current = true
@@ -933,6 +937,7 @@ export function SettingsSlideout() {
       }
       if (canSaveLcu) lcuFooter?.save()
       if (canSaveEnv) envFooter?.save()
+      if (canSaveMicrophone && (await microphoneFooter?.save()) === false) return
       if (canSaveVoicePrefs) handleSaveVoicePrefs()
       if (canSaveEngine) handleSaveEngine()
     } finally {
@@ -944,7 +949,7 @@ export function SettingsSlideout() {
   const handleFooterSave = () => {
     setFooterNotice(null)
     if (canSaveConfig) {
-      const other = canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveVoicePrefs || canSaveEngine
+      const other = canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveLcu || canSaveEnv || canSaveMicrophone || canSaveVoicePrefs || canSaveEngine
       handleSave(other)
       return
     }
@@ -2335,7 +2340,8 @@ export function SettingsSlideout() {
                   })
                 }
               }
-              const recommendedId = RECOMMENDED_WHISPER_MODEL_ID
+              const proposedId = voiceModel?.recommendedModelId
+              const recommendedId: WhisperSettingsModelId = WHISPER_SETTINGS_MODEL_IDS.find(id => id === proposedId) ?? RECOMMENDED_WHISPER_MODEL_ID
               const activeId = voiceModel?.localModelId || recommendedId
               const recEntry = voiceModel?.models?.[recommendedId]
               const recReady = recEntry?.status === "ready"
@@ -2386,7 +2392,7 @@ export function SettingsSlideout() {
                         {isRecommended ? `${RECOMMENDED_ROW_PREFIX}: ${modelId}` : modelId}
                         {modelId === "large-v3-turbo" ? (
                           <div style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}>
-                            仅终稿识别（无实时出字）；可能较慢，推荐先用 medium
+                            仅终稿识别（无实时出字）；速度取决于识别后端
                           </div>
                         ) : null}
                         {isActive ? " · 活动" : ""}
@@ -2519,6 +2525,7 @@ export function SettingsSlideout() {
 
               return (
                 <>
+                  <MicrophoneDeviceSelect onFooterSave={reportMicrophoneFooter} />
                   <div style={{ marginTop: 12 }}>
                     <div style={{ ...styles.label, marginBottom: 6 }}>{ENGINE_SECTION_LABEL}</div>
                     <label
@@ -2722,6 +2729,10 @@ export function SettingsSlideout() {
                         </div>
                       )}
 
+                      {voiceModel?.hardware && <div style={styles.helpText}>
+                        本机：{voiceModel.hardware.cpu} · {voiceModel.hardware.logicalCores} 逻辑核心 · {voiceModel.hardware.memoryGB} GB 内存。
+                        建议仅参考硬件资源；实际速度取决于识别后端。模型需自行下载和启用。
+                      </div>}
                       {renderModelRow(recommendedId, true)}
 
                       <button
@@ -2740,9 +2751,7 @@ export function SettingsSlideout() {
                         {OTHER_MODELS_TOGGLE} {otherWhisperOpen ? "▾" : "▸"}
                       </button>
                       {otherWhisperOpen &&
-                        OTHER_WHISPER_MODEL_IDS.map((id) =>
-                          renderModelRow(id as WhisperSettingsModelId, false),
-                        )}
+                        WHISPER_SETTINGS_MODEL_IDS.filter(id => id !== recommendedId).map(id => renderModelRow(id, false))}
 
                       {voiceModel && (
                         <>
@@ -2915,7 +2924,7 @@ export function SettingsSlideout() {
                             title={
                               canEnableLocal
                                 ? "将听写引擎切换为本机 Whisper（需已下载就绪模型）"
-                                : "请先下载推荐模型 medium（或任一就绪型号）后再启用"
+                                : `请先下载推荐模型 ${recommendedId}（或任一就绪型号）后再启用`
                             }
                             onClick={() => handleSaveEngine(true)}
                           >
@@ -2925,7 +2934,7 @@ export function SettingsSlideout() {
                       </div>
                       {!committedLocal && !canEnableLocal && voiceModel && (
                         <div style={{ ...styles.helpText, marginTop: 4, color: tokens.warning }}>
-                          请先下载推荐型号 medium（或就绪后启用）。选择「本机转写」仅为预览，不会立刻切换引擎。
+                          请先下载推荐型号 {recommendedId}（或就绪后启用）。选择「本机转写」仅为预览，不会立刻切换引擎。
                         </div>
                       )}
                     </div>
@@ -4744,15 +4753,15 @@ export function SettingsSlideout() {
         <div className="cm-settings-footer" style={styles.footer}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
             <span className="cm-settings-save-scope">保存当前设置草稿。授权与独立表单需要各自确认。</span>
-            {(hasEdits || computerHasEdits || localHasEdits || externalHasEdits || voicePrefsHasEdits || engineHasEdits || meetingFooter?.dirty || profileFooter?.dirty || minutesFooter?.dirty || lcuFooter?.dirty || envFooter?.dirty) && <span role="status">有未保存的修改</span>}
-            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter].some(control => control?.dirty && control.busy) && <span role="status">部分设置仍在等待连接或回执，草稿已保留。</span>}
+            {(hasEdits || computerHasEdits || localHasEdits || externalHasEdits || voicePrefsHasEdits || engineHasEdits || meetingFooter?.dirty || profileFooter?.dirty || minutesFooter?.dirty || lcuFooter?.dirty || envFooter?.dirty || microphoneFooter?.dirty) && <span role="status">有未保存的修改</span>}
+            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter, microphoneFooter].some(control => control?.dirty && control.busy) && <span role="status">部分设置仍在等待连接或回执，草稿已保留。</span>}
             {engineHasEdits && (engineSelection === "local" || engineSelection === "system") && !enginePrivacyAck && <span role="status">启用听写引擎前，请先勾选音频处理说明。</span>}
             {engineHasEdits && engineSelection === "external" && externalHasEdits && <span role="status">先保存外部转写配置，再保存引擎选择。</span>}
             {engineHasEdits && engineSelection === "external" && !externalPrivacyAck && <span role="status">启用外部转写前，请先勾选音频发送说明。</span>}
             {engineHasEdits && engineSelection === "external" && !externalHasEdits && externalPrivacyAck && modelState?.external?.keyConfigured && <span role="status">外部转写配置已保存，点击保存启用该引擎。</span>}
             {(savingExternal || externalHasEdits || voicePrefsHasEdits) && state.voiceModelError && <span role="alert">{modelProbeErrorLabel(state.voiceModelError) || state.voiceModelError}</span>}
             {localSaveError && <span role="alert">{localSaveError}</span>}
-            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter].map((control, index) => control?.error ? <span role="alert" key={index}>{control.error}</span> : null)}
+            {[meetingFooter, profileFooter, minutesFooter, lcuFooter, envFooter, microphoneFooter].map((control, index) => control?.error ? <span role="alert" key={index}>{control.error}</span> : null)}
             {localSaving && <span role="status">正在保存本机设置…</span>}
             {footerWaiting && <span role="status">正在按顺序保存设置，请等待配置回执…</span>}
             {footerRunning && <span role="status">正在提交其余设置…</span>}

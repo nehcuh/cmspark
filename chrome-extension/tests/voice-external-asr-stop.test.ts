@@ -154,7 +154,7 @@ test("the listen timer shows both limit sentences when the stop reaches both cap
   }
   let api = ui.render(props)
   api.toggle()
-  for (let i = 0; i < 5; i += 1) await Promise.resolve()
+  for (let i = 0; i < 12; i += 1) await Promise.resolve()
   const timer = ui.timers.find((item) => item.ms === 1000)
   assert.ok(timer, "external stop timer is armed at the duration cap")
   timer!.fn()

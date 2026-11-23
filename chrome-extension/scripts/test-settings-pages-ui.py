@@ -22,10 +22,39 @@ with tempfile.TemporaryDirectory() as out:
         page = browser.new_page(viewport={'width': 1440, 'height': 900})
         page.set_default_timeout(6000)
         page.add_init_script('window.recEvents=[];window.SpeechRecognition=class { constructor(){window.fakeRecognition=this} start(){window.activeRecognition=this} stop(){window.recEvents.push("stop");this.onend?.()} abort(){window.recEvents.push("abort");this.aborted=true;this.onend?.()} };')
+        page.add_init_script("""window.micDevices = [{kind:'audioinput',deviceId:'default',label:'Default'},
+                {kind:'audioinput',deviceId:'built-in',label:'MacBook microphone'},
+                {kind:'audioinput',deviceId:'phone',label:'iPhone microphone'}];
+          Object.defineProperty(navigator, 'mediaDevices', {value: {
+            enumerateDevices: () => window.deferMicEnumeration
+                ? new Promise(resolve => { window.resolveMicEnumeration = () => resolve(window.micDevices) })
+                : Promise.resolve(window.micDevices),
+            addEventListener(name, callback) { if (name === 'devicechange') window.micDeviceChange = callback },
+            removeEventListener() {}, getUserMedia: async () => ({getTracks: () => []})
+        }, configurable:true})""")
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto((Path(out) / 'index.html').as_uri())
         page.wait_for_function('Boolean(window.dispatchUI)')
+        page.evaluate("""() => {
+            window.microphoneChoice = '';
+            window.micStorageListeners = new Set();
+            chrome.storage.onChanged = {
+                addListener: listener => window.micStorageListeners.add(listener),
+                removeListener: listener => window.micStorageListeners.delete(listener)
+            };
+            const storage = chrome.storage.local, get = storage.get, set = storage.set;
+            storage.get = (key, callback) => key === 'voiceMicrophoneDeviceId' && !callback
+                ? Promise.resolve({[key]:window.microphoneChoice}) : get(key, callback);
+            storage.set = (values, callback) => {
+                if (!Object.hasOwn(values, 'voiceMicrophoneDeviceId') || callback) return set(values, callback);
+                if (window.deferMicSave) return new Promise(resolve => {
+                    window.resolveMicSave = () => { window.microphoneChoice = values.voiceMicrophoneDeviceId; resolve() };
+                });
+                window.microphoneChoice = values.voiceMicrophoneDeviceId;
+                return Promise.resolve();
+            };
+        }""")
         page.evaluate("window.dispatchUI({type:'SET_SETTINGS_OPEN',open:true})")
         settings = page.get_by_role('dialog', name='设置', exact=True)
         settings.wait_for()
@@ -127,7 +156,8 @@ with tempfile.TemporaryDirectory() as out:
         model_center.get_by_text('导入用外部转写 · fixture-asr · asr.example.test', exact=True).wait_for()
         page.evaluate("""() => {
             window.dictationFixture = {
-                sttEngine:'local', localModelId:'large-v3-turbo', recommendedModelId:'large-v3-turbo',
+                sttEngine:'local', localModelId:'large-v3-turbo', recommendedModelId:'small',
+                hardware:{cpu:'Test CPU',logicalCores:4,memoryGB:4},
                 models:{}, binary:{status:'ready'}, diskBudgetMB:4096, diskUsedMB:0,
             };
             window.dispatchUI({type:'SET_VOICE_MODEL_STATE',modelState:window.dictationFixture});
@@ -154,6 +184,62 @@ with tempfile.TemporaryDirectory() as out:
             const request = window.sent.find(x => x.type === 'voice.model.set_prefs');
             window.emitRuntime({type:'voice.model.state', id:request.id});
         }""")
+        mic = dictation.get_by_label('麦克风', exact=True)
+        mic.select_option('built-in')
+        assert page.evaluate("window.microphoneChoice") == ''
+        footer_save.click()
+        page.wait_for_function("window.microphoneChoice === 'built-in'")
+        page.evaluate("() => { window.deferMicEnumeration = true; window.micDeviceChange() }")
+        mic.select_option('phone')
+        footer_save.click()
+        page.wait_for_function("window.microphoneChoice === 'phone'")
+        page.evaluate("async () => { window.resolveMicEnumeration(); await new Promise(resolve => setTimeout(resolve, 0)) }")
+        assert mic.input_value() == 'phone'
+        page.evaluate("window.deferMicSave = true")
+        mic.select_option('built-in')
+        page.evaluate('delete window.resolveMicSave')
+        footer_save.click()
+        page.wait_for_function('Boolean(window.resolveMicSave)')
+        page.evaluate("() => { window.micDeviceChange() }")
+        page.evaluate("window.resolveMicSave()")
+        page.wait_for_function("window.microphoneChoice === 'built-in'")
+        page.evaluate("async () => { window.resolveMicEnumeration(); await new Promise(resolve => setTimeout(resolve, 0)) }")
+        assert mic.input_value() == 'built-in'
+        page.evaluate("""() => { window.microphoneChoice = 'phone';
+            for (const listener of window.micStorageListeners)
+                listener({voiceMicrophoneDeviceId:{newValue:'phone'}}, 'local'); }""")
+        page.wait_for_function("document.querySelector('#voice-microphone-device').value === 'phone'")
+        mic.select_option('built-in')
+        page.evaluate('delete window.resolveMicSave')
+        footer_save.click()
+        page.wait_for_function('Boolean(window.resolveMicSave)')
+        page.evaluate("""() => { const finish = window.resolveMicSave;
+            finish(); window.microphoneChoice = 'phone';
+            for (const listener of window.micStorageListeners) {
+                listener({voiceMicrophoneDeviceId:{newValue:'built-in'}}, 'local');
+                listener({voiceMicrophoneDeviceId:{newValue:'phone'}}, 'local');
+            }
+        }""")
+        settings.get_by_role('alert').filter(has_text='麦克风设置已在其他窗口更改').first.wait_for()
+        assert mic.input_value() == 'built-in' and footer_save.is_enabled()
+        mic.select_option('phone')
+        mic.select_option('built-in')
+        page.evaluate('delete window.resolveMicSave')
+        footer_save.click()
+        page.wait_for_function('Boolean(window.resolveMicSave)')
+        page.evaluate("""() => { window.resolveMicSave(); window.microphoneChoice = 'phone';
+            for (const listener of window.micStorageListeners)
+                listener({voiceMicrophoneDeviceId:{newValue:'built-in'}}, 'local');
+        }""")
+        settings.get_by_role('alert').filter(has_text='麦克风设置已在其他窗口更改').first.wait_for()
+        page.evaluate("""() => { for (const listener of window.micStorageListeners)
+            listener({voiceMicrophoneDeviceId:{newValue:'phone'}}, 'local'); }""")
+        assert mic.input_value() == 'built-in' and footer_save.is_enabled()
+        mic.select_option('phone')
+        page.evaluate('window.deferMicSave = false')
+        dictation.get_by_role('radio', name='本机转写', exact=False).check()
+        dictation.get_by_text('推荐: small', exact=False).wait_for()
+        dictation.get_by_text('本机：Test CPU', exact=False).wait_for()
         dictation.get_by_role('radio', name='外部转写', exact=False).check()
         dictation.get_by_label('密钥', exact=True).fill('fixture-transcription-key')
         assert footer_save.is_enabled()

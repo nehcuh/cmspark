@@ -956,6 +956,7 @@ export interface VoiceModelState {
   sttEngine: "browser" | "local" | "system" | "external"
   localModelId: string
   recommendedModelId: string
+  hardware?: { cpu: string; logicalCores: number; memoryGB: number }
   models: Record<string, { status: VoiceModelStatus; bytesOnDisk?: number; error?: string }>
   binary: { status: string; path?: string; message?: string }
   diskBudgetMB: number
