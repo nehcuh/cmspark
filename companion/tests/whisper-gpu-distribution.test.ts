@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import AdmZip from "adm-zip"
-import { downloadWhisperBinary, WhisperBinaryDownloadError } from "../src/voice/whisper-binary-download"
+import { downloadWhisperBinary, probeWhisperBinaryInstallAsync, WhisperBinaryDownloadError } from "../src/voice/whisper-binary-download"
 import type { WhisperBinaryManifest } from "../src/voice/whisper-binary-manifest"
 
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex")
@@ -53,5 +53,46 @@ test("damaged bundled GPU archive is refused before extraction or network fallba
       bundledArchivePath: f.archivePath,
       fetchImpl: async () => { throw new Error("must refuse local corruption") },
     }), (e: unknown) => e instanceof WhisperBinaryDownloadError && e.reason === "hash-mismatch")
+  } finally { rmSync(f.root, { recursive: true, force: true }) }
+})
+
+test("GPU full-file verification yields to timers and still detects changed DLL bytes", async () => {
+  assert.equal(typeof probeWhisperBinaryInstallAsync, "function")
+  const f = fixture()
+  try {
+    const bytes = Buffer.alloc(8 * 1024 * 1024, 17)
+    const exePath = path.join(f.root, "cmspark-whisper-win-x64.exe")
+    writeFileSync(exePath, bytes)
+    const entry = f.manifest.binaries["win-x64-vulkan"]!
+    if (entry.kind !== "zip") throw new Error("expected zip fixture")
+    entry.extract.files[0]!.size = bytes.length
+    entry.extract.files[0]!.sha256 = digest(bytes)
+    let timerRan = false
+    setImmediate(() => { timerRan = true })
+    const ready = await probeWhisperBinaryInstallAsync(f.root, "win-x64-vulkan", f.manifest)
+    assert.equal(ready.status, "ready")
+    assert.equal(timerRan, true, "verification must let abort and WebSocket callbacks run")
+    writeFileSync(path.join(f.root, "ggml-other.DLL"), "unpinned backend")
+    assert.equal((await probeWhisperBinaryInstallAsync(f.root, "win-x64-vulkan", f.manifest)).status, "incomplete", "native loader must not see unpinned extra DLLs")
+    rmSync(path.join(f.root, "ggml-other.DLL"))
+    bytes[1] = 18
+    writeFileSync(exePath, bytes)
+    assert.equal((await probeWhisperBinaryInstallAsync(f.root, "win-x64-vulkan", f.manifest)).status, "incomplete")
+    const controller = new AbortController()
+    controller.abort()
+    await assert.rejects(probeWhisperBinaryInstallAsync(f.root, "win-x64-vulkan", f.manifest, controller.signal), (e: unknown) => e instanceof Error && e.name === "AbortError")
+  } finally { rmSync(f.root, { recursive: true, force: true }) }
+})
+
+test("GPU installation cancellation before extraction never promotes a runtime", async () => {
+  const f = fixture()
+  const controller = new AbortController()
+  try {
+    await assert.rejects(downloadWhisperBinary({
+      arch: "win-x64-vulkan", destDir: path.join(f.root, "installed"), manifest: f.manifest,
+      bundledArchivePath: f.archivePath, signal: controller.signal,
+      onProgress(p) { if (p.phase === "extract") controller.abort() },
+    }), (e: unknown) => e instanceof WhisperBinaryDownloadError && e.reason === "aborted")
+    assert.throws(() => readFileSync(path.join(f.root, "installed", "cmspark-whisper-win-x64.exe")))
   } finally { rmSync(f.root, { recursive: true, force: true }) }
 })
