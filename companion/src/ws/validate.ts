@@ -1,3 +1,4 @@
+import { validChatContext } from "../llm/chat-context"
 import { validCockpitIdleRequest } from "./cockpit-idle"
 import { validCockpitBridgeMessage } from "./cockpit-native-bridge"
 // WS message shape validation (layer 1 fail-closed fence).
@@ -94,6 +95,11 @@ export function validateWsMessage(msg: any): WsValidationResult {
     if (!Number.isSafeInteger(msg.context_tab_id) || msg.context_tab_id < 0) {
       return { valid: false, error: "context_tab_id must be a non-negative safe integer" }
     }
+  }
+
+  if (["chat.create", "chat.regenerate", "file.upload"].includes(msg.type) &&
+      msg.chat_context !== undefined && !validChatContext(msg.chat_context)) {
+    return { valid: false, error: "Invalid chat_context selection" }
   }
 
   // Known message types with required field validation

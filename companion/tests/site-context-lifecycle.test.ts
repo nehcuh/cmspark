@@ -77,3 +77,19 @@ test("context tab id is validated on create, regenerate and upload", async () =>
     }
   }
 })
+
+test("chat context choices and source IDs are validated on all chat entry frames", async () => {
+  const { validateWsMessage } = await import("../src/ws/validate")
+  for (const type of ["chat.create", "chat.regenerate", "file.upload"]) {
+    const message = {
+      type, thread_id: "thread-a", message: "inspect", message_id: "message-a",
+      files: [{ name: "a.txt", type: "text/plain", content: "a" }],
+    }
+    assert.equal(validateWsMessage({
+      ...message, chat_context: { include_page: false, automatic_knowledge: false, knowledge_ids: ["notes"], skill_ids: [] },
+    }).valid, true)
+    for (const chat_context of [null, { include_page: "false" }, { automatic_knowledge: 0 }, { knowledge_ids: [1] }, { skill_ids: [" "] }]) {
+      assert.equal(validateWsMessage({ ...message, chat_context }).valid, false)
+    }
+  }
+})

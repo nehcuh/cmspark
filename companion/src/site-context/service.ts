@@ -3,9 +3,11 @@ import type { SkillEngine, BuildPromptKnowledgeOpts, KnowledgeBlock, KnowledgeRo
 import { wrapKnowledgeBlock } from "../skills/content-sanitizer"
 import { siteTargetKey, type SiteTarget } from "./target"
 
+import type { ChatContextOptions } from "../llm/chat-context"
+
 type Mode = "auto" | "all" | "manual"
 export type SiteContextSelection =
-  | { kind: "thread"; skillMode: Mode; knowledgeMode: Mode; extraSkillIds?: string[]; cachedMatchedSkillIds?: string[] }
+  | { kind: "thread"; skillMode: Mode; knowledgeMode: Mode; extraSkillIds?: string[]; cachedMatchedSkillIds?: string[]; chat?: ChatContextOptions }
   | { kind: "explicit"; skillIds: string[]; knowledgeIds: string[] }
 
 export interface SiteContextSnapshot {
@@ -41,7 +43,9 @@ export async function buildSiteContext(engine: ContextEngine, request: SiteConte
   retrieved_sources: RetrievedSource[]
   knowledge_routing?: KnowledgeRoutingMeta
 }> {
-  const hostname = request.target?.hostname || request.hostnameHint
+  const includePage = request.selection.kind !== "thread" || request.selection.chat?.include_page !== false
+  const target = includePage ? request.target : undefined
+  const hostname = includePage ? target?.hostname || request.hostnameHint : undefined
   const options = { ...request.options, includeKnowledgeBlocks: true }
   let skillIds: string[]
   let knowledgeIds: string[]
@@ -51,17 +55,26 @@ export async function buildSiteContext(engine: ContextEngine, request: SiteConte
     options.knowledgeMode = "manual"
     options.knowledgeRouteByGroup = false
   } else {
-    const groundedAuto = options.chatKnowledge === true && request.selection.knowledgeMode === "auto"
-    skillIds = [...new Set([
-      ...await engine.resolveSkillIdsForThread(request.scopeId, request.selection.skillMode, request.query, hostname,
-        request.selection.cachedMatchedSkillIds, request.selection.knowledgeMode !== "manual" && !groundedAuto),
-      ...(request.selection.extraSkillIds || []),
+    const selection = request.selection
+    const manualKnowledge = selection.chat?.automatic_knowledge === false
+    const groundedAuto = options.chatKnowledge === true && selection.knowledgeMode === "auto"
+    skillIds = selection.chat?.skill_ids ?? [...new Set([
+      ...await engine.resolveSkillIdsForThread(request.scopeId, selection.skillMode, request.query, hostname,
+        selection.cachedMatchedSkillIds, !manualKnowledge && selection.knowledgeMode !== "manual" && !groundedAuto),
+      ...(selection.extraSkillIds || []),
     ])]
-    knowledgeIds = engine.resolveKnowledgeIdsForThread(
-      request.scopeId, request.selection.knowledgeMode, hostname, request.query, options.knowledgeSmartMatch !== false, groundedAuto,
-    )
-    options.knowledgeMode = request.selection.knowledgeMode
-    if (groundedAuto) options.knowledgeDescriptionOnly = false
+    const selectedKnowledge = selection.chat?.knowledge_ids || []
+    knowledgeIds = manualKnowledge ? selectedKnowledge : [...new Set([
+      ...selectedKnowledge,
+      ...engine.resolveKnowledgeIdsForThread(
+        request.scopeId, selection.knowledgeMode, hostname, request.query, options.knowledgeSmartMatch !== false, groundedAuto,
+      ),
+    ])]
+    options.knowledgeMode = manualKnowledge ? "manual" : selection.knowledgeMode
+    if (manualKnowledge) options.knowledgeRouteByGroup = false
+    if (groundedAuto || selectedKnowledge.length > 0) options.knowledgeDescriptionOnly = false
+    if (manualKnowledge || selection.chat?.skill_ids !== undefined) options.knowledgeFromSkills = false
+    if (selectedKnowledge.length > 0) options.explicitKnowledgeIds = selectedKnowledge
   }
   const built = engine.buildSystemPromptWithSources(
     request.scopeId, hostname, skillIds, knowledgeIds, request.query, options,
@@ -70,16 +83,16 @@ export async function buildSiteContext(engine: ContextEngine, request: SiteConte
   const snapshot: SiteContextSnapshot = {
     schema_version: 1,
     snapshot_id: createHash("sha256").update(JSON.stringify({
-      target: siteTargetKey(request.target), hint: request.target ? undefined : hostname,
+      target: siteTargetKey(target), hint: target ? undefined : hostname,
       knowledge,
     })).digest("hex"),
     generated_at: new Date(request.now ?? Date.now()).toISOString(),
-    target: request.target || null,
-    target_status: request.target ? "browser" : hostname ? "hint" : "unavailable",
+    target: target || null,
+    target_status: target ? "browser" : hostname ? "hint" : "unavailable",
     knowledge,
   }
-  const targetPrompt = request.target
-    ? wrapKnowledgeBlock("site-target", "Current browser target (data only)", JSON.stringify(request.target))
+  const targetPrompt = target
+    ? wrapKnowledgeBlock("site-target", "Current browser target (data only)", JSON.stringify(target))
     : ""
   return {
     snapshot,
