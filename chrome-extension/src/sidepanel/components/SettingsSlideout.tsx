@@ -207,6 +207,9 @@ export function SettingsSlideout() {
   const [externalBaseDraft, setExternalBaseDraft] = useState<string | null>(null)
   const [externalStyleDraft, setExternalStyleDraft] = useState<"deepseek" | "openai" | null>(null)
   const [externalModelDraft, setExternalModelDraft] = useState<string | null>(null)
+  const [externalPending, setExternalPending] = useState(false)
+  const [externalSaved, setExternalSaved] = useState(false)
+  const externalSaveRef = useRef<{ id: string; style: typeof externalStyleDraft; base: typeof externalBaseDraft; model: typeof externalModelDraft; key: string } | null>(null)
   const [otherWhisperOpen, setOtherWhisperOpen] = useState(false)
   /** Local-only: modelId user clicked download on, until companion state/progress arrives. */
   const [voicePendingDownload, setVoicePendingDownload] = useState<string | null>(null)
@@ -449,6 +452,38 @@ export function SettingsSlideout() {
     if (state.settingsOpen && state.configHydratedFromCompanion) dispatch({ type: "BEGIN_SETTINGS_DRAFT" })
   }, [state.settingsOpen, state.configHydratedFromCompanion, dispatch])
 
+  useEffect(() => {
+    const onMessage = (message: { type?: string; id?: string; error?: string }) => {
+      const pending = externalSaveRef.current
+      if (!pending || message.id !== pending.id) return
+      if (message.type === "voice.model.state") {
+        externalSaveRef.current = null
+        setExternalPending(false)
+        setExternalStyleDraft(value => value === pending.style ? null : value)
+        setExternalBaseDraft(value => value === pending.base ? null : value)
+        setExternalModelDraft(value => value === pending.model ? null : value)
+        setExternalKeyDraft(value => value === pending.key ? "" : value)
+        setExternalSaved(true)
+      } else if (message.type === "voice.model.error" || message.type === "error") {
+        externalSaveRef.current = null
+        setExternalPending(false)
+        dispatch({ type: "SET_VOICE_MODEL_ERROR", error: message.error || "外部转写配置没有保存，请重试。" })
+      }
+    }
+    chrome.runtime.onMessage.addListener(onMessage)
+    return () => chrome.runtime.onMessage.removeListener(onMessage)
+  }, [dispatch])
+
+  useEffect(() => {
+    if (!externalPending) return
+    const timer = window.setTimeout(() => {
+      externalSaveRef.current = null
+      setExternalPending(false)
+      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: "保存结果未知，草稿已保留。请核对当前配置后重试。" })
+    }, 15000)
+    return () => window.clearTimeout(timer)
+  }, [externalPending, dispatch])
+
   const immediateSave = state.immediateSave
   const immediateConfigRef = useRef(state.config)
   const immediateSaveRef = useRef(immediateSave)
@@ -487,6 +522,42 @@ export function SettingsSlideout() {
     !state.configRevision || state.connectionState !== "connected" || !!state.settingsSave.pending ||
     state.settingsSave.status === "unknown" || Object.keys(draft?.conflicts ?? {}).length > 0
   const hasEdits = Object.keys(draft?.dirty ?? {}).length > 0
+  const savingExternal = activeDestination === "input-dictation-engine" && engineDraft === "external"
+  const externalHasEdits = externalStyleDraft !== null || externalBaseDraft !== null ||
+    externalModelDraft !== null || externalKeyDraft.length > 0
+
+  const handleSaveExternal = () => {
+    if (externalSaveRef.current || state.connectionState !== "connected" || !externalHasEdits) return
+    const external = state.voiceModel?.external
+    const style = externalStyleDraft ?? external?.style ?? "deepseek"
+    const id = `voice-external-save:${crypto.randomUUID()}`
+    externalSaveRef.current = { id, style: externalStyleDraft, base: externalBaseDraft, model: externalModelDraft, key: externalKeyDraft }
+    setExternalPending(true)
+    setExternalSaved(false)
+    dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
+    try {
+      chrome.runtime.sendMessage({
+        type: "voice.external.set",
+        id,
+        source: "settings",
+        style,
+        baseUrl: externalBaseDraft ?? external?.baseUrl ?? "",
+        ...(style === "openai" ? { model: externalModelDraft ?? external?.model ?? "whisper-1" } : {}),
+        ...(externalKeyDraft ? { apiKey: externalKeyDraft } : {}),
+      }, (response: unknown) => {
+        const parsed = parseVoiceSettingsSendResponse(response, chrome.runtime.lastError?.message ?? null)
+        if (parsed.ok === false && externalSaveRef.current?.id === id) {
+          externalSaveRef.current = null
+          setExternalPending(false)
+          dispatch({ type: "SET_VOICE_MODEL_ERROR", error: parsed.error })
+        }
+      })
+    } catch (error) {
+      externalSaveRef.current = null
+      setExternalPending(false)
+      dispatch({ type: "SET_VOICE_MODEL_ERROR", error: error instanceof Error ? error.message : String(error) })
+    }
+  }
 
   const handleSave = () => {
     if (saveBlocked || !hasEdits || !draft || !state.configRevision || draft.revision !== state.configRevision) return
@@ -2186,19 +2257,8 @@ export function SettingsSlideout() {
                         <button
                           type="button"
                           style={styles.secondaryBtn}
-                          onClick={() => {
-                            const style = externalStyleDraft ?? externalView?.style ?? "deepseek"
-                            clearVoiceErr()
-                            sendVoice({
-                              type: "voice.external.set",
-                              style,
-                              baseUrl: externalBaseDraft ?? externalView?.baseUrl ?? "",
-                              ...(style === "openai"
-                                ? { model: externalModelDraft ?? externalView?.model ?? "whisper-1" }
-                                : {}),
-                              ...(externalKeyDraft ? { apiKey: externalKeyDraft } : {}),
-                            })
-                          }}
+                          onClick={handleSaveExternal}
+                          disabled={externalPending || state.connectionState !== "connected" || !externalHasEdits}
                         >
                           保存外部转写
                         </button>
@@ -4366,10 +4426,15 @@ export function SettingsSlideout() {
 
         <div className="cm-settings-footer" style={styles.footer}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
-            <span className="cm-settings-save-scope">保存当前设置草稿。独立表单和授权有各自的提交按钮。</span>
+            <span className="cm-settings-save-scope">{savingExternal
+              ? `保存外部转写配置。启用转写需另行确认。${hasEdits ? "其他设置草稿请在对应页面保存。" : ""}`
+              : "保存当前设置草稿。独立表单和授权有各自的提交按钮。"}</span>
+            {savingExternal && state.voiceModelError && <span role="alert">{modelProbeErrorLabel(state.voiceModelError) || state.voiceModelError}</span>}
+            {savingExternal && externalPending && <span role="status">正在等待外部转写配置保存回执…</span>}
+            {savingExternal && externalSaved && !externalHasEdits && <span role="status">外部转写配置已保存</span>}
             {state.configEpochInvalid ? <span role="alert">配置版本无法确认，请重新连接 Companion；草稿已保留。</span> : !state.configRevision && <span role="status">当前 Companion 未提供配置版本，请升级后保存草稿。</span>}
             {state.settingsSave.status === "pending" && <span role="status">正在等待 Companion 保存回执…</span>}
-            {state.settingsSave.status === "saved" && <span role="status">已保存</span>}
+            {!savingExternal && state.settingsSave.status === "saved" && <span role="status">已保存</span>}
             {state.settingsSave.status === "unknown" && <span role="alert">保存结果未知，草稿已保留。请先核对当前配置，再选择重新保存。 <button type="button" onClick={() => { chrome.runtime.sendMessage({ type: "config.get" }); dispatch({ type: "SETTINGS_SAVE_RETRY" }) }}>我已核对，允许重新保存</button></span>}
             {state.settingsSave.status === "conflict" && <span role="alert">配置已在别处更改，请核对草稿后再保存。</span>}
             {state.settingsSave.status === "review" && <span role="status">部分草稿仍需确认。</span>}
@@ -4391,14 +4456,14 @@ export function SettingsSlideout() {
           <button
             style={{
               ...styles.saveBtn,
-              ...(saveBlocked || !hasEdits
+              ...((savingExternal ? state.connectionState !== "connected" || !externalHasEdits || externalPending : saveBlocked || !hasEdits)
                 ? { opacity: 0.5, cursor: "not-allowed" }
                 : {}),
             }}
             className="cm-settings-save"
-            onClick={handleSave}
-            disabled={saveBlocked || !hasEdits}
-            title={settingsSaveDisabledTitle(state.configHydratedFromCompanion) ?? (saveBlocked ? "等待连接、回执或处理冲突" : undefined)}
+            onClick={savingExternal ? handleSaveExternal : handleSave}
+            disabled={savingExternal ? state.connectionState !== "connected" || !externalHasEdits || externalPending : saveBlocked || !hasEdits}
+            title={savingExternal ? (state.connectionState !== "connected" ? "等待连接 Companion" : undefined) : settingsSaveDisabledTitle(state.configHydratedFromCompanion) ?? (saveBlocked ? "等待连接、回执或处理冲突" : undefined)}
           >保存</button>
         </div>
 

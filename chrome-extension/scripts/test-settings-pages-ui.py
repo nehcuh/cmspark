@@ -108,7 +108,9 @@ with tempfile.TemporaryDirectory() as out:
         dictation = settings.locator('[data-settings-destination="input-dictation-engine"]')
         dictation.get_by_role('radio', name='外部转写', exact=False).check()
         dictation.get_by_label('密钥', exact=True).fill('fixture-transcription-key')
-        dictation.get_by_role('button', name='保存外部转写', exact=True).click()
+        footer_save = settings.get_by_role('button', name='保存', exact=True)
+        assert footer_save.is_enabled()
+        footer_save.click()
         page.wait_for_function('window.sent.some(x=>x.type==="voice.external.set" && x.source==="settings")')
         page.evaluate("""() => {
             const external = {style:'deepseek',baseUrl:'',normalizedUrl:'https://api.deepseek.com/v1/tools/asr',
