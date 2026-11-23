@@ -10,8 +10,8 @@ Compiled production `runWhisperTranscribe` executed each backend with the same a
 
 | Model / input | CUDA | Vulkan | CPU |
 |---|---:|---:|---:|
-| medium / 11.0s recorded English | 3.108s | 2.499s | 24.891s |
-| large-v3-turbo / 9.1s synthetic Mandarin | 1.927s | 1.842s | 11.214s |
+| medium / 11.0s recorded English | 2.116s | 1.591s | 7.647s |
+| large-v3-turbo / 9.1s synthetic Mandarin | 1.986s | 1.665s | 10.866s |
 
 All three backends produced identical words for each clip. English came from upstream [`samples/jfk.wav`](https://github.com/ggml-org/whisper.cpp/blob/v1.7.6/samples/jfk.wav). Mandarin was generated locally using Windows Microsoft Huihui Desktop, 16kHz mono PCM16: “这是本地语音转写测试，使用英伟达显卡进行加速。请把这句话转换成文字。” This is a synthetic speech test, not a microphone or end-to-end recording test. The existing user's medium and turbo model files were read without altering their configuration.
 
@@ -30,7 +30,9 @@ The English model allocation above belongs to medium. Native device enumeration 
 
 Both acceptance runs additionally confirmed automatic CUDA selection and a state snapshot reporting the actual GPU. A process-local `CUDA_VISIBLE_DEVICES=-1` mask left Windows inventory intact but prevented CUDA execution: each request finished once on CPU with `fallbackReason=cuda_unproven` and the expected transcript. No driver was disabled. A real spawned CUDA child was aborted, its process exit checked, and the next CUDA transcription succeeded. Strict backend acceptance never substitutes CPU silently. Controlled tests separately cover original deadline accounting, no retry on abort/timeout/input failure, damaged runtime files and vendor/device boundaries.
 
-Machine-readable model/audio hashes, actual execution records and fallback/cancellation results are in [windows-voice-gpu-20261123.json](windows-voice-gpu-20261123.json). The English run preceded addition of licensing metadata to the Vulkan archive; native executable and DLL hashes were unchanged. The Mandarin run used the final archive with notices.
+The final Mandarin run additionally subscribed to the actual production execution observer. Its immutable CUDA record and CPU-fallback record reached the subscriber as execution-only updates, without engine/model/configuration fields. The WebSocket integration matrix separately verifies those updates reach only authenticated extension origins. Inference completion does not rebuild full settings/model state or hash multi-GB model files; the extension updates only execution history.
+
+Machine-readable model/audio hashes, actual execution records and fallback/cancellation results are in [windows-voice-gpu-20261123.json](windows-voice-gpu-20261123.json). Both final receipts use the exact final manifest and runtime resources, after conversion to asynchronous verification. These repeated measurements may benefit from warm OS/driver caches; they are not cold-start claims. Earlier exploratory observations had different timings and were superseded by these final receipts.
 
 ## Distribution and build
 
@@ -62,7 +64,9 @@ AMD/Intel/other physical adapters have vendor-aware inventory and use the shared
 
 ## Checks
 
-- Companion task 1: 186 affected tests passed; source and test TypeScript checks passed.
-- Distribution: new bundled-install and corruption tests failed before the change, then passed; existing downloader tests also passed (7 tests total).
+- Companion final affected subset: 199 tests passed, zero failures or skips; source and test TypeScript checks passed.
+- Distribution: new bundle integrity, asynchronous/tampered-byte verification, independent CPU pin, cancellation/staging cleanup and native tar-close ordering regressions failed before their fixes, then passed; distribution and existing downloader tests passed (12 tests total, included in the affected subset).
 - CUDA/Vulkan/CPU real speech, automatic selection, genuine unavailable-CUDA fallback and real child cancellation/recovery passed for both model/input pairs above.
-- UI and final review results are recorded below when completed.
+- Extension final complete suite: 2,033 tests passed, zero failures or skips; source and test TypeScript checks and sidepanel hygiene passed. Plasmo production build completed successfully; it retained the existing Browserslist outdated-database advisory, with no dependency update in this task.
+- Production ReactDOMServer rendering consumed the real recorded acceleration DTO and actual CPU fallback record. Callback regressions checked backend-targeted install cancellation; execution-only merge regressions preserved engine/model/preferences/progress. Browser interaction or a user microphone recording was not part of this validation.
+- Independent core/distribution and whole-branch reviews approved the final implementation through `12e186be` with all findings closed. Corrections included responsive full-byte verification, refusal of unlisted native files, independent CPU pins, waiting for native unpacker close before cleanup, backend-scoped cancellation/progress acknowledgements, and extension-only execution updates that cannot reapply an old engine snapshot or scan model files on inference completion.

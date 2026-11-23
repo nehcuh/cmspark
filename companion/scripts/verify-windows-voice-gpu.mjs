@@ -27,7 +27,7 @@ const companion = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const { downloadWhisperBinary } = require(path.join(companion, "dist/voice/whisper-binary-download.js"))
 const { runWhisperTranscribe } = require(path.join(companion, "dist/voice/whisper-runner.js"))
 const { loadWhisperBinaryManifest } = require(path.join(companion, "dist/voice/whisper-binary-manifest.js"))
-const { inspectWhisperAcceleration } = require(path.join(companion, "dist/voice/whisper-acceleration.js"))
+const { inspectWhisperAcceleration, observeWhisperExecution } = require(path.join(companion, "dist/voice/whisper-acceleration.js"))
 const manifest = loadWhisperBinaryManifest(path.join(companion, "assets/whisper-binary.manifest.json"))
 
 for (const backend of ["cpu", "cuda", "vulkan"]) {
@@ -71,8 +71,12 @@ for (const backend of ["cuda", "vulkan", "cpu"]) {
   console.log(`${backend}: ${result.ms}ms; actual=${result.execution.backend}; device=${result.execution.device ?? "CPU"}; ${result.text}`)
 }
 
+const executionEvents = []
+const unsubscribe = observeWhisperExecution((execution) => executionEvents.push({ type: "voice.acceleration.execution", execution }))
 const automatic = await runWhisperTranscribe({ ...base, acceleration: { dataDir } })
 assert.equal(automatic.execution?.backend, "cuda", "Automatic selection must prefer CUDA on the local NVIDIA device")
+assert.deepEqual(executionEvents.at(-1)?.execution, automatic.execution, "Actual production execution must reach the live observer")
+assert.deepEqual(Object.keys(executionEvents.at(-1)).sort(), ["execution", "type"], "Live update cannot contain voice engine/model settings")
 const automaticState = await inspectWhisperAcceleration({ dataDir })
 assert.equal(automaticState.plannedBackend, "cuda")
 assert.equal(automaticState.latest?.backend, "cuda")
@@ -114,12 +118,14 @@ assert.throws(() => process.kill(cancelledPid, 0), "Cancelled native process mus
 const recovered = await runWhisperTranscribe({ ...base, acceleration: { dataDir, strictBackend: "cuda" } })
 assert.equal(recovered.execution?.backend, "cuda")
 assert.ok(recovered.text.length >= 10)
+unsubscribe()
 const evidence = {
   generatedAt: new Date().toISOString(), node: process.version, platform: `${process.platform}-${process.arch}`,
   model: { name: path.basename(modelPath), bytes: fs.statSync(modelPath).size, sha256: await hashFile(modelPath) },
   audio: { name: path.basename(audioPath), bytes: fs.statSync(audioPath).size, sha256: await hashFile(audioPath) },
   manifestSha256: await hashFile(path.join(companion, "assets/whisper-binary.manifest.json")),
   results, automatic: { result: automatic, state: automaticState }, fallback,
+  executionEvents,
   cancellation: { actualChildStarted: true, exited: true, recovery: recovered },
   limitations: ["NVIDIA activity samples are host-wide, not per-process attribution.", "AMD and Intel physical devices were not available on this host.", "CLI process and model load run once per request; this does not measure recording/UI latency."],
 }

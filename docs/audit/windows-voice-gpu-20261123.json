@@ -1,175 +1,92 @@
 [
   {
-    "fallback": {
-      "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
-      "ms": 31426,
-      "execution": {
-        "backend": "cpu",
-        "fallbackReason": "cuda_unproven",
-        "ms": 31426,
-        "at": 1795435947362
-      }
-    },
-    "model": {
-      "name": "ggml-medium.bin",
-      "bytes": 1533763059,
-      "sha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"
-    },
-    "generatedAt": "2026-11-23T12:12:29.815Z",
-    "limitations": [
-      "NVIDIA activity samples are host-wide, not per-process attribution.",
-      "AMD and Intel physical devices were not available on this host.",
-      "CLI process and model load run once per request; this does not measure recording/UI latency."
-    ],
-    "cancellation": {
-      "actualChildStarted": true,
-      "exited": true,
-      "recovery": {
-        "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
-        "ms": 1928,
-        "execution": {
-          "backend": "cuda",
-          "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 1928,
-          "at": 1795435949815
-        }
-      }
-    },
-    "automatic": {
-      "result": {
-        "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
-        "ms": 3657,
-        "execution": {
-          "backend": "cuda",
-          "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 3657,
-          "at": 1795435915491
-        }
-      },
-      "state": {
-        "supported": true,
-        "adapters": [
-          {
-            "name": "OrayIddDriver Device",
-            "kind": "virtual",
-            "vendor": "other",
-            "driverVersion": "17.50.19.949"
-          },
-          {
-            "name": "NVIDIA GeForce RTX 4080 SUPER",
-            "kind": "physical",
-            "vendor": "nvidia",
-            "driverVersion": "32.0.16.1088",
-            "vramMB": 16376
-          }
-        ],
-        "runtimes": {
-          "cuda": {
-            "status": "ready",
-            "available": true
-          },
-          "vulkan": {
-            "status": "ready",
-            "available": true
-          }
-        },
-        "plannedBackend": "cuda",
-        "latest": {
-          "backend": "cuda",
-          "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 3657,
-          "at": 1795435915491
-        }
-      }
-    },
-    "manifestSha256": "06574b80dc81b24ea287735cecbaa73a61149bc0e89055ab21f08ac2130ad767",
+    "node": "v22.23.4",
     "audio": {
       "name": "jfk.wav",
       "bytes": 352078,
       "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
     },
+    "cancellation": {
+      "actualChildStarted": true,
+      "exited": true,
+      "recovery": {
+        "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+        "ms": 2030,
+        "execution": {
+          "backend": "cuda",
+          "device": "NVIDIA GeForce RTX 4080 SUPER",
+          "ms": 2030,
+          "at": 1795436571244
+        }
+      }
+    },
+    "executionEvents": null,
     "results": [
       {
         "execution": {
           "backend": "cuda",
           "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 3108,
-          "at": 1795435884319
+          "ms": 2116,
+          "at": 1795436541350
         },
         "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
-        "ms": 3108,
+        "ms": 2116,
         "backend": "cuda"
       },
       {
         "execution": {
           "backend": "vulkan",
           "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 2499,
-          "at": 1795435886877
+          "ms": 1591,
+          "at": 1795436542989
         },
         "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
-        "ms": 2499,
+        "ms": 1591,
         "backend": "vulkan"
       },
       {
         "execution": {
           "backend": "cpu",
-          "ms": 24891,
-          "at": 1795435911834
+          "ms": 7647,
+          "at": 1795436550679
         },
         "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
-        "ms": 24891,
+        "ms": 7647,
         "backend": "cpu"
       }
     ],
+    "manifestSha256": "f83a9072c07f0f6758edf363f81334236588118a30bba7b70418f96f1f6bab82",
     "platform": "win32-x64",
-    "node": "v22.23.4"
-  },
-  {
     "fallback": {
-      "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
-      "ms": 22067,
+      "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "ms": 15256,
       "execution": {
         "backend": "cpu",
         "fallbackReason": "cuda_unproven",
-        "ms": 22067,
-        "at": 1795436066105
+        "ms": 15256,
+        "at": 1795436568605
       }
     },
-    "model": {
-      "name": "ggml-large-v3-turbo.bin",
-      "bytes": 1624555275,
-      "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"
-    },
-    "generatedAt": "2026-11-23T12:14:28.589Z",
     "limitations": [
       "NVIDIA activity samples are host-wide, not per-process attribution.",
       "AMD and Intel physical devices were not available on this host.",
       "CLI process and model load run once per request; this does not measure recording/UI latency."
     ],
-    "cancellation": {
-      "actualChildStarted": true,
-      "exited": true,
-      "recovery": {
-        "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
-        "ms": 1946,
-        "execution": {
-          "backend": "cuda",
-          "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 1946,
-          "at": 1795436068589
-        }
-      }
+    "model": {
+      "name": "ggml-medium.bin",
+      "bytes": 1533763059,
+      "sha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"
     },
+    "generatedAt": "2026-11-23T12:22:51.244Z",
     "automatic": {
       "result": {
-        "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
-        "ms": 2324,
+        "text": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+        "ms": 2279,
         "execution": {
           "backend": "cuda",
           "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 2324,
-          "at": 1795436043688
+          "ms": 2279,
+          "at": 1795436552959
         }
       },
       "state": {
@@ -203,52 +120,156 @@
         "latest": {
           "backend": "cuda",
           "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 2324,
-          "at": 1795436043688
+          "ms": 2279,
+          "at": 1795436552959
         }
       }
-    },
-    "manifestSha256": "f83a9072c07f0f6758edf363f81334236588118a30bba7b70418f96f1f6bab82",
+    }
+  },
+  {
+    "node": "v22.23.4",
     "audio": {
       "name": "mandarin-synthetic.wav",
       "bytes": 291726,
       "sha256": "0ddfc93851a58e14f370e66c2f61000d72de5e1e93e73b0e4d0499ede6199b8c"
     },
+    "cancellation": {
+      "actualChildStarted": true,
+      "exited": true,
+      "recovery": {
+        "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
+        "ms": 1929,
+        "execution": {
+          "backend": "cuda",
+          "device": "NVIDIA GeForce RTX 4080 SUPER",
+          "ms": 1929,
+          "at": 1795437447215
+        }
+      }
+    },
+    "executionEvents": [
+      {
+        "type": "voice.acceleration.execution",
+        "execution": {
+          "backend": "cuda",
+          "device": "NVIDIA GeForce RTX 4080 SUPER",
+          "ms": 2309,
+          "at": 1795437422528
+        }
+      },
+      {
+        "type": "voice.acceleration.execution",
+        "execution": {
+          "backend": "cpu",
+          "fallbackReason": "cuda_unproven",
+          "ms": 21869,
+          "at": 1795437444742
+        }
+      }
+    ],
     "results": [
       {
         "execution": {
           "backend": "cuda",
           "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 1927,
-          "at": 1795436028218
+          "ms": 1986,
+          "at": 1795437407522
         },
         "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
-        "ms": 1927,
+        "ms": 1986,
         "backend": "cuda"
       },
       {
         "execution": {
           "backend": "vulkan",
           "device": "NVIDIA GeForce RTX 4080 SUPER",
-          "ms": 1842,
-          "at": 1795436030105
+          "ms": 1665,
+          "at": 1795437409227
         },
         "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
-        "ms": 1842,
+        "ms": 1665,
         "backend": "vulkan"
       },
       {
         "execution": {
           "backend": "cpu",
-          "ms": 11214,
-          "at": 1795436041364
+          "ms": 10866,
+          "at": 1795437420219
         },
         "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
-        "ms": 11214,
+        "ms": 10866,
         "backend": "cpu"
       }
     ],
+    "manifestSha256": "f83a9072c07f0f6758edf363f81334236588118a30bba7b70418f96f1f6bab82",
     "platform": "win32-x64",
-    "node": "v22.23.4"
+    "fallback": {
+      "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
+      "ms": 21869,
+      "execution": {
+        "backend": "cpu",
+        "fallbackReason": "cuda_unproven",
+        "ms": 21869,
+        "at": 1795437444742
+      }
+    },
+    "limitations": [
+      "NVIDIA activity samples are host-wide, not per-process attribution.",
+      "AMD and Intel physical devices were not available on this host.",
+      "CLI process and model load run once per request; this does not measure recording/UI latency."
+    ],
+    "model": {
+      "name": "ggml-large-v3-turbo.bin",
+      "bytes": 1624555275,
+      "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"
+    },
+    "generatedAt": "2026-11-23T12:37:27.215Z",
+    "automatic": {
+      "result": {
+        "text": "这是本地语音转写测试使用英伟达显卡进行加速请把这句话转换成文字",
+        "ms": 2309,
+        "execution": {
+          "backend": "cuda",
+          "device": "NVIDIA GeForce RTX 4080 SUPER",
+          "ms": 2309,
+          "at": 1795437422528
+        }
+      },
+      "state": {
+        "supported": true,
+        "adapters": [
+          {
+            "name": "OrayIddDriver Device",
+            "kind": "virtual",
+            "vendor": "other",
+            "driverVersion": "17.50.19.949"
+          },
+          {
+            "name": "NVIDIA GeForce RTX 4080 SUPER",
+            "kind": "physical",
+            "vendor": "nvidia",
+            "driverVersion": "32.0.16.1088",
+            "vramMB": 16376
+          }
+        ],
+        "runtimes": {
+          "cuda": {
+            "status": "ready",
+            "available": true
+          },
+          "vulkan": {
+            "status": "ready",
+            "available": true
+          }
+        },
+        "plannedBackend": "cuda",
+        "latest": {
+          "backend": "cuda",
+          "device": "NVIDIA GeForce RTX 4080 SUPER",
+          "ms": 2309,
+          "at": 1795437422528
+        }
+      }
+    }
   }
 ]

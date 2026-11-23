@@ -697,6 +697,8 @@ build-package.bat
 
 验证：包内 `dist-package\cmspark-windows-x64\bin\cmspark-whisper-win-x64.exe` 或设置页「本机组件：已就绪」。
 
+Windows x64 可在聊天听写设置中主动安装 **CUDA** 或 **Vulkan** 组件。自动选择顺序为可用的 NVIDIA CUDA → Vulkan → CPU；AMD、Intel 和其他兼容显卡使用 Vulkan 候选路径。界面分别显示检测到的显卡、下次候选后端与最近一次实际执行设备；虚拟显示适配器不算 GPU 加速。GPU 失败会显示回退原因，继续用 CPU。操作与验证边界见[本机 GPU 加速](docs/meeting-and-dictation-user-guide.md#251-windows-显卡加速)。
+
 > 本地 Windows x64 SEA 构建固定使用 x64 Node.js 22.23.4。官方 Setup.exe 由 `make package-windows` / CI `package.sh` 在安装 [NSIS](https://nsis.sourceforge.io/) 后生成。Office 引擎还需要匹配架构的 [Microsoft Visual C++ v14 runtime](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist)。
 
 #### 安装（注册后台服务）

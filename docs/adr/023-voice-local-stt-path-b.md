@@ -299,6 +299,7 @@ companion/src/voice/
 |------|------|
 | 2026-08-07 | 初版 Accepted：四路对抗 + Pi nits 吸收；L1–L16；WS 族；配置所有权；波次门禁 |
 | 2026-08-31 | 修订（一）：L13 非静默回落 + 自动激活 + 下载源镜像；修订（二）：auto-correct 可恢复（`localModelAutoCorrectedFrom` 暂存/恢复/清除）；§6 配置表同步 |
+| 2026-11-23 | #892：Windows x64 使用独立、完整校验的 CUDA／Vulkan 可选运行时，CUDA → Vulkan → CPU 候选选择；实际设备须由原生执行证据确认。取消安装绑定后端，预热／分段／终稿共用执行适配器；完成通知仅向已鉴权扩展发送轻量执行记录，不重建模型状态或改变引擎配置。详见 [GPU 设计](../superpowers/specs/2026-11-23-windows-voice-gpu-design.md)与[实机验收](../audit/windows-voice-gpu-20261123.md)。 |
 
 ---
 

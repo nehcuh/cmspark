@@ -82,6 +82,14 @@ OS 级全局热键（失焦仍按住）属后续增强。
 打包：`build-package.bat` 在缺少 `companion/dist/bin/cmspark-whisper-win-x64.exe` 时会按 `assets/whisper-binary.manifest.json` **自动拉取**（`CMSPARK_WHISPER_AUTO_FETCH=0` 可关）。  
 Windows pin 与 [whisper.cpp v1.7.6](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.7.6) `whisper-bin-x64.zip` 对齐。
 
+### 2.5.1 Windows 显卡加速
+
+Windows x64 的聊天听写设置会列出显示适配器和显存。先保留已就绪的 CPU 本机组件，再根据显卡主动安装加速组件：NVIDIA 优先 **CUDA**，AMD／Intel 和其他兼容显卡尝试 **Vulkan**；NVIDIA 也可使用 Vulkan。CUDA 包约 443 MB，经 HTTPS 下载和完整校验；Vulkan 约 7 MB，安装包随附，仍需点击安装。程序不自动安装显卡驱动，不自动下载组件或更换活动模型。
+
+**下一次自动选择候选**表示根据硬件、驱动和组件检查得到的计划。**最近一次执行**显示真正转写成功的 CPU／CUDA／Vulkan、GPU 名称、时间和耗时，尚未运行时显示暂无记录。组件已安装或显卡已发现都不代表 GPU 已成功执行。虚拟显示、软件渲染、驱动异常或组件文件校验失败会显示原因；GPU 尝试失败时可在同一请求时限内回退 CPU。取消按钮只取消它显示的后端安装。
+
+当前实体硬件验证为 RTX 4080 SUPER；AMD／Intel 的识别和 Vulkan 路径已覆盖，实体卡执行仍待验证。Vulkan 要求显卡驱动提供兼容实现；无法运行时保留 CPU。Windows ARM64、macOS 和 Linux 没有因本功能新增 GPU 支持承诺。实测输入、速度与限制见[本机验收记录](audit/windows-voice-gpu-20261123.md)。
+
 ### 2.6 本机 Whisper 渐进假设（M2）
 
 开启 **本机听写** + **连续听写** + **实时出字** 时：
