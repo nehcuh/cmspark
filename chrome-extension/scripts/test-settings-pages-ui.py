@@ -197,6 +197,7 @@ with tempfile.TemporaryDirectory() as out:
         assert mic.input_value() == 'phone'
         page.evaluate("window.deferMicSave = true")
         mic.select_option('built-in')
+        page.evaluate('delete window.resolveMicSave')
         footer_save.click()
         page.wait_for_function('Boolean(window.resolveMicSave)')
         page.evaluate("() => { window.micDeviceChange() }")
@@ -209,6 +210,7 @@ with tempfile.TemporaryDirectory() as out:
                 listener({voiceMicrophoneDeviceId:{newValue:'phone'}}, 'local'); }""")
         page.wait_for_function("document.querySelector('#voice-microphone-device').value === 'phone'")
         mic.select_option('built-in')
+        page.evaluate('delete window.resolveMicSave')
         footer_save.click()
         page.wait_for_function('Boolean(window.resolveMicSave)')
         page.evaluate("""() => { const finish = window.resolveMicSave;
@@ -222,6 +224,7 @@ with tempfile.TemporaryDirectory() as out:
         assert mic.input_value() == 'built-in' and footer_save.is_enabled()
         mic.select_option('phone')
         mic.select_option('built-in')
+        page.evaluate('delete window.resolveMicSave')
         footer_save.click()
         page.wait_for_function('Boolean(window.resolveMicSave)')
         page.evaluate("""() => { window.resolveMicSave(); window.microphoneChoice = 'phone';
