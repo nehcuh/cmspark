@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import AdmZip from "adm-zip"
@@ -94,5 +94,41 @@ test("GPU installation cancellation before extraction never promotes a runtime",
       onProgress(p) { if (p.phase === "extract") controller.abort() },
     }), (e: unknown) => e instanceof WhisperBinaryDownloadError && e.reason === "aborted")
     assert.throws(() => readFileSync(path.join(f.root, "installed", "cmspark-whisper-win-x64.exe")))
+  } finally { rmSync(f.root, { recursive: true, force: true }) }
+})
+
+test("asynchronous CPU probing retains the independent executable pin", async () => {
+  const f = fixture()
+  try {
+    f.manifest.binaries["win-x64"] = f.manifest.binaries["win-x64-vulkan"]!
+    writeFileSync(path.join(f.root, "cmspark-whisper-win-x64.exe"), f.exe)
+    const probe = await probeWhisperBinaryInstallAsync(f.root, "win-x64", f.manifest)
+    assert.equal(probe.status, "incomplete", "a self-consistent manifest cannot override the CPU executable pin")
+    assert.match(probe.message!, /primary pin mismatch/)
+  } finally { rmSync(f.root, { recursive: true, force: true }) }
+})
+
+test("cancelling a partially staged GPU install removes its owned staging files", async () => {
+  const f = fixture()
+  const controller = new AbortController()
+  try {
+    const zip = new AdmZip(f.archivePath)
+    const dependency = Buffer.from("pinned dependency")
+    zip.addFile("ggml.dll", dependency)
+    const archive = zip.toBuffer()
+    writeFileSync(f.archivePath, archive)
+    const entry = f.manifest.binaries["win-x64-vulkan"]!
+    if (entry.kind !== "zip") throw new Error("expected zip fixture")
+    entry.size = archive.length
+    entry.sha256 = digest(archive)
+    entry.extract.files.push({ src: "ggml.dll", dest: "ggml.dll", sha256: digest(dependency), size: dependency.length })
+    const destDir = path.join(f.root, "installed")
+    await assert.rejects(downloadWhisperBinary({
+      arch: "win-x64-vulkan", destDir, manifest: f.manifest, bundledArchivePath: f.archivePath,
+      signal: controller.signal,
+      onProgress(p) { if (p.file === "ggml.dll") controller.abort() },
+    }), (e: unknown) => e instanceof WhisperBinaryDownloadError && e.reason === "aborted")
+    assert.equal(existsSync(path.join(destDir, ".install-staging")), false)
+    assert.equal(existsSync(path.join(destDir, "cmspark-whisper-win-x64.exe")), false)
   } finally { rmSync(f.root, { recursive: true, force: true }) }
 })

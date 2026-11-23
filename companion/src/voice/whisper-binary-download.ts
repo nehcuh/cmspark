@@ -225,13 +225,18 @@ export async function probeWhisperBinaryInstallAsync(
   try { entries = await readdir(destDir) } catch { return { status: "incomplete", primaryPath, message: "cannot inspect runtime directory" } }
   const extra = unlistedGpuNativeFile(arch, entries, files.map((f) => f.name))
   if (extra) return { status: "incomplete", primaryPath, message: `unlisted native file ${extra}` }
+  const primaryPin = expectedWhisperSha256(arch)
   for (const file of files) {
     signal?.throwIfAborted()
     const filePath = path.join(destDir, file.name)
     try {
       const actual = await stat(filePath)
       if (!actual.isFile() || actual.size !== file.size) return { status: "incomplete", primaryPath, message: `size mismatch ${file.name}` }
-      if (await sha256File(filePath, signal) !== file.sha256) return { status: "incomplete", primaryPath, message: `hash mismatch ${file.name}` }
+      const digest = await sha256File(filePath, signal)
+      if (digest !== file.sha256) return { status: "incomplete", primaryPath, message: `hash mismatch ${file.name}` }
+      if (filePath === primaryPath && primaryPin && digest !== primaryPin) {
+        return { status: "incomplete", primaryPath, message: `primary pin mismatch for ${arch}` }
+      }
     } catch (error) {
       signal?.throwIfAborted()
       return { status: "incomplete", primaryPath, message: error instanceof Error ? error.message : String(error) }
@@ -393,6 +398,8 @@ async function installFromZip(
   mkdirSync(tmpRoot, { recursive: true })
   const zipPath = path.join(tmpRoot, "payload.zip")
   const extractDir = path.join(tmpRoot, "extract")
+  const staging = path.join(destDir, ".install-staging")
+  let ownsStaging = false
   try {
     // Vulkan ships as an optional, locally installable resource. An explicit
     // install action is still required; a corrupt resource must fail closed.
@@ -421,9 +428,9 @@ async function installFromZip(
     await extractZipWithTar(zipPath, extractDir, opts.signal)
 
     await mkdir(destDir, { recursive: true })
-    const staging = path.join(destDir, ".install-staging")
     rmSync(staging, { recursive: true, force: true })
     mkdirSync(staging, { recursive: true })
+    ownsStaging = true
 
     let i = 0
     for (const f of entry.extract.files) {
@@ -466,8 +473,6 @@ async function installFromZip(
       }
       renameSync(from, to)
     }
-    rmSync(staging, { recursive: true, force: true })
-
     const primaryName = primaryWhisperBinaryDest(opts.arch ?? resolveWhisperArch(), entry)
     const primary = path.join(destDir, primaryName)
     opts.onProgress?.({
@@ -478,6 +483,10 @@ async function installFromZip(
     })
     return primary
   } finally {
+    if (ownsStaging) {
+      // Only the staging directory created by this operation is eligible here.
+      try { await rm(staging, { recursive: true, force: true }) } catch { /* preserve original result/error */ }
+    }
     try {
       rmSync(tmpRoot, { recursive: true, force: true })
     } catch {
