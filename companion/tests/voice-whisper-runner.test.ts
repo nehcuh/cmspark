@@ -178,3 +178,124 @@ test("runWhisperTranscribe pre-aborted signal rejects immediately", async () => 
     (e: unknown) => e instanceof WhisperRunnerError && e.code === "aborted",
   )
 })
+
+const cudaRuntime = {
+  backend: "cuda" as const,
+  binaryPath: "/gpu/cuda.exe",
+}
+const cudaOpts = {
+  binaryPath: "/cpu/whisper.exe",
+  modelPath: "/models/medium.bin",
+  audioPath: "/tmp/speech.wav",
+  acceleration: { selectRuntime: async () => cudaRuntime },
+}
+const cudaDevice = "  Device 1: NVIDIA GeForce RTX 4080 SUPER, compute capability 8.9, VMM: yes\n"
+const cudaEvidence = [
+  "whisper_model_load:        CUDA1 total size = 1533.10 MB",
+  "whisper_backend_init_gpu: using CUDA1 backend",
+  "whisper_print_timings:     encode time = 150.00 ms",
+].join("\n")
+
+test("verified Windows CUDA runs without CPU flags and reports the chosen device", async () => {
+  let ranGpu = false
+  const result = await runWhisperTranscribe({
+    ...cudaOpts,
+    execFileImpl: (file, args, options, cb) => {
+      ranGpu = file === "/gpu/cuda.exe" && !args?.includes("-ng") && !args?.includes("-np")
+      queueMicrotask(() => cb(null, "heard", cudaDevice + cudaEvidence))
+      assert.equal(options.shell, false)
+      return { kill() { return true } } as ChildProcess
+    },
+  })
+  assert.equal(ranGpu, true)
+  assert.equal(result.text, "heard")
+  assert.equal(result.execution?.backend, "cuda")
+  assert.equal(result.execution?.device, "NVIDIA GeForce RTX 4080 SUPER")
+})
+
+test("CUDA enumeration or successful CPU output alone triggers one explicit CPU retry", async () => {
+  const attempts: Array<{ file: string; args: readonly string[]; timeout: number | undefined }> = []
+  const result = await runWhisperTranscribe({
+    ...cudaOpts,
+    timeoutMs: 3_000,
+    execFileImpl: (file, args, options, cb) => {
+      attempts.push({ file, args: args ?? [], timeout: options.timeout })
+      if (file === "/gpu/cuda.exe") {
+        setTimeout(() => cb(null, "unproven", cudaDevice + "whisper_backend_init_gpu: no GPU found\n"), 25)
+      } else {
+        queueMicrotask(() => cb(null, "CPU transcript", ""))
+      }
+      return { kill() { return true } } as ChildProcess
+    },
+  })
+  assert.equal(result.text, "CPU transcript")
+  assert.deepEqual(attempts.map((attempt) => attempt.file), ["/gpu/cuda.exe", "/cpu/whisper.exe"])
+  assert.ok(attempts[1]?.args.includes("-ng"))
+  assert.ok(attempts[1]?.args.includes("-np"))
+  assert.ok((attempts[1]?.timeout ?? 0) < (attempts[0]?.timeout ?? 0))
+  assert.equal(result.execution?.backend, "cpu")
+  assert.equal(result.execution?.fallbackReason, "cuda_unproven")
+})
+
+test("GPU failure falls back only once when CPU also fails", async () => {
+  const files: string[] = []
+  await assert.rejects(
+    runWhisperTranscribe({
+      ...cudaOpts,
+      execFileImpl: (file, _args, _options, cb) => {
+        files.push(file)
+        const error = Object.assign(new Error("process failed"), { code: 1 })
+        queueMicrotask(() => cb(error, "", ""))
+        return { kill() { return true } } as ChildProcess
+      },
+    }),
+    (e: unknown) => e instanceof WhisperRunnerError && e.code === "nonzero_exit",
+  )
+  assert.deepEqual(files, ["/gpu/cuda.exe", "/cpu/whisper.exe"])
+})
+
+for (const failure of ["abort", "timeout", "model", "audio"] as const) {
+  test(`GPU ${failure} does not launch CPU`, async () => {
+    const files: string[] = []
+    const controller = new AbortController()
+    const timeout = Object.assign(new Error("timeout"), { killed: true, signal: "SIGTERM" as const })
+    const badModel = Object.assign(new Error("model invalid"), { code: 3 })
+    await assert.rejects(
+      runWhisperTranscribe({
+        ...cudaOpts,
+        signal: controller.signal,
+        execFileImpl: (file, _args, _options, cb) => {
+          files.push(file)
+          queueMicrotask(() => {
+            if (failure === "abort") controller.abort()
+            if (failure === "timeout") cb(timeout, "", "")
+            if (failure === "model") cb(badModel, "", "whisper_model_load: invalid model data (bad magic)\n")
+            if (failure === "audio") cb(null, "", "error: failed to read audio file '/tmp/speech.wav'\n")
+          })
+          return { kill() { queueMicrotask(() => cb(timeout, "", "")); return true } } as ChildProcess
+        },
+      }),
+      (e: unknown) => e instanceof WhisperRunnerError &&
+        e.code === (failure === "abort" ? "aborted" : failure === "timeout" ? "timeout" : "nonzero_exit"),
+    )
+    assert.deepEqual(files, ["/gpu/cuda.exe"])
+  })
+}
+
+test("runtime selection shares the original deadline and aborts without spawning", async () => {
+  let spawned = false
+  await assert.rejects(
+    runWhisperTranscribe({
+      ...cudaOpts,
+      timeoutMs: 15,
+      acceleration: { selectRuntime: () => new Promise((resolve) => setTimeout(() => resolve(cudaRuntime), 60)) },
+      execFileImpl: (_file, _args, _options, cb) => {
+        spawned = true
+        queueMicrotask(() => cb(null, "", ""))
+        return { kill() { return true } } as ChildProcess
+      },
+    }),
+    (e: unknown) => e instanceof WhisperRunnerError && e.code === "timeout",
+  )
+  assert.equal(spawned, false)
+})

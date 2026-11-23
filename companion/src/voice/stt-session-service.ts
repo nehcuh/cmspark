@@ -159,6 +159,11 @@ export class SttSessionService {
     this.core = new SttSessionCore(deps.now ?? (() => Date.now()))
   }
 
+  private runWhisper(opts: Parameters<WhisperRunnerFn>[0]): Promise<WhisperRunResult> {
+    if (this.deps.runWhisper) return this.deps.runWhisper(opts)
+    return runWhisperTranscribe({ ...opts, acceleration: { dataDir: this.deps.dataDir } })
+  }
+
   getActive(): ReturnType<SttSessionCore["getActive"]> {
     return this.core.getActive()
   }
@@ -373,7 +378,6 @@ export class SttSessionService {
       const partialDirId = `p${(now % 1e10).toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`
       sessionDir = await createSessionDir(partialDirId, this.deps.dataDir)
       const audioPath = await writeSessionFile(sessionDir, fileName, body)
-      const run = this.deps.runWhisper ?? runWhisperTranscribe
       // F5: re-check final infer after IO gap
       if (this.bound?.inferring || this.bound?.sessionId !== sessionId) {
         try {
@@ -386,7 +390,7 @@ export class SttSessionService {
         bound.partialInferring = false
         return { ok: false, code: "partial_skipped", message: "session advanced before run" }
       }
-      const result = await run({
+      const result = await this.runWhisper({
         binaryPath: binRes.path,
         modelPath,
         audioPath,
@@ -519,7 +523,6 @@ export class SttSessionService {
       const { body, fileName } = audioBodyForWhisper(audio, format)
       const audioPath = await writeSessionFile(sessionDir, fileName, body)
 
-      const run = this.deps.runWhisper ?? runWhisperTranscribe
       // large models need more wall time (CPU encode of long utterances)
       const baseTimeout = this.deps.inferMaxMs ?? STT_INFER_MAX_MS
       // large-v3-turbo: cold start loads ~1.6GB + Metal pipeline compile; 180s was
@@ -537,7 +540,7 @@ export class SttSessionService {
       } catch {
         /* logger optional in tests */
       }
-      const result = await run({
+      const result = await this.runWhisper({
         binaryPath: binRes.path,
         modelPath,
         audioPath,

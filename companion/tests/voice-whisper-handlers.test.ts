@@ -16,7 +16,10 @@ import { validateWsMessage } from "../src/server"
 import {
   handleVoiceModelMessage as handleVoiceModelMessageRaw,
   _resetVoiceModelHandlersForTests,
+  observeVoiceModelState,
 } from "../src/voice/whisper-handlers"
+import { recordWhisperExecution } from "../src/voice/whisper-acceleration"
+import { buildVoiceModelState } from "../src/voice/whisper-state"
 import { clearConfigCache, getConfig, saveConfig, setVoiceFields } from "../src/config"
 import type { WhisperModelId } from "../src/voice/whisper-catalog"
 
@@ -122,6 +125,90 @@ test("validateWsMessage: invalid modelId rejected", () => {
     }).valid,
     false,
   )
+})
+
+test("binary download validation permits only optional CUDA or Vulkan", () => {
+  const msg = { type: "voice.binary.download", source: "settings" }
+  assert.equal(validateWsMessage(msg).valid, true)
+  assert.equal(validateWsMessage({ ...msg, backend: "cuda" }).valid, true)
+  assert.equal(validateWsMessage({ ...msg, backend: "vulkan" }).valid, true)
+  for (const backend of ["cpu", "DML", null, { arch: "win-x64-cuda" }]) {
+    assert.equal(validateWsMessage({ ...msg, backend }).valid, false)
+  }
+})
+
+test("binary download belt rejects invalid backends and GPU requests on unsupported platforms", async () => {
+  const msg = { type: "voice.binary.download", source: "settings" }
+  const deps = {
+    platform: "linux" as const,
+    downloadBinaryImpl: async () => { assert.fail("invalid request reached the downloader") },
+  }
+  const invalid = await handleVoiceModelMessageRaw({ ...msg, backend: "win-x64-cuda" }, EXT_CTX, deps)
+  assert.equal(invalid.code, "INVALID_BACKEND")
+  const unsupported = await handleVoiceModelMessageRaw({ ...msg, backend: "cuda" }, EXT_CTX, deps)
+  assert.equal(unsupported.code, "UNSUPPORTED_BACKEND")
+})
+
+test("Vulkan install uses its own directory and correlated progress and cancellation", { timeout: 5_000 }, async (t) => {
+  resetVoiceConfig()
+  t.after(_resetVoiceModelHandlersForTests)
+  const messages: any[] = []
+  const ctx = { ...EXT_CTX, broadcast: (msg: unknown) => messages.push(msg) }
+  let finish!: () => void
+  const finished = new Promise<void>((resolve) => { finish = resolve })
+  const response = await handleVoiceModelMessageRaw({
+    type: "voice.binary.download", source: "settings", backend: "vulkan",
+    arch: "win-x64-cuda", destDir: "ignore",
+  }, ctx, {
+    platform: "win32",
+    arch: "x64",
+    downloadBinaryImpl: async (opts) => {
+      assert.equal(opts?.arch, "win-x64-vulkan")
+      assert.equal(opts?.destDir, path.join(TEST_DATA_DIR, "bin", "whisper", "win-x64", "vulkan"))
+      opts?.onProgress?.({ phase: "download", totalBytes: 100, receivedBytes: 25 })
+      await new Promise<void>((resolve) => opts?.signal?.addEventListener("abort", () => resolve(), { once: true }))
+      finish()
+      return { primaryPath: "fixture", destDir: opts?.destDir ?? "", arch: "win-x64-vulkan", version: "fixture" }
+    },
+  })
+  assert.equal(response.status, "started")
+  assert.equal(response.backend, "vulkan")
+  assert.equal(messages.find((msg) => msg.type === "voice.binary.progress")?.backend, "vulkan")
+  const cancel = await handleVoiceModelMessageRaw({ type: "voice.binary.cancel", source: "settings" }, ctx)
+  assert.deepEqual(cancel, { type: "voice.binary.cancel.result", ok: true, status: "cancelling", backend: "vulkan" })
+  await finished
+})
+
+test("execution observer publishes the latest bounded record through voice.model.state", { timeout: 5_000 }, async (t) => {
+  resetVoiceConfig()
+  const seen: any[] = []
+  let received!: () => void
+  const published = new Promise<void>((resolve) => { received = resolve })
+  const stop = observeVoiceModelState((message) => {
+    seen.push(message)
+    received()
+  }, {
+    buildState: (opts) => buildVoiceModelState({
+      ...opts,
+      accelerationOptions: {
+        platform: "win32",
+        arch: "x64",
+        dataDir: TEST_DATA_DIR,
+        detectHardware: async () => ({ adapters: [], cudaDriver: false, vulkanLoader: false, inventoryAvailable: true }),
+      },
+    }),
+  })
+  t.after(stop)
+  recordWhisperExecution({ backend: "cuda", device: "NVIDIA test device", ms: 5, at: 1 })
+  recordWhisperExecution({ backend: "cpu", fallbackReason: "cuda_unproven", ms: 11, at: 2 })
+  await published
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].type, "voice.model.state")
+  assert.deepEqual(seen[0].acceleration.latest, { backend: "cpu", fallbackReason: "cuda_unproven", ms: 11, at: 2 })
+  stop()
+  recordWhisperExecution({ backend: "cpu", ms: 12, at: 3 })
+  await flush()
+  assert.equal(seen.length, 1)
 })
 
 // --- handler belt (layer 2) ---------------------------------------------------

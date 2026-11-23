@@ -9,10 +9,23 @@ import {
 } from "node:child_process"
 import * as path from "node:path"
 import * as os from "node:os"
+import { performance } from "node:perf_hooks"
 
 import { STT_INFER_MAX_MS } from "./session-caps"
+import {
+  parseWhisperBackendEvidence,
+  recordWhisperExecution,
+  selectWindowsWhisperRuntime,
+  supportsWindowsWhisperAcceleration,
+  verifiedWindowsWhisperRuntime,
+  type WhisperBackend,
+  type WhisperExecution,
+  type WhisperFallbackReason,
+  type WhisperRuntimeChoice,
+} from "./whisper-acceleration"
+import { windowsSystemDirectory } from "./whisper-windows-hardware"
 
-export type WhisperRunResult = { text: string; ms: number }
+export type WhisperRunResult = { text: string; ms: number; execution?: WhisperExecution }
 
 /** Injectable execFile (node:child_process.execFile compatible). */
 export type ExecFileImpl = (
@@ -38,9 +51,18 @@ export type RunWhisperTranscribeOpts = {
   signal?: AbortSignal
   /** Inject for tests. */
   execFileImpl?: ExecFileImpl
+  acceleration?: {
+    dataDir?: string
+    /** Internal acceptance entry. GPU choices always use the verified install. */
+    strictBackend?: WhisperBackend
+    /** Inject Windows selection for deterministic runner tests. */
+    selectRuntime?: () => Promise<WhisperRuntimeChoice>
+  }
 }
 
-export type WhisperRunnerErrorCode = "timeout" | "aborted" | "spawn_error" | "nonzero_exit"
+export type WhisperRunnerErrorCode =
+  | "timeout" | "aborted" | "spawn_error" | "nonzero_exit"
+  | "backend_unavailable" | "backend_unproven"
 
 export class WhisperRunnerError extends Error {
   readonly code: WhisperRunnerErrorCode
@@ -69,6 +91,7 @@ export function buildWhisperArgs(opts: {
   audioPath: string
   lang: string
   threads?: number
+  backend?: WhisperBackend
 }): string[] {
   const threads = opts.threads ?? defaultWhisperThreadCount()
   return [
@@ -79,8 +102,7 @@ export function buildWhisperArgs(opts: {
     "-l",
     opts.lang,
     "-nt",
-    "-ng",
-    "-np",
+    ...(!opts.backend || opts.backend === "cpu" ? ["-ng", "-np"] : []),
     "-t",
     String(threads),
   ]
@@ -120,27 +142,136 @@ export function parseWhisperStdout(stdout: string): string {
  * Run cmspark-whisper / whisper-cli. No shell.
  * On abort or timeout: kill child (SIGTERM → SIGKILL escalate on abort).
  */
-export async function runWhisperTranscribe(
-  opts: RunWhisperTranscribeOpts,
-): Promise<WhisperRunResult> {
-  const lang = opts.lang ?? "zh"
+export async function runWhisperTranscribe(opts: RunWhisperTranscribeOpts): Promise<WhisperRunResult> {
   const timeoutMs = opts.timeoutMs ?? STT_INFER_MAX_MS
+  const strict = opts.acceleration?.strictBackend
+  const selectRuntime = opts.acceleration?.selectRuntime
+  if (!strict && !selectRuntime && (opts.execFileImpl || !supportsWindowsWhisperAcceleration())) {
+    const { text, ms } = await runWhisperAttempt(opts, opts.binaryPath, "cpu", timeoutMs, false)
+    return { text, ms }
+  }
+
+  const started = performance.now()
+  const elapsed = () => Math.round(performance.now() - started)
+  const remaining = () => {
+    if (opts.signal?.aborted) throw new WhisperRunnerError("aborted", "whisper aborted")
+    const budget = Math.floor(timeoutMs - (performance.now() - started))
+    if (budget < 1) throw timeoutError(timeoutMs)
+    return budget
+  }
+  remaining()
+
+  let runtime: WhisperRuntimeChoice = { backend: "cpu" }
+  if (strict && strict !== "cpu") {
+    const verified = verifiedWindowsWhisperRuntime(strict, opts.acceleration?.dataDir)
+    if (!verified) throw new WhisperRunnerError("backend_unavailable", `verified Whisper ${strict} runtime unavailable`)
+    runtime = verified
+  } else if (!strict) {
+    runtime = await selectWithinDeadline(
+      selectRuntime ?? (() => selectWindowsWhisperRuntime({ dataDir: opts.acceleration?.dataDir })),
+      remaining(), timeoutMs, opts.signal,
+    )
+  }
+
+  const finish = (text: string, backend: WhisperBackend, device?: string, fallbackReason?: WhisperFallbackReason) => {
+    remaining()
+    const ms = elapsed()
+    const execution: WhisperExecution = {
+      backend,
+      ...(device ? { device } : {}),
+      ...(fallbackReason ? { fallbackReason } : {}),
+      ms,
+      at: Date.now(),
+    }
+    if (!strict && !selectRuntime && !opts.execFileImpl) recordWhisperExecution(execution)
+    return { text, ms, execution }
+  }
+
+  let fallbackReason: WhisperFallbackReason | undefined
+  if (runtime.backend !== "cpu") {
+    try {
+      const { text, stderr } = await runWhisperAttempt(opts, runtime.binaryPath, runtime.backend, remaining(), true)
+      const evidence = parseWhisperBackendEvidence(runtime.backend, stderr)
+      if (evidence) return finish(text, runtime.backend, evidence.device)
+      if (strict) throw new WhisperRunnerError("backend_unproven", `Whisper did not prove ${runtime.backend} execution`)
+      fallbackReason = `${runtime.backend}_unproven`
+    } catch (error) {
+      if (strict || error instanceof WhisperInputError ||
+          !(error instanceof WhisperRunnerError) || error.code === "aborted" || error.code === "timeout") throw error
+      fallbackReason = `${runtime.backend}_failed`
+    }
+  }
+
+  const { text } = await runWhisperAttempt(opts, opts.binaryPath, "cpu", remaining(), true)
+  return finish(text, "cpu", undefined, fallbackReason)
+}
+
+function timeoutError(timeoutMs: number): WhisperRunnerError {
+  return new WhisperRunnerError("timeout", `whisper timed out after ${timeoutMs}ms`)
+}
+
+async function selectWithinDeadline(
+  select: () => Promise<WhisperRuntimeChoice>,
+  budget: number,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<WhisperRuntimeChoice> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  try {
+    const stop = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(timeoutError(timeoutMs)), budget)
+      onAbort = () => reject(new WhisperRunnerError("aborted", "whisper aborted"))
+      signal?.addEventListener("abort", onAbort, { once: true })
+      if (signal?.aborted) onAbort()
+    })
+    return await Promise.race([Promise.resolve().then(select), stop])
+  } finally {
+    clearTimeout(timer)
+    if (onAbort) signal?.removeEventListener("abort", onAbort)
+  }
+}
+
+class WhisperInputError extends WhisperRunnerError {
+  constructor(input: "model" | "audio") {
+    super("nonzero_exit", `whisper could not read the ${input} input`)
+  }
+}
+
+function whisperInputFailure(stderr: string): WhisperInputError | undefined {
+  if (/^error: (?:failed to read audio file|input file not found)\b/mi.test(stderr)) return new WhisperInputError("audio")
+  if (/^whisper_init_from_file\w*: failed to open|^whisper_model_load: (?:invalid model\b|unknown tensor|tensor .* has wrong (?:size|shape) in model file|ERROR not all tensors loaded|WARN no tensors loaded)/mi.test(stderr)) {
+    return new WhisperInputError("model")
+  }
+}
+
+type WhisperAttempt = { text: string; ms: number; stderr: string }
+
+function runWhisperAttempt(
+  opts: RunWhisperTranscribeOpts,
+  binaryPath: string,
+  backend: WhisperBackend,
+  timeoutMs: number,
+  checkInput: boolean,
+): Promise<WhisperAttempt> {
+  const lang = opts.lang ?? "zh"
   const execFile = opts.execFileImpl ?? (defaultExecFile as ExecFileImpl)
   const args = buildWhisperArgs({
     modelPath: opts.modelPath,
     audioPath: opts.audioPath,
     lang,
+    backend,
   })
   const started = Date.now()
   // Windows loads whisper/ggml DLLs from the directory of the *executable*.
   // Explicit cwd keeps sibling DLLs resolvable even if process.cwd is elsewhere.
-  const binaryDir = path.dirname(path.resolve(opts.binaryPath))
+  const binaryDir = path.dirname(path.resolve(binaryPath))
 
   if (opts.signal?.aborted) {
     throw new WhisperRunnerError("aborted", "whisper aborted before start")
   }
 
-  return new Promise<WhisperRunResult>((resolve, reject) => {
+  return new Promise<WhisperAttempt>((resolve, reject) => {
     let settled = false
     let abortedBySignal = false
     let killEscalation: ReturnType<typeof setTimeout> | undefined
@@ -152,7 +283,7 @@ export async function runWhisperTranscribe(
       cleanup()
       reject(err)
     }
-    const finishResolve = (r: WhisperRunResult) => {
+    const finishResolve = (r: WhisperAttempt) => {
       if (settled) return
       settled = true
       cleanup()
@@ -166,6 +297,7 @@ export async function runWhisperTranscribe(
       } catch {
         /* ignore */
       }
+      if (settled) return
       killEscalation = setTimeout(() => {
         try {
           child?.kill("SIGKILL")
@@ -173,9 +305,7 @@ export async function runWhisperTranscribe(
           /* ignore */
         }
       }, 2_000)
-      if (typeof (killEscalation as any).unref === "function") {
-        ;(killEscalation as any).unref()
-      }
+      killEscalation.unref()
     }
 
     const cleanup = () => {
@@ -187,7 +317,7 @@ export async function runWhisperTranscribe(
 
     try {
       child = execFile(
-        opts.binaryPath,
+        binaryPath,
         args,
         {
           timeout: timeoutMs,
@@ -200,9 +330,10 @@ export async function runWhisperTranscribe(
           env: {
             // Inherit OS env (SystemRoot etc. required on Windows CRT) then override PATH
             ...process.env,
+            ...(backend !== "cpu" ? { GGML_BACKEND_PATH: undefined } : {}),
             PATH:
               process.platform === "win32"
-                ? `${binaryDir}${path.delimiter}${process.env.PATH || ""}`
+                ? [binaryDir, backend === "cpu" ? process.env.PATH : windowsSystemDirectory()].filter(Boolean).join(path.delimiter)
                 : process.env.PATH,
             // macOS: ensure @loader_path sibling dylibs resolve even if rpath is odd
             ...(process.platform === "darwin"
@@ -223,18 +354,21 @@ export async function runWhisperTranscribe(
               : {}),
           },
         },
-        (err, stdout, _stderr) => {
+        (err, stdout, stderr) => {
           const ms = Date.now() - started
           const out = String(stdout ?? "")
-          if (!err) {
-            finishResolve({ text: parseWhisperStdout(out), ms })
-            return
-          }
+          const diagnostics = String(stderr ?? "")
           if (abortedBySignal || opts.signal?.aborted) {
             finishReject(new WhisperRunnerError("aborted", "whisper aborted"))
             return
           }
-          const e = err as ExecFileException & { killed?: boolean; code?: string | number }
+          if (!err) {
+            const inputFailure = checkInput ? whisperInputFailure(diagnostics) : undefined
+            if (inputFailure) finishReject(inputFailure)
+            else finishResolve({ text: parseWhisperStdout(out), ms, stderr: diagnostics })
+            return
+          }
+          const e = err
           // maxBuffer / spawn failures
           if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
             finishReject(
@@ -260,16 +394,14 @@ export async function runWhisperTranscribe(
               return
             }
             finishReject(
-              new WhisperRunnerError(
-                "timeout",
-                `whisper timed out after ${timeoutMs}ms`,
-              ),
+              timeoutError(timeoutMs),
             )
             return
           }
           if (typeof e.code === "number") {
+            const inputFailure = checkInput ? whisperInputFailure(diagnostics) : undefined
             finishReject(
-              new WhisperRunnerError(
+              inputFailure ?? new WhisperRunnerError(
                 "nonzero_exit",
                 e.message || `whisper exit ${e.code}`,
               ),
@@ -292,7 +424,7 @@ export async function runWhisperTranscribe(
       return
     }
 
-    if (opts.signal) {
+    if (!settled && opts.signal) {
       opts.signal.addEventListener("abort", onAbort, { once: true })
       if (opts.signal.aborted) onAbort()
     }

@@ -66,6 +66,7 @@ import {
 import { getMcpManager, getMcpConfirmCache } from "../mcp"
 import { applyHardenedProcessPath } from "../process-path"
 import { scheduleWhisperPrewarm } from "../voice/whisper-prewarm"
+import { observeVoiceModelState } from "../voice/whisper-handlers"
 import {
   getOrCreateSharedSecret,
   consumeSecretFreshlyGenerated,
@@ -791,6 +792,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     logger.info("server.listening", { port })
     // Explicit opt-in is persisted; opening a UI is not required for confirmed reminders.
     try { getActivityService().start() } catch { logger.warn("activity.start_failed") }
+    httpServer.once("close", observeVoiceModelState(broadcastToClients))
     scheduleWhisperPrewarm()
     // P3a HUD spike: if tray is co-located in this process, run full in-process
     // open→hydrate→confirm→standby. Dual-process (normal tray + server) is driven

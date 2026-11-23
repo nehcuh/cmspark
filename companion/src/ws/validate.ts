@@ -740,6 +740,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.source !== "settings") {
         return { valid: false, error: 'voice.binary.download requires source:"settings" (settings-page only)' }
       }
+      if (m.backend !== undefined && m.backend !== "cuda" && m.backend !== "vulkan") {
+        return { valid: false, error: 'voice.binary.download accepts optional backend:"cuda" or "vulkan"' }
+      }
       return { valid: true }
     },
     "voice.binary.cancel": (m) => {
