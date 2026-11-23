@@ -109,7 +109,7 @@
 
 ## 后续工作（Active backlog）
 
-本表只做导航。Issue 是否仍开放以 GitHub 为准；本索引不把未经该票自己验收的旧票标成完成。产品版本以包清单 **1.4.0**（尚未正式发布）与 [release-status.md](release-status.md) 为准。
+本表只做导航。Issue 是否仍开放以 GitHub 为准；本索引不把未经该票自己验收的旧票标成完成。当前产品版本与发行状态以[包清单](../companion/package.json)和 [release-status.md](release-status.md) 为准。
 
 | 文档 | 说明 |
 |------|------|

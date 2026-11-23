@@ -138,7 +138,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 
 - docs/README.md — 文档导航（用户 / 架构 / ADR / 工程 / 归档）
 - CONTRIBUTING.md — 需求设计 **Issue-first**（新行为必须先开 GitHub Issue）
-- CHANGELOG.md — **活切点 1.7.2（发布准备，尚未正式发布）**。发行包与验收边界见 [docs/release-status.md](docs/release-status.md)。
+- CHANGELOG.md — **活切点 1.7.2（正式发布）**。发行包与验收边界见 [docs/release-status.md](docs/release-status.md)。
 - docs/superpowers/specs/2026-08-27-post-227-status.md — **SNAPSHOT** 0.5.3 / #227；不是活状态
 - docs/GOAL.md — 项目目标与阶段规划
 - docs/architecture.md — 完整架构文档（§0 能力三轴 · §7 Packs · §8–11 MCP/CU·Host·Apps/Orchestrator·Board）
