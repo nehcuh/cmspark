@@ -57,9 +57,15 @@ function restoreWorkspaceTeardown(raw) {
     "   assertionSite=2;assert.equal(await Promise.race([exit,failure.then(()=>{throw Error('OWNED_WORKSPACE_NATIVE_PHASE_FAILED')}),new Promise<never>((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('OWNED_WORKSPACE_NATIVE_DEADLINE')),{once:true}))]),0)\n" +
       "   if(uiDone){assertionSite=3;assert.equal((await uiDone).ok,true,'owned acknowledged UI runner must genuinely close quiescent')}\n",
   ]
+  const expected = [
+    'a33b28d44008d5640275965fd0ec6c79cb7f576d8b3e2ffc1371f67514c469d9',
+    'dc7d55f881406a8bdaba8faad2c64bb67b8f429e8d3e4cd99ab0db4557ece876',
+    'f96c612701d79f67300252ff592753e06e9c7a5547f83be4efbaf17f87121b9b',
+  ]
   let restored = 0
-  const value = raw.replace(/\/\*WORKSPACE_TEARDOWN_BEGIN\*\/[\s\S]*?\/\*WORKSPACE_TEARDOWN_END\*\//g, () => {
-    assert.ok(restored < prior.length)
+  const value = raw.replace(/\/\*WORKSPACE_TEARDOWN_BEGIN\*\/[\s\S]*?\/\*WORKSPACE_TEARDOWN_END\*\//g, block => {
+    const digest = createHash('sha256').update(block.replace(/\r\n/g, '\n')).digest('hex')
+    assert.equal(digest, expected[restored], 'WORKSPACE_TEARDOWN_SOURCE')
     return prior[restored++].replace(/\n/g, eol)
   })
   assert.equal(restored, prior.length)

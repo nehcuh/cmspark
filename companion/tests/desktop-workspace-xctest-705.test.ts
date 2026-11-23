@@ -358,6 +358,24 @@ test('705 failure-only UI stage is closed bounded and never a lifecycle authorit
 
 // Exact source-only inverse of the macOS title compatibility change. Never applies to receipts or compiled evidence.
 function restoreCloseObservation476(kind:'ui'|'protocol'|'observer'|'helper'|'native',raw:string){return require(path.resolve('scripts/tests/observation-788-inverse.mjs')).restoreCloseObservation476(kind,raw)}
+test('476 workspace teardown inverse rejects changes inside each ordered teardown block',()=>{
+ const inverse=(raw:string)=>restoreCloseObservation476('native',
+  require(path.resolve('scripts/tests/host-tick-inverse.cjs')).restoreHostTick(
+   require(path.resolve('scripts/tests/success-timing-inverse.cjs')).restoreSuccessTiming476(raw)))
+ const source=fs.readFileSync(path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'utf8')
+ for(const value of [source,source.replace(/\r?\n/g,'\r\n')]){
+  assert.doesNotThrow(()=>inverse(value))
+  for(const [original,changed] of [
+   ['workspaceDone=resolve','workspaceDone=()=>{}'],
+   ['workspaceDone()/*WORKSPACE_TEARDOWN_END*/','void 0/*WORKSPACE_TEARDOWN_END*/'],
+   ['[workspaceReceiptsComplete,uiDone]','[workspaceReceiptsComplete]'],
+  ]){
+   assert.ok(value.includes(original))
+   assert.throws(()=>inverse(value.replace(original,changed)),/WORKSPACE_TEARDOWN_SOURCE/)
+  }
+ }
+})
+
 test('476 inverse rejects missing duplicate altered and appended observation sources in LF and CRLF',()=>{
  const samples=[['protocol',path.join(files,'OwnedUIProtocol.swift'),'/*OBS476_BOUNDARY_BEGIN*/'],['observer',path.join(files,'OwnerObserver.swift'),'/*OBS476_BOUNDARY_BEGIN*/'],['helper',helper,'/*OBS476_CLOSE_BEGIN*/'],['native',path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'/*OBS476_CLOSE_BEGIN*/']] as const
  for(const [kind,file,marker]of samples)for(const eol of ['\n','\r\n']){
