@@ -508,7 +508,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         const nativeMode = overrideMode === "auto" || overrideMode === "on" || overrideMode === "off"
           ? overrideMode : config.llm.native_vision
         const visionFallback = rest.test_vision_fallback === true && config.vision?.enabled &&
-          (!nativeVision || nativeMode === "off")
+          (nativeMode === "off" || (nativeMode !== "on" && !nativeVision))
           ? await testVision(config.vision)
           : undefined
         return {

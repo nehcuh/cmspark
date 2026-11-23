@@ -162,10 +162,9 @@ export function resolveNativeVision(opts: {
     raw === true || raw === "on" ? "on" : raw === false || raw === "off" ? "off" : "auto"
   if (mode === "on") return true
   if (mode === "off") return false
-  if (likelyMultimodal(opts.modelName)) return true
   // Keyed {url,model} probe bit echoed by companion config.test. An unkeyed
   // session flag would leak "native" onto any later model — never accepted.
-  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") === true
+  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") ?? likelyMultimodal(opts.modelName)
 }
 
 /**

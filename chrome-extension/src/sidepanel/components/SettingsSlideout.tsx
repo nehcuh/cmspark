@@ -351,6 +351,12 @@ export function SettingsSlideout() {
     setEngineDraft(null)
   }, [state.settingsOpen, committedEngine])
 
+  useEffect(() => {
+    if (state.voiceModelError && engineSelection === "browser" && committedEngine && committedEngine !== "browser") {
+      setEngineDraft(null)
+    }
+  }, [state.voiceModelError, engineSelection, committedEngine])
+
   // Clear local pending-download once companion reports downloading/ready or progress.
   useEffect(() => {
     const pending = voicePendingDownload
@@ -2191,7 +2197,7 @@ export function SettingsSlideout() {
                                 ? { model: externalModelDraft ?? externalView?.model ?? "whisper-1" }
                                 : {}),
                               ...(externalKeyDraft ? { apiKey: externalKeyDraft } : {}),
-                            }, { onOk: () => setExternalKeyDraft("") })
+                            })
                           }}
                         >
                           保存外部转写

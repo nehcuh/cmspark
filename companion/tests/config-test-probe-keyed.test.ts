@@ -96,6 +96,7 @@ test("config.test probes the saved vision model only when needed", async () => {
     for (const { mainWorks, acceptsImage, enabled, mode, expectedFallback, protocol = "openai" } of [
       { mainWorks: true, acceptsImage: true, enabled: true, mode: "auto", expectedFallback: false },
       { mainWorks: true, acceptsImage: false, enabled: true, mode: "auto", expectedFallback: true },
+      { mainWorks: true, acceptsImage: false, enabled: true, mode: "on", expectedFallback: false },
       { mainWorks: true, acceptsImage: true, enabled: true, mode: "auto", expectedFallback: false, protocol: "anthropic" },
       { mainWorks: true, acceptsImage: false, enabled: true, mode: "auto", expectedFallback: true, protocol: "anthropic" },
       { mainWorks: true, acceptsImage: true, enabled: true, mode: "off", expectedFallback: true },

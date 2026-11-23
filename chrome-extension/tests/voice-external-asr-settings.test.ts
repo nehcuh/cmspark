@@ -199,6 +199,36 @@ test("OpenAI settings show the stored model", () => {
   assert.equal(input?.props.value, "kept-model")
 })
 
+test("a rejected engine change restores the committed selection", () => {
+  const ui = harness()
+  ui.dispatch({ type: "SET_VOICE_MODEL_STATE", modelState: externalState })
+  let rendered = ui.renderSlideout()
+  const radios = () => ui.rows(rendered).filter(node => node.type === "input" && node.props.name === "voice-stt-engine")
+  radios()[0].props.onChange()
+  rendered = ui.renderSlideout()
+  assert.equal(radios()[0].props.checked, true)
+  ui.dispatch({ type: "SET_VOICE_MODEL_ERROR", error: "引擎切换失败" })
+  ui.renderSlideout()
+  rendered = ui.renderSlideout()
+  assert.equal(radios()[1].props.checked, true)
+})
+
+test("a rejected external save retains the typed key for correction", () => {
+  const ui = harness()
+  ui.dispatch({ type: "SET_VOICE_MODEL_STATE", modelState: externalState })
+  let rendered = ui.renderSlideout()
+  let panel = externalPanel(ui.rows, rendered)
+  const key = ui.rows(panel).find(node => node.type === "input" && node.props.type === "password")
+  key.props.onChange({ target: { value: "fixture-secret" } })
+  rendered = ui.renderSlideout()
+  panel = externalPanel(ui.rows, rendered)
+  ui.rows(panel).find(node => node.type === "button" && textOf(node).includes("保存外部转写")).props.onClick()
+  ui.dispatch({ type: "SET_VOICE_MODEL_ERROR", error: "配置没有保存" })
+  rendered = ui.renderSlideout()
+  panel = externalPanel(ui.rows, rendered)
+  assert.equal(ui.rows(panel).find(node => node.type === "input" && node.props.type === "password").props.value, "fixture-secret")
+})
+
 test("background forwards external dictation settings to Companion", () => {
   const source = fs.readFileSync(path.resolve("src/background/index.ts"), "utf8")
   const start = source.indexOf('case "voice.model.get_state"')
