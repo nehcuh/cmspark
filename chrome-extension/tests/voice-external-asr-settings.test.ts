@@ -21,6 +21,7 @@ function harness() {
   const at = (relative: string) => path.resolve(root, relative)
   const modules = new Map<string, any>()
   const messages: any[] = []
+  const listeners = new Set<(message: any) => void>()
   const slots = new Map<string, { cells: any[]; effects: any[] }>()
   let frame: { cells: any[]; effects: any[] } | undefined
   let cursor = 0
@@ -63,7 +64,7 @@ function harness() {
     lastError: undefined,
     getURL: (value: string) => "chrome-extension://owned/" + value,
     sendMessage: (message: any) => { messages.push(message); return Promise.resolve(undefined) },
-    onMessage: { addListener() {}, removeListener() {} },
+    onMessage: { addListener(fn: any) { listeners.add(fn) }, removeListener(fn: any) { listeners.delete(fn) } },
   }, tabs: { create: () => Promise.resolve({}), query() {} } }
   const leafNames = [
     "ui/Modal", "UserEnvSection", "SiteCounterSettingsSection", "NetSecSettingsSection",
@@ -128,7 +129,7 @@ function harness() {
     flushEffects()
     return ui
   }
-  return { dispatch, messages, renderSlideout, rows, state: () => state }
+  return { dispatch, messages, renderSlideout, rows, state: () => state, emit: (message: any) => listeners.forEach(fn => fn(message)) }
 }
 
 const externalState = {
@@ -167,9 +168,14 @@ function modelLabels(rows: (node: any) => any[], panel: any) {
 
 test("DeepSeek settings hide the model field and do not send one", () => {
   const ui = harness()
+  ui.dispatch({ type: "SET_CONNECTION", state: "connected" })
   ui.dispatch({ type: "SET_VOICE_MODEL_STATE", modelState: externalState })
   ui.renderSlideout()
-  const rendered = ui.renderSlideout()
+  let rendered = ui.renderSlideout()
+  const base = ui.rows(externalPanel(ui.rows, rendered)).find(node => node.type === "input" && node.props.placeholder?.includes("默认地址"))
+  assert.ok(base)
+  base.props.onChange({ target: { value: "https://example.com/asr" } })
+  rendered = ui.renderSlideout()
   const panel = externalPanel(ui.rows, rendered)
   assert.equal(modelLabels(ui.rows, panel).length, 0)
   const save = ui.rows(panel).find((node) => node.type === "button" && textOf(node).includes("保存外部转写"))
@@ -179,6 +185,31 @@ test("DeepSeek settings hide the model field and do not send one", () => {
   assert.equal(sent.length, 1)
   assert.equal("model" in sent[0], false)
   assert.equal(sent[0].style, "deepseek")
+})
+
+test("external save clears only acknowledged drafts and ignores unrelated broadcasts", () => {
+  const ui = harness()
+  ui.dispatch({ type: "SET_CONNECTION", state: "connected" })
+  ui.dispatch({ type: "SET_VOICE_MODEL_STATE", modelState: externalState })
+  let rendered = ui.renderSlideout()
+  const getKey = () => ui.rows(externalPanel(ui.rows, rendered)).find(node => node.type === "input" && node.props.type === "password")
+  getKey().props.onChange({ target: { value: "first-key" } })
+  rendered = ui.renderSlideout()
+  ui.rows(externalPanel(ui.rows, rendered)).find(node => node.type === "button" && textOf(node).includes("保存外部转写")).props.onClick()
+  const sent = ui.messages.find(message => message.type === "voice.external.set")
+  assert.ok(sent?.id)
+  rendered = ui.renderSlideout()
+  ui.emit({ type: "voice.model.state" })
+  rendered = ui.renderSlideout()
+  assert.equal(getKey().props.value, "first-key")
+  getKey().props.onChange({ target: { value: "new-key" } })
+  ui.emit({ type: "voice.model.state", id: sent.id })
+  rendered = ui.renderSlideout()
+  assert.equal(getKey().props.value, "new-key")
+  ui.rows(externalPanel(ui.rows, rendered)).find(node => node.type === "button" && textOf(node).includes("保存外部转写")).props.onClick()
+  ui.emit({ type: "voice.model.state", id: sent.id })
+  rendered = ui.renderSlideout()
+  assert.equal(getKey().props.value, "")
 })
 
 test("OpenAI settings show the stored model", () => {
