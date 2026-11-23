@@ -503,8 +503,7 @@ export function useWebSocket() {
           reasoningRef.current = r
           dispatch({ type: "SET_STREAMING_REASONING", content: r })
           dispatch({ type: "SET_PROCESSING", isProcessing: true })
-          // Live thinking replaces generic / parse status labels
-          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+          dispatch({ type: "SET_PROCESSING_STATUS", status: msg.retrying === true ? "模型尚未给出答案，正在重试…" : null })
           break
         }
 
@@ -1532,9 +1531,11 @@ export function useWebSocket() {
               : typeof msg.threadId === "string" && msg.threadId
                 ? msg.threadId
                 : ""
-          if (!shouldApplyStreamEvent(histTid, activeThreadRef.current)) break
+          // Selection and a fast history reply can be queued before React renders.
+          // The reducer checks the thread against the state preceding this action.
+          if (!histTid || !Array.isArray(msg.messages)) break
           clearHydrateRetry(histTid)
-          dispatch({ type: "SET_MESSAGES", messages: sanitizeHydratedMessages(msg.messages) })
+          dispatch({ type: "SET_MESSAGES", threadId: histTid, messages: sanitizeHydratedMessages(msg.messages) })
           // In-memory companion snapshot only. Omitted by summoner / old companions.
           if (msg.run_status === "llm" || msg.run_status === "idle") {
             dispatch({

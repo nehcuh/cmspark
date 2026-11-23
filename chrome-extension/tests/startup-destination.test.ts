@@ -75,3 +75,12 @@ test("resident navigation follows the surface breakpoint", () => {
     assert.equal(navigationMode({ surface, innerWidth: cases[surface] }), "resident")
   }
 })
+
+test("an offline remembered title requests its transcript once the list and connection are ready", () => {
+  const input = { commitGeneration: 1, currentGeneration: 1, rememberedThreadId: "remembered",
+    activeThreadId: "remembered", threads: [{ id: "remembered" }], connection: "connected" as const, listArrived: true }
+  const restore = commitStartupNavigation({ ...input, needsTranscript: true })
+  assert.ok(!restore.ignored && restore.selectThread === "remembered")
+  const refresh = commitStartupNavigation({ ...input, needsTranscript: false })
+  assert.ok(!refresh.ignored && !refresh.selectThread)
+})

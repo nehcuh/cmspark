@@ -54,6 +54,7 @@ function constantText(source: ts.SourceFile, name: string) {
 }
 const consumerCode = [
   draftFunctions,
+  constantText(effort, "orderedEfforts"),
   functionText(effort, "isReasoningEffort"),
   functionText(effort, "effectiveReasoningEffort"),
   functionText(normalizer, "isMaskedApiKey"),

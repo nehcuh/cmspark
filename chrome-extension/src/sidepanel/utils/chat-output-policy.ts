@@ -33,5 +33,5 @@ export function calculateChatOutputBudget(
   } else if (effort === "high" || effort === "xhigh" || effort === "max") {
     automatic = 64000
   }
-  return { contextWindow, preferred: Math.min(ceiling, explicit ?? automatic), ceiling, documented: spec !== undefined }
+  return { contextWindow, preferred: Math.min(ceiling, explicit ?? automatic), ceiling, documented: spec?.output !== undefined }
 }

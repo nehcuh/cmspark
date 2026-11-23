@@ -5,7 +5,7 @@
 
 import type { LlmConfig } from "../../config"
 import { logger } from "../../logger"
-import { reasoningSupport, reasoningWireEffort } from "../reasoning-effort"
+import { isCompatibilityGateway, reasoningSupport, reasoningParams } from "../reasoning-effort"
 import { providerModelLimits } from "../output-budget"
 import { throwIfLlmEndpointBlocked } from "../../security"
 import type {
@@ -16,6 +16,7 @@ import type {
   StreamChatParams,
 } from "../provider"
 import {
+  type LiveAnthropicBlock,
   buildAnthropicRequestBody,
   LLM_MAX_TOKENS_DEFAULT,
   resolveAnthropicMessagesUrl,
@@ -83,14 +84,13 @@ export class AnthropicProvider implements LlmProvider {
           : this.config.context_window,
       messages: params.messages,
       tools: params.tools,
-      temperature: support === "anthropic-47" ? undefined : temperature,
+      temperature: support === "anthropic-47" || support === "anthropic-46" ? undefined : temperature,
       stream: true,
       maxTokens: streamMax,
       maxTokenCeiling: providerModelLimits(this.config, model)?.output,
     })
 
-    const effort = reasoningWireEffort(support, this.config.reasoning_effort)
-    if (effort) body.output_config = { effort }
+    Object.assign(body, reasoningParams(support, params.reasoning_effort ?? this.config.reasoning_effort, "anthropic"))
 
     const response = await fetch(url, {
       method: "POST",
@@ -112,7 +112,7 @@ export class AnthropicProvider implements LlmProvider {
       throw new Error("Anthropic stream response has no body")
     }
 
-    yield* parseAnthropicSseStream(response.body, params.signal)
+    yield* parseAnthropicSseStream(response.body, params.signal, isCompatibilityGateway(this.config.protocol, this.config.base_url))
   }
 
   async complete(params: CompleteParams): Promise<CompleteResult> {
@@ -136,14 +136,13 @@ export class AnthropicProvider implements LlmProvider {
       model,
       contextWindow: Math.max(this.config.context_window, recapMax * 2),
       messages: params.messages,
-      temperature: support === "anthropic-47" ? undefined : temperature,
+      temperature: support === "anthropic-47" || support === "anthropic-46" ? undefined : temperature,
       stream: false,
       maxTokens: completeMax,
       maxTokenCeiling: providerModelLimits(this.config, model)?.output,
     })
 
-    const effort = reasoningWireEffort(support, this.config.reasoning_effort)
-    if (effort) body.output_config = { effort }
+    Object.assign(body, reasoningParams(support, params.reasoning_effort ?? this.config.reasoning_effort, "anthropic"))
 
     const response = await fetch(url, {
       method: "POST",
@@ -238,6 +237,7 @@ export function mapAnthropicCompleteResponse(json: AnthropicMessageResponse): Co
 export async function* parseAnthropicSseStream(
   body: ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>,
   signal?: AbortSignal,
+  gateway = false,
 ): AsyncGenerator<CanonicalStreamEvent> {
   const decoder = new TextDecoder("utf-8")
   let buffer = ""
@@ -246,7 +246,7 @@ export async function* parseAnthropicSseStream(
   let nextToolIndex = 0
   let finishReason: string | null | undefined
   let emittedUsage = false
-
+  const live = new Map<number, LiveAnthropicBlock>()
   const processEvent = function* (
     eventName: string | undefined,
     data: string,
@@ -264,22 +264,28 @@ export async function* parseAnthropicSseStream(
     if (type === "content_block_start") {
       const index = typeof parsed.index === "number" ? parsed.index : 0
       const block = parsed.content_block as
-        | { type?: string; id?: string; name?: string; text?: string; thinking?: string }
+        | { type?: string; id?: string; name?: string; text?: string; thinking?: string; data?: string; signature?: string }
         | undefined
       if (!block) return
       if (block.type === "tool_use") {
         const toolIdx = nextToolIndex++
         toolIndexByBlock.set(index, toolIdx)
+        if (!gateway) live.set(index, { type: "tool_slot", index: toolIdx })
         yield {
           type: "tool_call_delta",
           index: toolIdx,
           id: block.id,
           name: block.name,
         }
-      } else if (block.type === "thinking" && block.thinking) {
-        yield { type: "reasoning", text: block.thinking }
+      } else if (block.type === "thinking") {
+        if (!gateway) live.set(index, { type: "thinking", thinking: block.thinking ?? "", ...(block.signature !== undefined ? { signature: block.signature } : {}) })
+        if (block.thinking) yield { type: "reasoning", text: block.thinking }
+      } else if (block.type === "redacted_thinking" && typeof block.data === "string") {
+        if (!gateway) live.set(index, { type: "redacted_thinking", data: block.data })
+      } else if (block.type === "text") {
+        if (!gateway) live.set(index, { type: "text", text: block.text ?? "" })
+        if (block.text) yield { type: "token", text: block.text }
       }
-      // text block start usually has empty text — ignore
       return
     }
 
@@ -291,11 +297,18 @@ export async function* parseAnthropicSseStream(
             text?: string
             partial_json?: string
             thinking?: string
+            signature?: string
           }
         | undefined
       if (!delta) return
 
+      const block = live.get(index)
+      if (block?.type === "thinking") {
+        if (delta.thinking) block.thinking += delta.thinking
+        if (delta.signature) block.signature = (block.signature ?? "") + delta.signature
+      }
       if (delta.type === "text_delta" && delta.text) {
+        if (block?.type === "text") block.text += delta.text
         yield { type: "token", text: delta.text }
         return
       }
@@ -467,7 +480,12 @@ export async function* parseAnthropicSseStream(
   }
   yield* flushEvent()
 
-  yield { type: "done", finish_reason: finishReason ?? null }
+  const blocks = Array.from(live).sort(([a], [b]) => a - b).map(([, block]) => block)
+  // Only replay provider-native blocks for a completed tool step. Raw signatures
+  // and redacted data never enter history, UI frames or recovery requests.
+  const replay = !gateway && finishReason === "tool_use" && blocks.some(b => b.type === "thinking" || b.type === "redacted_thinking")
+    && blocks.filter(b => b.type === "tool_slot").length === nextToolIndex && nextToolIndex > 0
+  yield { type: "done", finish_reason: finishReason ?? null, ...(replay ? { liveBlocks: blocks } : {}) }
 }
 
 function isReadableStream(x: unknown): x is ReadableStream<Uint8Array> {

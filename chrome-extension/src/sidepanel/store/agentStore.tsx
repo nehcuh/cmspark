@@ -517,11 +517,11 @@ export type AgentAction =
   | { type: "REMEMBER_THREAD"; threadId: string }
   | { type: "COMMIT_NAVIGATION"; decision: { ignored: false; layer: "session" | "projects"; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null; remembered: string | null } }
   | { type: "NAVIGATE"; layer: "projects" | "project" | "session" | "recent" | "tools"; projectId: string | null }
-  | { type: "SET_ACTIVE_THREAD"; threadId: string }
+  | { type: "SET_ACTIVE_THREAD"; threadId: string | null }
   | { type: "ADD_MESSAGE"; message: Message }
   | { type: "REMOVE_MESSAGE"; id: string }
   | { type: "UPDATE_MESSAGE"; id: string; content: string }
-  | { type: "SET_MESSAGES"; messages: Message[] }
+  | { type: "SET_MESSAGES"; messages: Message[]; threadId?: string }
   | { type: "HYDRATE_FAILED"; message?: string }
   | { type: "ADD_TOOL_CALL"; messageId: string; toolCall: any }
   | { type: "UPDATE_TOOL_CALL"; messageId: string; toolCallId: string; updates: any }
@@ -1322,16 +1322,18 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         threadListEpoch: threads.map(thread => thread.id).join("\n") === state.threadListSignature ? state.threadListEpoch : state.threadListEpoch + 1,
       }
     }
-    case "COMMIT_NAVIGATION":
+    case "COMMIT_NAVIGATION": {
+      const id = action.decision.activeThreadId
+      const selected = id === state.activeThreadId ? state : agentReducer(state, { type: "SET_ACTIVE_THREAD", threadId: id })
       return {
-        ...state,
+        ...selected,
         navigationLayer: action.decision.layer,
         navigationProjectId: null,
         navigationHomeCopy: action.decision.homeCopy,
         navigationRemembered: action.decision.remembered,
-        activeThreadId: action.decision.activeThreadId,
-        messages: action.decision.activeThreadId ? state.messages : [],
+        messages: id ? selected.messages : [],
       }
+    }
     case "NAVIGATE":
       return { ...state, navigationLayer: action.layer, navigationProjectId: action.projectId }
     case "REMEMBER_THREAD":
@@ -1423,6 +1425,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         }),
       }
     case "SET_MESSAGES": {
+      if (action.threadId !== undefined && action.threadId !== state.activeThreadId) return state
       const merged = mergeHydratedMessages(state.messages, action.messages)
       let cache = state.messagesByThreadId
       let order = state.messagesCacheOrder

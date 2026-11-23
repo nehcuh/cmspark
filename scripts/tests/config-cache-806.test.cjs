@@ -18,9 +18,14 @@ const hydrate=only(n=>ts.isIfStatement(n)&&n.expression.getText(ast)==='msg.type
 const wsSource=fs.readFileSync(path.join(root,'chrome-extension/src/background/ws-client.ts'),'utf8'),wsAst=ts.createSourceFile('ws-client.ts',wsSource,ts.ScriptTarget.Latest,true);
 const wsClass=wsAst.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='WSClient');assert.ok(wsClass);
 const wsMethods=wsClass.members.filter(n=>ts.isMethodDeclaration(n)&&['send','desktopBrowserConnectionCurrent'].includes(n.name.getText(wsAst)));assert.equal(wsMethods.length,2);
+const effortModule = { exports: {} };
+const effortSource = fs.readFileSync(path.join(root, 'chrome-extension/src/sidepanel/utils/reasoning-effort.ts'), 'utf8');
+vm.runInNewContext(ts.transpileModule(effortSource, {
+ compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+}).outputText, effortModule);
 function fixture(mode){
  const text=`${budgetSource};class ActualWS {${wsMethods.map(n=>n.getText(wsAst)).join("\n")}};let extensionConfig={base_url:'https://original.invalid',model_name:'original',max_tokens:64000},reply;const writes=[],frames=[];const chrome={storage:{local:{set(value){writes.push(value)}}}},WebSocket={OPEN:1,CONNECTING:0};let wsClient=${mode==='missing'?'null':`new ActualWS()`};if(wsClient){wsClient.unpaired=false;wsClient.authenticated=${mode==='open'};wsClient.pending=[];wsClient.ws=${mode==='disconnected'?'null':`{readyState:1,send(value){frames.push(value)}}`}};${save};function send(message){reply=undefined;function sendResponse(value){reply=value}switch(message.type){case 'config.set':${send}}};function receive(msg){${hydrate}};globalThis.fixture={send,receive,writes,frames,wsClient,get:()=>extensionConfig,reply:()=>reply}`;
- const realm={};vm.runInNewContext(ts.transpileModule(text,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,realm);return realm.fixture;
+ const realm={isReasoningEffort: effortModule.exports.isReasoningEffort};vm.runInNewContext(ts.transpileModule(text,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,realm);return realm.fixture;
 }
 for(const mode of ['missing','disconnected','handshake','open']) test(`actual ${mode} send preserves cache until authoritative update`,()=>{
  const f=fixture(mode);f.send({type:'config.set',config:{model_name:'uncommitted',api_key:'private-test-key'}});assert.equal(f.reply().ok,mode==='handshake'||mode==='open');if(mode==='handshake')assert.equal(f.wsClient.pending.length,1);if(mode==='open')assert.equal(f.frames.length,1);assert.equal(f.writes.length,0);assert.equal(f.get().model_name,'original');f.receive({type:'config.updated',config:{llm:{model_name:'committed',api_key:'***'}}});assert.equal(f.writes.length,1);assert.equal(f.get().model_name,'committed');assert.equal(JSON.stringify(f.writes).includes('private-test-key'),false)
@@ -54,4 +59,14 @@ for(const fields of [{id:'invalid id'},{id:42},{config_revision:''},{config_revi
 test('correlated draft save is refused during authentication instead of queued',()=>{
  const f=fixture('handshake');f.send({type:'config.set',id:'owned-request-2',config_revision:'owned-epoch:7',config:{model_name:'candidate'}});
  assert.equal(f.reply().ok,false);assert.equal(f.reply().error,'CONFIG_CONNECTION_NOT_READY');assert.equal(f.wsClient.pending.length,0);assert.equal(f.frames.length,0);
+});
+
+test('authoritative updates cache the selected reasoning effort and ignore invalid values', () => {
+ const f = fixture('open');
+ for (const effort of ['minimal', 'none', 'max']) {
+  f.receive({type:'config.updated',config:{llm:{reasoning_effort:effort}}});
+  assert.equal(f.writes.at(-1).extensionConfig.reasoning_effort, effort);
+ }
+ f.receive({type:'config.updated',config:{llm:{reasoning_effort:'unknown'}}});
+ assert.equal(f.get().reasoning_effort, 'max');
 });

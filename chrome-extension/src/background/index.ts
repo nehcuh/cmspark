@@ -1,3 +1,4 @@
+import { isReasoningEffort, type ReasoningEffort } from "../sidepanel/utils/reasoning-effort"
 // CMspark Browser Agent — Background Service Worker
 // WebSocket client, CDP manager, tab manager, cookie ops
 
@@ -102,7 +103,7 @@ type LogLevel = "debug" | "info" | "warn" | "error"
 interface ExtensionConfig {
   base_url: string
   model_name: string
-  reasoning_effort?: "low" | "medium" | "high" | "xhigh"
+  reasoning_effort?: ReasoningEffort
   max_tokens?: number
   temperature?: number
   context_window?: number
@@ -126,7 +127,7 @@ function stripSecretsFromExtensionConfig(raw: Record<string, unknown> | null | u
   return {
     base_url: typeof src.base_url === "string" ? src.base_url : "",
     model_name: typeof src.model_name === "string" ? src.model_name : "",
-    reasoning_effort: src.reasoning_effort === "low" || src.reasoning_effort === "medium" || src.reasoning_effort === "high" || src.reasoning_effort === "xhigh" ? src.reasoning_effort : undefined,
+    reasoning_effort: isReasoningEffort(src.reasoning_effort) ? src.reasoning_effort : undefined,
     max_tokens: normalizeSavedChatOutputLimit(src.max_tokens),
     temperature: typeof src.temperature === "number" ? src.temperature : undefined,
     context_window: typeof src.context_window === "number" ? src.context_window : undefined,
@@ -176,7 +177,7 @@ function saveExtensionConfig(cfg: Record<string, unknown>) {
   const next: ExtensionConfig = {
     base_url: String(llm.base_url ?? extensionConfig?.base_url ?? ""),
     model_name: String(llm.model_name ?? extensionConfig?.model_name ?? ""),
-    reasoning_effort: llm.reasoning_effort === "low" || llm.reasoning_effort === "medium" || llm.reasoning_effort === "high" || llm.reasoning_effort === "xhigh" ? llm.reasoning_effort : extensionConfig?.reasoning_effort,
+    reasoning_effort: isReasoningEffort(llm.reasoning_effort) ? llm.reasoning_effort : extensionConfig?.reasoning_effort,
     max_tokens: normalizeSavedChatOutputLimit(llm.max_tokens) ?? extensionConfig?.max_tokens,
     temperature: llm.temperature !== undefined ? Number(llm.temperature) : extensionConfig?.temperature,
     context_window: llm.context_window !== undefined ? Number(llm.context_window) : extensionConfig?.context_window,

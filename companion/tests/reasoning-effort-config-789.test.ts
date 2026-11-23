@@ -4,7 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-test("#789 actual config handlers persist four levels, default legacy, and reject invalid without writing", async () => {
+test("#789 actual config handlers persist supported levels, default legacy, and reject invalid without writing", async () => {
   const owned = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-reasoning-789-"))
   const identity = fs.lstatSync(owned)
   process.env.CMSPARK_DATA_DIR = owned
@@ -17,7 +17,7 @@ test("#789 actual config handlers persist four levels, default legacy, and rejec
   const { handleConfigFamily } = await import("../src/message-router/handlers/config")
   try {
     assert.equal(config.getConfig().llm.reasoning_effort, "medium")
-    for (const level of ["low", "medium", "high", "xhigh"]) {
+    for (const level of ["none", "minimal", "low", "medium", "high", "xhigh", "max"]) {
       const response = await handleConfigFamily("config.set", { config: { reasoning_effort: level } })
       assert.equal(response.type, "config.updated")
       assert.equal(response.config.llm.reasoning_effort, level)
@@ -28,7 +28,7 @@ test("#789 actual config handlers persist four levels, default legacy, and rejec
     assert.equal(nested.config.llm.reasoning_effort, "high")
     assert.equal(nested.config.llm.api_key, "***")
     const before = fs.readFileSync(path.join(owned, "config.json"))
-    for (const candidate of [{ reasoning_effort: "max" }, { llm: { reasoning_effort: null } }]) {
+    for (const candidate of [{ reasoning_effort: "extreme" }, { llm: { reasoning_effort: null } }]) {
       const response = await handleConfigFamily("config.set", { config: candidate })
       assert.equal(response.type, "error")
       assert.equal(response.error, "INVALID_REASONING_EFFORT")

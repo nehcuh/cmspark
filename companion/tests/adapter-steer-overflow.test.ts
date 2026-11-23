@@ -537,21 +537,64 @@ test("a configured output limit applies to recovery attempts", async () => {
   assert.equal(done.generation_limit, "output_budget")
 })
 
-test("reasoning without visible text retains a precise generation limit in live and persisted chat", async () => {
+const reasoningOnlyLimit: CreateHandler = async function* () {
+  yield { type: "reasoning", text: "思考片段" }
+  yield { type: "done", finish_reason: "max_tokens" }
+}
+
+test("reasoning-only exhaustion retries once and persists the recovered answer", async () => {
   resetState()
   const params = buildMockParams("test-sn-reason-limit")
-  createHandlers = [async function* () {
-    yield { type: "reasoning", text: "思考片段" }
-    yield { type: "done", finish_reason: "max_tokens" }
-  }]
+  createHandlers = [reasoningOnlyLimit, textStreamHandler("恢复后的回答")]
   await chatCreate(params)
-  assert.equal(streamParams.length, 1)
-  const done = params.getSentMessages().find((m) => m.type === "chat.done")
-  assert.equal(done.generation_limit, "output_budget")
-  assert.equal(done.reasoning_content, "思考片段")
-  const saved = params.threadManager.getMessages(params.threadId).find(m => m.id === done.message_id)
-  assert.equal(saved?.generation_limit, "output_budget")
-  assert.equal(saved?.reasoning_content, "思考片段")
+  assert.equal(streamParams.length, 2)
+  assert.ok(params.getSentMessages().some(m => m.type === "chat.reasoning" && m.retrying && !m.content))
+  const done = params.getSentMessages().find(m => m.type === "chat.done")
+  assert.ok(done)
+  const rows = params.threadManager.getMessages(params.threadId).filter(m => m.role === "assistant")
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].id, done.message_id)
+  assert.equal(rows[0].content, "恢复后的回答")
+  assert.ok(!rows[0].reasoning_content)
+})
+
+test("a second reasoning-only exhaustion leaves no failed assistant history", async () => {
+  resetState()
+  const params = buildMockParams("test-sn-reason-limit-twice")
+  createHandlers = [reasoningOnlyLimit, reasoningOnlyLimit]
+  await chatCreate(params)
+  assert.equal(streamParams.length, 2)
+  assert.match(params.getSentMessages().find(m => m.type === "chat.error")?.error ?? "", /单次输出上限/)
+  assert.ok(!params.threadManager.getMessages(params.threadId).some(m => m.role === "assistant"))
+})
+
+test("context exhaustion or a broken reasoning-only stream never persists a failed draft", async () => {
+  const broken: CreateHandler = async function* () {
+    yield { type: "reasoning", text: "trace" }
+    yield { type: "reasoning", text: "", replace: true }
+    throw Object.assign(new Error("socket closed"), { code: "ECONNRESET" })
+  }
+  const context: CreateHandler = async function* () {
+    yield { type: "reasoning", text: "trace" }
+    yield { type: "done", finish_reason: "model_context_window_exceeded" }
+  }
+  const contextError: CreateHandler = async function* () {
+    yield { type: "reasoning", text: "trace" }
+    throw { message: "context_length_exceeded" }
+  }
+  const otherFailure: CreateHandler = async function* () {
+    yield { type: "reasoning", text: "trace" }
+    throw new Error("upstream error")
+  }
+  for (const handlers of [[context], [contextError], [otherFailure], [reasoningOnlyLimit, context], [broken, broken]]) {
+    resetState()
+    const params = buildMockParams("test-sn-reason-interrupted")
+    createHandlers = [...handlers]
+    await chatCreate(params)
+    assert.equal(streamParams.length, handlers.length)
+    assert.match(params.getSentMessages().find(m => m.type === "chat.error")?.error ?? "", /上下文上限|再次中断|报告错误/)
+    assert.ok(!params.threadManager.getMessages(params.threadId).some(m => m.role === "assistant"))
+  }
 })
 
 test("a streamed context limit preserves partial text and tool history without executing the truncated batch", async () => {

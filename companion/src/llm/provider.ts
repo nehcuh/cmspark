@@ -6,6 +6,8 @@
  * Adapter / extract / title consume CanonicalStreamEvent / complete only (Node3).
  */
 
+import type { LiveResponseItem, liveResponseItems } from "./providers/openai-responses"
+import type { LiveAnthropicBlock, liveAnthropicBlocks } from "./providers/anthropic-convert"
 import type { LlmConfig } from "../config"
 import { OpenAIProvider } from "./providers/openai"
 import { AnthropicProvider } from "./providers/anthropic"
@@ -49,6 +51,8 @@ export type CanonicalChatMessage =
       tool_calls?: CanonicalToolCall[]
       /** DeepSeek / thinking — internal only; dropped on Anthropic wire (M7). */
       reasoning_content?: string
+      [liveResponseItems]?: LiveResponseItem[]
+      [liveAnthropicBlocks]?: LiveAnthropicBlock[]
     }
   | {
       role: "tool"
@@ -75,7 +79,7 @@ export type CanonicalStreamEvent =
       /** Incremental arguments JSON fragment. */
       arguments?: string
     }
-  | { type: "reasoning"; text: string }
+  | { type: "reasoning"; text: string; replace?: boolean }
   | {
       type: "usage"
       prompt_tokens?: number
@@ -83,9 +87,10 @@ export type CanonicalStreamEvent =
       total_tokens?: number
       reasoning_tokens?: number
     }
-  | { type: "done"; finish_reason?: string | null }
+  | { type: "done"; finish_reason?: string | null; liveBlocks?: LiveAnthropicBlock[]; responseItems?: LiveResponseItem[] }
 
 export interface StreamChatParams {
+  reasoning_effort?: LlmConfig["reasoning_effort"]
   messages: CanonicalChatMessage[]
   tools?: CanonicalToolDefinition[]
   temperature?: number

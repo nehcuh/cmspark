@@ -7,6 +7,7 @@ export function commitStartupNavigation(input: {
   threads: Array<{ id: string; trashed_at?: string | null }>
   activeThreadId: string | null
   connection: "connected" | "connecting" | "disconnected"
+  needsTranscript?: boolean
   listArrived: boolean
 }): { ignored: true; reason: "stale-generation" } | { ignored: false; layer: "session" | "projects"; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null; remembered: string | null } {
   if (input.commitGeneration !== input.currentGeneration) return { ignored: true, reason: "stale-generation" }
@@ -15,7 +16,7 @@ export function commitStartupNavigation(input: {
     return { ignored: false, layer: "session", activeThreadId: input.rememberedThreadId, selectThread: false, homeCopy: null, remembered: input.rememberedThreadId }
   }
   if (usable(input.rememberedThreadId) && input.rememberedThreadId) {
-    return { ignored: false, layer: "session", activeThreadId: input.rememberedThreadId, selectThread: input.connection === "connected" && input.activeThreadId !== input.rememberedThreadId ? input.rememberedThreadId : false, homeCopy: null, remembered: input.rememberedThreadId }
+    return { ignored: false, layer: "session", activeThreadId: input.rememberedThreadId, selectThread: input.connection === "connected" && (input.needsTranscript || input.activeThreadId !== input.rememberedThreadId) ? input.rememberedThreadId : false, homeCopy: null, remembered: input.rememberedThreadId }
   }
   if (input.listArrived && input.rememberedThreadId) {
     return { ignored: false, layer: "projects", activeThreadId: null, selectThread: false, homeCopy: projectCopy.restoreInvalid, remembered: null }

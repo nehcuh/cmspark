@@ -238,7 +238,7 @@ export interface LLMConfig {
   // settings UI show "已配置 ✓" without ever exposing the real key.
   api_key_set?: boolean
   model_name: string
-  reasoning_effort?: "low" | "medium" | "high" | "xhigh"
+  reasoning_effort?: import("./utils/reasoning-effort").ReasoningEffort
   max_tokens?: number
   temperature: number
   context_window: number

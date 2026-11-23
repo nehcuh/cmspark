@@ -1,6 +1,6 @@
 /** Closed semantic settings catalog. Model output never names arbitrary config keys. */
 import { describeShellProvision, shellProvisionSentence } from "../capability/shell-provision"
-import { effectiveReasoningEffort, reasoningSupport } from "../llm/reasoning-effort"
+import { orderedEfforts, effortLevels, reasoningWireEffort, reasoningSupport } from "../llm/reasoning-effort"
 import { CHAT_OUTPUT_LIMIT_MAX, normalizeSavedChatOutputLimit } from "../llm/output-budget"
 export type SettingValue = boolean | number | string
 export type SettingsSection = "voice" | "export" | "integrations" | "security" | "model"
@@ -26,7 +26,7 @@ export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
     min: 0, max: CHAT_OUTPUT_LIMIT_MAX, prerequisites: [], read: c => normalizeSavedChatOutputLimit(c.llm?.max_tokens) ?? 0,
     patch: value => ({ llm: { max_tokens: value } }) },
   { id: "chat.reasoningEffort", label: "默认对话思考强度", description: "改变支持思考强度的对话模型请求。较低强度适合减少等待，复杂问题可能需要更高强度。", scope: "companion", section: "model",
-    values: ["low", "medium", "high", "xhigh"], prerequisites: [], read: c => effectiveReasoningEffort(c.llm?.reasoning_effort),
+    values: orderedEfforts, prerequisites: [], read: c => reasoningWireEffort(reasoningSupport(c.llm?.protocol, c.llm?.base_url, c.llm?.model_name), c.llm?.reasoning_effort) ?? "medium",
     patch: value => ({ llm: { reasoning_effort: value } }) },
   { id: "history.retentionDays", label: "对话历史保留天数", description: "缩短保存期限，减少历史占用；到期清理后无法通过恢复设置找回历史。", scope: "companion", section: "export", min: 1, max: 3650,
     prerequisites: ["缩短期限可能使旧历史在清理时被删除，请先导出需要保留的内容。"], read: c => c.history_retention_days ?? 30, patch: value => ({ history_retention_days: value }) },
@@ -51,9 +51,10 @@ export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
 
 export function availableSettings(config: any): readonly CatalogEntry[] {
   const llm = config.llm
-  return reasoningSupport(llm?.protocol, llm?.base_url, llm?.model_name) === "unsupported"
+  const support = reasoningSupport(llm?.protocol, llm?.base_url, llm?.model_name)
+  return support === "unsupported"
     ? SETTINGS_CATALOG.filter(entry => entry.id !== "chat.reasoningEffort")
-    : SETTINGS_CATALOG
+    : SETTINGS_CATALOG.map(entry => entry.id === "chat.reasoningEffort" ? { ...entry, values: effortLevels[support] } : entry)
 }
 export function validSettingValue(entry: CatalogEntry, value: unknown): value is SettingValue {
   if (entry.values) return entry.values.some(v => v === value)

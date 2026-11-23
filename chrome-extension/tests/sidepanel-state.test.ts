@@ -1139,3 +1139,15 @@ test("hydrate retry: Thread not found retries once then HYDRATE_FAILED", () => {
   assert.equal(next.hydrating, false)
   assert.equal(next.processingStatus, "加载失败")
 })
+
+test("startup selection accepts an immediate history response and rejects it after switching", () => {
+  const restore = agentReducer(initialState, { type: "COMMIT_NAVIGATION", decision: {
+    ignored: false, layer: "session", activeThreadId: "old", selectThread: false, homeCopy: null, remembered: "old" } })
+  assert.equal(restore.hydrating, true)
+  const reply = { type: "SET_MESSAGES" as const, threadId: "old",
+    messages: [{ id: "m1", thread_id: "old", role: "user" as const, content: "remembered body", created_at: "t" }] }
+  const loaded = agentReducer(restore, reply)
+  assert.equal(loaded.messages[0].content, "remembered body")
+  const switched = agentReducer(loaded, { type: "SET_ACTIVE_THREAD", threadId: "new" })
+  assert.equal(agentReducer(switched, reply), switched)
+})

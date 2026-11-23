@@ -15,6 +15,7 @@ function navigationStorage(): chrome.storage.LocalStorageArea | null {
 export function useNavigationStartup() {
   const { state, dispatch } = useAgentStore()
   const generation = useRef(0)
+  const needsTranscript = useRef(true)
   const threadsRef = useRef(state.threads)
   const activeRef = useRef(state.activeThreadId)
   const connectionRef = useRef(state.connectionState)
@@ -33,6 +34,7 @@ export function useNavigationStartup() {
   useEffect(() => {
     const storage = navigationStorage()
     if (!storage) return
+    if (state.connectionState !== "connected") needsTranscript.current = true
     const commitGeneration = bumpListGeneration(generation.current)
     generation.current = commitGeneration
     storage.get(LAST_THREAD_KEY, stored => {
@@ -46,6 +48,7 @@ export function useNavigationStartup() {
         activeThreadId: activeRef.current,
         connection: connectionRef.current,
         listArrived: listArrivedRef.current,
+        needsTranscript: needsTranscript.current,
       })
       if ("reason" in decision) return
       const live = threadsRef.current.find(thread => thread.id === activeRef.current && !thread.trashed_at)
@@ -54,9 +57,13 @@ export function useNavigationStartup() {
         storage.set({ [LAST_THREAD_KEY]: live.id })
         return
       }
+      if (connectionRef.current === "connected" && listArrivedRef.current) needsTranscript.current = false
       dispatch({ type: "COMMIT_NAVIGATION", decision })
-      if (typeof decision.selectThread === "string") chrome.runtime.sendMessage({ type: "thread.select", threadId: decision.selectThread })
+      if (typeof decision.selectThread === "string") {
+        chrome.runtime.sendMessage({ type: "thread.select", threadId: decision.selectThread })
+      }
       storage.set({ [LAST_THREAD_KEY]: decision.remembered })
     })
-  }, [state.connectionState, state.threadListEpoch])
+    return () => { generation.current++ }
+  }, [state.connectionState, state.threadListEpoch, state.threadListArrived])
 }
