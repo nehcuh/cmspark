@@ -131,7 +131,7 @@ test('705 actual rejected UI completion signals the existing parent failure whil
  let then:ts.CallExpression|undefined;function walk(n:ts.Node){if(ts.isVariableDeclaration(n)&&n.name.getText(ast)==='fail')fail=n.initializer;if(ts.isBinaryExpression(n)&&n.left.getText(ast)==='uiDone'&&ts.isCallExpression(n.right))then=n.right;ts.forEachChild(n,walk)}walk(callback);assert.ok(then&&fail);assert.equal(then.arguments.length,2)
  const code='let failed=false,failureSite=0,signals=0;const failResolve=()=>{signals++};const fail='+fail.getText(ast)+';globalThis.good='+then.arguments[0].getText(ast)+';globalThis.bad='+then.arguments[1].getText(ast)+';globalThis.state=()=>({failed,failureSite,signals});globalThis.preset=()=>{failureSite=5};',compiled=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,scope:any={};vm.runInNewContext(compiled,scope,{timeout:1000})
  assert.equal(scope.good().ok,true);assert.equal(scope.state().signals,0);assert.equal(scope.bad(Error('PRIVATE_SENTINEL')).ok,false);assert.equal(scope.state().signals,1);assert.equal(scope.state().failed,true);assert.equal(scope.state().failureSite,9);scope.preset();scope.bad();assert.equal(scope.state().failureSite,5)
- assert.match(source,/Promise\.race\(\[exit,failure\.then\(/);assert.match(source,/owned acknowledged UI runner must genuinely close quiescent/)
+ assert.match(source,/Promise\.race\(\[exit,phaseFailed,deadline\]/);assert.match(source,/owned acknowledged UI runner must genuinely close quiescent/)
 })
 
 // Separate passive fixed-file snapshot; never a lifecycle/cleanup authority.
@@ -358,6 +358,25 @@ test('705 failure-only UI stage is closed bounded and never a lifecycle authorit
 
 // Exact source-only inverse of the macOS title compatibility change. Never applies to receipts or compiled evidence.
 function restoreCloseObservation476(kind:'ui'|'protocol'|'observer'|'helper'|'native',raw:string){return require(path.resolve('scripts/tests/observation-788-inverse.mjs')).restoreCloseObservation476(kind,raw)}
+test('476 workspace teardown inverse rejects changes inside each ordered teardown block',()=>{
+ const inverse=(raw:string)=>restoreCloseObservation476('native',
+  require(path.resolve('scripts/tests/host-tick-inverse.cjs')).restoreHostTick(
+   require(path.resolve('scripts/tests/success-timing-inverse.cjs')).restoreSuccessTiming476(raw)))
+ const source=fs.readFileSync(path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'utf8')
+ for(const value of [source,source.replace(/\r?\n/g,'\r\n')]){
+  assert.doesNotThrow(()=>inverse(value))
+  for(const [original,changed] of [
+   ['/private/tmp/cm476-', '/private/tmp/changed-'],
+   ['workspaceDone=resolve','workspaceDone=()=>{}'],
+   ['workspaceDone()/*WORKSPACE_TEARDOWN_END*/','void 0/*WORKSPACE_TEARDOWN_END*/'],
+   ['[workspaceReceiptsComplete,uiDone]','[workspaceReceiptsComplete]'],
+  ]){
+   assert.ok(value.includes(original))
+   assert.throws(()=>inverse(value.replace(original,changed)),/WORKSPACE_TEARDOWN_SOURCE/)
+  }
+ }
+})
+
 test('476 inverse rejects missing duplicate altered and appended observation sources in LF and CRLF',()=>{
  const samples=[['protocol',path.join(files,'OwnedUIProtocol.swift'),'/*OBS476_BOUNDARY_BEGIN*/'],['observer',path.join(files,'OwnerObserver.swift'),'/*OBS476_BOUNDARY_BEGIN*/'],['helper',helper,'/*OBS476_CLOSE_BEGIN*/'],['native',path.resolve('tests/desktop-native-thread-metadata-476.test.ts'),'/*OBS476_CLOSE_BEGIN*/']] as const
  for(const [kind,file,marker]of samples)for(const eol of ['\n','\r\n']){
