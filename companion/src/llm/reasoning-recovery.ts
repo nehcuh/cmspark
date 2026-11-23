@@ -1,5 +1,5 @@
 import type { LlmConfig } from "../config"
-import { isBenignStreamTailClose } from "./transport-error"
+import { isBenignStreamTailClose, isTransientLlmTransportError } from "./transport-error"
 import { classifyGenerationLimit, isContextOverflowError } from "./overflow"
 import type { CanonicalChatMessage, CanonicalStreamEvent, LlmProvider, StreamChatParams } from "./provider"
 import { effortLevels, modelSpec, reasoningWireEffort } from "./reasoning-effort"
@@ -93,12 +93,18 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
         yield event
       }
     } catch (error) {
-      if (params.signal?.aborted || (error instanceof Error && error.name === "AbortError") || hasAnswerOrTool || !sawReasoning) throw error
-      const code = (error as { code?: unknown } | null)?.code
-      if (classifyGenerationLimit(code) === "context_window" || isContextOverflowError(error instanceof Error ? error.message : String(error))) {
+      const failure = error as { name?: unknown; code?: unknown; message?: unknown } | null
+      if (params.signal?.aborted || failure?.name === "AbortError" || hasAnswerOrTool || !sawReasoning) throw error
+      if (error instanceof ReasoningRecoveryError) throw error
+      const message = typeof failure?.message === "string" ? failure.message : String(error)
+      if (classifyGenerationLimit(failure?.code) === "context_window" || isContextOverflowError(message)) {
         throw new ReasoningRecoveryError("已到模型上下文上限，本轮未生成正文或工具调用。")
       }
-      if (!isBenignStreamTailClose(error)) throw error
+      // Once reasoning has streamed, this step owns its entire retry budget.
+      // An unclassified provider fault must not enter the outer generic retry loop.
+      if (!isBenignStreamTailClose(error) && !isTransientLlmTransportError(String(failure?.code ?? ""))) {
+        throw new ReasoningRecoveryError("模型在返回正文或工具调用前报告错误，本轮已停止。", { cause: error })
+      }
       cause = "transport"
     } finally {
       // Also closes a live HTTP stream when the outer consumer stops early.

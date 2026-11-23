@@ -572,7 +572,7 @@ test("context exhaustion or a broken reasoning-only stream never persists a fail
   const broken: CreateHandler = async function* () {
     yield { type: "reasoning", text: "trace" }
     yield { type: "reasoning", text: "", replace: true }
-    throw new Error("Premature close")
+    throw Object.assign(new Error("socket closed"), { code: "ECONNRESET" })
   }
   const context: CreateHandler = async function* () {
     yield { type: "reasoning", text: "trace" }
@@ -580,15 +580,19 @@ test("context exhaustion or a broken reasoning-only stream never persists a fail
   }
   const contextError: CreateHandler = async function* () {
     yield { type: "reasoning", text: "trace" }
-    throw Object.assign(new Error("context_length_exceeded"), { code: "context_length_exceeded" })
+    throw { message: "context_length_exceeded" }
   }
-  for (const handlers of [[context], [contextError], [reasoningOnlyLimit, context], [broken, broken]]) {
+  const otherFailure: CreateHandler = async function* () {
+    yield { type: "reasoning", text: "trace" }
+    throw new Error("upstream error")
+  }
+  for (const handlers of [[context], [contextError], [otherFailure], [reasoningOnlyLimit, context], [broken, broken]]) {
     resetState()
     const params = buildMockParams("test-sn-reason-interrupted")
     createHandlers = [...handlers]
     await chatCreate(params)
     assert.equal(streamParams.length, handlers.length)
-    assert.match(params.getSentMessages().find(m => m.type === "chat.error")?.error ?? "", /上下文上限|再次中断/)
+    assert.match(params.getSentMessages().find(m => m.type === "chat.error")?.error ?? "", /上下文上限|再次中断|报告错误/)
     assert.ok(!params.threadManager.getMessages(params.threadId).some(m => m.role === "assistant"))
   }
 })
