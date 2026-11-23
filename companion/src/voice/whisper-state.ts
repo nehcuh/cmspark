@@ -159,8 +159,6 @@ export interface BuildVoiceModelStateOpts {
   binary?: VoiceModelStatePayload["binary"]
   /** Inject companion roots for binary search. */
   companionRoots?: string[]
-  /** Private install root or hardware inputs for isolated tests. */
-  accelerationOptions?: Parameters<typeof inspectWhisperAcceleration>[0]
 }
 
 /**
@@ -245,7 +243,7 @@ export async function buildVoiceModelState(
   })
 
   const hardware = detectWhisperHardware()
-  const acceleration = await inspectWhisperAcceleration(opts.accelerationOptions)
+  const acceleration = await inspectWhisperAcceleration()
   return {
     type: "voice.model.state",
     sttEngine,

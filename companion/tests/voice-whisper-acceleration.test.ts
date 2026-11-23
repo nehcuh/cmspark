@@ -7,8 +7,10 @@ import path from "node:path"
 
 import {
   inspectWhisperAcceleration,
+  observeWhisperExecution,
   parseWhisperBackendEvidence,
   parseWindowsWhisperAdapters,
+  recordWhisperExecution,
   selectWindowsWhisperRuntime,
 } from "../src/voice/whisper-acceleration"
 import type { WhisperBinaryManifest } from "../src/voice/whisper-binary-manifest"
@@ -129,4 +131,17 @@ test("Vulkan reports the runtime's chosen ordinal, independently from adapter or
   assert.equal(parseWhisperBackendEvidence("cuda", diagnostics), undefined)
   assert.equal(parseWhisperBackendEvidence("vulkan", diagnostics.replace("Vulkan1 total", "Vulkan0 total")), undefined)
   assert.equal(parseWhisperBackendEvidence("vulkan", diagnostics.replace("AMD Radeon RX 7700 XT", "llvmpipe")), undefined)
+})
+
+test("Whisper observers receive an immutable record containing only execution metadata", (t) => {
+  const seen: unknown[] = []
+  const stop = observeWhisperExecution((execution) => seen.push(execution))
+  t.after(stop)
+  const attempt = { backend: "cpu" as const, fallbackReason: "cuda_failed" as const, ms: 30, at: 1, text: "private transcript" }
+  recordWhisperExecution(attempt)
+  assert.deepEqual(seen, [{ backend: "cpu", fallbackReason: "cuda_failed", ms: 30, at: 1 }])
+  assert.ok(Object.isFrozen(seen[0]))
+  stop()
+  recordWhisperExecution({ backend: "cpu", ms: 30, at: 2 })
+  assert.equal(seen.length, 1)
 })

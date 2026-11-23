@@ -23,7 +23,6 @@ import { getConfig, setVoiceFields } from "../config"
 import { defaultVoiceExternal, reduceExternalConfig } from "./external-asr-config"
 import {
   isWhisperGpuBackend,
-  observeWhisperExecution,
   supportsWindowsWhisperAcceleration,
   whisperGpuInstallTarget,
   type WhisperBackend,
@@ -179,40 +178,6 @@ async function statePayload(
     return { ...state, acceleration: { ...state.acceleration, downloadingBackend: activeBinaryDownload.backend } }
   }
   return state
-}
-
-/** Publish completed runner changes over the authenticated model-state channel. */
-export function observeVoiceModelState(
-  broadcast: (state: VoiceModelStatePayload) => void,
-  deps: VoiceModelHandlerDeps = {},
-): () => void {
-  let pending = false
-  let publishing = false
-  let stopped = false
-  async function publish() {
-    try {
-      while (pending && !stopped) {
-        pending = false
-        const state = await statePayload(deps)
-        if (!pending && !stopped) broadcast(attachLastDownloadError(state))
-      }
-    } catch (err) {
-      logger.warn("voice.model.execution_state_failed", { error: err instanceof Error ? err.message : String(err) })
-    } finally {
-      publishing = false
-    }
-  }
-  const unsubscribe = observeWhisperExecution(() => {
-    pending = true
-    if (!publishing) {
-      publishing = true
-      setImmediate(() => void publish())
-    }
-  })
-  return () => {
-    stopped = true
-    unsubscribe()
-  }
 }
 
 function resolveRoot(deps: VoiceModelHandlerDeps): string {
@@ -1144,15 +1109,20 @@ export async function handleVoiceModelMessage(
     }
 
     case "voice.binary.cancel": {
-      if (!activeBinaryDownload) {
+      const requestedBackend: unknown = rest.backend
+      if (requestedBackend !== undefined && requestedBackend !== "cpu" && !isWhisperGpuBackend(requestedBackend)) {
+        return modelError("本机组件取消仅支持可选的 cpu、cuda 或 vulkan 后端。", { code: "INVALID_BACKEND" })
+      }
+      const backend = requestedBackend ?? "cpu"
+      if (activeBinaryDownload?.backend !== backend) {
         return {
           type: "voice.binary.cancel.result" as const,
           ok: true,
           status: "not-running",
+          backend,
         }
       }
-      const { controller, backend } = activeBinaryDownload
-      controller.abort()
+      activeBinaryDownload.controller.abort()
       logger.info("voice.binary.download.cancel_requested", { backend })
       return {
         type: "voice.binary.cancel.result" as const,

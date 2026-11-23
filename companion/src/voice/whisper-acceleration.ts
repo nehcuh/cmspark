@@ -19,13 +19,13 @@ export const WHISPER_GPU_BACKENDS = ["cuda", "vulkan"] as const
 export type WhisperGpuBackend = typeof WHISPER_GPU_BACKENDS[number]
 export type WhisperBackend = "cpu" | WhisperGpuBackend
 export type WhisperFallbackReason = `${WhisperGpuBackend}_failed` | `${WhisperGpuBackend}_unproven`
-export type WhisperExecution = {
+export type WhisperExecution = Readonly<{
   backend: WhisperBackend
   device?: string
   fallbackReason?: WhisperFallbackReason
   ms: number
   at: number
-}
+}>
 
 type AvailabilityReason =
   | "unsupported_platform"
@@ -170,16 +170,24 @@ export function parseWhisperBackendEvidence(backend: WhisperGpuBackend, stderr: 
 }
 
 let latestExecution: WhisperExecution | undefined
-const executionObservers = new Set<() => void>()
+const executionObservers = new Set<(execution: WhisperExecution) => void>()
 
-export function observeWhisperExecution(listener: () => void): () => void {
+export function observeWhisperExecution(listener: (execution: WhisperExecution) => void): () => void {
   executionObservers.add(listener)
   return () => { executionObservers.delete(listener) }
 }
 
 export function recordWhisperExecution(execution: WhisperExecution): void {
-  latestExecution = { ...execution }
+  const { backend, device, fallbackReason, ms, at } = execution
+  const record: WhisperExecution = Object.freeze({
+    backend,
+    ...(device ? { device } : {}),
+    ...(fallbackReason ? { fallbackReason } : {}),
+    ms,
+    at,
+  })
+  latestExecution = record
   for (const notify of executionObservers) {
-    try { notify() } catch { /* Observers cannot fail an inference. */ }
+    try { notify(record) } catch { /* Observers cannot fail an inference. */ }
   }
 }
