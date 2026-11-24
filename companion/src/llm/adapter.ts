@@ -6,7 +6,7 @@ import { isSnapshotLocatorRefusal, snapshotHistory } from "../tool/snapshot-loca
 // LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
 
 import os from "os"
-import { randomUUID } from "crypto"
+import { createHash, randomUUID } from "crypto"
 import { buildCodingHandoffContext } from "../acp/capability-context"
 import { currentAcpSessions } from "../acp/session-recovery"
 import { normalizeDocumentWarning } from "../file-formats"
@@ -41,7 +41,7 @@ import type { LcuHumanChannel } from "../computer/lcu/authorization"
 import type { LcuTurn } from "../computer/lcu/runtime"
 import { lcuThreadAdmitted } from "../computer/lcu/runtime"
 import { LcuObservationManager } from "../computer/lcu/result"
-import type { UserContentPart } from "./provider"
+import type { CompleteUsage, UserContentPart } from "./provider"
 import { guiTemplateConfigError } from "../apps/gui-templates"
 import {
   createProvider,
@@ -74,6 +74,7 @@ import { liveResponseItems, type LiveResponseItem } from "./providers/openai-res
 import { liveAnthropicBlocks, type LiveAnthropicBlock } from "./providers/anthropic-convert"
 import { ReasoningRecoveryError, streamChatWithRecovery } from "./reasoning-recovery"
 import { modelSpec } from "./reasoning-effort"
+import { hostnameFromBaseUrl } from "./providers/headers"
 import { convertLeftoverSteerToNextRun, takeSteer } from "./run-queues"
 import type { RunStats } from "../loop/loop-state"
 import { chatOutputBudget } from "./output-budget"
@@ -639,6 +640,12 @@ export function runTerminalEpochIsCurrent(threadId: string, epoch: number): bool
   return runTerminalEpoch.get(threadId) === epoch
 }
 
+/** Route dimensions for usage reports. Never log a URL path, query, or credential. */
+function usageRoute(config: LlmConfig, threadId: string) {
+  return { thread_id: threadId, model: config.model_name,
+    base_host: hostnameFromBaseUrl(config.base_url), protocol: config.protocol ?? "openai" }
+}
+
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, knowledgeIds, knowledgeDescriptionOnly, knowledgeMode, knowledgeSmartMatch, knowledgeRouteByGroup, fileContents, imageAttachments, reservedUserMessageId, clientMessageId, config, threadManager, skillEngine, historyStore, sendToExtension, signal, skipUserMessage, contextRefsSegment, hostname } = params
   params.assertCurrentRun?.()
@@ -650,6 +657,7 @@ export async function chatCreate(params: ChatCreateParams) {
   // Persist before any await: old successful reports cannot survive a crashed rerun
   // as if they were produced by the new execution.
   const executionId = randomUUID()
+  const promptCacheKey = createHash("sha256").update("cmspark-chat\0").update(threadId).digest("hex")
   threadManager.update(threadId, { last_run_execution_id: executionId,
     ...(startingThread?.worker_release ? { worker_release: null } : {}) })
   const pendingFollowup = startingThread?.fleet_followup
@@ -993,9 +1001,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     lcuThreadAdmitted(threadId, id => threadManager.get(id), name => threadManager.isToolAllowed(threadId, name))
   let codingHandoffContext = ""
   let fleetSupervisionHint = ""
-  const paramsForNativeBrowserTarget = () => { const v = params.nativeBrowserTarget?.(); return Number.isSafeInteger(v) && (v || 0) > 0 ? v : undefined }
+  const paramsForNativeBrowserTarget = () => {
+    const tabId = params.nativeBrowserTarget?.()
+    return tabId !== undefined && Number.isSafeInteger(tabId) && tabId > 0 ? tabId : undefined
+  }
+  const nativeBrowserTargetPrompt = () => {
+    const tabId = paramsForNativeBrowserTarget()
+    if (tabId === undefined) return ""
+    return `Current native task browser target tabId=${tabId}. Only get_page_text is supported by this selected target; list_tabs/evaluate/other browser actions are unavailable. Visibility selection is not tool approval.`
+  }
   const composeSystemPrompt = () => [
-    ...(paramsForNativeBrowserTarget() ? [`Current native task browser target tabId=${paramsForNativeBrowserTarget()}. Only get_page_text is supported by this selected target; list_tabs/evaluate/other browser actions are unavailable. Visibility selection is not tool approval.`] : []),
     basePrompt,
     runProgressHint,
     fleetDispatchHint,
@@ -1012,6 +1027,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     typeof contextRefsSegment === "string" && contextRefsSegment.trim()
       ? contextRefsSegment.trim()
       : "",
+    nativeBrowserTargetPrompt(),
     safetyGuardContent,
     securityFooter,
   ]
@@ -1640,7 +1656,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     const assessment = await assessFleetTask({ provider, task: params.message, signal,
       allowedTools: assessmentTools })
     if (typeof assessment.usage?.total_tokens === "number") runStats.totalTokens += assessment.usage.total_tokens
-    if (assessment.usage) logger.info("llm.usage", { thread_id: threadId, model: config.model_name, kind: "fleet_assess", ...assessment.usage })
+    if (assessment.status !== "failed") logger.info("llm.usage", { ...usageRoute(config, threadId), kind: "fleet_assess", ...assessment.usage })
     logger.info("fleet.assessment", { thread_id: threadId, status: assessment.status,
       subtask_count: assessment.subtasks?.length ?? 0, duration_ms: Date.now() - started })
     if (assessment.status === "suggest" && !signal?.aborted) {
@@ -1690,14 +1706,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     let finishReason: string | null | undefined
 
     try {
-      let finalUsage:
-        | {
-            prompt_tokens?: number
-            completion_tokens?: number
-            total_tokens?: number
-            reasoning_tokens?: number
-          }
-        | undefined
+      let finalUsage: CompleteUsage | undefined
 
       const steered = takeSteer(threadId)
       if (steered.length) {
@@ -1725,6 +1734,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       // Consume CanonicalStreamEvent from provider (token | tool_call_delta | reasoning | usage | done)
       for await (const ev of streamChatWithRecovery(provider, {
         messages,
+        promptCacheKey,
         tools: tools as CanonicalToolDefinition[],
         temperature: config.temperature,
         model: config.model_name,
@@ -1737,6 +1747,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           reasoningContent = ""
           if (assistantContent) sendToExtension({ type: "chat.token", thread_id: threadId, content: "" })
           assistantContent = ""
+          if (finalUsage) logger.info("llm.usage", {
+            ...usageRoute(config, threadId), kind: "chat", round, ...finalUsage, retry_cause: ev.cause,
+          })
           finalUsage = undefined
           logger.info("llm.reasoning_retry", { thread_id: threadId, model: config.model_name, cause: ev.cause,
             chars: ev.chars, retry_effort: ev.effort, completion_tokens: ev.completionTokens, reasoning_tokens: ev.reasoningTokens })
@@ -1789,12 +1802,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           if (ev.name) toolCalls[idx].function.name += ev.name
           if (ev.arguments) toolCalls[idx].function.arguments += ev.arguments
         } else if (ev.type === "usage") {
-          finalUsage = {
-            prompt_tokens: ev.prompt_tokens,
-            completion_tokens: ev.completion_tokens,
-            total_tokens: ev.total_tokens,
-            reasoning_tokens: ev.reasoning_tokens,
-          }
+          const { type: _eventType, ...usage } = ev
+          finalUsage = usage
           if (runStats && typeof ev.total_tokens === "number") {
             runStats.totalTokens += ev.total_tokens
           }
@@ -1813,6 +1822,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         officialOpenAI,
         sentTokens: outputMaxTokens,
         completionTokens: finalUsage?.completion_tokens,
+      })
+      logger.info("llm.usage", {
+        ...usageRoute(config, threadId), kind: "chat", round, ...finalUsage,
+        ...(finishReason ? { finish_reason: finishReason } : {}),
       })
       if (generationLimit && toolCalls.some((tc) => tc != null)) {
         // This batch is incomplete and has never run. Keep visible partial replies
@@ -1837,20 +1850,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           // Notify-only pass (thread.context_compact_prompt); messages untouched.
           await runContextBudgetPass("mid_loop")
         }
-        // Architect T1: log usage+finish_reason FIRST; persist assistant draft;
-        // interrupted remainder AFTER assistant id exists; then ephemeral chat.error.
-        // Zero extra assistant/error message (breaks persistHealedToolRows newest-unpaired).
-        logger.info("llm.usage", {
-          thread_id: threadId,
-          model: config.model_name,
-          kind: "chat",
-          round,
-          prompt_tokens: finalUsage?.prompt_tokens,
-          completion_tokens: finalUsage?.completion_tokens,
-          total_tokens: finalUsage?.total_tokens,
-          reasoning_tokens: finalUsage?.reasoning_tokens,
-          finish_reason: finishReason ?? null,
-        })
         const truncatedCalls: StreamToolCall[] = toolCalls.filter(
           (tc): tc is StreamToolCall => tc != null,
         )
@@ -1888,20 +1887,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         })
         if (runStats) runStats.terminal = "error"
         return
-      }
-
-      // Log usage for the completed LLM round (provider yields usage event when available).
-      if (finalUsage?.total_tokens !== undefined) {
-        logger.info("llm.usage", {
-          thread_id: threadId,
-          model: config.model_name,
-          kind: "chat",
-          round,
-          prompt_tokens: finalUsage.prompt_tokens,
-          completion_tokens: finalUsage.completion_tokens,
-          total_tokens: finalUsage.total_tokens,
-          reasoning_tokens: finalUsage.reasoning_tokens,
-        })
       }
 
       // Save assistant message (sparse index holes from tool_call_delta are dropped)
@@ -3279,17 +3264,7 @@ export async function generateThreadTitle(params: {
       ],
     })
 
-    if (result.usage?.total_tokens !== undefined) {
-      logger.info("llm.usage", {
-        thread_id: threadId,
-        model: config.model_name,
-        kind: "title",
-        prompt_tokens: result.usage.prompt_tokens,
-        completion_tokens: result.usage.completion_tokens,
-        total_tokens: result.usage.total_tokens,
-        reasoning_tokens: result.usage.reasoning_tokens,
-      })
-    }
+    logger.info("llm.usage", { ...usageRoute(config, threadId), kind: "title", ...result.usage })
 
     let alias = result.content.trim().replace(/[\n"'"]/g, "") || ""
     // Truncate and sanitize

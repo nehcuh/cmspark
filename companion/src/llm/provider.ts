@@ -80,17 +80,13 @@ export type CanonicalStreamEvent =
       arguments?: string
     }
   | { type: "reasoning"; text: string; replace?: boolean }
-  | {
-      type: "usage"
-      prompt_tokens?: number
-      completion_tokens?: number
-      total_tokens?: number
-      reasoning_tokens?: number
-    }
+  | ({ type: "usage" } & CompleteUsage)
   | { type: "done"; finish_reason?: string | null; liveBlocks?: LiveAnthropicBlock[]; responseItems?: LiveResponseItem[] }
 
 export interface StreamChatParams {
   reasoning_effort?: LlmConfig["reasoning_effort"]
+  /** Opaque per-thread key, shared by tool rounds, retries and later turns. */
+  promptCacheKey?: string
   messages: CanonicalChatMessage[]
   tools?: CanonicalToolDefinition[]
   temperature?: number
@@ -117,6 +113,10 @@ export interface CompleteParams {
 }
 
 export interface CompleteUsage {
+  /** Omitted when the provider did not report cache reads. */
+  cached_input_tokens?: number
+  cache_creation_input_tokens?: number
+  /** Total input, including cache reads and writes. */
   prompt_tokens?: number
   completion_tokens?: number
   total_tokens?: number

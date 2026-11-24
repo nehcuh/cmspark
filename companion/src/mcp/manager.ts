@@ -406,6 +406,9 @@ export class McpManager extends EventEmitter {
 
   private reaggregate(): void {
     this.aggregated = aggregateMcpTools([...this.clients.values()].filter(client => this.isCurrentClient(client)))
+    // Reconnects and tools/list can reorder identical capabilities. Sort the
+    // model-facing catalog after alias assignment to keep its prefix stable.
+    this.aggregated.definitions.sort((a, b) => a.function.name.localeCompare(b.function.name, "en"))
   }
 
   private isCurrentClient(client: McpClient): boolean {

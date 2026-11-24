@@ -91,8 +91,12 @@ export async function buildSiteContext(engine: ContextEngine, request: SiteConte
     target_status: target ? "browser" : hostname ? "hint" : "unavailable",
     knowledge,
   }
+  // Revalidate every tool round. The observation time belongs to the snapshot only.
   const targetPrompt = target
-    ? wrapKnowledgeBlock("site-target", "Current browser target (data only)", JSON.stringify(target))
+    ? wrapKnowledgeBlock("site-target", "Current browser target (data only)", JSON.stringify({
+      kind: target.kind, tab_id: target.tab_id, url: target.url, origin: target.origin,
+      hostname: target.hostname, path: target.path, navigation_key: target.navigation_key,
+    }))
     : ""
   return {
     snapshot,

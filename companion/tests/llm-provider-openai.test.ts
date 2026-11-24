@@ -183,3 +183,23 @@ test("streamChat passes through messages without internal-only fields unchanged"
     { role: "assistant", content: "yo" },
   ])
 })
+
+test("chat usage includes cache reads in prompt tokens exactly once", async () => {
+  for (const [fields, expected, write] of [
+    [{ prompt_tokens_details: { cached_tokens: 80, cache_write_tokens: 10 } }, 80, 10],
+    [{ magpie_cache_unknown: true, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } }, undefined, undefined],
+    [{ prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 100 }, 0, undefined],
+    [{}, undefined, undefined],
+  ] as const) {
+    const provider = new OpenAIProvider(baseLlm())
+    captureCreate(provider, () => ({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 100, completion_tokens: 2, total_tokens: 102, ...fields },
+    }))
+    const { usage } = await provider.complete({ messages: toolThread })
+    assert.equal(usage?.cached_input_tokens, expected)
+    assert.equal(usage?.cache_creation_input_tokens, write)
+    assert.equal(usage?.prompt_tokens, 100)
+    assert.equal(usage?.total_tokens, 102)
+  }
+})
