@@ -12,6 +12,7 @@ import type {
   CanonicalStreamEvent,
   CompleteParams,
   CompleteResult,
+  CompleteUsage,
   LlmProvider,
   StreamChatParams,
 } from "../provider"
@@ -91,6 +92,9 @@ export class AnthropicProvider implements LlmProvider {
     })
 
     Object.assign(body, reasoningParams(support, params.reasoning_effort ?? this.config.reasoning_effort, "anthropic"))
+    if (params.promptCacheKey && new URL(url).href === "https://api.anthropic.com/v1/messages") {
+      body.cache_control = { type: "ephemeral" }
+    }
 
     const response = await fetch(url, {
       method: "POST",
@@ -183,6 +187,23 @@ export class AnthropicHttpError extends Error {
 interface AnthropicUsage {
   input_tokens?: number
   output_tokens?: number
+  magpie_cache_unknown?: boolean
+  cache_read_input_tokens?: number
+  cache_creation_input_tokens?: number
+}
+
+function anthropicUsage(u: AnthropicUsage): CompleteUsage {
+  // Magpie may return zero placeholders when its upstream did not count the cache.
+  const read = u.magpie_cache_unknown ? undefined : u.cache_read_input_tokens
+  const write = u.magpie_cache_unknown ? undefined : u.cache_creation_input_tokens
+  const prompt = u.input_tokens === undefined ? undefined : u.input_tokens + (read ?? 0) + (write ?? 0)
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: u.output_tokens,
+    total_tokens: prompt !== undefined || u.output_tokens !== undefined ? (prompt ?? 0) + (u.output_tokens ?? 0) : undefined,
+    ...(read !== undefined ? { cached_input_tokens: read } : {}),
+    ...(write !== undefined ? { cache_creation_input_tokens: write } : {}),
+  }
 }
 
 interface AnthropicMessageResponse {
@@ -213,18 +234,7 @@ export function mapAnthropicCompleteResponse(json: AnthropicMessageResponse): Co
     finish_reason: json.stop_reason ?? null,
   }
   if (reasoning) result.reasoning = reasoning
-  if (json.usage) {
-    const prompt = json.usage.input_tokens
-    const completion = json.usage.output_tokens
-    result.usage = {
-      prompt_tokens: prompt,
-      completion_tokens: completion,
-      total_tokens:
-        prompt !== undefined || completion !== undefined
-          ? (prompt ?? 0) + (completion ?? 0)
-          : undefined,
-    }
-  }
+  if (json.usage) result.usage = anthropicUsage(json.usage)
   return result
 }
 
@@ -245,7 +255,7 @@ export async function* parseAnthropicSseStream(
   const toolIndexByBlock = new Map<number, number>()
   let nextToolIndex = 0
   let finishReason: string | null | undefined
-  let emittedUsage = false
+  let usage: AnthropicUsage | undefined
   const live = new Map<number, LiveAnthropicBlock>()
   const processEvent = function* (
     eventName: string | undefined,
@@ -344,37 +354,13 @@ export async function* parseAnthropicSseStream(
     if (type === "message_delta") {
       const delta = parsed.delta as { stop_reason?: string | null } | undefined
       if (delta?.stop_reason) finishReason = delta.stop_reason
-      const usage = parsed.usage as AnthropicUsage | undefined
-      if (usage && (usage.input_tokens !== undefined || usage.output_tokens !== undefined)) {
-        emittedUsage = true
-        const prompt = usage.input_tokens
-        const completion = usage.output_tokens
-        yield {
-          type: "usage",
-          prompt_tokens: prompt,
-          completion_tokens: completion,
-          total_tokens:
-            prompt !== undefined || completion !== undefined
-              ? (prompt ?? 0) + (completion ?? 0)
-              : undefined,
-        }
-      }
+      if (parsed.usage) usage = { ...usage, ...parsed.usage as AnthropicUsage }
       return
     }
 
     if (type === "message_start") {
       const message = parsed.message as { usage?: AnthropicUsage } | undefined
-      const usage = message?.usage
-      if (usage && usage.input_tokens !== undefined && !emittedUsage) {
-        // Input tokens often only on message_start; final total on message_delta
-        yield {
-          type: "usage",
-          prompt_tokens: usage.input_tokens,
-          completion_tokens: usage.output_tokens,
-          total_tokens:
-            usage.input_tokens + (usage.output_tokens !== undefined ? usage.output_tokens : 0),
-        }
-      }
+      usage = message?.usage
       return
     }
 
@@ -479,6 +465,9 @@ export async function* parseAnthropicSseStream(
     }
   }
   yield* flushEvent()
+
+  // Usage snapshots can split input and cumulative output across start/delta.
+  if (usage) yield { type: "usage", ...anthropicUsage(usage) }
 
   const blocks = Array.from(live).sort(([a], [b]) => a - b).map(([, block]) => block)
   // Only replay provider-native blocks for a completed tool step. Raw signatures

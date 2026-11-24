@@ -406,7 +406,7 @@ test("buildAnthropicRequestBody honors llm maxTokens and ignores vision 1024", (
 
 const TEXT_SSE = [
   'event: message_start',
-  'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}',
+  'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"usage":{"input_tokens":10,"cache_read_input_tokens":30,"cache_creation_input_tokens":5,"output_tokens":0}}}',
   '',
   'event: content_block_start',
   'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
@@ -436,7 +436,7 @@ test("SSE: text deltas → token events + usage + done", async () => {
     ["Hello", " world"],
   )
   const usage = events.filter((e) => e.type === "usage")
-  assert.ok(usage.length >= 1)
+  assert.deepEqual(usage, [{ type: "usage", prompt_tokens: 45, completion_tokens: 2, total_tokens: 47, cached_input_tokens: 30, cache_creation_input_tokens: 5 }])
   const done = events.filter((e) => e.type === "done")
   assert.equal(done.length, 1)
   assert.equal((done[0] as { finish_reason?: string }).finish_reason, "end_turn")
@@ -531,6 +531,16 @@ test("SSE: thinking deltas → reasoning events (M6)", async () => {
     tokens.map((t) => t.text),
     ["final"],
   )
+})
+
+test("Magpie cache placeholders leave hit rate unknown", () => {
+  const result = mapAnthropicCompleteResponse({ usage: {
+    input_tokens: 75, output_tokens: 2, magpie_cache_unknown: true,
+    cache_read_input_tokens: 0, cache_creation_input_tokens: 0,
+  } })
+  assert.equal(result.usage?.prompt_tokens, 75)
+  assert.equal(result.usage?.cached_input_tokens, undefined)
+  assert.equal(result.usage?.cache_creation_input_tokens, undefined)
 })
 
 test("mapAnthropicCompleteResponse maps text + thinking + usage", () => {

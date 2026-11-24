@@ -160,7 +160,7 @@ test("GPT-6 uses Responses with tools, preserves opaque items, and recovers from
     const incomplete = bodies.length === 1
     const frames = [{ type: incomplete ? "response.incomplete" : "response.completed",
       response: { status: incomplete ? "incomplete" : "completed", incomplete_details: incomplete ? { reason: "max_output_tokens" } : undefined,
-        output: incomplete ? [] : [reasoning, fn], usage: { input_tokens: 30, output_tokens: 512, total_tokens: 542, output_tokens_details: { reasoning_tokens: 510 } } } }]
+        output: incomplete ? [] : [reasoning, fn], usage: { input_tokens: 30, output_tokens: 512, total_tokens: 542, input_tokens_details: { cached_tokens: 20 }, output_tokens_details: { reasoning_tokens: 510 } } } }]
     return new Response(frames.map(f => "data: " + JSON.stringify(f) + "\n\n").join(""), { headers: { "Content-Type": "text/event-stream" } })
   })
   const provider = new OpenAIProvider(cfg)
@@ -171,6 +171,10 @@ test("GPT-6 uses Responses with tools, preserves opaque items, and recovers from
   const events = []
   for await (const ev of streamChatWithRecovery(provider, params, cfg)) {
     events.push(ev.type)
+    if (ev.type === "usage") {
+      assert.equal(ev.prompt_tokens, 30)
+      assert.equal(ev.cached_input_tokens, 20)
+    }
     if (ev.type === "done") done = ev
   }
   assert.ok(done?.responseItems)
