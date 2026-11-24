@@ -1,8 +1,16 @@
 # 版本与交付状态
 
-源码开发版本 **1.9.0（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码开发版本 **1.9.1（发布准备）**。当前正式安装包见 [v1.9.0](https://github.com/nehcuh/cmspark/releases/tag/v1.9.0)。
 
-## 1.9.0 发布准备
+## 1.9.1 发布准备
+
+看图与截图设置新增显式「复用主模型」开关，关闭复用后使用保留的独立视觉配置。截图分析总开关与实际选模一致，输入框原生图片路径保持独立。需求与实现见 [#904](https://github.com/nehcuh/cmspark/issues/904) / [PR #905](https://github.com/nehcuh/cmspark/pull/905)。正式 tag、三平台发布预演、主线 CI、安装器及本机换装仍待完成。
+
+## 1.9.0 正式发布
+
+2026-11-24 16:55:46（北京时间）正式发布，源码提交为 `9970ed3a2cb66e280cd4b63f254abd5efded64f1`。正式 [Release 构建](https://github.com/nehcuh/cmspark/actions/runs/45358153095)与[六平台安装器构建](https://github.com/nehcuh/cmspark/actions/runs/45358156509)均通过；[安装包](https://github.com/nehcuh/cmspark/releases/tag/v1.9.0)已公开。
+
+### 1.9.0 验收范围
 
 聊天截图采集、识别回执和待办候选改进见 [#900](https://github.com/nehcuh/cmspark/issues/900)。固定可见窗口的物理双屏、真实聊天客户端和 Wayland 选窗回传仍待现场验收。
 
