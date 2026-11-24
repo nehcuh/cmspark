@@ -563,6 +563,34 @@ test("getAggregatedToolsForServers with unknown server name returns empty for th
   assert.equal(manager.getAggregatedToolsForServers(new Set(["nonexistent"])).length, 0)
 })
 
+test("reconnecting a server with reordered discovery preserves the model tool prefix and routes", async t => {
+  let reversed = false
+  t.mock.method(McpClient.prototype, "connect", async function(this: McpClient) {
+    const names = this.name === "alpha" ? ["lookup", "count"] : ["read"]
+    ;(this as any)._toolsCache = (reversed ? names.reverse() : names).map(name => ({
+      name, description: name, inputSchema: { type: "object", properties: {} },
+    }))
+    ;(this as any)._connection.status = "connected"
+  })
+  const manager = new McpManager()
+  const config = httpCfg()
+  await manager.start({ enabled: true, servers: { alpha: config, beta: config } })
+  try {
+    const before = manager.getAggregatedTools()
+    assert.equal(before.length, 3)
+    const alpha = new Set(["alpha"])
+    const selected = manager.getAggregatedToolsForServers(alpha)
+    assert.equal(selected.length, 2)
+    await manager.stopClient("alpha")
+    assert.deepEqual(manager.getAggregatedToolsForServers(alpha), [])
+    reversed = true
+    await manager.startClient("alpha", config)
+    assert.deepEqual(manager.getAggregatedTools(), before)
+    assert.deepEqual(manager.getAggregatedToolsForServers(alpha), selected)
+    assert.deepEqual(manager.resolveToolName("mcp__alpha__lookup"), { serverName: "alpha", toolName: "lookup" })
+  } finally { await manager.shutdown() }
+})
+
 for (const holdGhostClose of [false, true]) {
   test(`latest config restores a same-name ghost while another server closes (ghost close held: ${holdGhostClose})`, async (t) => {
     const deferred = () => {

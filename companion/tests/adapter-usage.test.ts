@@ -153,7 +153,7 @@ test("chatCreate logs llm.usage when terminal chunk carries usage", async () => 
     { choices: [{ delta: { content: " there" } }] },
     {
       choices: [],
-      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, prompt_tokens_details: { cached_tokens: 8 } },
     },
   ]
 
@@ -167,6 +167,9 @@ test("chatCreate logs llm.usage when terminal chunk carries usage", async () => 
   assert.equal(event.level, "info")
   assert.equal(event.data.thread_id, params.threadId)
   assert.equal(event.data.model, "test-model")
+  assert.equal(event.data.cached_input_tokens, 8)
+  assert.equal(event.data.protocol, "openai")
+  assert.equal(event.data.base_host, "localhost")
   assert.equal(event.data.kind, "chat")
   assert.equal(event.data.round, 1)
   assert.equal(event.data.prompt_tokens, 10)
@@ -174,7 +177,7 @@ test("chatCreate logs llm.usage when terminal chunk carries usage", async () => 
   assert.equal(event.data.total_tokens, 12)
 })
 
-test("chatCreate does not throw or log usage when terminal chunk lacks usage", async () => {
+test("chatCreate counts completed chat with unknown cache usage", async () => {
   clearLogEvents()
   mockStreamChunks = [
     { choices: [{ delta: { content: "Hi" } }] },
@@ -186,7 +189,9 @@ test("chatCreate does not throw or log usage when terminal chunk lacks usage", a
   await assert.doesNotReject(async () => chatCreate(params))
 
   const usageEvents = logEvents.filter(e => e.event === "llm.usage")
-  assert.equal(usageEvents.length, 0, "Should not log llm.usage without usage data")
+  assert.equal(usageEvents.length, 1)
+  assert.equal(usageEvents[0].data.cached_input_tokens, undefined)
+  assert.equal(usageEvents[0].data.prompt_tokens, undefined)
 })
 
 test("chatCreate includes reasoning_tokens when present in usage details", async () => {
@@ -287,7 +292,7 @@ test("generateThreadTitle logs llm.usage when response carries usage", async () 
   assert.equal(event.data.total_tokens, 55)
 })
 
-test("generateThreadTitle does not log usage when response lacks usage", async () => {
+test("generateThreadTitle counts completed requests with unknown cache usage", async () => {
   clearLogEvents()
   mockNonStreamResponse = {
     choices: [{ message: { content: "无 usage" } }],
@@ -314,5 +319,7 @@ test("generateThreadTitle does not log usage when response lacks usage", async (
   )
 
   const usageEvents = logEvents.filter(e => e.event === "llm.usage")
-  assert.equal(usageEvents.length, 0, "Should not log llm.usage without usage data")
+  assert.equal(usageEvents.length, 1)
+  assert.equal(usageEvents[0].data.cached_input_tokens, undefined)
+  assert.equal(usageEvents[0].data.prompt_tokens, undefined)
 })

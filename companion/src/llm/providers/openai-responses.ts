@@ -69,6 +69,7 @@ export async function* streamOpenAIResponses(client: OpenAI, model: string, effo
   if (response.usage) {
     const u = response.usage
     yield { type: "usage", prompt_tokens: u.input_tokens, completion_tokens: u.output_tokens,
+      cached_input_tokens: u.input_tokens_details?.cached_tokens,
       total_tokens: u.total_tokens, reasoning_tokens: u.output_tokens_details?.reasoning_tokens }
   }
   const items = response.output.filter((item): item is LiveResponseItem =>

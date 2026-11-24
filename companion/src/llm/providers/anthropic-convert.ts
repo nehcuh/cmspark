@@ -52,6 +52,7 @@ export interface AnthropicMessage {
 export interface AnthropicRequestBody {
   model: string
   max_tokens: number
+  cache_control?: { type: "ephemeral" }
   messages: AnthropicMessage[]
   system?: string
   temperature?: number

@@ -12,6 +12,7 @@ import type {
   CanonicalStreamEvent,
   CompleteParams,
   CompleteResult,
+  CompleteUsage,
   LlmProvider,
   StreamChatParams,
 } from "../provider"
@@ -22,6 +23,25 @@ import { streamOpenAIResponses } from "./openai-responses"
 import { reasoningParams, reasoningWireEffort } from "../reasoning-effort"
 import { LLM_MAX_TOKENS_DEFAULT } from "./anthropic-convert"
 import { providerModelLimits } from "../output-budget"
+
+type ChatUsage = OpenAI.Completions.CompletionUsage & {
+  prompt_cache_hit_tokens?: number
+  prompt_tokens_details?: { cache_write_tokens?: number }
+  magpie_cache_unknown?: boolean
+}
+
+function chatUsage(u: ChatUsage): CompleteUsage {
+  const cached = u.magpie_cache_unknown ? undefined : u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens
+  const written = u.magpie_cache_unknown ? undefined : u.prompt_tokens_details?.cache_write_tokens
+  return {
+    prompt_tokens: u.prompt_tokens,
+    completion_tokens: u.completion_tokens,
+    total_tokens: u.total_tokens,
+    reasoning_tokens: u.completion_tokens_details?.reasoning_tokens,
+    ...(typeof cached === "number" ? { cached_input_tokens: cached } : {}),
+    ...(typeof written === "number" ? { cache_creation_input_tokens: written } : {}),
+  }
+}
 
 export class OpenAIProvider implements LlmProvider {
   private readonly client: OpenAI
@@ -76,6 +96,7 @@ export class OpenAIProvider implements LlmProvider {
 
     const stream = await this.client.chat.completions.create(createParams, {
       signal: params.signal,
+      ...(spec?.provider === "Grok" && params.promptCacheKey ? { headers: { "x-grok-conv-id": params.promptCacheKey } } : {}),
     })
 
     let streamedReasoning = ""
@@ -92,14 +113,7 @@ export class OpenAIProvider implements LlmProvider {
 
         if ((chunk as { usage?: OpenAI.Completions.CompletionUsage }).usage) {
           const u = (chunk as { usage: OpenAI.Completions.CompletionUsage }).usage
-          yield {
-            type: "usage",
-            prompt_tokens: u.prompt_tokens,
-            completion_tokens: u.completion_tokens,
-            total_tokens: u.total_tokens,
-            reasoning_tokens: (u as { completion_tokens_details?: { reasoning_tokens?: number } })
-              .completion_tokens_details?.reasoning_tokens,
-          }
+          yield { type: "usage", ...chatUsage(u) }
         }
 
         if (delta?.content) {
@@ -194,16 +208,7 @@ export class OpenAIProvider implements LlmProvider {
     if (reasoning) {
       result.reasoning = reasoning
     }
-    if (response.usage) {
-      result.usage = {
-        prompt_tokens: response.usage.prompt_tokens,
-        completion_tokens: response.usage.completion_tokens,
-        total_tokens: response.usage.total_tokens,
-        reasoning_tokens: (
-          response.usage as { completion_tokens_details?: { reasoning_tokens?: number } }
-        ).completion_tokens_details?.reasoning_tokens,
-      }
-    }
+    if (response.usage) result.usage = chatUsage(response.usage)
     return result
   }
 }
