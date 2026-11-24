@@ -70,12 +70,21 @@ type LlmLike = Pick<LlmConfig, "protocol" | "auth_style" | "client_header_profil
  */
 export function visionConfigForAnalyze(llm: LlmLike, vision?: VisionLike | null): VisionLike | null {
   if (!vision?.enabled) return null
+  return selectImageAnalysisConfig(llm, vision, vision.reuse_main_model !== false)
+}
+
+/** Document images keep their existing native-main preference and upload gate. */
+export function visionConfigForDocumentImages(llm: LlmLike, vision?: VisionLike | null): VisionLike | null {
+  return selectImageAnalysisConfig(llm, vision, true)
+}
+
+function selectImageAnalysisConfig(llm: LlmLike, vision: VisionLike | null | undefined, reuseMain: boolean): VisionLike | null {
   const useNative = resolveNativeVision({
       modelName: llm.model_name,
       baseUrl: llm.base_url,
       mode: llm.native_vision,
     })
-  if (useNative && vision.reuse_main_model !== false) {
+  if (useNative && reuseMain) {
     return {
       enabled: true,
       base_url: llm.base_url,
@@ -94,5 +103,5 @@ export function visionConfigForAnalyze(llm: LlmLike, vision?: VisionLike | null)
       prompt: vision?.prompt,
     }
   }
-  return vision
+  return vision?.enabled ? vision : null
 }

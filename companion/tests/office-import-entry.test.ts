@@ -409,6 +409,41 @@ test("render-only chat refuses disabled vision and metadata-only fallback", asyn
   assert.equal(svc.threadManager.getMessages(svc.thread.id).filter(message => message.role === "user").length, 0)
 })
 
+test("904 document images keep native main vision independent of screenshot switches", async () => {
+  router.__testSetFileParseImpl(async (_bytes, name, mime) => rendered(name, mime))
+  saveUploadConfig(DEFAULT_UPLOAD_MIMES, true)
+  let mainImages = 0
+  let separateImages = 0
+  completionImpl = async params => {
+    if (!params.stream && JSON.stringify(params.messages).includes("image_url")) {
+      if (params.model === "gpt-4o") mainImages++
+      else separateImages++
+      return { choices: [{ message: { content: "主模型读取文档页面：收入 904" } }] }
+    }
+    if (params.stream) return (async function* () {
+      yield { choices: [{ index: 0, delta: { content: "已读取文档" }, finish_reason: null }] }
+      yield { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+    })()
+    return { choices: [{ message: { content: "文档" } }] }
+  }
+  cfg.saveConfig({ llm: { ...cfg.getConfig().llm, model_name: "gpt-4o", native_vision: "auto" } })
+  for (const enabled of [false, true]) {
+    cfg.saveConfig({ vision: { ...cfg.getConfig().vision!, enabled, reuse_main_model: false } })
+    const svc = services()
+    const result = await router.handleMessage(upload(svc.thread.id, "scan-904.pdf"), svc, session())
+    assert.equal(result.type, "file.uploaded", JSON.stringify(result))
+    const user = svc.threadManager.getMessages(svc.thread.id).find(message => message.role === "user")
+    assert.match(String(user?.content), /主模型读取文档页面：收入 904/)
+  }
+  assert.ok(mainImages > 0)
+  assert.equal(separateImages, 0, "screenshot reuse preference must not redirect document images")
+  cfg.saveConfig({ file_upload: { ...cfg.getConfig().file_upload!, enable_vision_analysis: false } })
+  const denied = services()
+  const result = await router.handleMessage(upload(denied.thread.id, "disabled-document.pdf"), denied, session())
+  assert.equal(result.type, "file.upload_error")
+  assert.match(String(result.error), /需要视觉分析/)
+})
+
 test("render-only chat accepts an actual vision success and records partial-page warning", async () => {
   router.__testSetFileParseImpl(async (_bytes, name, mime) => rendered(name, mime))
   saveUploadConfig(DEFAULT_UPLOAD_MIMES, true)

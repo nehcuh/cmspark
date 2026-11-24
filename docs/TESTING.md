@@ -4,11 +4,13 @@
 
 `companion/tests/vision-reuse-toggle-904.test.ts` 覆盖截图总开关、独立模型选择、主模型切换、配置保存与重载时的专用凭据保留；`vision-reuse-probe-904.test.ts` 通过真实本机 HTTP 设置路由及 WebSocket handler 验证测试连接选用的 Key 和鉴权头。通过 `companion/scripts/run-tests.mjs` 运行，数据目录与真实安装隔离。
 
+`office-import-entry.test.ts` 的 #904 场景通过实际 `file.upload` producer 验证扫描文档的原生主模型识别不受截图总开关和复用偏好影响；关闭文档视觉分析仍拒绝扫描文档。原文本模型加独立视觉服务的成功和拒绝用例保留。
+
 `chrome-extension/tests/vision-reuse-toggle-904.test.ts` 覆盖偏好归一化及能力覆盖、精确端点探测。先编译 Companion 测试，再在 `chrome-extension/` 执行 `uv run --no-project --with playwright python scripts/test-vision-reuse-ui.py`，验证真实 App 和本机 Web 页在 390px／1440px 下的置灰、独立配置保留、模型切换、用途摘要、保存及测试连接请求。该浏览器夹具使用合成传输，不读写用户配置，不代表真实模型识别效果验收。
 
-## 活状态（2026-11-16）
+## 活状态（2026-11-24）
 
-产品版本 **1.4.0**（尚未正式发布）。此前 1.0.1 文档核对基线是 `16f3048b9b83b813648830517d0a1bd9994bf564`。Node 要求看 `companion/package.json` 与仓库根 `package.json` 的 `engines.node`（`>=22.23.4 <23`）。CI 固定版本看 `.github/workflows/ci.yml` 的 `node-version`（`22.23.4`）。`chrome-extension/package.json` 没有单独的 `engines` 字段。
+产品版本 **1.9.1**（尚未正式发布）。此前 1.0.1 文档核对基线是 `16f3048b9b83b813648830517d0a1bd9994bf564`。Node 要求看 `companion/package.json` 与仓库根 `package.json` 的 `engines.node`（`>=22.23.4 <23`）。CI 固定版本看 `.github/workflows/ci.yml` 的 `node-version`（`22.23.4`）。`chrome-extension/package.json` 没有单独的 `engines` 字段。
 
 在仓库根执行下面两条命令。现行 `*.test.ts` 数以命令结果为准。口径是对应目录中文件名匹配 `*.test.ts` 的个数。`*.test.mjs`、`*.test.js` 和 `scripts/tests` 另计。该文件数也不同于 `node:test` 跑出来的用例条数。
 
