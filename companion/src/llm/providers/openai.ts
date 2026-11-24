@@ -94,8 +94,6 @@ export class OpenAIProvider implements LlmProvider {
       createParams.tool_choice = "auto"
     }
 
-    // Magpie's Grok plugin reads the translated body to set x-grok-conv-id upstream.
-    if (spec?.provider === "Magpie" && params.promptCacheKey) createParams.prompt_cache_key = params.promptCacheKey
     const stream = await this.client.chat.completions.create(createParams, {
       signal: params.signal,
       ...(spec?.provider === "Grok" && params.promptCacheKey ? { headers: { "x-grok-conv-id": params.promptCacheKey } } : {}),

@@ -56,27 +56,26 @@ test("chat sends per-thread cache affinity only on supported destination/protoco
     assert.equal(requests.length, before + 1)
     return requests[before]
   }
-  const initial = await chat(first.id, magpie)
-  const key = initial.body.prompt_cache_key
+  const grok = { ...magpie, base_url: "https://api.x.ai/v1", model_name: "grok-4.7" }
+  const initial = await chat(first.id, grok)
+  const key = initial.headers.get("x-grok-conv-id")
   assert.match(String(key), /^[a-f0-9]{64}$/)
   assert.notEqual(key, first.id)
-  assert.equal((await chat(first.id, magpie)).body.prompt_cache_key, key)
-  assert.notEqual((await chat(second.id, magpie)).body.prompt_cache_key, key)
-  assert.equal(initial.headers.has("x-session-affinity"), false)
+  assert.equal((await chat(first.id, grok)).headers.get("x-grok-conv-id"), key)
+  const otherKey = (await chat(second.id, grok)).headers.get("x-grok-conv-id")
+  assert.match(String(otherKey), /^[a-f0-9]{64}$/)
+  assert.notEqual(otherKey, key)
 
-  const grok = await chat(first.id, { ...magpie, base_url: "https://api.x.ai/v1", model_name: "grok-4.7" })
-  assert.equal(grok.headers.get("x-grok-conv-id"), key)
-  const relay = await chat(first.id, { ...magpie, base_url: "https://relay.example/v1" })
-  assert.equal(relay.body.prompt_cache_key, undefined)
-  assert.equal(relay.headers.has("x-grok-conv-id"), false)
+  for (const gateway of [magpie, { ...magpie, protocol: "anthropic" as const }, { ...grok, base_url: "https://relay.example/v1" }]) {
+    const req = await chat(first.id, gateway)
+    assert.equal(req.body.prompt_cache_key, undefined)
+    assert.equal(req.body.cache_control, undefined)
+    assert.equal(req.headers.has("x-session-affinity"), false)
+    assert.equal(req.headers.has("x-grok-conv-id"), false)
+  }
 
   const claude: LlmConfig = { ...magpie, base_url: "https://api.anthropic.com/v1", model_name: "claude-sonnet-4-6", protocol: "anthropic" }
   assert.deepEqual((await chat(first.id, claude)).body.cache_control, { type: "ephemeral" })
-  const viaMessages = await chat(first.id, { ...magpie, protocol: "anthropic" })
-  assert.equal(viaMessages.body.cache_control, undefined)
-  assert.equal(viaMessages.body.prompt_cache_key, undefined)
-  assert.equal(viaMessages.headers.has("x-session-affinity"), false)
-
   await createProvider(claude).complete({ messages: [{ role: "user", content: "Title" }] })
   assert.equal(requests.at(-1)?.body.cache_control, undefined)
 })

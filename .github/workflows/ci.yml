@@ -80,6 +80,9 @@ jobs:
         run: |
           cd companion && npm test
 
+      - name: Verify prompt cache reporting
+        run: node --test scripts/tests/prompt-cache-report.test.cjs
+
       - name: Swift tray packaging CPU controls
         # Inert fixtures and source checks only; macOS packaging is verified
         # separately by the real release build.
