@@ -1,6 +1,10 @@
 # 版本与交付状态
 
-源码版本 **1.8.0（已于 2026-11-24 正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码版本 **1.8.1（发布准备）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+
+## 1.8.1 发布准备
+
+缓存命中优化已合入 [PR #899](https://github.com/nehcuh/cmspark/pull/899)。供应商实测覆盖合成请求，发布后正常流量由 [#898](https://github.com/nehcuh/cmspark/issues/898) 持续跟踪。
 
 ## 1.8.0
 
