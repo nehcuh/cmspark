@@ -13,11 +13,32 @@ import { runL2ToolAdmission } from "../../src/tool/l2-admission"
 import { SecurityConfirmationManager } from "../../src/security-confirmation"
 import { MacWindowEnumerator, MacScreenCapturer, MacLocator, MacPreviewBuilder } from "../../src/computer/darwin-adapters"
 import * as previewHelper from "../../src/computer/l2-preview-image"
+import { getComputerSessionTrust } from "../../src/computer/session-trust"
 import type { AppEntry } from "../../src/apps/types"
 
 before(async () => { await initDataDir() })
 const roots: string[] = []
 afterEach(() => { mock.restoreAll(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }) })
+
+async function deniedAdmission(finalParams: Record<string, unknown>) {
+  const manager = new SecurityConfirmationManager()
+  const frames: any[] = []
+  const ws = { readyState: WebSocket.OPEN, send(raw: string) {
+    const frame = JSON.parse(raw); frames.push(frame)
+    if (frame.type === "security.confirmation.request") queueMicrotask(() => {
+      assert.equal(manager.respondFrom(frame.confirmation_id, true, {} as WebSocket).outcome, "origin_mismatch")
+      assert.equal(manager.respondFrom(frame.confirmation_id, false, ws).outcome, "resolved")
+    })
+  } } as unknown as WebSocket
+  const result = await runL2ToolAdmission({ toolName: "host_computer", finalParams,
+    toolCallId: "preview532", startedAt: Date.now(), ws, sessionId: "controlled-session", isOutboundMcpCall: false,
+    logToolFinish() {}, securityConfirmations: manager, getThreadManager: () => ({ get: () => null }) as any,
+    getCachedTabUrl: () => undefined, getDomainFromUrl: () => "", computerRateLimiter: async () => ({ saturated: () => false, statusLine: () => "controlled rate status" }) as any,
+    activeTrayConfirmsByWs: new WeakMap(), clients: new Set([ws]), wsAuthGet: () => ({ authenticated: true, origin: "chrome-extension://controlled" }),
+  })
+  assert.equal(manager.pendingCount(), 0)
+  return { result, frames }
+}
 
 async function prompt(mode: "capture" | "success" | "no_window" | "unattempted" | "timeout") {
   mock.method(os, "platform", () => "darwin")
@@ -56,23 +77,8 @@ async function prompt(mode: "capture" | "success" | "no_window" | "unattempted" 
     ...(mode === "unattempted" ? {} : { bundleId: "example.preview532" }),
   } as AppEntry })
   saveConfig({ security: { ...getConfig().security, allow_all_schemes: false, auto_approve_dangerous: false, auto_approve_enterprise_tools: false }, computer: { coordinateEnabled: true } } as any)
-  const manager = new SecurityConfirmationManager()
-  const frames: any[] = []
-  const ws = { readyState: WebSocket.OPEN, send(raw: string) {
-    const frame = JSON.parse(raw); frames.push(frame)
-    if (frame.type === "security.confirmation.request") queueMicrotask(() => {
-      assert.equal(manager.respondFrom(frame.confirmation_id, true, {} as WebSocket).outcome, "origin_mismatch")
-      assert.equal(manager.respondFrom(frame.confirmation_id, false, ws).outcome, "resolved")
-    })
-  } } as unknown as WebSocket
-  const result = await runL2ToolAdmission({ toolName: "host_computer", finalParams: { app: token, task: "controlled task", actions: [{ action: "click", x: 1, y: 1 }] },
-    toolCallId: "preview532", startedAt: Date.now(), ws, sessionId: "controlled-session", isOutboundMcpCall: false,
-    logToolFinish() {}, securityConfirmations: manager, getThreadManager: () => ({ get: () => null }) as any,
-    getCachedTabUrl: () => undefined, getDomainFromUrl: () => "", computerRateLimiter: async () => ({ saturated: () => false, statusLine: () => "controlled rate status" }) as any,
-    activeTrayConfirmsByWs: new WeakMap(), clients: new Set([ws]), wsAuthGet: () => ({ authenticated: true, origin: "chrome-extension://controlled" }),
-  })
+  const { result, frames } = await deniedAdmission({ app: token, task: "controlled task", actions: [{ action: "click", x: 1, y: 1 }] })
   assert.equal(result.ok, false, "deny must still refuse")
-  assert.equal(manager.pendingCount(), 0)
   if (mode === "timeout") {
     releaseCapture(); await removed
   }
@@ -127,3 +133,59 @@ test("#532 manager rejects unknown/raw preview reason without changing nonce/ori
   assert.equal(manager.respondFrom(frame.confirmation_id, false, ws).outcome, "resolved")
   assert.equal((await result).approved, false)
 })
+
+for (const platform of ["darwin", "win32"] as const) {
+  test(`host_computer ${platform}: invalid drafts and trusted actions do not capture for a dialog`, async () => {
+    mock.method(os, "platform", () => platform)
+    const preview = mock.method(previewHelper, "buildComputerL2PreviewImage", async () => null)
+    const token = platform === "darwin" ? "mac.app.preview" : "win.app.preview"
+    replaceAppsEntries({ [token]: { token, kind: "gui", display_name: "Fixture", source: "user", policy: "manual",
+      enabled: true, coordinateAllowed: true, added_at: "2026-10-14T00:00:00Z",
+      bundleId: "example.preview", exe: { path: "C:\\Fixture\\preview.exe", user_writable_dir: false } } })
+    saveConfig({ security: { ...getConfig().security, allow_all_schemes: false, auto_approve_dangerous: false, auto_approve_enterprise_tools: false }, computer: { coordinateEnabled: true } } as any)
+    const base = { app: token, task: "Controlled action", __thread_id: "preview-thread", actions: [{ action: "click", x: 0, y: 0 }] }
+    const invalid = [
+      { draft: { ...base, task: " " }, code: "COMPUTER_INPUT_INVALID" },
+      { draft: { ...base, actions: [{ action: "double_click", x: 0 }] }, code: "COMPUTER_INPUT_INVALID" },
+      { draft: { ...base, actions: [{ action: "type", text: "x".repeat(1500) }, { action: "type", text: "x".repeat(501) }] }, code: "TYPE_TEXT_TOO_LONG" },
+    ]
+    for (const { draft, code } of invalid) {
+      const { result, frames } = await deniedAdmission(draft)
+      assert.equal(result.ok, false)
+      if (!result.ok) assert.equal(result.result.error_code, code)
+      assert.deepEqual(frames, [])
+      assert.equal(preview.mock.callCount(), 0)
+    }
+    for (const keys of [["win", "shift"], ["f1"], ["ctrl", "f12", "enter"]]) {
+      const before = preview.mock.callCount()
+      const { result, frames } = await deniedAdmission({ ...base, actions: [{ action: "key", keys }] })
+      assert.equal(result.ok, false)
+      if (platform === "darwin") {
+        if (!result.ok) assert.equal(result.result.error_code, "COMPUTER_INPUT_INVALID")
+        assert.deepEqual(frames, [])
+        assert.equal(preview.mock.callCount(), before)
+      } else {
+        assert.equal(frames.filter(f => f.type === "security.confirmation.request").length, 1)
+        assert.equal(preview.mock.callCount(), before + 1)
+      }
+    }
+    const beforeTrust = preview.mock.callCount()
+    const key = "thread:preview-thread"
+    const trust = getComputerSessionTrust()
+    try {
+      trust.grant(key, token, { explicitOptIn: true })
+      trust.recordBudget(key, token, 15)
+      trust.recordActions(key, token, 1)
+      const reused = await deniedAdmission({ ...base, actions: [{ action: "key", keys: ["win", "enter"] }] })
+      assert.equal(reused.result.ok, true)
+      assert.deepEqual(reused.frames, [])
+      assert.equal(preview.mock.callCount(), beforeTrust)
+
+      trust.markCredentialSurfaceSeen(key, token, true)
+      const prompted = await deniedAdmission(base)
+      assert.equal(prompted.result.ok, false)
+      assert.equal(prompted.frames.filter(f => f.type === "security.confirmation.request").length, 1)
+      assert.equal(preview.mock.callCount(), beforeTrust + 1)
+    } finally { trust.clearSession(key) }
+  })
+}

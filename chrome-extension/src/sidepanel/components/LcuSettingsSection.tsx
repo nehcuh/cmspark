@@ -158,6 +158,13 @@ export function LcuSettingsSection({ active = true, onFooterSave }: { active?: b
     })
   }
 
+  if (state?.detection === "unsupported_platform" && !state.enabled && !selected && !state.cleanupUnknown && !state.activeRuns) {
+    return <section aria-label="LCU 桌面操作" style={styles.section}>
+      <SectionHeader title="LCU 桌面操作" meta="实验" />
+      <p style={styles.help}>当前 Companion（{state.platform} / {state.architecture}）不支持 LCU。</p>
+    </section>
+  }
+
   return <section aria-label="LCU 桌面操作" style={styles.section}>
     <SectionHeader title="LCU 桌面操作" meta="实验 · 默认关闭" />
     <p style={styles.help}>使用本机 ChatGPT 桌面应用提供的运行时。仅安装 Codex CLI 无法开启此能力；CMspark 不代为安装依赖。</p>

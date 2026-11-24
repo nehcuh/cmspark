@@ -1,9 +1,19 @@
 # Computer Use 使用说明
 
 > **面向使用者**：如何开启桌面坐标操控、确认台里怎么批/急停、session-trust 是什么、平台与限制。  
-> **产品版本**：0.7.0 · **决策摘要**：[ADR-017](adr/017-computer-use.md)
+> **适用版本**：以 1.9.1 为基线的开发分支。新增设置入口及修复见 [#906](https://github.com/nehcuh/cmspark/issues/906)。已发行的 1.9.1 可直接从底栏「应用」进入。
 > **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md) · **Host / Apps**：[host-and-apps.md](host-and-apps.md)  
 > **过程史（非规范）**：[decisions/coordinate-computer-use-plan.md](decisions/coordinate-computer-use-plan.md)
+
+## 从哪里开始
+
+| 你的任务 | 入口 | 需要准备什么 |
+| --- | --- | --- |
+| 读取网页、填写网页表单 | 当前对话的浏览器工具 | 选择目标标签页。一般无需开启桌面操作。 |
+| 操作 Windows 或 Mac 应用窗口 | 设置 → 工具与集成 → 桌面操作 → 打开应用面板，或从底栏「应用」直接进入 | 启用「坐标操作」，添加并打开目标应用，在「···」菜单查看授权方式。Windows 用可执行文件路径，macOS 优先从列表选取，也可以填写 Bundle ID。 |
+| 使用本机 ChatGPT 桌面运行时 | 同一设置页的「LCU 桌面操作」 | 在兼容的 Apple Silicon Mac 上配置，并在需要的对话中启用。 |
+
+**第一次确认后还会不会再问？** 普通应用的持久授权决定它能否成为目标。任务确认会展示将输入的文字和动作范围。同一认证连接、对话和应用，首次人工同意且读取成功后，连续纯读取可复用同意。切换应用、增加未批准的文字、授权过期或进入敏感界面，都可能需要新的确认。LCU 有独立的授权流程。
 
 ### 能力坐标
 
@@ -19,7 +29,7 @@
 
 ## 可选 LCU 桌面后端（实验）
 
-设置 → 工具 → **LCU 桌面操作**提供独立入口。当前适配 [LCU v0.13.0](https://github.com/amontlabs/lcu/releases/tag/v0.13.0)，依赖本机官方 **ChatGPT 桌面应用**提供运行时；仅安装 Codex CLI 不满足要求。CMspark 不自动安装或更新这些依赖，也不打包其运行时。
+设置 → 工具与集成 → 桌面操作 → **LCU 桌面操作**提供实验入口。当前适配 [LCU v0.13.0](https://github.com/amontlabs/lcu/releases/tag/v0.13.0)，依赖本机官方 **ChatGPT 桌面应用**提供运行时；仅安装 Codex CLI 不满足要求。CMspark 不自动安装或更新这些依赖，也不打包其运行时。
 
 - macOS Apple Silicon 可检查兼容性并申请启用。Linux 当前只发现安装路径；Windows、Intel Mac 当前不可用。上游支持的平台不等于 CMspark 已验证的平台。
 - 默认关闭。先开启现有 Computer Use 总开关，在 LCU 区域保存可执行文件路径（默认安装位置可留空），主动检查兼容性，再授权启用。修改路径会停用旧授权；检查通过要求符合上游兼容记录，或匹配下述 CMspark 有限实测的精确版本组合。
@@ -110,7 +120,7 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 | **何时写入** | 你批准了**任务级**初始 L2 之后（可勾选「本会话自动同意同类操作」等 UI 文案，以面板为准） |
 | **能跳过什么** | ① 部分 **任务中途 re-L2**（如预算耗尽后继续、部分 pause，任务本地即可静默）；② **G1 多任务 initial-L2 skip**：须 **显式 opt-in** + 同 thread key + 同 App + type corpus ⊆ 已批 + budget/actions ≤ 已见上限 + 未过期 + 无凭据闩 + 非 experimental |
 | **绝不能静默过** | 危险检测（`danger_detected`）、实验性定位建议（`experimental_suggestion`）、前台让出（`foreground_yielded`）— **始终 prompt**；**协议解锁 / auto_approve 也不能单独**跳过任务级 L2（值守见 §5.1） |
-| **失效** | Companion 重启清空；默认 **约 30 分钟** 自上次交互批准空闲过期；OCR 见到凭据界面会 **闩住**，阻止下一轮 initial-skip |
+| **失效** | 距上次人工批准 **约 30 分钟**或 Companion 重启后失效。期间连续执行操作也按这次批准计时。OCR 见到凭据界面会阻止下一轮跳过确认。 |
 | **不是** | `ThreadApprovals` 的 host 白名单、也不是 `auto_approve_dangerous` / 协议解锁；**也不是**无人值守（见下） |
 
 用一句话：**你已批过「这一会话对这个 App」的范围（并可勾选自动同意同类）；系统在安全标签与 corpus/预算门允许时少问「继续吗」与后续同类任务的初始确认。**
@@ -123,7 +133,7 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 | 首枪 initial L2 | **必须**先交互批一次 | 武装后 **跳过**（键入无逐字预览） |
 | App 范围 | 已批的那个 app | 每次任务实时 `coordinateAllowed`（**浏览器 one-shot 永不 skip**） |
 | type 文本 | 须 ⊆ 已批 corpus | **open_within_app**（不绑 corpus） |
-| 寿命 | ~30min idle / 重启清 | **8h 墙钟** / 重启清 / 点解除 |
+| 寿命 | 距上次人工批准约 30 分钟 / 重启清 | **8h 墙钟** / 重启清 / 点解除 |
 | 徽章 | （企业信任等） | 顶栏 **值守中 · 桌面** |
 | mid-task re-L2（危险/实验/前台） | 始终确认 | **静默通过**（武装=风险自担；硬拒绝仍 throw） |
 | 急停 | 停任务 | 停任务，**不等于**解除值守 |
@@ -153,7 +163,7 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
 
 **不要**去找或勾选 `node`、`cmspark-host` 等内部进程名。若列表里有历史残留项，可关闭它们；以 **CMspark** 为准。
 
-更新或重装后若截图再次失败：把 CMspark 开关关掉再打开一次（ad-hoc 安装时系统可能要求重新授权）。
+更新或重装后若出现明确的录屏拒绝，请核对当前安装在系统设置中的授权，完全退出后再打开。若提示目标窗口消失，重新打开目标窗口；若只报告捕获失败，先检查窗口可见性和新的观察结果。重复授予录屏权限无法找回已经关闭的窗口。
 
 > P0 交付路径为 **CMspark.app（DMG）**；其他安装方式（如 install-daemon）的 TCC 身份可能不同，不在本修复范围内。
 
@@ -189,7 +199,7 @@ Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打
 |--------|------|------|
 | `click` / `double_click` / `right_click` | 点击 | 可用 `target` 锚文本定位，或显式 `x,y` |
 | `type` | 键入文本 | 必须进 L2 语料逐字枚举 |
-| `key` | 命名键和弦 | 白名单键名，非任意 VK |
+| `key` | 命名键组合 | macOS 的 Command 写作 `win`，须搭配已支持的非修饰键，如 `["win","enter"]`。F1–F12 仅支持 Windows。 |
 | `scroll` | 滚轮 | 需客户端坐标 + 非零 delta |
 | `drag` | 拖拽 | 起点/终点客户端坐标 |
 | `wait` | 等待 | 上限约 5s |

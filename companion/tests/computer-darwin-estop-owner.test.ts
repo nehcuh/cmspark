@@ -171,6 +171,16 @@ test("B2: host.swift Aqua spawn lockstep DATA_DIR --socket-path, not hardcoded /
   assert.doesNotMatch(src, /"\/tmp\/cmspark-estop\.flag"/)
 })
 
+test("tray-launched emergency stop uses existing macOS grants without requesting permissions", () => {
+  const host = fs.readFileSync(srcFile("host-use", "darwin", "host.swift"), "utf8")
+  const estop = host.slice(host.indexOf("func runEstop("))
+  assert.match(estop, /AXIsProcessTrusted\(\)/)
+  assert.match(estop, /CGPreflightListenEventAccess\(\)/)
+  assert.match(estop, /if canListen \|\| axTrustedBefore \{\s*tap = CGEvent\.tapCreate/)
+  assert.match(estop, /if tap == nil && axTrustedBefore \{\s*tap = CGEvent\.tapCreate/)
+  assert.doesNotMatch(estop, /AXIsProcessTrustedWithOptions|CGRequestListenEventAccess|kAXTrustedCheckOptionPrompt/)
+})
+
 test("B2: host-skylight.swift --socket-path required; flag default leaves /tmp", () => {
   const src = fs.readFileSync(srcFile("host-use", "darwin", "host-skylight.swift"), "utf8")
   assert.match(src, /estop: --socket-path required/)

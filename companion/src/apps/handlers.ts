@@ -17,6 +17,7 @@ import { CONFIG_CHANGE_EVENT, configEvents, getConfig, replaceAppsEntries } from
 import { logger } from "../logger"
 import { getThreadApprovals } from "../host-use/thread-approvals"
 import { getComputerSessionTrust } from "../computer/session-trust"
+import { appCoordinateMode } from "../computer/policy"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
@@ -196,14 +197,14 @@ function hasPrototypePollutionKey(obj: any): boolean {
   return false
 }
 
-/** entries map → sorted array with the policy ceiling attached (WP4 badge). */
-function entriesList(entries: Record<string, AppEntry>) {
+function entriesList(entries: Record<string, AppEntry>, platform = os.platform()) {
   return Object.values(entries)
     .map((e) => {
       const { templates, ...rest } = e
-      if (templates === undefined) return { ...rest, max_policy: maxPolicyForEntry(e) }
+      const view = { ...rest, max_policy: maxPolicyForEntry(e), coordinate_mode: appCoordinateMode(e, platform) }
+      if (templates === undefined) return view
       const error = guiTemplateConfigError(templates, e)
-      return { ...rest, max_policy: maxPolicyForEntry(e),
+      return { ...view,
         templates: error ? [] : templates.map(({ id, name, profile, risk }) => ({ id, name, profile, risk })),
         ...(error ? { template_unavailable: "模板配置不支持；请检查现有应用配置。" } : {}),
       }
@@ -282,11 +283,9 @@ export async function handleAppsMessage(
         return {
           type: "apps.list",
           enabled: after.enabled,
-          entries: entriesList(after.entries),
+          entries: entriesList(after.entries, deps.platform ?? os.platform()),
           presets: presets.map(p => ({ ...p, persisted: Object.hasOwn(after.entries, p.token) })),
-          // WP6a (Finding 2): the extension can't see process.platform — ship it
-          // so the panel renders an honest「仅 Windows 可用」state off win32
-          // instead of a dead add button.
+          // The browser and Companion can run on different platforms.
           platform: deps.platform ?? os.platform(),
         }
       } finally { configEvents.off(CONFIG_CHANGE_EVENT, onChange) }
@@ -302,7 +301,6 @@ export async function handleAppsMessage(
         })
       }
       if (platform === "darwin") {
-        // macOS: scan /Applications and ~/Applications for .app bundles
         const candidates = await enumerateMacApps()
         return { type: "apps.enumerate.result", candidates }
       }

@@ -1,8 +1,7 @@
 // computer-*.ps1 static security guards (adversary WP2 X2).
 //
-// The ps1 scripts have NO behavioral test coverage (they need a real GUI);
-// these content assertions lock the two properties that must never silently
-// regress:
+// The Windows geometry case runs real helpers on a private desktop. The
+// cross-platform source checks also enforce these properties:
 //   1. UTF-8 BOM on every computer-*.ps1 — PowerShell 5.1 reads BOM-less
 //      UTF-8 as ANSI, mangling CJK literals (danger words, error messages);
 //   2. the key branch re-verifies GetForegroundWindow BEFORE its SendBatch —
@@ -13,9 +12,20 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { execFileSync } from "node:child_process"
+import { resolvePowerShellExe } from "../src/host-use/win/powershell"
 
 // Compiled tests live in .test-dist/tests — resolve the REAL source scripts.
 const SCRIPTS_DIR = path.resolve(__dirname, "..", "..", "src", "host-use", "win", "scripts")
+test("Windows helpers preserve Unicode window titles and restored/maximized geometry", { skip: process.platform !== "win32" }, () => {
+  const fixture = path.resolve(SCRIPTS_DIR, "../../../../tests/fixtures/win/computer-window-geometry.ps1")
+  const output = execFileSync(resolvePowerShellExe(), [
+    "-MTA", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-File", fixture, "-Scripts", SCRIPTS_DIR,
+  ], { encoding: "utf8", windowsHide: true, timeout: 15_000 })
+  assert.equal(output.trim(), "PASS")
+})
+
 const COMPUTER_PS1 = [
   "computer-input.ps1",
   "computer-estop.ps1",

@@ -72,11 +72,12 @@ export async function enumerateApps(runner: PsRunner = runPs): Promise<Enumerate
   return (await enumerateAppsDetailed(runner)).candidates
 }
 
-// macOS WP3: scan /Applications and ~/Applications for .app bundles.
+// macOS system, shared and per-user application directories.
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import { execFileSync } from "child_process"
+import { execFile } from "child_process"
+import { promisify } from "util"
 
 export interface EnumeratedMacCandidate {
   name: string
@@ -85,38 +86,39 @@ export interface EnumeratedMacCandidate {
   path: string
 }
 
-function readPlistString(plistPath: string, key: string): string | null {
+const execFileAsync = promisify(execFile)
+
+async function readPlistString(plistPath: string, key: string): Promise<string | null> {
   try {
-    const output = execFileSync("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, plistPath], {
+    const { stdout } = await execFileAsync("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, plistPath], {
       encoding: "utf-8",
       timeout: 3000,
-      stdio: ["ignore", "pipe", "ignore"],
     })
-    return output.trim() || null
+    return stdout.trim() || null
   } catch {
     return null
   }
 }
 
-export function enumerateMacApps(): EnumeratedMacCandidate[] {
-  const dirs = ["/Applications", path.join(os.homedir(), "Applications")]
+export async function enumerateMacApps(
+  dirs = ["/System/Applications", "/Applications", path.join(os.homedir(), "Applications")],
+  readString = readPlistString,
+): Promise<EnumeratedMacCandidate[]> {
   const results: EnumeratedMacCandidate[] = []
   const seen = new Set<string>()
 
   for (const dir of dirs) {
     let entries: fs.Dirent[]
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { continue }
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }) } catch { continue }
     for (const entry of entries) {
       if (!entry.isDirectory() || !entry.name.endsWith(".app")) continue
       const infoPath = path.join(dir, entry.name, "Contents", "Info.plist")
-      if (!fs.existsSync(infoPath)) continue
+      const bundleId = await readString(infoPath, "CFBundleIdentifier")
+      if (!bundleId || seen.has(bundleId.toLowerCase())) continue
+      seen.add(bundleId.toLowerCase())
 
-      const bundleId = readPlistString(infoPath, "CFBundleIdentifier")
-      if (!bundleId || seen.has(bundleId)) continue
-      seen.add(bundleId)
-
-      const displayName = readPlistString(infoPath, "CFBundleDisplayName")
-        ?? readPlistString(infoPath, "CFBundleName")
+      const displayName = await readString(infoPath, "CFBundleDisplayName")
+        ?? await readString(infoPath, "CFBundleName")
         ?? entry.name.replace(/\.app$/, "")
 
       results.push({ name: displayName, source: "installed", bundleId, path: path.join(dir, entry.name) })

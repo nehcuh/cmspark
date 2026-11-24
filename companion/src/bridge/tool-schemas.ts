@@ -350,7 +350,8 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
         z.object({
           action: z.literal("key"),
           keys: z.array(z.enum([
-            // Modifiers: win/cmd/meta/command all mean ⌘ on macOS (host maps to cmd).
+            // The wire schema retains legacy modifier spellings. The runtime
+            // accepts win for Command on macOS and rejects cmd/meta/command.
             "ctrl", "alt", "shift", "win", "cmd", "meta", "command",
             "enter", "escape", "tab", "space", "backspace", "delete",
             "up", "down", "left", "right", "home", "end", "pageup", "pagedown",

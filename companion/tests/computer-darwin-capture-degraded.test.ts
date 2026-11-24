@@ -163,6 +163,21 @@ test("P2/C4: non-CAPTURE_FAILED errors do NOT emit capture.degraded audit", () =
   }
 })
 
+test("a ScreenCaptureKit runtime failure does not report a stale frame or request permissions", () => {
+  const audit = mock.method(loggerMod.logger, "info", () => {})
+  try {
+    const err = interpretScreenshotFailure(47, {
+      ok: false, error_code: "CAPTURE_FAILED", capture_stage: "screen_capture_kit", native_error_code: -3802,
+      error: "localized native diagnostic",
+    })
+    assert.equal(err.code, "CAPTURE_FAILED")
+    assert.equal(err.message, "screenshot: ScreenCaptureKit could not capture the target window (native error -3802)")
+    assert.equal(audit.mock.callCount(), 0)
+  } finally {
+    audit.mock.restore()
+  }
+})
+
 test("P2/C4: CAPTURE_FAILED without capture_degraded block still audits with reason=unknown", () => {
   const calls: { event: string; fields: Record<string, unknown> }[] = []
   const restore = mock.method(loggerMod.logger, "info", (event: string, fields?: Record<string, unknown>) => {

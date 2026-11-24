@@ -150,6 +150,15 @@ export function isBrowserVaultExePath(p: string): boolean {
   }
 }
 
+/** How the panel should present this app. The executor rechecks the live target. */
+export function appCoordinateMode(entry: AppEntry, platform: NodeJS.Platform) {
+  if ((platform !== "win32" && platform !== "darwin") || entry.kind !== "gui") return "unsupported"
+  const identity = platform === "win32" ? entry.exe?.path : entry.bundleId
+  if (typeof identity !== "string" || !identity) return "missing_identity"
+  if (canEverCoordinate(entry, platform)) return "per_app"
+  return isVaultBrowserEntry(entry, platform) ? "browser_task" : "protected"
+}
+
 export type CoordinateAssertOpts = {
   /**
    * host_computer admission only. Lets a vault *browser* through without the

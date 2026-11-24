@@ -126,7 +126,7 @@ public class CapW32 {
     return true;
   }
   public static bool ForceForeground(IntPtr hwnd){
-    ShowWindow(hwnd, 9); // SW_RESTORE
+    if (IsIconic(hwnd)) ShowWindow(hwnd, 9); // SW_RESTORE
     IntPtr fg = GetForegroundWindow(); uint dummy;
     uint fgTid = GetWindowThreadProcessId(fg, out dummy);
     uint myTid = GetCurrentThreadId(); bool ok = false;
@@ -199,16 +199,21 @@ $hwndPtr = [IntPtr]::new($Hwnd)
 if (-not [CapW32]::IsWindow($hwndPtr)) { Fail "HWNDDEAD" "hwnd $Hwnd is not a live window" 4 }
 
 Refuse-CockpitWindow $hwndPtr
-$r = New-Object CapW32+RECT
-if (-not [CapW32]::GetWindowRect($hwndPtr, [ref]$r)) { Fail "HWNDDEAD" "window rect query failed" 4 }
-$width = $r.Right - $r.Left; $height = $r.Bottom - $r.Top
-if ($width -le 0 -or $height -le 0) { Fail "HWNDDEAD" "hwnd $Hwnd has an empty rect" 4 }
 
 $activityDpi = if ($Passive) { [CapW32]::PerMonitorDpi($hwndPtr) } else { 0 }
 $wasIconic = [CapW32]::IsIconic($hwndPtr)
 if ($Passive -and $wasIconic) { Fail "CAPTUREFAILED" "passive target is minimized" 6 }
-if ($wasIconic) { [CapW32]::ShowWindow($hwndPtr, 9) | Out-Null; Start-Sleep -Milliseconds 250 }
+if ($wasIconic) {
+  [CapW32]::ShowWindow($hwndPtr, 9) | Out-Null
+  Start-Sleep -Milliseconds 250
+  if ([CapW32]::IsIconic($hwndPtr)) { Fail "CAPTUREFAILED" "target is still minimized after restore" 6 }
+}
 
+# The frame and its final identity check must use the same post-restore rectangle.
+$r = New-Object CapW32+RECT
+if (-not [CapW32]::GetWindowRect($hwndPtr, [ref]$r)) { Fail "HWNDDEAD" "window rect query failed" 4 }
+$width = $r.Right - $r.Left; $height = $r.Bottom - $r.Top
+if ($width -le 0 -or $height -le 0) { Fail "HWNDDEAD" "hwnd $Hwnd has an empty rect" 4 }
 [uint32]$targetPid = 0
 $targetTid = [CapW32]::GetWindowThreadProcessId($hwndPtr, [ref]$targetPid)
 if ($targetPid -eq 0 -or $targetTid -eq 0 -or -not [CapW32]::ValidRect($r)) { Fail "CAPTUREFAILED" "capture identity unavailable" 6 }

@@ -1769,13 +1769,20 @@ private final class ActivityWindowPicker: NSObject, SCContentSharingPickerObserv
 
 // MARK: - screenshot (ScreenCaptureKit)
 
+private func cuScreenCapturePermissionDenied(_ error: NSError) -> Bool {
+    let screenCaptureDomain = error.domain == SCStreamError.errorDomain
+        || error.domain == "com.apple.ScreenCaptureKit"
+    // Retain the alternate denial code previously observed by this host.
+    return screenCaptureDomain && (error.code == SCStreamError.Code.userDeclined.rawValue || error.code == -38001)
+}
+
 func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     // Prefer IncludingWindow, but ALWAYS fall back to optionAll filtered by
     // kCGWindowNumber. WeChat/Electron often return [] for IncludingWindow
     // while the id is still present in optionAll (pgvexn 2026-07-25).
     // Never use unfiltered optionAll (ea3y6n: wrong window → 64x64 rect).
     guard let first = cuWindowInfoDict(windowId: windowId) else {
-        return cuError("cannot get window info for windowId \(windowId)")
+        return cuError("target window is unavailable", code: "APP_WINDOW_NOT_FOUND")
     }
     guard let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
         return cuError("cannot read window bounds for windowId \(windowId)")
@@ -1872,18 +1879,15 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     // CGImage that later SIGSEGVs at offset 0x10 inside cuScreenshot (after PNG
     // write succeeds). Observed 2026-07-25 on all windows (WeChat/Chrome/Settings).
     let semaphore = DispatchSemaphore(value: 0)
-    let captureBox = CUBox<(image: CGImage?, error: String?)>((nil, nil))
-    let hostPid = ProcessInfo.processInfo.processIdentifier
-    let hostParentPid = getppid()
-
+    let captureBox = CUBox<(image: CGImage?, errorResponse: String?)>((nil, nil))
     let task = Task<Void, Never> {
+        defer { semaphore.signal() }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let targetWindow = content.windows.first(where: { UInt32($0.windowID) == windowId }) else {
                 captureBox.with {
-                    $0 = (nil, "window \(windowId) not found among \(content.windows.count) SCShareableContent windows (pid=\(hostPid) ppid=\(hostParentPid))")
+                    $0 = (nil, cuError("target window is unavailable for capture", code: "APP_WINDOW_NOT_FOUND"))
                 }
-                semaphore.signal()
                 return
             }
             let filter = SCContentFilter(desktopIndependentWindow: targetWindow)
@@ -1905,45 +1909,29 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
             config.height = outH
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
             captureBox.with { $0 = (image, nil) }
-        } catch let err as NSError {
-            // TCC denial codes observed in the wild:
-            //   -3801  (user message: 用户拒绝了…捕捉的TCC) — macOS 15/26 common
-            //   -38001 — older docs / alternate SCStreamError enum path
-            // Match both; also treat localized "TCC" / "denied" in this domain as denial.
-            let isSckTcc =
-                err.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
-                || err.domain == "com.apple.ScreenCaptureKit"
-            let isDenialCode = (err.code == -3801 || err.code == -38001)
-            let desc = err.localizedDescription
-            let looksLikeDenial = desc.localizedCaseInsensitiveContains("TCC")
-                || desc.localizedCaseInsensitiveContains("denied")
-                || desc.contains("拒绝")
-            let errMsg: String
-            if isSckTcc && (isDenialCode || looksLikeDenial) {
-                errMsg =
-                    "Screen Recording permission denied (ScreenCaptureKit code=\(err.code)). " +
-                    "Open System Settings → Privacy & Security → Screen Recording, enable «CMspark», " +
-                    "then fully quit CMspark and reopen. If you just reinstalled/updated, turn the switch off and on again."
-            } else {
-                errMsg = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(desc) (pid=\(hostPid) ppid=\(hostParentPid))"
-            }
-            captureBox.with { $0 = (nil, errMsg) }
         } catch {
-            captureBox.with {
-                $0 = (nil, "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))")
+            let nativeError = error as NSError
+            let response: String
+            if cuScreenCapturePermissionDenied(nativeError) {
+                response = cuError(
+                    "Screen Recording permission denied. Enable CMspark in System Settings → Privacy & Security → Screen Recording, then quit and reopen CMspark.",
+                    code: "PERMISSION_DENIED")
+            } else {
+                response = cuError("ScreenCaptureKit could not capture the target window", code: "CAPTURE_FAILED",
+                                   extra: ["capture_stage": "screen_capture_kit", "native_error_code": nativeError.code])
             }
+            captureBox.with { $0 = (nil, response) }
         }
-        semaphore.signal()
     }
     _ = task
     semaphore.wait()
 
     let (capturedImage, captureError) = captureBox.with { $0 }
     if let err = captureError {
-        return cuError(err, code: "PERMISSION_DENIED")
+        return err
     }
     guard let image = capturedImage else {
-        return cuError("no image captured (no error reported)", code: "PERMISSION_DENIED")
+        return cuError("ScreenCaptureKit returned no image", code: "CAPTURE_FAILED", extra: ["capture_stage": "screen_capture_kit"])
     }
 
     let outURL = URL(fileURLWithPath: outputPath) as CFURL
@@ -2308,6 +2296,20 @@ func cuSelfTestClassifier() -> String {
         failures.append("empty_and_clause: must be false — sizeGuard is the safety net for empty bitmaps")
     }
 
+    // Exercise the same NSError classifier as the real SCK capture path.
+    let declinedCode = SCStreamError.Code.userDeclined.rawValue
+    for (domain, code, denied) in [
+        (SCStreamError.errorDomain, declinedCode, true),
+        ("com.apple.ScreenCaptureKit", -38001, true),
+        (SCStreamError.errorDomain, SCStreamError.Code.failedToStart.rawValue, false),
+        (NSCocoaErrorDomain, declinedCode, false),
+    ] {
+        let error = NSError(domain: domain, code: code, userInfo: [NSLocalizedDescriptionKey: "denied"])
+        if cuScreenCapturePermissionDenied(error) != denied {
+            failures.append("screen_capture_permission: unexpected classification for \(domain) \(code)")
+        }
+    }
+
     if !failures.isEmpty {
         let msg = failures.joined(separator: "; ")
         fputs("[host] cuSelfTestClassifier FAIL: \(msg)\n", stderr)
@@ -2329,6 +2331,7 @@ func cuSelfTestClassifier() -> String {
             "and_truth_high_high_not_stale",
             "and_truth_high_low_not_stale",
             "empty_bitmap_contract",
+            "screen_capture_permission",
         ],
     ])
 }
@@ -2814,27 +2817,26 @@ func runEstop(socketPath: String, flagPath: String, nonceFile: String) throws ->
     }
 
     // 2. CGEventTap hotkey: Ctrl+Shift+Alt+Cmd+E (best-effort)
-    // tapCreate fails SILENTLY (returns nil) when TCC denies the tap.
-    // Request trust explicitly so the user may get the system dialog and a
-    // landing spot in Accessibility / Input Monitoring.
+    // This helper also starts at ordinary tray launch. Check existing grants
+    // without requesting Accessibility or Input Monitoring in the background.
     let axTrustedBefore = AXIsProcessTrusted()
-    if !axTrustedBefore {
-        let promptOpts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(promptOpts)
-    }
+    let canListen = CGPreflightListenEventAccess()
     let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
     // Prefer listenOnly: we never modify events (callback always passes through).
     // Some LaunchServices/TCC contexts reject defaultTap while listenOnly works.
-    var tap = CGEvent.tapCreate(
-        tap: .cgSessionEventTap,
-        place: .headInsertEventTap,
-        options: .listenOnly,
-        eventsOfInterest: mask,
-        callback: estopEventTapCallback,
-        userInfo: nil
-    )
+    var tap: CFMachPort?
+    if canListen || axTrustedBefore {
+        tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: estopEventTapCallback,
+            userInfo: nil
+        )
+    }
     var tapMode = "listenOnly"
-    if tap == nil {
+    if tap == nil && axTrustedBefore {
         tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,

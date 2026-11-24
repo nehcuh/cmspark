@@ -255,8 +255,8 @@ export function SettingsSlideout() {
   const activeCategory = settingsRoute.view === "home" ? undefined : settingsRoute.category
   const activeDestination = settingsRoute.view === "destination" ? settingsRoute.destination : undefined
   const settingsInteractive = state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)
-  const knowledgeRoute = useRef<SettingsRoute | null>(null)
-  knowledgeRoute.current = settingsInteractive && activeDestination === "data-knowledge" ? settingsRoute : null
+  const panelRoute = useRef<SettingsRoute | null>(null)
+  panelRoute.current = settingsInteractive ? settingsRoute : null
   const settingsBody = useRef<HTMLDivElement>(null)
   const focusTarget = useRef<string | null>(null)
   const lastSettingsFocus = useRef<HTMLElement | null>(null)
@@ -1312,15 +1312,17 @@ export function SettingsSlideout() {
     })
   }
 
-  const openKnowledgeSettings = async () => {
-    if (!host || knowledgeRoute.current !== settingsRoute) return
+  const openSettingsPanel = async (panel: "apps" | "knowledge") => {
+    const destination = panel === "apps" ? "tools-lcu" : "data-knowledge"
+    if (!host || activeDestination !== destination || panelRoute.current !== settingsRoute) return
+    const label = panel === "apps" ? "应用" : "知识"
     try {
-      const opened = await host.openPanelForce("knowledge")
-      if (knowledgeRoute.current !== settingsRoute) return
+      const opened = await host.openPanelForce(panel)
+      if (panelRoute.current !== settingsRoute) return
       if (opened) dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-      else setImmediateNotice("知识面板尚未打开，请完成当前操作后重试。")
+      else setImmediateNotice(`${label}面板尚未打开，请完成当前操作后重试。`)
     } catch {
-      if (knowledgeRoute.current === settingsRoute) setImmediateNotice("无法打开知识面板，请重试。")
+      if (panelRoute.current === settingsRoute) setImmediateNotice(`无法打开${label}面板，请重试。`)
     }
   }
 
@@ -3781,6 +3783,11 @@ export function SettingsSlideout() {
           </SettingsPage>
 
           <SettingsPage id="tools-lcu" active={activeDestination === "tools-lcu"}>
+          <section style={styles.field} aria-label="原生桌面操作">
+            <strong>原生桌面操作 · macOS / Windows</strong>
+            <p style={styles.helpText}>打开应用面板，开启「坐标操作」，再从目标应用的「···」菜单查看可用的授权方式。</p>
+            <button type="button" className="cm-settings-text-link" disabled={!host} onClick={() => void openSettingsPanel("apps")}>打开应用面板</button>
+          </section>
           <LcuSettingsSection active={activeDestination === "tools-lcu" && settingsInteractive} onFooterSave={reportLcuFooter} />
           </SettingsPage>
 
@@ -3832,7 +3839,7 @@ export function SettingsSlideout() {
 
           <SettingsPage id="data-knowledge" active={activeDestination === "data-knowledge"}>
             <p className="cm-settings-note">使用知识面板核对当前对话的知识选择方式、勾选项和匹配规则。</p>
-            <button type="button" className="cm-settings-text-link" disabled={!host} onClick={() => void openKnowledgeSettings()}>打开知识面板</button>
+            <button type="button" className="cm-settings-text-link" disabled={!host} onClick={() => void openSettingsPanel("knowledge")}>打开知识面板</button>
           </SettingsPage>
 
           <SettingsPage id="data-files" active={activeDestination === "data-files"}>

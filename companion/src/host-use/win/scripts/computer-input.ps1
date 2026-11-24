@@ -68,6 +68,7 @@ public class InpW32 {
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
@@ -131,7 +132,8 @@ public class InpW32 {
   }
   public static uint SendBatch(INPUT[] arr){ return SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(INPUT))); }
   public static bool ForceForeground(IntPtr hwnd){
-    ShowWindow(hwnd, 9);
+    // SW_RESTORE changes the client geometry of maximized windows.
+    if (IsIconic(hwnd)) ShowWindow(hwnd, 9);
     IntPtr fg = GetForegroundWindow(); uint dummy;
     uint fgTid = GetWindowThreadProcessId(fg, out dummy);
     uint myTid = GetCurrentThreadId(); bool ok = false;

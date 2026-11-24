@@ -73,6 +73,35 @@ function fakeGate(behavior: "approve" | "deny" | "cancel", captured?: { calls: n
 
 const approveChannel = async () => ({ confirmationId: "c", approved: true, reason: "approved" as const })
 
+test("Apps list and updates describe each native coordinate path without persisting the hint", async t => {
+  for (const platform of ["darwin", "win32"] as const) {
+    const platformMock = t.mock.method(os, "platform", () => platform)
+    try {
+      reset()
+      const native = platform === "win32"
+      const entry = (slug: string, exe: string | undefined, bundleId?: string) => seedEntry({
+        token: `${native ? "win" : "mac"}.app.${slug}`, exe: exe ? { path: exe, user_writable_dir: false } : undefined, bundleId,
+        ...(!exe && native ? { aumid: "Owned.App_abcde!App" } : {}),
+      })
+      const apps = [
+        entry("editor", native ? EXE : undefined, native ? undefined : "com.example.Editor"),
+        entry("browser", native ? CHROME_EXE : undefined, native ? undefined : "com.apple.Safari"),
+        entry("protected", native ? POWERSHELL_EXE : undefined, native ? undefined : "com.apple.Terminal"),
+        entry("unbound", native ? undefined : "/Applications/Owned.app"),
+      ]
+      replaceAppsEntries(Object.fromEntries(apps.map(app => [app.token, app])))
+      const originals = apps.map(app => app.token)
+      const list = await handleAppsMessage({ type: "apps.list" }, {}, deps({ platform, exists: () => false }))
+      const updated = await handleAppsMessage({ type: "apps.set_enabled", token: originals[0], enabled: true })
+      for (const result of [list, updated]) {
+        assert.deepEqual(originals.map(token => result.entries.find((e: AppEntry) => e.token === token)?.coordinate_mode),
+          ["per_app", "browser_task", "protected", "missing_identity"])
+      }
+      assert.ok(Object.values(getConfig().apps!.entries).every(app => !("coordinate_mode" in app)))
+    } finally { platformMock.mock.restore() }
+  }
+})
+
 // --- apps.set_coordinate_allowed -----------------------------------------------
 
 test("apps.set_coordinate_allowed: invalid token -> INVALID_TOKEN", async () => {
@@ -239,6 +268,50 @@ test("apps.set_coordinate_allowed: clearing on a vault binary is still free (wei
 })
 
 // --- computer.set_enabled --------------------------------------------------------
+
+test("an already enabled coordinate switch requires no second biometric", async () => {
+  reset()
+  setComputerCoordinateEnabled(true)
+  const calls = { calls: 0 }
+  const result = await handleComputerMessage({ type: "computer.set_enabled", enabled: true },
+    { requestConfirmation: approveChannel }, { gate: fakeGate("deny", calls) })
+  assert.equal(result.coordinateEnabled, true)
+  assert.equal(calls.calls, 0)
+})
+
+test("overlapping enables open one prompt and a disable wins over its late approval", async () => {
+  reset()
+  const request = { type: "computer.set_enabled", enabled: true }
+  const ctx = { requestConfirmation: approveChannel }
+  let release!: () => void
+  const waiting = new Promise<void>(resolve => { release = resolve })
+  const first = handleComputerMessage(request, ctx, { gate: async req => {
+    await waiting
+    return fakeGate("approve")(req)
+  } })
+  try {
+    const calls = { calls: 0 }
+    const second = await handleComputerMessage(request, ctx, { gate: fakeGate("approve", calls) })
+    assert.equal(second.code, "COMPUTER_ENABLE_PENDING")
+    assert.equal(calls.calls, 0)
+  } finally {
+    await handleComputerMessage({ type: "computer.set_enabled", enabled: false }, {})
+    release()
+  }
+  assert.equal((await first).code, "COMPUTER_ENABLE_STALE")
+  assert.equal(getConfig().computer?.coordinateEnabled, false)
+  assert.equal((await handleComputerMessage(request, ctx, { gate: fakeGate("approve") })).coordinateEnabled, true)
+})
+
+test("disconnected owner cannot commit a pending global coordinate grant", async () => {
+  reset()
+  let current = true
+  const result = await handleComputerMessage({ type: "computer.set_enabled", enabled: true },
+    { requestConfirmation: approveChannel, ownerCurrent: () => current },
+    { gate: async req => { current = false; return fakeGate("approve")(req) } })
+  assert.equal(result.code, "COMPUTER_ENABLE_STALE")
+  assert.equal(getConfig().computer?.coordinateEnabled, false)
+})
 
 test("computer.set_enabled: non-boolean -> INVALID_ENABLED", async () => {
   reset()

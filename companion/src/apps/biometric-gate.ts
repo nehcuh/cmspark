@@ -72,7 +72,7 @@ export async function requireAppsBiometric(req: BiometricGateRequest): Promise<B
     const decision = await req.requestConfirmation({
       toolName: req.action,
       dangerousApis: [],
-      code: `${req.reason} — Windows Hello unavailable; type the 6-char code to approve`,
+      code: `${req.reason} — type the 6-char code to approve`,
       nonceChallenge: challenge,
     })
     if (decision.approved) {

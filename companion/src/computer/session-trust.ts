@@ -158,8 +158,8 @@ export function reL2ShouldPrompt(tags: string[]): boolean {
 }
 
 /**
- * Trust grant record. `grantedAt` enables idle expiry; the original per-app
- * grant set is preserved but now stores last-touched timestamps.
+ * Per-app state. Only interactive task approval sets lastApprovedAt. A
+ * credential latch can exist before any approval, e.g. during unattended use.
  *
  * `corpus` (P5 / Grok v4.1 §3.2): the accumulated set of type.text literals
  * the user has approved for this (sessionId, appToken). The G1 initial-L2
@@ -178,9 +178,7 @@ export function reL2ShouldPrompt(tags: string[]): boolean {
  * G1 initial-L2 skip requires this; mid-task reL2 silence does not.
  */
 interface GrantRecord {
-  appToken: string
-  grantedAt: number
-  lastTouchedAt: number
+  lastApprovedAt?: number
   /** Set TRUE when after-frame OCR detected a credential surface. Next initial-L2 cannot skip. */
   credentialSurfaceSeen: boolean
   /** Approved type.text literals accumulated across interactive approvals. P5 (Grok v4.1 §3.2). */
@@ -209,34 +207,15 @@ export class ComputerSessionTrust {
    */
   grant(sessionId: string, appToken: string, opts?: ComputerTrustGrantOptions): void {
     if (!sessionId || !appToken) return
-    let inner = this.trusted.get(sessionId)
-    if (!inner) {
-      inner = new Map()
-      this.trusted.set(sessionId, inner)
-    }
-    const now = Date.now()
-    const existing = inner.get(appToken)
-    const explicit =
-      opts?.explicitOptIn === true || existing?.explicitOptIn === true
-    inner.set(appToken, {
-      appToken,
-      grantedAt: existing?.grantedAt ?? now,
-      lastTouchedAt: now,
-      credentialSurfaceSeen: existing?.credentialSurfaceSeen ?? false,
-      corpus: existing?.corpus ?? new Set<string>(),
-      maxBudgetSeen: existing?.maxBudgetSeen ?? 0,
-      maxActionsSeen: existing?.maxActionsSeen ?? 0,
-      explicitOptIn: explicit,
-    })
+    const record = this.ensureRecord(sessionId, appToken)
+    record.lastApprovedAt = Date.now()
+    if (opts?.explicitOptIn === true) record.explicitOptIn = true
   }
 
   /** True when grant has explicit session auto-approve opt-in (and is live). */
   hasExplicitOptIn(sessionId: string, appToken: string): boolean {
     const rec = this.record(sessionId, appToken)
-    if (!rec || !rec.explicitOptIn) return false
-    if (Date.now() - rec.lastTouchedAt > IDLE_EXPIRY_MS) return false
-    if (rec.credentialSurfaceSeen) return false
-    return true
+    return rec?.explicitOptIn === true && this.isTrusted(sessionId, appToken)
   }
 
   /**
@@ -253,7 +232,7 @@ export class ComputerSessionTrust {
    * the grant has not been idle-expired AND the credential latch is not set.
    *
    * **Pure read** (Pi final-review caveat 2, 2026-07-24): does NOT refresh
-   * lastTouchedAt. The 30-min idle window is anchored to the LAST INTERACTIVE
+   * lastApprovedAt. The 30-min idle window is anchored to the LAST INTERACTIVE
    * APPROVAL (or explicit grant()), not to skip-path consults. This makes
    * "30 min idle" mean "30 min since the user last said yes" — a hot session
    * firing corpus-subset tasks every <30 min still expires 30 min after the
@@ -264,15 +243,15 @@ export class ComputerSessionTrust {
    */
   isTrusted(sessionId: string, appToken: string): boolean {
     const rec = this.record(sessionId, appToken)
-    if (!rec) return false
-    if (Date.now() - rec.lastTouchedAt > IDLE_EXPIRY_MS) return false
+    if (rec?.lastApprovedAt === undefined) return false
+    if (Date.now() - rec.lastApprovedAt > IDLE_EXPIRY_MS) return false
     if (rec.credentialSurfaceSeen) return false
     return true
   }
 
   /** Raw trust check — ignores expiry / latch. For diagnostic / audit only. */
   isTrustedRaw(sessionId: string, appToken: string): boolean {
-    return !!this.record(sessionId, appToken)
+    return this.record(sessionId, appToken)?.lastApprovedAt !== undefined
   }
 
   /**
@@ -283,25 +262,8 @@ export class ComputerSessionTrust {
    * defensively — never silently skip when the safety signal is missing.
    */
   markCredentialSurfaceSeen(sessionId: string, appToken: string, seen: boolean | null): void {
-    if (!sessionId || !appToken) return
-    let inner = this.trusted.get(sessionId)
-    if (!inner) {
-      inner = new Map()
-      this.trusted.set(sessionId, inner)
-    }
-    const now = Date.now()
-    const existing = inner.get(appToken)
-    inner.set(appToken, {
-      appToken,
-      grantedAt: existing?.grantedAt ?? now,
-      lastTouchedAt: now,
-      // Defensive: seen === null (OCR failed) → treat as seen.
-      credentialSurfaceSeen: seen === null ? true : (existing?.credentialSurfaceSeen || seen),
-      corpus: existing?.corpus ?? new Set<string>(),
-      maxBudgetSeen: existing?.maxBudgetSeen ?? 0,
-      maxActionsSeen: existing?.maxActionsSeen ?? 0,
-      explicitOptIn: existing?.explicitOptIn ?? false,
-    })
+    if (seen === false || !sessionId || !appToken) return
+    this.ensureRecord(sessionId, appToken).credentialSurfaceSeen = true
   }
 
   /**
@@ -314,7 +276,7 @@ export class ComputerSessionTrust {
    */
   recordBudget(sessionId: string, appToken: string, budget: number): void {
     const rec = this.record(sessionId, appToken)
-    if (!rec) return
+    if (rec?.lastApprovedAt === undefined) return
     const b = Math.max(0, Math.floor(budget))
     if (b > rec.maxBudgetSeen) rec.maxBudgetSeen = b
   }
@@ -325,7 +287,7 @@ export class ComputerSessionTrust {
    */
   recordActions(sessionId: string, appToken: string, actionCount: number): void {
     const rec = this.record(sessionId, appToken)
-    if (!rec) return
+    if (rec?.lastApprovedAt === undefined) return
     const n = Math.max(0, Math.floor(actionCount))
     if (n > rec.maxActionsSeen) rec.maxActionsSeen = n
   }
@@ -354,7 +316,7 @@ export class ComputerSessionTrust {
    */
   clearCredentialLatch(sessionId: string, appToken: string): void {
     const rec = this.record(sessionId, appToken)
-    if (rec) rec.credentialSurfaceSeen = false
+    if (rec?.lastApprovedAt !== undefined) rec.credentialSurfaceSeen = false
   }
 
   /**
@@ -367,7 +329,7 @@ export class ComputerSessionTrust {
   extendCorpus(sessionId: string, appToken: string, texts: string[]): void {
     if (!sessionId || !appToken) return
     const rec = this.record(sessionId, appToken)
-    if (!rec) return
+    if (rec?.lastApprovedAt === undefined) return
     for (const t of texts) {
       if (typeof t === "string" && t.length > 0) rec.corpus.add(t)
     }
@@ -422,6 +384,20 @@ export class ComputerSessionTrust {
   private record(sessionId: string, appToken: string): GrantRecord | undefined {
     const inner = this.trusted.get(sessionId)
     return inner?.get(appToken)
+  }
+
+  private ensureRecord(sessionId: string, appToken: string): GrantRecord {
+    let apps = this.trusted.get(sessionId)
+    if (!apps) {
+      apps = new Map()
+      this.trusted.set(sessionId, apps)
+    }
+    let record = apps.get(appToken)
+    if (!record) {
+      record = { credentialSurfaceSeen: false, corpus: new Set(), maxBudgetSeen: 0, maxActionsSeen: 0, explicitOptIn: false }
+      apps.set(appToken, record)
+    }
+    return record
   }
 }
 

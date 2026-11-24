@@ -3683,6 +3683,7 @@ async function dispatchMessage(
     case "computer.set_enabled":
     case "computer.evidence.open":
       return handleComputerMessage(msg, {
+        ownerCurrent: session?.appsOwnerCurrent,
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
         // WP4: P6 频率上限按每面板(每 WS 连接)计数。
