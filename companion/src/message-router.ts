@@ -1141,6 +1141,9 @@ async function dispatchMessage(
   switch (type) {
     case "activity.state":
     case "activity.apps":
+    case "activity.bind_window":
+    case "activity.unbind_window":
+    case "activity.pause_window":
     case "activity.preview":
     case "activity.preview_ocr":
     case "activity.configure":

@@ -19,9 +19,9 @@ const profile: ActivityChatProfile = { window_class: 'OwnedChatMain', width: 80,
 const config = (): ActivityConfig => ({ ...DEFAULT_ACTIVITY_CONFIG, enabled: true, allowed_apps: [id], extraction_mode: 'vision', ocr_language: 'en-US', chat_scopes: [{ app_id: id, profiles: [structuredClone(profile)] }] })
 const image = scope825Png(80, 60, (x, y) => x < 20 ? [220, 0, 220, 255] : x > 40 && y > 30 ? [0, 40, 220, 255] : [255, 255, 255, 255])
 const fresh = () => fs.mkdtempSync(path.join(os.tmpdir(), 'activity-scope825-'))
-function nativeDouble(root: string, options: { title?: string; failOcr?: boolean; afterClass?: string; source?: Buffer; cropClamp?: boolean; abort?: AbortController } = {}) {
+function nativeDouble(root: string, options: { dpi?: number; geometry?: string; title?: string; failOcr?: boolean; afterClass?: string; source?: Buffer; cropClamp?: boolean; abort?: AbortController } = {}) {
   const calls: Array<{ name: string; args: string[] }> = []; let probes = 0
-  const window = { hwnd: 42, pid: 100, started: 'owned-start', app_id: id, app_name: 'Owned Chat', exe: 'c:\\owned\\chat.exe', title: 'Owned Main Window', window_class: 'OwnedChatMain', geometry: '0,0,80,60', safe: true }
+  const window = { hwnd: 42, pid: 100, started: 'owned-start', app_id: id, app_name: 'Owned Chat', exe: 'c:\\owned\\chat.exe', title: 'Owned Main Window', window_class: 'OwnedChatMain', geometry: options.geometry || '0,0,80,60', safe: true }
   const run: PsRunner = async (name, args) => {
     calls.push({ name, args })
     if (name === 'activity-windows.ps1') return JSON.stringify({ ok: true, window: { ...window, window_class: probes++ && options.afterClass ? options.afterClass : window.window_class } })
@@ -36,7 +36,7 @@ function nativeDouble(root: string, options: { title?: string; failOcr?: boolean
         return JSON.stringify({ ok: true, mode: 'crop' })
       }
       fs.writeFileSync(output, options.source || image)
-      return JSON.stringify({ ok: true, restoredFromIconic: false, observation_quality: 'ok', occludedBy: [] })
+      return JSON.stringify({ ok: true, hwnd: 42, activity_dpi: options.dpi, rect: { x: -80, y: 0, width: 80, height: 60 }, restoredFromIconic: false, observation_quality: 'ok', occludedBy: [] })
     }
     if (name === 'computer-ocr.ps1') {
       if (options.failOcr) throw Error('owned OCR unavailable')
@@ -182,7 +182,7 @@ test('manual preview can capture while an automatic source is being analyzed', a
     assert.equal(service.state().sources.length, 1)
     finish()
     await new Promise<void>(resolve => setImmediate(resolve))
-    assert.equal(service.state().runtime.status, 'ready_for_review')
+    assert.equal(service.state().sources[0].recognition?.status, 'complete')
   } finally { finish?.(); await service.stop(); fs.rmSync(root, { recursive: true, force: true }) }
 })
 test('scope825 refusal is a normal visible status and stores no source or model request', async () => {
@@ -239,4 +239,20 @@ test('scope825 deduplication keeps same-text different conversations as separate
     assert.ok(store.addSource({ ...base, conversation_title: 'BETA GROUP' }, image))
     assert.equal(store.addSource({ ...base, conversation_title: 'ALPHA GROUP' }, image), null)
   } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})
+
+test('900 Windows matches a verified physical frame on a negative-coordinate display to its logical calibration', async () => {
+  const dir = fresh(), signal = new AbortController().signal
+  try {
+    const full = { ...config(), chat_scopes: [] }
+    const recorder = nativeDouble(dir, { dpi: 192, geometry: '-80,0,0,60' }).adapter
+    const preview = await recorder.capture(full, signal)
+    assert.deepEqual([preview?.logical_width, preview?.logical_height], [40, 30])
+    const half = { ...profile, width: 40, height: 30, logical_width: 40, logical_height: 30,
+      content: { x: 10, y: 0, width: 30, height: 30 }, title: { x: 12, y: 1, width: 20, height: 4 } }
+    const scoped = { ...config(), chat_scopes: [{ app_id: id, profiles: [half] }] }
+    assert.deepEqual(imageSize((await recorder.capture(scoped, signal))!.image), { width: 60, height: 60 })
+    for (const uncertain of [{ dpi: 0, geometry: '-80,0,0,60' }, { dpi: 192, geometry: '0,0,80,60' }])
+      await assert.rejects(nativeDouble(dir, uncertain).adapter.capture(scoped, signal), ActivityScopeSkip)
+  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 })

@@ -29,8 +29,8 @@ export interface VisionResult {
 }
 
 export class VisionOutputError extends Error {
-  constructor(readonly code: "empty" | "truncated") {
-    super(code === "empty" ? "Vision model returned empty response" : "Vision model exhausted its output token budget")
+  constructor(readonly code: "empty" | "truncated" | "timeout") {
+    super({ empty: "Vision model returned empty response", truncated: "Vision model exhausted its output token budget", timeout: "Vision request timed out" }[code])
   }
 }
 
@@ -187,6 +187,7 @@ async function doAnalyze(
   options?: VisionAnalysisOptions,
 ): Promise<VisionResult> {
   const startTime = Date.now()
+  let timeout: AbortSignal | undefined
 
   try {
     const apiKey = config.api_key || "ollama"
@@ -217,7 +218,7 @@ async function doAnalyze(
       return buildFallback(image, config, "Image is not a recognized raster")
     }
 
-    const timeout = AbortSignal.timeout(config.timeout_ms)
+    timeout = AbortSignal.timeout(config.timeout_ms)
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
     const response = await createProvider(resolveVisionLlmConfig(config)).complete({
       model: config.model_name,
@@ -252,6 +253,7 @@ async function doAnalyze(
     return { description, cached: false, model_used: config.model_name, latency_ms: latencyMs }
   } catch (err: any) {
     if (err instanceof VisionOutputError) throw err
+    if (options?.requireComplete && timeout?.aborted && !signal?.aborted) throw new VisionOutputError("timeout")
     const latencyMs = Date.now() - startTime
     logger.warn("vision.analysis_failed", {
       error: err.message,

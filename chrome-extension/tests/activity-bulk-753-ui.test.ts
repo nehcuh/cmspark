@@ -410,13 +410,18 @@ test('796 running app picker reaches all 20 apps across pages and preserves cros
 
 
 test('822 actual model form separates image consent, clears it on mode changes, and submits the displayed target', async () => withUI(async (fixture, ui) => {
+  ui.controller.snapshot.runtime.chat_scope_supported = true
   let panel = ui.render('activity').panel
   ui.button(panel, '设置应用与隐私').props.onClick()
   panel = ui.render('activity').panel
   const mode = () => ui.find(panel, node => node.type === 'select' && ui.rows(node).some(child => child.type === 'option' && child.props.value === 'qwen'))
   const consent = () => ui.find(panel, node => node.type === 'input' && node.props.type === 'checkbox' && ui.rows(panel).some(label => label.type === 'label' && ui.text(label).includes('允许所选图像模型读取') && ui.rows(label).includes(node)))
+  const titleConsent = () => ui.find(panel, node => node.type === 'input' && node.props.type === 'checkbox' && ui.rows(panel).some(label => label.type === 'label' && ui.text(label).includes('辅助核验聊天标题') && ui.rows(label).includes(node)))
   assert.equal(mode().props.value, 'ocr')
   mode().props.onChange({ target: { value: 'vision' } }); panel = ui.render('activity').panel
+  assert.equal(titleConsent().props.checked, false)
+  titleConsent().props.onChange({ target: { checked: true } }); panel = ui.render('activity').panel
+  assert.equal(titleConsent().props.checked, true)
   const shownTarget = ui.controller.snapshot.runtime.model_target_ids.vision
   assert.equal(consent().props.checked, false)
   consent().props.onChange({ target: { checked: true } }); panel = ui.render('activity').panel
@@ -425,6 +430,7 @@ test('822 actual model form separates image consent, clears it on mode changes, 
   assert.equal(consent().props.checked, false, 'changing image mode requires a fresh decision')
   mode().props.onChange({ target: { value: 'vision' } }); panel = ui.render('activity').panel
   consent().props.onChange({ target: { checked: true } }); panel = ui.render('activity').panel
+  assert.equal(titleConsent().props.checked, false, 'new model selection requires separate title consent')
   const snapshot = ui.controller.snapshot
   ui.controller.snapshot = { ...snapshot, runtime: { ...snapshot.runtime, model_target_ids: { ...snapshot.runtime.model_target_ids, vision: '0'.repeat(64) }, model_targets: { ...snapshot.runtime.model_targets, vision: 'changed while the form was open' } } }
   panel = ui.render('activity').panel
@@ -441,6 +447,7 @@ test('822 actual model form separates image consent, clears it on mode changes, 
   const call = ui.configurationCalls[0], reply = await call.promise
   assert.equal(call.payload.patch.extraction_mode, 'vision')
   assert.equal(call.payload.patch.image_ai_enabled, true)
+  assert.equal(call.payload.patch.title_ai_enabled, false)
   assert.equal(call.payload.patch.ocr_ai_enabled, false)
   assert.equal(call.payload.expected_model_target, shownTarget)
   assert.equal(reply.ok, true)

@@ -1,6 +1,10 @@
 # 版本与交付状态
 
-源码开发版本 **1.8.1（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码开发版本 **1.9.0（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+
+## 1.9.0 发布准备
+
+聊天截图采集、识别回执和待办候选改进见 [#900](https://github.com/nehcuh/cmspark/issues/900)。固定可见窗口的物理双屏、真实聊天客户端和 Wayland 选窗回传仍待现场验收。
 
 ## 1.8.1 发布准备
 

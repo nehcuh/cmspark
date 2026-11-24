@@ -51,11 +51,17 @@ export function useActivity(connected: boolean, connectionRevision: number) {
   useEffect(() => {
     if (!connected) { snapshotPeer.current = null; return }
     void refresh()
-    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh() }, 20_000)
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh() }
     document.addEventListener('visibilitychange', onVisible)
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); readController.current?.abort(); readController.current = null; reading.current = false; setLoading(false); controller.current?.abort() }
+    return () => { document.removeEventListener('visibilitychange', onVisible); readController.current?.abort(); readController.current = null; reading.current = false; setLoading(false); controller.current?.abort() }
   }, [connected, connectionRevision, refresh])
+  const processing = snapshot?.sources.some(s => s.recognition?.status === 'queued' || s.recognition?.status === 'running')
+  const refreshInterval = processing ? 3000 : snapshot?.config.enabled ? Math.min(snapshot.config.interval_ms, 20_000) : 20_000
+  useEffect(() => {
+    if (!connected) return
+    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh() }, refreshInterval)
+    return () => clearInterval(timer)
+  }, [connected, refresh, refreshInterval])
   const mutate = useCallback(async (type: string, data: Record<string, unknown>, success: string) => {
     const owner = peer.current
     if (!connected || !owner.connected || snapshotPeer.current !== owner || writing.current) {

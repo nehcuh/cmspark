@@ -97,10 +97,12 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
     const captured=await adapter.capture(config,owned.signal)
     assert.ok(captured);assert.equal(captured.app_id,native.app_id)
     assert.match(captured.ocr_text,/PROJECT\s+ALPHA/i);assert.match(captured.ocr_text,/REPORT\s+FRIDAY/i)
+    if(win) assert.match(captured.ocr_text,/PROJECT ALPHA[^\n]*\n[^\n]*SEND REPORT FRIDAY/i)
     if(win){const after=JSON.parse(await runPs(resolveWinScript('activity-windows.ps1'),['-Mode','Probe'])).window;assert.equal(after.hwnd,before);assert.equal(after.pid,child.pid)}
     else{
       const after=JSON.parse((await exec('/usr/bin/python3',['-I',resolveLinuxRecorder(),'probe'],{signal:owned.signal,timeout:15000})).stdout).window
       assert.equal(after.window,before);assert.equal(after.pid,child.pid)
+      await exec('/usr/bin/python3', ['-I', path.resolve('tests/helpers/activity-x11-stacking-900.py'), resolveLinuxRecorder(), String(before), native.app_id, dir], { signal: owned.signal, timeout: 15000 })
       assert.ok(captured.window_class)
       const content = { x: 100, y: 0, width: 600, height: 300 }
       const title = { x: 100, y: 80, width: 600, height: 70 }

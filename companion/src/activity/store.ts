@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { createHash, randomUUID } from 'crypto'
-import { ActivityError, DEFAULT_ACTIVITY_CONFIG, type ActivityConfig, type ActivityState, type ActivitySource, type PersonalTodo, type TodoCandidate, type TaskEvidence } from './types'
+import { ActivityError, DEFAULT_ACTIVITY_CONFIG, type ActivityRecognition, type ActivityConfig, type ActivityState, type ActivitySource, type PersonalTodo, type TodoCandidate, type TaskEvidence } from './types'
 import { iso, validateConfig, validateTask } from './validation'
 import { evidencedDeadline } from './deadline-evidence'
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
@@ -32,6 +32,7 @@ export class ActivityStore {
       if (/^pending-[a-f0-9-]+\.png$/.test(name) || /^state-[a-f0-9-]{36}\.tmp$/.test(name) || orphan) fs.rmSync(path.join(this.root, name), { force: true })
     }
   }
+  revision(): number { return this.value.revision }
   state(): ActivityState { return clone(this.value) }
   /** Exclude raw OCR before cloning the state sent to the workspace. */
   stateMetadata(): Omit<ActivityState, 'sources'> & { sources: Array<Omit<ActivitySource, 'ocr_text'>> } {
@@ -73,26 +74,46 @@ export class ActivityStore {
       this.value = next
     } finally { fs.rmSync(pending, { force: true }) }
   }
-  configure(revision: number, patch: unknown): void {
-    validateConfig(patch)
+  configure(revision: number, patch: unknown): boolean {
+    const update = validateConfig(patch) as Partial<ActivityConfig>
+    const affectsJobs = (Object.keys(update) as Array<keyof ActivityConfig>).some(key =>
+      !['interval_ms', 'image_output_tokens', 'title_ai_consent', 'title_ai_enabled'].includes(key) &&
+      JSON.stringify(update[key]) !== JSON.stringify(this.value.config[key]))
     if (revision !== this.value.revision) throw new ActivityError('REVISION_CONFLICT', '活动设置已变化，请刷新后重试')
-    this.mutate(s => { const update = patch as Partial<ActivityConfig>
+    this.mutate(s => {
       const model = update.dedicated_vision
       const previous = s.config.dedicated_vision
+      // Revoke the old queue in the same durable write as the configuration.
+      // A crash between saving settings and aborting a request cannot revive old work.
+      if (affectsJobs) for (const source of s.sources) {
+        if (source.recognition?.status === 'queued' || source.recognition?.status === 'running')
+          source.recognition = { status: 'saved', reason: '设置已变化，请核对后重新识别' }
+      }
       Object.assign(s.config, update)
       if (model) s.config.dedicated_vision = { ...previous, ...model, api_key: !model.api_key || /^\*+$/.test(model.api_key) ? previous?.api_key || '' : model.api_key }
       s.config.allowed_apps = [...new Set(s.config.allowed_apps)] })
+    return affectsJobs
+  }
+  unfinishedRecognition(): ActivitySource['id'][] {
+    return this.value.sources.filter(s => s.recognition?.status === 'queued' || s.recognition?.status === 'running').map(s => s.id).reverse()
+  }
+  setRecognition(id: string, receipt: ActivityRecognition): void {
+    if (!this.value.sources.some(s => s.id === id)) return
+    this.mutate(s => { s.sources.find(item => item.id === id)!.recognition = receipt })
   }
   addSource(input: Omit<ActivitySource, 'id' | 'bytes' | 'sha256'>, image: Buffer): ActivitySource | null {
     if (image.length === 0 || image.length > 16 * 1024 * 1024) throw new ActivityError('QUOTA_EXCEEDED', '截图大小不合适')
     const sha256 = digest(image)
-    const same = this.value.sources.find(s => !s.deleted && s.app_id === input.app_id && s.window_title === input.window_title && (s.conversation_title || '') === (input.conversation_title || '') && (s.sha256 === sha256 || (input.ocr_text.trim().length > 0 && s.ocr_text === input.ocr_text)))
+    const same = this.value.sources.find(s => !s.deleted && s.binding_id === input.binding_id && s.app_id === input.app_id && s.window_title === input.window_title && (s.conversation_title || '') === (input.conversation_title || '') && (s.sha256 === sha256 || (input.ocr_text.trim().length > 0 && s.ocr_text === input.ocr_text)))
     if (same) return null
     if (this.value.sources.length >= 2000) throw new ActivityError('QUOTA_EXCEEDED', '活动记录数已达上限')
     const source: ActivitySource = { ...input, id: randomUUID(), bytes: image.length, sha256 }
     const file = this.imagePath(source.id)
     fs.writeFileSync(file, image, { flag: 'wx', mode: 0o600 })
-    try { this.mutate(s => { s.sources.unshift(source) }) } catch (e) { fs.rmSync(file, { force: true }); throw e }
+    try { this.mutate(s => {
+      const index = s.sources.findIndex(row => row.captured_at <= source.captured_at)
+      s.sources.splice(index < 0 ? s.sources.length : index, 0, source)
+    }) } catch (e) { fs.rmSync(file, { force: true }); throw e }
     return clone(source)
   }
   saveVisualTranscript(source: ActivitySource, transcript: string): ActivitySource {
@@ -105,17 +126,31 @@ export class ActivityStore {
     this.mutate(s => { s.sources.find(item => item.id === source.id)!.ocr_text = text })
     return this.sourceMetadata(source.id)
   }
-  addCandidates(source: ActivitySource, entries: Array<Omit<TodoCandidate, 'id' | 'revision' | 'created_at' | 'status'>>): void {
+  addCandidates(source: ActivitySource, entries: Array<Omit<TodoCandidate, 'id' | 'revision' | 'created_at' | 'status'>>, completedAt?: string): void {
     const canonical = this.value.sources.find(s => s.id === source.id)
     if (!canonical || canonical.sha256 !== source.sha256 || canonical.ocr_text !== source.ocr_text) throw new ActivityError('SOURCE_EXPIRED', '来源已清理，本次抽取结果不再接纳')
     this.mutate(s => {
+      const sourceById = new Map(s.sources.map(row => [row.id, row]))
+      const actions = new Set<string>(), titles = new Set<string>(), legacyTitles = new Set<string>()
+      function seen(row: Pick<TodoCandidate, 'title' | 'evidence'>): boolean {
+        const e = row.evidence, origin = sourceById.get(e.source_id)
+        const message = [e.app_id, origin?.binding_id, origin?.conversation_title || e.source_id,
+          e.sender, e.message_time, e.quote.replace(/\s+/g, '')]
+        const title = JSON.stringify([...message, row.title.replace(/\s+/g, '')])
+        const action = e.action_quote && JSON.stringify([...message, e.action_quote.replace(/\s+/g, '')])
+        const duplicate = action ? actions.has(action) || legacyTitles.has(title) : titles.has(title)
+        if (action) actions.add(action)
+        else legacyTitles.add(title)
+        titles.add(title)
+        return duplicate
+      }
+      s.candidates.forEach(seen)
       for (const item of entries.slice(0, 12)) {
-        if (s.candidates.length >= 3000) break
-        // Dedupe across overlapping captures, but never across different group/sender anchors.
-        const key = (e: TaskEvidence) => digest([e.app_id, e.group, e.sender, e.message_time, e.quote.replace(/\s+/g, '')].join('\n'))
-        if (s.candidates.some(c => key(c.evidence) === key(item.evidence))) continue
+        if (seen(item)) continue
+        if (s.candidates.length >= 3000) throw new ActivityError('QUOTA_EXCEEDED', '候选已达上限，请清理来源后重试')
         s.candidates.unshift({ ...item, id: randomUUID(), revision: 0, created_at: source.captured_at, status: 'pending' })
       }
+      if (completedAt) s.sources.find(item => item.id === source.id)!.recognition = { status: 'complete', completed_at: completedAt, candidates: entries.length }
     })
   }
   confirm(id: string, revision: number, task: unknown, now: string): PersonalTodo {
@@ -212,7 +247,7 @@ export class ActivityStore {
     this.mutate(s => {
       s.sources = s.sources.filter(source => !ids.has(source.id))
       s.candidates = s.candidates.filter(c => !ids.has(c.evidence.source_id))
-      for (const t of s.todos) if (ids.has(t.evidence.source_id)) { t.evidence.quote = ''; t.evidence.group = ''; t.evidence.sender = ''; t.evidence.message_time = ''; t.revision++ }
+      for (const t of s.todos) if (ids.has(t.evidence.source_id)) { delete t.evidence.action_quote; delete t.evidence.context_quote; delete t.evidence.deadline_text; t.evidence.quote = ''; t.evidence.group = ''; t.evidence.sender = ''; t.evidence.message_time = ''; t.revision++ }
     })
     for (const sourceId of ids) fs.rmSync(this.imagePath(sourceId), { force: true })
   }

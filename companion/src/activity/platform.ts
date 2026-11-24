@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { resolveWinScript, runPs, type PsRunner } from '../host-use/win/powershell'
 import { MacPassiveRecorder, type CapturedWindow, type RecorderAdapter } from './adapters'
 import { ActivityError, PROTECTED_APPS, type ActivityApp, type ActivityConfig, type ActivityRect } from './types'
-import { ActivityScopeSkip, activityImageCrop, imageSize, namedWindowLayout, profileForFrame, recognizedChatTitle, scopeLocalFrame, validateActivityRect } from './chat-scope'
+import { checkChatTitle, type ScopedTitle, ActivityScopeSkip, activityImageCrop, imageSize, namedWindowLayout, profileForFrame, recognizedChatTitle, scopeLocalFrame, validateActivityRect } from './chat-scope'
 import { decodeWindowsActivityApps } from './windows-apps'
 
 const exec = promisify(execFile)
@@ -30,7 +30,8 @@ export class WindowsPassiveRecorder implements RecorderAdapter {
       const stderr = String((error as any)?.stderr || '')
       if (/APP_LIST_LIMIT_EXCEEDED/.test(stderr)) throw new ActivityError('APP_LIST_LIMIT_EXCEEDED', 'Windows 运行进程超过 4096 项，本次列表未更新；已有选择保留')
       if (name === 'activity-windows.ps1' && args[1] === 'Apps') throw new ActivityError('APP_LIST_FAILED', '无法读取完整 Windows 运行进程列表；请刷新重试，已有选择保留')
-      throw new ActivityError('WINDOWS_CAPTURE_UNAVAILABLE', /OCRLANGMISSING/.test(stderr) ? '本机未安装所选 Windows OCR 语言包，请在系统语言设置中安装或选择其他语言' : 'Windows 采集或 OCR 不可用：请核对普通交互桌面、窗口权限及本地 OCR 语言')
+      if (/OCRLANGMISSING/.test(stderr)) throw new ActivityError('OCR_LANGUAGE_MISSING', '本机未安装所选 Windows OCR 语言包，请在系统语言设置中安装或选择其他语言')
+      throw new ActivityError('WINDOWS_CAPTURE_UNAVAILABLE', 'Windows 采集或 OCR 不可用，请核对普通交互桌面与窗口权限')
     }
   }
   async listApps(signal: AbortSignal): Promise<ActivityApp[]> {
@@ -42,9 +43,9 @@ export class WindowsPassiveRecorder implements RecorderAdapter {
     return withPendingImage(this.root, image, file => this.ocr(file, language, signal))
   }
   private async ocr(file: string, language: LocalLanguage, signal: AbortSignal): Promise<string> {
-    const result = await this.call('computer-ocr.ps1', ['-ImagePath', file, '-Language', language], signal)
-    if (result.ok !== true || !Array.isArray(result.words)) throw new ActivityError('OCR_FAILED', 'Windows 本地 OCR 未返回可靠结果')
-    return result.words.filter((word: any) => typeof word.text === 'string').map((word: any) => word.text).join('\n').slice(0, 24000)
+    const result = await this.call('computer-ocr.ps1', ['-ActivityText', '-ImagePath', file, '-Language', language], signal)
+    if (result.ok !== true || !Array.isArray(result.lines) || result.lines.some((line: unknown) => typeof line !== 'string')) throw new ActivityError('OCR_FAILED', 'Windows 本地 OCR 未返回可靠结果')
+    return result.lines.join('\n').slice(0, 24000)
   }
   private async crop(file: string, rect: ActivityRect, signal: AbortSignal): Promise<Buffer> {
     return withPendingImage(this.root, null, async output => {
@@ -77,20 +78,23 @@ export class WindowsPassiveRecorder implements RecorderAdapter {
       const stat = fs.lstatSync(file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024) throw new ActivityError('CAPTURE_FAILED', '截图文件不可读取')
       let image: Buffer = fs.readFileSync(file); validatePng(image)
-      const profile = profileForFrame(config, window.app_id, window.window_class, image)
-      let conversationTitle: string | undefined
+      // The probe uses physical coordinates, including negative coordinates on secondary displays.
+      const { width, height } = imageSize(image), rect = captured.rect, dpi = captured.activity_dpi
+      const verifiedDpi = Number.isSafeInteger(dpi) && dpi > 0 && captured.hwnd === window.hwnd &&
+        rect?.width === width && rect?.height === height &&
+        [rect.x, rect.y, rect.x + width, rect.y + height].join(',') === window.geometry
+      const logicalSize = verifiedDpi && (width * 96) % dpi === 0 && (height * 96) % dpi === 0
+        ? { width: width * 96 / dpi, height: height * 96 / dpi } : undefined
+      const profile = profileForFrame(config, window.app_id, window.window_class, image, logicalSize)
+      let scoped: ScopedTitle = {}
       if (profile) {
-        try { conversationTitle = await this.ocrTitle(image, profile.title, languageOf(config), signal) }
-        catch (error) {
-          if (signal.aborted) throw error
-          throw new ActivityScopeSkip('scope_unreadable', '当前聊天标题无法在本机识别；请核对 OCR 语言与标题区域')
-        }
-        if (!conversationTitle) throw new ActivityScopeSkip('scope_unreadable', '未能识别当前聊天标题；请核对标题区域与本机 OCR 语言')
-        if (!profile.allowed_titles.includes(conversationTitle)) throw new ActivityScopeSkip('scope_title_mismatch', '当前聊天标题不在允许名单，已跳过且未保存截图')
+        scoped = await checkChatTitle(config, profile, signal,
+          () => this.ocrTitle(image, profile.title, languageOf(config), signal),
+          () => this.crop(file, profile.title, signal))
         image = await this.crop(file, profile.content, signal)
       }
       const ocrText = (config.extraction_mode || 'ocr') !== 'ocr' ? '' : profile ? await this.ocrImage(image, languageOf(config), signal) : await this.ocr(file, languageOf(config), signal)
-      return { app_id: window.app_id, app_name: window.app_name, window_title: window.title.slice(0, 500), ...(window.window_class ? { window_class: window.window_class } : {}), ...(conversationTitle ? { conversation_title: conversationTitle } : {}), image, ocr_text: ocrText }
+      return { app_id: window.app_id, app_name: window.app_name, window_title: window.title.slice(0, 500), ...(logicalSize ? { logical_width: logicalSize.width, logical_height: logicalSize.height } : {}), ...(window.window_class ? { window_class: window.window_class } : {}), ...scoped, image, ocr_text: ocrText }
     })
   }
 }
@@ -102,9 +106,13 @@ export function resolveLinuxRecorder(): string {
 export type LinuxRunner = (executable: string, args: string[], signal: AbortSignal) => Promise<string>
 export const runLinux: LinuxRunner = async (executable, args, signal) => {
   try {
-    const { stdout } = await exec(executable, args, { timeout: 30_000, maxBuffer: 1024 * 1024, signal, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: process.env.HOME, DISPLAY: process.env.DISPLAY, XAUTHORITY: process.env.XAUTHORITY, XDG_SESSION_TYPE: process.env.XDG_SESSION_TYPE, WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY, DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS }, encoding: 'utf8' })
+    const { stdout, stderr } = await exec(executable, args, { timeout: 30_000, maxBuffer: 1024 * 1024, signal, env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: process.env.HOME, DISPLAY: process.env.DISPLAY, XAUTHORITY: process.env.XAUTHORITY, XDG_SESSION_TYPE: process.env.XDG_SESSION_TYPE, WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY, DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS }, encoding: 'utf8' })
+    // Tesseract can exit 0 after loading English even when the requested Chinese pack failed.
+    if (executable === '/usr/bin/tesseract' && /Failed loading language|Error opening data file/.test(stderr))
+      throw new ActivityError('OCR_LANGUAGE_MISSING', '本机未安装所选 Tesseract OCR 语言包，请安装相应语言包或选择其他语言')
     return stdout
   } catch (error) {
+    if (error instanceof ActivityError) throw error
     if (signal.aborted) throw error
     const code = String((error as any)?.stderr || '').trim()
     if (code === 'SCREEN_LOCK_OR_SAVER') throw new ActivityError('DESKTOP_LOCKED', '屏幕已锁定或屏保开启，已跳过采集')

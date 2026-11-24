@@ -726,8 +726,11 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
       case "activity.state":
       case "activity.apps":
-    case "activity.preview":
-    case "activity.preview_ocr":
+      case "activity.bind_window":
+      case "activity.unbind_window":
+      case "activity.pause_window":
+      case "activity.preview":
+      case "activity.preview_ocr":
       case "activity.configure":
       case "activity.import":
       case "activity.scan":

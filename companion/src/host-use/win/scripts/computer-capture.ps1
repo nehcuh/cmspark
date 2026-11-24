@@ -59,6 +59,12 @@ public class CapW32 {
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetThreadDpiAwarenessContext();
   [DllImport("user32.dll")] public static extern bool AreDpiAwarenessContextsEqual(IntPtr first, IntPtr second);
+  [DllImport("user32.dll")] static extern IntPtr GetWindowDpiAwarenessContext(IntPtr h);
+  [DllImport("user32.dll")] static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
+  public static uint PerMonitorDpi(IntPtr h) {
+    try { return PhysicalContext() && GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(h)) == 2 ? GetDpiForWindow(h) : 0; }
+    catch (EntryPointNotFoundException) { return 0; }
+  }
   public static bool PhysicalContext() { return AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), new IntPtr(-4)); }
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
@@ -198,6 +204,7 @@ if (-not [CapW32]::GetWindowRect($hwndPtr, [ref]$r)) { Fail "HWNDDEAD" "window r
 $width = $r.Right - $r.Left; $height = $r.Bottom - $r.Top
 if ($width -le 0 -or $height -le 0) { Fail "HWNDDEAD" "hwnd $Hwnd has an empty rect" 4 }
 
+$activityDpi = if ($Passive) { [CapW32]::PerMonitorDpi($hwndPtr) } else { 0 }
 $wasIconic = [CapW32]::IsIconic($hwndPtr)
 if ($Passive -and $wasIconic) { Fail "CAPTUREFAILED" "passive target is minimized" 6 }
 if ($wasIconic) { [CapW32]::ShowWindow($hwndPtr, 9) | Out-Null; Start-Sleep -Milliseconds 250 }
@@ -293,6 +300,7 @@ Write-Output (ConvertTo-Json -Depth 6 -Compress -InputObject ([ordered]@{
   rect = @{ x = $r.Left; y = $r.Top; width = $width; height = $height }
   client = @{ x = $clientOffX; y = $clientOffY; width = ($cr.Right - $cr.Left); height = ($cr.Bottom - $cr.Top) }
   dpi = $dpi
+  activity_dpi = $(if ($activityDpi -gt 0 -and [CapW32]::PerMonitorDpi($hwndPtr) -eq $activityDpi) { $activityDpi } else { 0 })
   path = $OutPath
   sha256 = $sha
   black = $black

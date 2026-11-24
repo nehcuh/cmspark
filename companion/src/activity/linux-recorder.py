@@ -204,7 +204,7 @@ class Desktop:
         if not self.x.XTranslateCoordinates(self.display, window, self.root, 0, 0, C.byref(x), C.byref(y), C.byref(child)):
             raise RuntimeError("WINDOW_GONE")
         w, h = width.value, height.value
-        if w <= 0 or h <= 0 or w > 8192 or h > 8192 or w*h > 16_777_216:
+        if w <= 0 or h <= 0:
             raise RuntimeError("WINDOW_BOUNDS")
         return x.value, y.value, w, h
 
@@ -216,8 +216,6 @@ class Desktop:
         stack = self.prop(self.root, "_NET_CLIENT_LIST_STACKING")
         if not isinstance(active, list) or len(active) != 1 or not stack or active[0] not in stack:
             raise RuntimeError("FOREGROUND_UNAVAILABLE")
-        if stack[-1] != active[0]:
-            raise RuntimeError("WINDOW_OCCLUDED")
         focus, revert = U(), I()
         self.x.XGetInputFocus(self.display, C.byref(focus), C.byref(revert))
         current = focus.value
@@ -229,6 +227,8 @@ class Desktop:
             current, _children = self.tree(current)
         else:
             raise RuntimeError("FOCUS_IDENTITY_UNAVAILABLE")
+        # A higher managed client on another monitor need not obscure this one.
+        self.check_above(self.geometry(active[0]), stack[stack.index(active[0])+1:])
         return self.info(active[0])
 
     def tree(self, window):
@@ -257,8 +257,11 @@ class Desktop:
         _parent, children = self.tree(self.root)
         if frame not in children:
             raise RuntimeError("STACK_UNAVAILABLE")
+        self.check_above(bounds, children[children.index(frame)+1:])
+
+    def check_above(self, bounds, windows):
         x, y, w, h = bounds
-        for above in children[children.index(frame)+1:]:
+        for above in windows:
             attr = Attributes()
             if not self.x.XGetWindowAttributes(self.display, above, C.byref(attr)):
                 raise RuntimeError("STACK_UNAVAILABLE")
@@ -279,6 +282,8 @@ class Desktop:
             bounds = self.geometry(window)
             root_bounds = self.geometry(self.root)
             x, y, w, h = bounds
+            if w > 8192 or h > 8192 or w*h > 16_777_216:
+                raise RuntimeError("WINDOW_BOUNDS")
             if x < 0 or y < 0 or x+w > root_bounds[2] or y+h > root_bounds[3]:
                 raise RuntimeError("WINDOW_NOT_FULLY_VISIBLE")
             self.unobscured(window, bounds)
@@ -333,7 +338,9 @@ def main(argv):
     desktop = Desktop()
     try:
         if argv == ["probe"]:
-            return {"ok": True, "window": desktop.active()}
+            target = desktop.active()
+            desktop.unobscured(target["window"], desktop.geometry(target["window"]))
+            return {"ok": True, "window": target}
         if argv == ["apps"]:
             stack = desktop.prop(desktop.root, "_NET_CLIENT_LIST_STACKING")
             if not isinstance(stack, list) or len(stack) > 4096:

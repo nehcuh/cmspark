@@ -42,16 +42,19 @@ test('local Gemma extraction disables reasoning and a truncated response keeps i
     assert.equal(failed.error_code, 'VISION_OUTPUT_LIMIT')
     assert.deepEqual(failed.state, service.state())
     assert.equal(service.state().config.interval_ms, 3000)
+    const receipt = new ActivityStore(directory).state().sources[0].recognition
+    assert.equal(receipt?.status, 'failed')
+    assert.equal(receipt?.status === 'failed' && receipt.code, 'VISION_OUTPUT_LIMIT')
     const sourceId = service.state().sources[0].id
     const source = await service.handle({ type: 'activity.source', source_id: sourceId })
     assert.equal(source.ok, true)
     assert.equal((source.source as { image_data_url: string }).image_data_url, 'data:image/png;base64,' + PNG)
     const customPrompt = '优先提取明确要求群内反馈的任务'
-    assert.equal((await service.handle({ type: 'activity.configure', expected_revision: service.state().revision, patch: { extraction_prompt: customPrompt } })).ok, true)
+    assert.equal((await service.handle({ type: 'activity.configure', expected_revision: service.state().revision, patch: { extraction_prompt: customPrompt, image_output_tokens: 4096 } })).ok, true)
     assert.equal(service.state().config.image_ai_enabled, true)
     assert.equal((await service.handle({ type: 'activity.analyze', source_id: sourceId })).ok, true)
     assert.equal(service.state().candidates.length, 1)
-    assert.deepEqual(requests.map(body => [body.reasoning_effort, body.max_tokens]), [['none', 2048], ['none', 2048]])
+    assert.deepEqual(requests.map(body => [body.reasoning_effort, body.max_tokens]), [['none', 2048], ['none', 4096]])
     const [original, customized] = requests.map(body => body.messages[0].content.find(part => part.type === 'text')?.text)
     assert.equal(original, ACTIVITY_IMAGE_PROMPT)
     assert.ok(customized?.includes(customPrompt))
@@ -245,4 +248,19 @@ test('an open consent form cannot authorize a globally changed vision endpoint',
     assert.equal(service.state().config.image_ai_enabled, false)
     assert.equal((await service.handle({ type: 'activity.configure', expected_revision: state.revision, expected_model_target: service.state().runtime.model_target_ids!.vision, patch: { extraction_mode: 'vision', image_ai_enabled: true } })).ok, true)
   } finally { await service.stop(); fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('strict vision recognition distinguishes a provider timeout from an empty model reply', async () => {
+  const original = globalThis.fetch
+  const timer = setTimeout(() => {}, 2000)
+  try {
+    globalThis.fetch = async (_url, init) => new Promise((_resolve, reject) => {
+      const signal = init?.signal!
+      if (signal.aborted) reject(signal.reason)
+      else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })
+    const model = { ...getConfig().vision!, base_url: 'http://127.0.0.1:9009/v1', model_name: 'owned-timeout',
+      timeout_ms: 50, cache_ttl_seconds: 0, fallback: 'error' as const }
+    await assert.rejects(analyzeImage(IMAGE, model, 'owned timeout fixture', undefined, { requireComplete: true }), { code: 'timeout' })
+  } finally { clearTimeout(timer); globalThis.fetch = original }
 })

@@ -1,0 +1,54 @@
+[
+  {
+    "displayed": [
+      "虚构项目甲",
+      "小周 09:00",
+      "小林，核对清单，把差异发给我。"
+    ],
+    "raw": "```json\n{\n  \"transcript\": \"虚构项目甲\\n小周 09:00\\n小林，核对清单，把差异发给我。\",\n  \"candidates\": [\n    {\n      \"title\": \"核对清单\",\n      \"owner\": \"小林\",\n      \"due_at\": null,\n      \"feedback_to\": \"\",\n      \"feedback_required\": false,\n      \"group\": \"虚构项目甲\",\n      \"sender\": \"小周\",\n      \"message_time\": \"09:00\",\n      \"quote\": \"小林，核对清单，把差异发给我。\",\n      \"action_quote\": \"核对清单\",\n      \"context_quote\": \"\",\n      \"deadline_text\": \"\"\n    },\n    {\n      \"title\": \"把差异发给小周\",\n      \"owner\": \"小林\",\n      \"due_at\": null,\n      \"feedback_to\": \"小周\",\n      \"feedback_required\": true,\n      \"group\": \"虚构项目甲\",\n      \"sender\": \"小周\",\n      \"message_time\": \"09:00\",\n      \"quote\": \"小林，核对清单，把差异发给我。\",\n      \"action_quote\": \"把差异发给我\",\n      \"context_quote\": \"\",\n      \"deadline_text\": \"\"\n    }\n  ]\n}\n```",
+    "binding": 1,
+    "expectedNew": 2
+  },
+  {
+    "displayed": [
+      "虚构项目乙",
+      "小夏 10:00：请整理报价。",
+      "小江 10:01：我来整理报价，周五下班前给小夏。"
+    ],
+    "raw": "{\"transcript\":\"虚构项目乙\\n\\n小夏 10:00：请整理报价。\\n\\n小江 10:01：我来整理报价，周五下班前给小夏。\",\"candidates\":[{\"title\":\"整理报价\",\"owner\":\"小江\",\"due_at\":null,\"feedback_to\":\"小夏\",\"feedback_required\":true,\"group\":\"虚构项目乙\",\"sender\":\"小夏\",\"message_time\":\"10:00\",\"quote\":\"小夏 10:00：请整理报价。\",\"action_quote\":\"整理报价\",\"context_quote\":\"小江 10:01：我来整理报价，周五下班前给小夏。\",\"deadline_text\":\"周五下班前\"}]}",
+    "binding": 1,
+    "expectedNew": 1
+  },
+  {
+    "displayed": [
+      "虚构项目丙",
+      "小许：核对已经完成，差异也发过了。",
+      "小黄：如果客户同意，后续再安排准备材料。",
+      "小吴：大家午安。"
+    ],
+    "raw": "{\"transcript\":\"虚构项目丙\\n小许：核对已经完成，差异也发过了。\\n小黄：如果客户同意，后续再安排准备材料。\\n小吴：大家午安。\",\"candidates\":[]}",
+    "binding": 1,
+    "expectedNew": 0
+  },
+  {
+    "displayed": [
+      "虚构项目甲",
+      "小周 09:00",
+      "小林，核对清单，把差异发给我。",
+      "小林 09:01：收到。"
+    ],
+    "raw": "```json\n{\n  \"transcript\": \"虚构项目甲\\n小周 09:00\\n小林，核对清单，把差异发给我。\\n小林 09:01: 收到。\",\n  \"candidates\": [\n    {\n      \"title\": \"核对清单\",\n      \"owner\": \"小林\",\n      \"due_at\": null,\n      \"feedback_to\": \"\",\n      \"feedback_required\": false,\n      \"group\": \"虚构项目甲\",\n      \"sender\": \"小周\",\n      \"message_time\": \"09:00\",\n      \"quote\": \"小林，核对清单，把差异发给我。\",\n      \"action_quote\": \"核对清单\",\n      \"context_quote\": \"小林 09:01: 收到。\",\n      \"deadline_text\": \"\"\n    },\n    {\n      \"title\": \"把清单差异发给小周\",\n      \"owner\": \"小林\",\n      \"due_at\": null,\n      \"feedback_to\": \"小周\",\n      \"feedback_required\": true,\n      \"group\": \"虚构项目甲\",\n      \"sender\": \"小周\",\n      \"message_time\": \"09:00\",\n      \"quote\": \"小林，核对清单，把差异发给我。\",\n      \"action_quote\": \"把差异发给我\",\n      \"context_quote\": \"小林 09:01: 收到。\",\n      \"deadline_text\": \"\"\n    }\n  ]\n}\n```",
+    "binding": 1,
+    "expectedNew": 0
+  },
+  {
+    "displayed": [
+      "虚构项目甲",
+      "小周 09:00",
+      "小林，核对清单，把差异发给我。"
+    ],
+    "raw": "```json\n{\n  \"transcript\": \"虚构项目甲\\n小周 09:00\\n小林，核对清单，把差异发给我。\",\n  \"candidates\": [\n    {\n      \"title\": \"核对清单\",\n      \"owner\": \"小林\",\n      \"due_at\": null,\n      \"feedback_to\": \"小周\",\n      \"feedback_required\": true,\n      \"group\": \"虚构项目甲\",\n      \"sender\": \"小周\",\n      \"message_time\": \"09:00\",\n      \"quote\": \"小林，核对清单，把差异发给我。\",\n      \"action_quote\": \"核对清单\",\n      \"context_quote\": \"\",\n      \"deadline_text\": \"\"\n    },\n    {\n      \"title\": \"把差异发给小周\",\n      \"owner\": \"小林\",\n      \"due_at\": null,\n      \"feedback_to\": \"小周\",\n      \"feedback_required\": true,\n      \"group\": \"虚构项目甲\",\n      \"sender\": \"小周\",\n      \"message_time\": \"09:00\",\n      \"quote\": \"小林，核对清单，把差异发给我。\",\n      \"action_quote\": \"把差异发给我\",\n      \"context_quote\": \"\",\n      \"deadline_text\": \"\"\n    }\n  ]\n}\n```",
+    "binding": 2,
+    "expectedNew": 2
+  }
+]

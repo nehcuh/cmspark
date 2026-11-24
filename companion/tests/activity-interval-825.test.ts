@@ -33,20 +33,32 @@ test('825 tick starts at 3000ms, not 2999ms, without changing the stored default
   } finally { await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
 })
 
-test('825 slow model remains single-flight and skipped ticks do not form a backlog', async () => {
+test('900 slow model processes one source at a time while every due capture is stored', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'activity825-busy-'))
-  let now = 100_000, captures = 0, extracts = 0, release!: () => void
+  let now = 100_000, captures = 0, displayed = 0, extracts = 0, release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
   const service = new ActivityService({ dataDir: dir, platform: 'win32', now: () => now,
-    recorder: { capture: async () => ({ app_id: app, app_name: 'Owned Chat', window_title: 'Owned', ocr_text: `Send report ${++captures}`, image: Buffer.from(`owned-${captures}`) }) },
+    recorder: { capture: async () => {
+      captures++
+      return { app_id: app, app_name: 'Owned Chat', window_title: 'Owned', ocr_text: 'Send report ' + displayed, image: Buffer.from('owned-' + displayed) }
+    } },
     extract: async () => { if (++extracts === 1) await held; return [] }, notify: async () => {} })
   try {
     service.store.configure(0, { enabled: true, allowed_apps: [app], interval_ms: 3000, ocr_ai_enabled: true })
     service.start(); await turn(); assert.equal(captures, 1); assert.equal(extracts, 1)
-    for (const elapsed of [3000, 6000, 9000]) { now = 100_000 + elapsed; await service.tick(); assert.equal(captures, 1) }
-    await assert.rejects(service.scan(), { code: 'BUSY' })
-    release(); await turn(); await service.tick()
-    assert.equal(captures, 2); assert.equal(extracts, 2)
-    await service.tick(); assert.equal(captures, 2)
+    for (const [elapsed, frame] of [[3000, 1], [6000, 1], [9000, 2], [12000, 2], [15000, 2], [18000, 3], [21000, 3], [24000, 3]]) {
+      now = 100_000 + elapsed; displayed = frame
+      await service.tick()
+    }
+    assert.equal(captures, 9)
+    assert.equal(service.state().runtime.last_success_at, new Date(118_000).toISOString())
+    assert.equal(extracts, 1)
+    assert.deepEqual(service.state().sources.map(s => s.recognition?.status), ['queued', 'queued', 'queued', 'running'])
+    await service.handle({ type: 'activity.configure', expected_revision: service.store.revision(), patch: { interval_ms: 4000 } })
+    now = 125_000
+    release(); await turn()
+    assert.equal(extracts, 4)
+    assert.ok(service.state().sources.every(s => s.recognition?.status === 'complete' && s.recognition.candidates === 0))
+    await service.tick(); assert.equal(captures, 9)
   } finally { release(); await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
 })

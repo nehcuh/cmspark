@@ -17,6 +17,7 @@ param(
   # BCP-47 tag, e.g. "zh-Hans" (default) or "en-US".
   [string]$Language = "zh-Hans",
   # Diagnostic mode: list installed recognizer languages and exit.
+  [switch]$ActivityText,
   [switch]$ListLanguages
 )
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -133,6 +134,13 @@ try {
   $result = Wait-WinRtAsync $recOp ([Windows.Media.Ocr.OcrResult])
 } catch {
   Fail "OCRFAILED" "recognize: $($_.Exception.Message)" 5
+}
+
+# Preserve the engine's reading order and language-specific spacing for literal chat evidence.
+if ($ActivityText) {
+  $lines = @($result.Lines | ForEach-Object { [string]$_.Text })
+  ConvertTo-Json -Compress -InputObject ([ordered]@{ ok = $true; language = $Language; lines = $lines })
+  exit 0
 }
 
 $words = @()
