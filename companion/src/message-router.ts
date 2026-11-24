@@ -89,7 +89,7 @@ import {
 } from "./skills/knowledge-graph"
 import { KNOWLEDGE_UNGROUPED_KEY, type KnowledgeGraphLabelEntry } from "./skills/knowledge-clusters"
 import { normalizeTags } from "./threads/digest"
-import { resolveNativeVision, visionConfigForAnalyze } from "./llm/likely-multimodal"
+import { resolveNativeVision, visionConfigForAnalyze, visionConfigForDocumentImages } from "./llm/likely-multimodal"
 import {
   allocateUploadMessageId,
   buildVisionAttachMessage,
@@ -1880,7 +1880,7 @@ async function dispatchMessage(
             (embedLlm as any)[key] = val
           }
         }
-        const embedVisionCfg = visionConfigForAnalyze(embedLlm, config.vision)
+        const embedVisionCfg = visionConfigForDocumentImages(embedLlm, config.vision)
         const visionEnabled = !!(embedVisionCfg && fileConfig.enable_vision_analysis !== false)
 
         for (const parseResult of parseResults) {

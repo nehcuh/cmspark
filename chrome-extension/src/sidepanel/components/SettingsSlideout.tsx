@@ -127,11 +127,7 @@ import {
 import { detectSpeechRecognition, normalizeChatDictationLanguage } from "../voice/detect"
 import {
   VISION_COPY,
-  applyVisionReuseFromMain,
-  bannerBodyForHost,
   extractHostname,
-  isCustomVisionConfig,
-  isVisionReusingMain,
   shouldOfferVisionReuse,
 } from "./vision-reuse-logic"
 
@@ -199,10 +195,6 @@ export function SettingsSlideout() {
   const [autopilotBusy, setAutopilotBusy] = useState(false)
   const [advancedGatesOpen, setAdvancedGatesOpen] = useState(false)
   // Vision reuse UX (multi-adversarial P0): banner session + advanced collapse when reused
-  const [visionReuseBanner, setVisionReuseBanner] = useState(false)
-  const [visionReuseBannerDismissed, setVisionReuseBannerDismissed] = useState(false)
-  const [visionReuseHint, setVisionReuseHint] = useState<string | null>(null)
-  const [visionAdvancedOpen, setVisionAdvancedOpen] = useState(false)
   const [unattendedAckDesktop, setUnattendedAckDesktop] = useState(false)
   const [unattendedAckSession, setUnattendedAckSession] = useState(false)
   const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
@@ -1802,25 +1794,6 @@ export function SettingsSlideout() {
                 onChange={e => {
                   const on = e.target.checked
                   dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_enabled: on } })
-                  setVisionReuseHint(null)
-                  if (!on) {
-                    setVisionReuseBanner(false)
-                    return
-                  }
-                  // Banner only on false→true; never auto-copy credentials (S-V5)
-                  if (
-                    !visionReuseBannerDismissed &&
-                    shouldOfferVisionReuse({
-                      model_name: config.model_name,
-                      base_url: config.base_url,
-                      api_key: config.api_key,
-                      protocol: config.protocol,
-                    })
-                  ) {
-                    setVisionReuseBanner(true)
-                  } else {
-                    setVisionReuseBanner(false)
-                  }
                 }}
               />
               启用截图视觉分析
@@ -1829,104 +1802,35 @@ export function SettingsSlideout() {
             <div style={{ ...styles.helpText, marginTop: 4 }}>{VISION_COPY.railDifferentiator}</div>
           </div>
 
-          {config.vision_enabled && visionReuseBanner && (
-            <div style={{
-              ...styles.field,
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: tokens.accentSoft,
-              border: `1px solid ${tokens.border}`,
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{VISION_COPY.bannerTitle}</div>
-              <div style={{ fontSize: 12, color: tokens.textSecondary, marginBottom: 8, lineHeight: 1.45 }}>
-                {bannerBodyForHost(extractHostname(config.base_url))}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <button
-                  type="button"
-                  style={styles.testBtn}
-                  onClick={() => {
-                    const main = {
-                      model_name: config.model_name,
-                      base_url: config.base_url,
-                      api_key: config.api_key,
-                      protocol: config.protocol,
-                    }
-                    if (isCustomVisionConfig(main, config)) {
-                      if (!window.confirm(VISION_COPY.overwriteConfirm)) return
-                    }
-                    const result = applyVisionReuseFromMain(main)
-                    dispatch({ type: "EDIT_SETTINGS_DRAFT", config: result.patch })
-                    setVisionReuseBanner(false)
-                    setVisionReuseBannerDismissed(true)
-                    setVisionAdvancedOpen(false)
-                    setVisionReuseHint(
-                      (result.needsKeyPaste ? VISION_COPY.needsKeyPaste + " " : "") +
-                        VISION_COPY.postReuseTestHint,
-                    )
-                  }}
-                >
-                  {VISION_COPY.useMain}
-                </button>
-                <button
-                  type="button"
-                  style={styles.toggleBtn}
-                  onClick={() => {
-                    setVisionReuseBanner(false)
-                    setVisionReuseBannerDismissed(true)
-                    setVisionAdvancedOpen(true)
-                  }}
-                >
-                  {VISION_COPY.keepSeparate}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {config.vision_enabled && visionReuseHint && (
-            <div style={{ ...styles.helpText, color: tokens.success, marginBottom: 8 }}>
-              {visionReuseHint}
-            </div>
-          )}
-
           {config.vision_enabled && (() => {
-            const reusing = isVisionReusingMain(
-              { model_name: config.model_name, base_url: config.base_url },
-              config,
-            )
-            const showFields = !reusing || visionAdvancedOpen
+            const canReuse = shouldOfferVisionReuse(config)
+            const reusing = canReuse && config.vision_reuse_main_model !== false
             return (
               <>
-                {reusing && (
-                  <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    flexWrap: "wrap",
-                    marginBottom: 8,
-                    fontSize: 12,
-                  }}>
-                    <span style={{
-                      padding: "2px 8px",
-                      borderRadius: 8,
-                      background: tokens.successSoft,
-                      color: tokens.success,
-                      fontWeight: 500,
-                    }}>
-                      {VISION_COPY.reusedChip} · {extractHostname(config.vision_base_url || config.base_url)}
-                    </span>
-                    <button
-                      type="button"
-                      style={styles.toggleBtn}
-                      onClick={() => setVisionAdvancedOpen(v => !v)}
-                    >
-                      {visionAdvancedOpen ? VISION_COPY.collapseAdvanced : VISION_COPY.expandAdvanced}
-                    </button>
+                <div style={styles.field}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={reusing}
+                      disabled={!canReuse}
+                      onChange={e => dispatch({ type: "EDIT_SETTINGS_DRAFT", config: { vision_reuse_main_model: e.target.checked } })}
+                    />
+                    {VISION_COPY.reuseMain}
+                  </label>
+                  <div style={styles.helpText}>
+                    {!canReuse ? VISION_COPY.unavailableHelp : reusing ? VISION_COPY.reuseHelp : VISION_COPY.separateHelp}
                   </div>
-                )}
-
-                {showFields && (
-                  <>
+                  {reusing && (
+                    <div style={{ ...styles.helpText, color: tokens.success, marginTop: 4 }}>
+                      当前使用：{config.model_name} · {extractHostname(config.base_url)}
+                    </div>
+                  )}
+                </div>
+                <fieldset
+                  disabled={reusing}
+                  aria-label="独立视觉模型配置"
+                  style={{ border: 0, padding: 0, margin: 0, minWidth: 0, opacity: reusing ? 0.5 : 1 }}
+                >
               <div style={styles.field}>
                 <label style={styles.label}>
                   API Key{" "}
@@ -1996,6 +1900,8 @@ export function SettingsSlideout() {
                 </datalist>
               </div>
 
+                </fieldset>
+
               <div style={styles.field}>
                 <label style={styles.label}>
                   超时时间: {Math.round((config.vision_timeout_ms || 30000) / 1000)}s
@@ -2026,10 +1932,7 @@ export function SettingsSlideout() {
                   视觉模型不可用时的处理方式：仅元数据 = 发送页面标题和尺寸信息
                 </div>
               </div>
-                  </>
-                )}
-
-              <p style={styles.helpText}>需要验证独立视觉模型时，「测试模型连接」会使用已保存的视觉配置。</p>
+              <p style={styles.helpText}>保存后，「测试模型连接」会验证当前使用的视觉模型。</p>
               </>
             )
           })()}

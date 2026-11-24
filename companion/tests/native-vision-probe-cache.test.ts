@@ -89,7 +89,7 @@ test("an Anthropic main model handles screenshots through its actual provider", 
     const config = visionConfigForAnalyze({
       base_url: "http://127.0.0.1:9/v1", api_key: "fixture-key", model_name: "claude-test",
       protocol: "anthropic", native_vision: "on", anthropic_version: "2023-06-01",
-    })
+    }, { enabled: true, base_url: "http://127.0.0.1:9/v1", api_key: "fixture-key", model_name: "claude-test" })
     assert.ok(config)
     const result = await analyzeImage({
       base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",

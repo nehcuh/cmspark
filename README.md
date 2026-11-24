@@ -3,13 +3,15 @@
 > 对着**已经登录的 Chrome** 干活的本机手：热键召唤开口，危险走**确认台**，Codex / Claude Code / Grok 可**租同一只手**（Outbound MCP）。家是 **已登录 Chrome + 硬闸**，不是 Side Panel。  
 > 能力叠加：**默认**网页问答与页内操控；**按需** Skills / Knowledge / MCP / 任务包；**opt-in** 桌面 Computer Use 与企业模块。产品句：[PRODUCT.md](PRODUCT.md)。
 
-源码开发版本 **1.9.0（尚未正式发布）**；已发布安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
+源码开发版本 **1.9.1（尚未正式发布）**；已发布安装包与源码进度请看[版本与交付状态](docs/release-status.md)和[变更记录](CHANGELOG.md)。
 
 从插件弹窗或侧栏顶行选择 **个人工作台**，可以打开会议、录屏、实时转写、翻译、活动记录和待办。
 
 扩展设置首页可以按用途查找配置，也可以输入「会议纪要模型」或「把思考过程收起来」。在 **设置 → 模型与服务** 可以保存可复用的文本模型，分别选择默认对话和会议纪要模型。录音转写和纪要生成的配置与确认流程见[会议与听写指南](docs/meeting-and-dictation-user-guide.md)。
 
 从旧版升级时，请将 Companion 与 Chrome 扩展一起升级。解压安装的扩展需在 Chrome 扩展管理页重新加载，会议面板才能使用本版的转写和纪要确认流程。
+
+在 **设置 → 模型与服务 → 看图与截图** 中，先开启截图视觉分析。主模型支持图片时，可以开启「复用主模型」，截图识别会跟随当前主模型，独立模型设置置灰且保留。关闭复用后可填写独立视觉服务；主模型不支持图片时需要使用独立服务。关闭截图视觉分析会停止工具截图识别；输入框上传图片仍按主模型的看图能力独立处理。旧配置未设置复用偏好时，保持已开启截图分析优先使用主模型的行为。
 
 ---
 
@@ -1021,4 +1023,4 @@ cmspark/
 
 ---
 
-> **当前阶段（1.9.0）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。操作面：已完成工具步骤收成审计芯 · 舰队 Glance/Inspect · spawn kick · 子任务不摊成平级聊天 · collect_handback 散文研究报告算成功收取。Capture 默认 **1040×760**（紧凑 **360×420**）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· Darwin 内嵌终端（#432，默认关）· `search_threads`/`search_knowledge`（#439）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**（`node.exe` + `cmspark-agent.js`）；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**（#363 摘帽门未过）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（1.9.1）**：家 = **已登录 Chrome + 硬闸**（[PRODUCT.md](PRODUCT.md)）。操作面：已完成工具步骤收成审计芯 · 舰队 Glance/Inspect · spawn kick · 子任务不摊成平级聊天 · collect_handback 散文研究报告算成功收取。Capture 默认 **1040×760**（紧凑 **360×420**）· 知识默认 TF-IDF top-k 注入 · 知识图谱（#427）· Darwin 内嵌终端（#432，默认关）· `search_threads`/`search_knowledge`（#439）。召唤器 HTML **流式出字** · Whisper 自动激活/当次会话回退横幅/HF 镜像 · 会议说话人「自动」档。**听写+ / 会议 / 本机 Whisper** 已交付；**对话框可粘贴/点选/拖入图片**；**Windows 官方 NSIS Setup.exe**（`node.exe` + `cmspark-agent.js`）；**知识 CRUD 诚实**（AI 草稿 / 检索打分 / 分布视图 / 多级文件夹 / sha256 去重）；**侧栏 UI 重构 + 巡航档位/plan_readonly/无人值守 loop 三件套 + 专家团队 v1 + CU 完整性链**（0.6.0 主题，值守默认关）；**租手钥匙 CLI + L8**；ChatShell 空态 + **弹出对话框**；技能 TF-IDF + 当轮活计划（页面工具前必须 propose；成功后才挂卡；放弃/纯问答则无卡）。**不是**召唤器/租手完成切点——T1 已记分（CMspark 臂 Y / Playwright 打不开门户），**禁扩**默认 outbound profile（[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。CU 实验定位仅 **Qwen3-VL**（#363 摘帽门未过）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
