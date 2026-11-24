@@ -1,8 +1,12 @@
 # 版本与交付状态
 
-源码开发版本 **1.8.1（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码版本 **1.8.1（已于 2026-11-24 正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
 
-## 1.8.1 发布准备
+## 1.8.1
+
+2026-11-24 07:11:42 UTC 正式发布，标签指向 `bfc447d838b5f518a1f726e137f44498fd6f4cbb`。主线检查、同树基础包与安装器预演、正式发布构建及同标签安装器构建均通过。正式版 19 项附件已核对摘要、文件大小及校验清单。[正式发行](https://github.com/nehcuh/cmspark/releases/tag/v1.8.1) · [正式构建](https://github.com/nehcuh/cmspark/actions/runs/45344026930) · [同标签安装器](https://github.com/nehcuh/cmspark/actions/runs/45344031665)
+
+Windows 原生 Office 检查首次发生 30 秒解析超时，原时限复核通过，首次超时原因未知。[主线检查](https://github.com/nehcuh/cmspark/actions/runs/45339193377)
 
 缓存命中优化已合入 [PR #899](https://github.com/nehcuh/cmspark/pull/899)。供应商实测覆盖合成请求，发布后正常流量由 [#898](https://github.com/nehcuh/cmspark/issues/898) 持续跟踪。
 
