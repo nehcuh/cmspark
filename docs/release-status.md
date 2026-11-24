@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-源码版本 **1.8.1（发布准备）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码开发版本 **1.8.1（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
 
 ## 1.8.1 发布准备
 
