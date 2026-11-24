@@ -182,7 +182,7 @@ test('manual preview can capture while an automatic source is being analyzed', a
     assert.equal(service.state().sources.length, 1)
     finish()
     await new Promise<void>(resolve => setImmediate(resolve))
-    assert.equal(service.state().runtime.status, 'ready_for_review')
+    assert.equal(service.state().sources[0].recognition?.status, 'complete')
   } finally { finish?.(); await service.stop(); fs.rmSync(root, { recursive: true, force: true }) }
 })
 test('scope825 refusal is a normal visible status and stores no source or model request', async () => {

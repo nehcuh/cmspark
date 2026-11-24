@@ -51,7 +51,7 @@ export interface HostIntegrityCheck {
  * MacOS/CMspark is deep-signed and will NOT match this pin; see
  * codesignProductIdentityOk path in checkHostIntegrity.
  */
-export const CMSPARK_HOST_SHA256 = "3fcc3952404b7cdb9df73b733cdf6354464f0832cf2700bf6e1ac10b88041a63"
+export const CMSPARK_HOST_SHA256 = "3873cbe5378d3ce52cae7e1cff554d87e0dcdda62867f5a0cfb99a74539c26c7"
 
 /**
  * True when realpath is inside a macOS .app Contents tree (packaged install).

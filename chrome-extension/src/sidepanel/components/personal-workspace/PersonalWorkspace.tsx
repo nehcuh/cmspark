@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { CONTEXT_PANEL_TABS, type ContextPanelId } from '../ContextPanelHost'
 import { datetimeInput, taskDatePatch, dueToday, formatTaskTime, requestActivity, taskComplete, type ActivityApp, type ActivityConfig, type ActivityReply, type PersonalTodo, type TaskEvidence, type TodoCandidate } from './activity-request'
 import type { ActivityBulkAction, ActivityBulkItem, ActivityBulkResult, ActivityController } from './useActivity'
-import { RecentActivitySources } from './RecentActivitySources'
+import { RecentActivitySources, recognitionLabel } from './RecentActivitySources'
 import { ChatScopeEditor } from './ChatScopeEditor'
 
 /** Aliases help users find a process; only app_id grants the existing capture scope. */
@@ -152,7 +152,7 @@ function TodoPanel({ today, controller, connected, active, navigationOwner, navi
 }
 
 function sourceLine(evidence: TaskEvidence, appName?: string): string { return [appName || evidence.app_id || '应用未识别', evidence.group || '群 / 对话未识别', evidence.sender || '提出人未识别'].join(' / ') }
-function SourceEvidence({ evidence, connected, onSource, sourceAvailable = true, appName, autoLoad = false }: { evidence: TaskEvidence; appName?: string; connected: boolean; onSource?: (source: NonNullable<ActivityReply['source']>) => void; sourceAvailable?: boolean; autoLoad?: boolean }) {
+function SourceEvidence({ evidence, connected, onSource, sourceAvailable = true, appName, autoLoad = false, resultVersion }: { resultVersion?: string; evidence: TaskEvidence; appName?: string; connected: boolean; onSource?: (source: NonNullable<ActivityReply['source']>) => void; sourceAvailable?: boolean; autoLoad?: boolean }) {
   const [source, setSource] = useState<ActivityReply['source']>(), [error, setError] = useState(''), [loading, setLoading] = useState(false)
   const abort = useRef<AbortController | null>(null)
   const sourceId = evidence.source_id
@@ -166,9 +166,12 @@ function SourceEvidence({ evidence, connected, onSource, sourceAvailable = true,
     setSource(undefined); setError(''); setLoading(false)
     if (autoLoad && connected && sourceAvailable && sourceId) void load()
     return () => abort.current?.abort()
-  }, [load, sourceId, evidence.quote, sourceAvailable, connected, autoLoad])
+  }, [load, sourceId, evidence.quote, sourceAvailable, connected, autoLoad, resultVersion])
   return <><p className="cm-personal-source-line">{sourceLine(evidence, appName || source?.app_name)}</p><dl><dt>消息时间</dt><dd>{evidence.message_time || '未识别，请核对原文'}</dd><dt>原始应用</dt><dd>{evidence.app_id || '未识别'}</dd></dl>
     <blockquote>{evidence.quote || '没有引用文本，可核对保存的截图。'}</blockquote>
+    {evidence.context_quote && <blockquote>相邻消息 · {evidence.context_quote}</blockquote>}
+    {evidence.action_quote && <p className="cm-personal-fieldnote">行动原文 · {evidence.action_quote}</p>}
+    {evidence.deadline_text && <p className="cm-personal-fieldnote">原文截止时间 · {evidence.deadline_text}（请核对日期）</p>}
     <button type="button" className="cm-p-link" disabled={!connected || loading || !evidence.source_id || !sourceAvailable} onClick={() => void load()}>{!sourceAvailable ? '来源已清理' : loading ? '读取来源中…' : source ? '重新读取来源' : '查看原始截图'}</button>
     {error && <p role="alert" className="cm-personal-fieldnote">{error}</p>}
     {sourceAvailable && source && <details open><summary className="cm-personal-source-line">{source.origin === 'manual_import' ? '导入于（原消息时间未知）' : '采集于'} {formatTaskTime(source.captured_at)} · {source.app_name || source.app_id}</summary>{source.image_data_url && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(source.image_data_url) ? <img className="cm-personal-source-image" src={source.image_data_url} alt={`${source.app_name || '应用'}在${formatTaskTime(source.captured_at)}的来源截图`} /> : <p className="cm-personal-fieldnote">截图已清理或不可读取。</p>}<p className="cm-personal-fieldnote" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: 10 }}>{source.ocr_text || '暂无识别文字'}</p></details>}
@@ -210,32 +213,53 @@ function ActivityPanel({ controller, connected }: { controller: ActivityControll
   const { snapshot, busy, mutate } = controller
   const [editing, setEditing] = useState(false), [deleteConfirm, setDeleteConfirm] = useState(false)
   const [sourceId, setSourceId] = useState<string | null>(null)
+  const [visibleSources, setVisibleSources] = useState(30)
   const sourceDetail = useRef<HTMLElement | null>(null)
   useEffect(() => { sourceDetail.current?.scrollIntoView?.({ block: 'nearest' }) }, [sourceId])
   const [loadedSource, setLoadedSource] = useState<ActivityReply['source']>(), [manual, setManual] = useState(false)
   const runtime = snapshot!.runtime, config = snapshot!.config
+  const bindings = config.fixed_windows || []
+  const bindable = (config.chat_scopes || []).filter(scope => scope.profiles.length && config.allowed_apps.includes(scope.app_id))
   const imageMode = (config.extraction_mode || 'ocr') !== 'ocr'
   const extractionAllowed = imageMode ? config.image_ai_enabled : config.ocr_ai_enabled
   const source = snapshot!.sources.find(item => item.id === sourceId)
-  const status = !controller.snapshotCurrent ? '采集状态待确认' : !runtime.supported ? '当前环境仅支持主动导入截图' : runtime.scanning ? '正在采集与分析' : config.enabled && !runtime.running ? '采集后台未运行' : config.enabled ? '采集已开启' : '采集已暂停'
+  const status = !controller.snapshotCurrent ? '采集状态待确认' : !runtime.supported ? '当前环境仅支持主动导入截图' : runtime.scanning ? '正在检查窗口' : config.enabled && !runtime.running ? '采集后台未运行' : config.enabled ? '采集已开启' : '采集已暂停'
   return <>
-    <div className="cm-personal-config"><div className="cm-personal-section-title"><h2>{status}</h2><button type="button" className="cm-p-button" disabled={!connected || busy || !runtime.supported || !config.enabled && !config.allowed_apps.length} onClick={() => void mutate('activity.configure', { expected_revision: snapshot!.revision, patch: { enabled: !config.enabled } }, config.enabled ? '已暂停后续采集。' : '采集已开启；仅覆盖指定的前台应用。')}>{config.enabled ? '暂停采集' : '开启采集'}</button></div>
+    <div className="cm-personal-config"><div className="cm-personal-section-title"><h2>{status}</h2><button type="button" className="cm-p-button" disabled={!connected || busy || !runtime.supported || !config.enabled && !config.allowed_apps.length} onClick={() => void mutate('activity.configure', { expected_revision: snapshot!.revision, patch: { enabled: !config.enabled } }, config.enabled ? '已暂停后续采集。' : '采集已开启，请核对当前采集范围。')}>{config.enabled ? '暂停采集' : '开启采集'}</button></div>
       <p className="cm-personal-fieldnote">{runtime.coverage}</p><p className="cm-personal-fieldnote">{runtime.platform_note}</p>
-      <div className="cm-personal-runtime"><div><span>最近成功采集</span><strong>{formatTaskTime(runtime.last_success_at)}</strong></div><div><span>指定应用</span><strong>{config.allowed_apps.length} 个 · 每 {config.interval_ms / 1000} 秒检查 · 可设为 3 秒</strong></div><div><span>已保存来源</span><strong>{snapshot!.sources.length} 张 · {(snapshot!.sources.reduce((total, item) => total + item.bytes, 0) / 1024 / 1024).toFixed(1)} MiB</strong></div></div>
+      <div className="cm-personal-runtime"><div><span>最近新增截图</span><strong>{formatTaskTime(runtime.last_success_at || snapshot?.sources[0]?.captured_at || null)}</strong></div><div><span>最近检查</span><strong>{formatTaskTime(runtime.last_scan_at)}</strong></div><div><span>指定应用</span><strong>{config.allowed_apps.length} 个 · 每 {config.interval_ms / 1000} 秒检查 · 可设为 3 秒</strong></div><div><span>已保存来源</span><strong>{snapshot!.sources.length} 张 · {(snapshot!.sources.reduce((total, item) => total + item.bytes, 0) / 1024 / 1024).toFixed(1)} MiB</strong></div></div>
       {controller.snapshotCurrent && runtime.error && <p role="alert">采集未完成：{runtime.error}</p>}
       {connected && controller.snapshotCurrent && config.enabled && runtime.scope_note && <p role="status" className="cm-personal-fieldnote">{runtime.scope_note} · 未保存截图、未送入模型。</p>}
       {connected && controller.snapshotCurrent && config.enabled && !runtime.running && <p role="status" className="cm-personal-fieldnote">采集后台当前未运行，请重新启动 Companion 或稍后重新查看。</p>}
       {connected && controller.snapshotCurrent && config.enabled && runtime.running && runtime.status === 'no_visible_allowed_window' && <p role="status" className="cm-personal-fieldnote">本次未能安全完成前台窗口采集，未保存截图。请确认选择的是对应应用，并在检查期间保持目标窗口处于前台。</p>}
-      {connected && controller.snapshotCurrent && config.enabled && runtime.running && runtime.status === 'unchanged' && <p role="status" className="cm-personal-fieldnote">已检查前台窗口，截图或识别文字与已有来源重复，因此没有新增截图。</p>}
+      {connected && controller.snapshotCurrent && config.enabled && runtime.running && runtime.status === 'unchanged' && <p role="status" className="cm-personal-fieldnote">已检查窗口，截图或识别文字与已有来源重复，因此没有新增截图。</p>}
       <p className="cm-personal-fieldnote">处理方式：{runtime.model_target || 'OCR 文本 → 主对话模型'}。{extractionAllowed ? imageMode ? '已授权截图处理；新截图直接生成待办候选。' : '已授权 OCR 文本抽取；原始截图留在本机。' : '尚未授权当前处理目标；请在应用与隐私设置中核对。'}</p>
       <div className="cm-personal-actions" style={{ marginTop: 16 }}><button type="button" className="cm-p-button" disabled={busy || !connected} onClick={() => setEditing(value => !value)}>{editing ? '收起设置' : '设置应用与隐私'}</button><button type="button" className="cm-p-button" disabled={!connected || busy || !runtime.supported || !config.enabled} onClick={() => void mutate('activity.scan', {}, '本次采集请求已完成，请核对最近成功时间与待整理事项。')}>{busy ? '等待后台…' : '现在检查一次'}</button></div>
+      {(runtime.fixed_window_supported || bindings.length > 0) && <section className="cm-personal-config-section">
+        <h2>{bindings.length ? '固定可见窗口' : '跟随前台聊天'}</h2>
+        <p className="cm-personal-fieldnote">固定后只轮流检查所选窗口。多显示器采集处于试验阶段。切到其他应用后仍会记录已校准的对话。请先在应用与隐私设置中保存对话范围。</p>
+        {bindings.map(binding => {
+          const receipt = runtime.fixed_window_status?.[binding.id]
+          return <div className="cm-personal-source-entry" key={binding.id}>
+            <span>{binding.title}<br /><small>{binding.paused ? '此窗口已暂停' : receipt?.reason || receipt?.status || '请重新选择窗口'}{receipt?.display && ' · 显示器 ' + receipt.display}
+              {receipt?.last_checked_at && ' · 最近检查 ' + formatTaskTime(receipt.last_checked_at)}
+              {receipt?.last_saved_at && ' · 最近新增 ' + formatTaskTime(receipt.last_saved_at)}</small></span>
+            {runtime.fixed_window_supported && <button className="cm-p-link" disabled={!connected || busy} onClick={() => void mutate('activity.pause_window', { binding_id: binding.id, paused: !binding.paused }, binding.paused ? '已恢复此窗口检查。' : '已暂停此窗口检查。')}>{binding.paused ? '恢复检查' : '暂停此窗'}</button>}
+            {runtime.fixed_window_supported && <button className="cm-p-link" disabled={!connected || busy} onClick={() => void mutate('activity.bind_window', { binding_id: binding.id, app_id: binding.app_id }, '窗口已重新绑定。')}>重新选窗</button>}
+            <button className="cm-p-link" disabled={!connected || busy} onClick={() => void mutate('activity.unbind_window', { binding_id: binding.id }, '固定窗口已移除。')}>{bindings.length === 1 ? '移除并暂停采集' : '移除窗口'}</button>
+          </div>
+        })}
+        {runtime.fixed_window_supported && bindable.map(scope => <button key={scope.app_id} className="cm-p-button" disabled={!connected || busy || bindings.length >= 8}
+          onClick={() => void mutate('activity.bind_window', { app_id: scope.app_id }, '已固定所选窗口。')}>选择并固定窗口 · {scope.profiles[0].allowed_titles[0]}</button>)}
+      </section>}
       {editing && <ActivityConfigEditor modelTargetIds={runtime.model_target_ids} modelTargets={runtime.model_targets} platform={runtime.platform} autoSupported={runtime.supported} scopeSupported={runtime.chat_scope_supported ?? (runtime.platform === 'win32' && runtime.supported)} config={config} revision={snapshot!.revision} busy={busy || !connected} onSave={async (patch, expected_model_target, expectedRevision) => { if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('未取得最新设置版本，请重新保存。'); const saved = await mutate('activity.configure', { expected_revision: expectedRevision, patch, ...(expected_model_target ? { expected_model_target } : {}) }, '采集设置已保存。'); if (saved) setEditing(false) }} />}
       <section className="cm-personal-config-section"><h2>保留与清理</h2><p className="cm-personal-fieldnote" style={{ margin: '12px 0' }}>来源最多保留 {config.retention_days} 天，容量上限 {config.max_storage_mb} MiB；清理截图与 OCR 后，已确认事项保留，引用原文也会移除。</p><p className="cm-personal-fieldnote">OCR 文本、来源信息和事项共享独立的 16 MiB 元数据上限；达到后会拒绝超额操作（QUOTA_EXCEEDED）。可先清理来源，再重试编辑或提醒，已确认事项会保留。</p>{deleteConfirm ? <div className="cm-personal-actions"><span className="cm-personal-fieldnote">删除全部截图、OCR 和未确认候选？此操作不可撤销。</span><button className="cm-p-button cm-p-danger" type="button" disabled={busy || !connected} onClick={async () => { if (await mutate('activity.delete', {}, '来源与未确认候选已清理；已确认事项保留。')) setDeleteConfirm(false) }}>确认清理来源</button><button className="cm-p-button" type="button" onClick={() => setDeleteConfirm(false)}>取消</button></div> : <button className="cm-p-button cm-p-danger" type="button" disabled={!connected || busy} onClick={() => setDeleteConfirm(true)}>清理全部来源</button>}</section>
     </div>
     <ImportScreenshot busy={busy || !connected} imageMode={imageMode} authorized={!!extractionAllowed} onImport={image_base64 => mutate('activity.import', { image_base64 }, imageMode ? extractionAllowed ? '截图抽取完成，请到待整理中核对候选。' : '截图已保存在本机。核对处理目标并授权后可抽取待办。' : '截图已在本机 OCR；未发送模型。请核对来源后整理待办，或单独点击抽取。')} />
-    <RecentActivitySources sources={snapshot!.sources} onSelect={id => { if (id === sourceId) { sourceDetail.current?.scrollIntoView?.({ block: 'nearest' }); return }; setSourceId(id); setLoadedSource(undefined); setManual(false) }} />
-    {source && <section className="cm-personal-detail" ref={sourceDetail} key={source.id} style={{ maxWidth: 900, marginTop: 20 }}><div className="cm-personal-detail-top"><h2>采集来源</h2><button className="cm-p-link" type="button" onClick={() => setSourceId(null)}>关闭来源</button></div><SourceEvidence appName={source.app_name} connected={connected} onSource={setLoadedSource} autoLoad evidence={{ source_id: source.id, app_id: source.app_id, group: '', sender: '', message_time: '', quote: '' }} />
-      <div className="cm-personal-actions" style={{ marginTop: 16 }}><button type="button" className="cm-p-button" disabled={busy || !connected || !loadedSource} onClick={() => setManual(value => !value)}>{manual ? '收起待办草稿' : '手动整理为待办'}</button><button type="button" className="cm-p-button" disabled={busy || !connected || !extractionAllowed} onClick={() => void mutate('activity.analyze', { source_id: source.id }, '该来源的待办抽取已完成，请到待整理中核对。')}>抽取待办</button></div>
+    <RecentActivitySources localRetryOnly={!extractionAllowed} sources={snapshot!.sources} visibleCount={visibleSources} onMore={() => setVisibleSources(count => count + 30)}
+      onAnalyze={connected && !busy && (extractionAllowed || !imageMode) ? id => { void mutate('activity.analyze', { source_id: id, queue_only: true }, '已提交识别，可在来源列表查看进度。') } : undefined} onSelect={id => { if (id === sourceId) { sourceDetail.current?.scrollIntoView?.({ block: 'nearest' }); return }; setSourceId(id); setLoadedSource(undefined); setManual(false) }} />
+    {source && <section className="cm-personal-detail" ref={sourceDetail} key={source.id} style={{ maxWidth: 900, marginTop: 20 }}><div className="cm-personal-detail-top"><h2>采集来源</h2><span>{recognitionLabel(source.recognition)}</span><button className="cm-p-link" type="button" onClick={() => setSourceId(null)}>关闭来源</button></div><SourceEvidence appName={source.app_name} connected={connected} onSource={setLoadedSource} autoLoad resultVersion={source.recognition && ('completed_at' in source.recognition ? source.recognition.completed_at : source.recognition.status === 'saved' ? source.recognition.reason : undefined)} evidence={{ source_id: source.id, app_id: source.app_id, group: '', sender: '', message_time: '', quote: '' }} />
+      <div className="cm-personal-actions" style={{ marginTop: 16 }}><button type="button" className="cm-p-button" disabled={busy || !connected || !loadedSource} onClick={() => setManual(value => !value)}>{manual ? '收起待办草稿' : '手动整理为待办'}</button><button type="button" className="cm-p-button" disabled={busy || !connected || !extractionAllowed} onClick={() => void mutate('activity.analyze', { source_id: source.id, queue_only: true }, '已提交识别，可在来源列表查看进度。')}>抽取待办</button></div>
       {!loadedSource && <p className="cm-personal-fieldnote">截图载入后即可手动整理。</p>}
       {!extractionAllowed && <p className="cm-personal-fieldnote">抽取前请在应用与隐私设置中核对模型和内容发送范围。</p>}
       {manual && loadedSource && <TaskEditor key={source.id} item={{ id: source.id, revision: snapshot!.revision, created_at: source.captured_at, title: '', owner: '', due_at: null, feedback_to: '', feedback_required: true, evidence: { source_id: source.id, app_id: source.app_id, group: '', sender: '', message_time: '', quote: loadedSource.ocr_text.slice(0, 2000) }, status: 'pending' }} busy={busy || !connected} onSave={async (task, revision) => { const saved = await mutate('todo.create', { source_id: source.id, expected_revision: revision, task }, '手动整理的待办已保存。'); if (saved) setManual(false); return saved }} />}
@@ -288,6 +312,7 @@ function ActivityConfigEditor({ config, revision, busy, onSave, platform = 'darw
   const displayedTargets = useRef({ labels: modelTargets, ids: modelTargetIds })
   const [apps, setApps] = useState(config.allowed_apps.join('\n')), [interval, setIntervalValue] = useState(config.interval_ms / 1000), [days, setDays] = useState(config.retention_days), [storage, setStorage] = useState(config.max_storage_mb), [ai, setAi] = useState(config.ocr_ai_enabled)
   const [mode, setMode] = useState(config.extraction_mode || 'ocr'), [imageAi, setImageAi] = useState(config.image_ai_enabled === true)
+  const [outputTokens, setOutputTokens] = useState(config.image_output_tokens || 0)
   const [extractionPrompt, setExtractionPrompt] = useState(config.extraction_prompt ?? '')
   const [modelUrl, setModelUrl] = useState(config.dedicated_vision?.base_url || ''), [modelName, setModelName] = useState(config.dedicated_vision?.model_name || ''), [modelKey, setModelKey] = useState(''), [modelProtocol, setModelProtocol] = useState(config.dedicated_vision?.protocol || 'openai')
   const [language, setLanguage] = useState(config.ocr_language || 'zh-Hans')
@@ -327,6 +352,7 @@ function ActivityConfigEditor({ config, revision, busy, onSave, platform = 'darw
       if (!live.current || controller.signal.aborted || busyNow.current) return
       if (JSON.stringify([fresh.config, fresh.runtime.model_target_ids]) !== baseline.current) throw new Error('设置或图像处理目标已变化，请收起并重新打开设置后核对；草稿保留。')
       await onSave({ ...(scopeSupported ? { chat_scopes: chatScopes } : {}), allowed_apps: allowed, interval_ms: interval * 1000, retention_days: days, max_storage_mb: storage, ocr_ai_enabled: ai, ocr_language: language, extraction_mode: mode,
+        ...(outputTokens !== (config.image_output_tokens || 0) ? { image_output_tokens: outputTokens } : {}),
         ...(extractionPrompt !== (config.extraction_prompt ?? '') ? { extraction_prompt: extractionPrompt } : {}),
         image_ai_enabled: mode !== 'ocr' && imageAi, ...(mode === 'dedicated' ? { dedicated_vision: { base_url: modelUrl.trim(), model_name: modelName.trim(), api_key: modelKey, protocol: modelProtocol } } : {}) }, displayedTargets.current.ids?.[mode], fresh.revision)
     } catch (e) { if (live.current && !controller.signal.aborted) setError((e as Error).message) }
@@ -344,6 +370,7 @@ function ActivityConfigEditor({ config, revision, busy, onSave, platform = 'darw
       <textarea value={extractionPrompt} onChange={e => setExtractionPrompt(e.target.value)} maxLength={2000} rows={3} disabled={busy || checking} placeholder="例如：我在群里的昵称是小林。只提取明确交给我的任务，优先关注需要在群里反馈结果的事项。" />
       <span className="cm-personal-fieldnote">最多 2000 字符。抽取时随请求交给所选模型，留空使用默认规则。</span>
     </label>
+    {(mode === 'vision' || mode === 'dedicated') && <label>图像输出上限（Token）<input type="number" min={1} max={128000} step={1} value={outputTokens || ''} placeholder="沿用模型设置" onChange={e => setOutputTokens(Number(e.target.value))} disabled={busy || checking} /></label>}
     {mode === 'dedicated' && <><label>图像模型协议<select value={modelProtocol} onChange={e => { setModelProtocol(e.target.value as typeof modelProtocol); setImageAi(false) }} disabled={busy || checking}><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic Messages</option></select></label><label>模型名称<input required value={modelName} onChange={e => { setModelName(e.target.value); setImageAi(false) }} disabled={busy || checking} /></label><label className="cm-personal-wide">服务地址<input type="url" required value={modelUrl} onChange={e => { setModelUrl(e.target.value); setImageAi(false) }} placeholder="https://模型服务地址/v1" disabled={busy || checking} /></label><label className="cm-personal-wide">专用 API Key<input type="password" autoComplete="new-password" value={modelKey} onChange={e => { setModelKey(e.target.value); setImageAi(false) }} placeholder={config.dedicated_vision?.api_key_set ? '已配置，留空保持不变' : '本机服务可留空；云端请填写'} disabled={busy || checking} /></label></>}
     {mode !== 'ocr' && <><p className="cm-personal-fieldnote cm-personal-wide">{mode === 'qwen' ? `${displayedTargets.current.labels?.qwen || '本机 Qwen3-VL'}。截图、识别文字与待办抽取均在本机处理，使用已下载权重和 Python 环境；无需开启电脑点击定位。` : mode === 'dedicated' ? `截图将交给 ${modelUrl || '待配置端点'} 的 ${modelName || '待配置模型'} 处理。` : `截图处理目标：${displayedTargets.current.labels?.vision || '请先保存并核对图像识别配置'}。`}模型失败时保留来源供重试，不自动切换云端。</p><label className="cm-personal-check cm-personal-wide"><input type="checkbox" checked={imageAi} onChange={e => setImageAi(e.target.checked)} disabled={busy || checking} />允许所选图像模型读取聊天截图并提出待办候选。截图可能包含个人或企业信息；更换处理目标后需重新授权。</label></>}
     {mode === 'ocr' && <label className="cm-personal-check cm-personal-wide"><input type="checkbox" checked={ai} onChange={e => setAi(e.target.checked)} disabled={busy || checking} />允许将截图识别出的 OCR 文本发送给当前配置的模型，用于理解聊天并提出待办候选。聊天内容可能包含个人或企业信息。</label>}<p className="cm-personal-fieldnote cm-personal-wide">正式待办与提醒均需你核对确认。保存范围后仍需单独开启自动采集；暂停后仍可主动导入截图。</p></div>{error && <p role="alert">{error}</p>}<div className="cm-personal-save"><button type="submit" className="cm-p-button cm-p-primary" disabled={busy || checking}>{checking ? '正在核对并保存…' : '保存范围与隐私设置'}</button></div></form>

@@ -90,7 +90,7 @@ export function ChatScopeEditor({ appIds, apps, scopes, language, busy, onChange
   const replacing = preview && editingScope?.profiles.some(p => profileLayoutKey(p) === profileLayoutKey(preview))
   function addProfile() {
     if (!editingApp || !preview || !rectsValid || !recognized || !namesValid) return
-    const profile = { window_class: preview.window_class, width: preview.width, height: preview.height, content: content!, title: title!, allowed_titles: allowed }
+    const profile = { window_class: preview.window_class, ...(preview.logical_width && preview.logical_height ? { logical_width: preview.logical_width, logical_height: preview.logical_height } : {}), width: preview.width, height: preview.height, content: content!, title: title!, allowed_titles: allowed }
     const profiles = (scopes.find(scope => scope.app_id === editingApp)?.profiles || []).filter(p => profileLayoutKey(p) !== profileLayoutKey(profile))
     if (profiles.length >= 8) { setError('每个应用最多保留 8 种窗口布局；请先移除不再使用的范围。'); return }
     updateApp(editingApp, [...profiles, profile]); close()

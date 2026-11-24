@@ -36,10 +36,17 @@ export function hasActivityImageConsent(config: ActivityConfig): boolean {
     config.image_ai_enabled === true && config.image_ai_consent === activityModelTarget(config).id
 }
 
+// Persist only a fingerprint. A queued OCR job must not follow a changed main endpoint.
+export function recognitionTarget(config: ActivityConfig): string {
+  if ((config.extraction_mode || 'ocr') !== 'ocr') return activityModelTarget(config).id
+  const { base_url, model_name, protocol, api_key, extra_headers, auth_style, client_header_profile, claude_code_compat_version, anthropic_version } = getConfig().llm
+  return createHash('sha256').update(JSON.stringify(['ocr', base_url, model_name, protocol, api_key, auth_style, client_header_profile, claude_code_compat_version, anthropic_version, Object.entries(extra_headers || {}).sort(([a], [b]) => a.localeCompare(b))])).digest('hex')
+}
+
 export function activityVisionConfig(config: ActivityConfig): VisionConfig {
   const model = config.extraction_mode === 'dedicated' ? config.dedicated_vision : getConfig().vision
   return {
     enabled: true, base_url: '', model_name: '', api_key: '', timeout_ms: 120_000,
-    max_tokens: 4000, cache_ttl_seconds: 0, ...model, fallback: 'error',
+    max_tokens: 4000, cache_ttl_seconds: 0, ...model, ...(config.image_output_tokens ? { max_tokens: config.image_output_tokens } : {}), fallback: 'error',
   }
 }

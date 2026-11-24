@@ -799,6 +799,11 @@ do {
         out = try runBiometricVerify(nonce: nonce, reason: reason)
 
     // --- WP3 coordinate computer-use subcommands ---
+    case "activity-window-picker":
+        guard #available(macOS 15.2, *), let bundle = argValue("--bundle-id") else {
+            out = cuError("window picker unavailable"); break
+        }
+        ActivityWindowPicker(bundle: bundle).run()
     case "window-list":
         let bid = argValue("--bundle-id")
         let widStr = argValue("--window-id"); let wid: UInt32? = widStr.flatMap { UInt32($0) }
@@ -1631,6 +1636,137 @@ func cuCursorGet() -> String {
     return cuJson(["ok": true, "x": p.x, "y": p.y])
 }
 
+// One process owns one system-selected filter. Capture requests never resolve a
+// replacement window by title and never activate the application.
+@available(macOS 15.2, *)
+private final class ActivityWindowPicker: NSObject, SCContentSharingPickerObserver {
+    private let bundle: String
+    private var selected = false
+    private var selectedApp: NSRunningApplication?
+    init(bundle: String) { self.bundle = bundle }
+
+    private func reply(_ fields: [String: Any]) {
+        FileHandle.standardOutput.write(Data((cuJson(fields) + "\n").utf8))
+    }
+
+    func run() -> Never {
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        let picker = SCContentSharingPicker.shared
+        var configuration = SCContentSharingPickerConfiguration()
+        configuration.allowedPickerModes = [.singleWindow]
+        configuration.allowsChangingSelectedContent = false
+        picker.defaultConfiguration = configuration
+        picker.add(self)
+        picker.isActive = true
+        picker.present(using: .window)
+        let parent = getppid()
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+            if getppid() != parent || parent == 1 { exit(0) }
+        }
+        withExtendedLifetime(self) { NSApp.run() }
+        exit(0)
+    }
+    func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
+        reply(["status": "cancelled"]); exit(0)
+    }
+    func contentSharingPickerStartDidFailWithError(_ error: Error) {
+        reply(["status": "unavailable"]); exit(1)
+    }
+    func contentSharingPicker(_ picker: SCContentSharingPicker, didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
+        guard !selected, filter.style == .window, filter.includedWindows.count == 1,
+              let window = filter.includedWindows.first, let owner = window.owningApplication,
+              owner.bundleIdentifier == bundle, let title = window.title, !title.isEmpty, title.count <= 500 else {
+            reply(["status": "wrong_window"]); exit(0)
+        }
+        guard let app = NSRunningApplication(processIdentifier: owner.processID), app.bundleIdentifier == bundle else {
+            reply(["status": "wrong_window"]); exit(0)
+        }
+        selectedApp = app
+        selected = true
+        reply(["status": "selected", "title": title, "app_id": bundle, "app_name": owner.applicationName, "window_id": window.windowID])
+        DispatchQueue.global().async {
+            while let command = readLine() {
+                guard command == "capture" else { break }
+                let semaphore = DispatchSemaphore(value: 0)
+                Task {
+                    await self.capture(filter, window, owner)
+                    semaphore.signal()
+                }
+                semaphore.wait()
+            }
+            exit(0)
+        }
+    }
+
+    private struct Observation: Equatable {
+        let bounds: CGRect
+        let title: String
+        let display: CGDirectDisplayID
+    }
+    private enum Skip: String, Error {
+        case permission, secureInput, locked, closed, notVisible, occluded, geometry, spanning, changed
+    }
+    // CG lists front-to-back in Quartz coordinates on the current Space.
+    private func observe(_ window: SCWindow, _ owner: SCRunningApplication) throws -> Observation {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+              session[kCGSessionOnConsoleKey as String] as? Bool == true,
+              session[kCGSessionLoginDoneKey as String] as? Bool == true,
+              session["CGSSessionScreenIsLocked"] as? Bool != true else { throw Skip.locked }
+        guard AXIsProcessTrusted() else { throw Skip.permission }
+        guard !IsSecureEventInputEnabled() else { throw Skip.secureInput }
+        guard selectedApp?.isTerminated == false,
+              NSRunningApplication(processIdentifier: owner.processID)?.bundleIdentifier == bundle,
+              let info = cuWindowInfoDict(windowId: window.windowID), cuWindowNumber(info) == window.windowID,
+              info[kCGWindowOwnerPID as String] as? pid_t == owner.processID else { throw Skip.closed }
+        guard let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]],
+              let index = rows.firstIndex(where: { cuWindowNumber($0) == window.windowID }) else { throw Skip.notVisible }
+        let row = rows[index]
+        func frame(_ r: [String: Any]) -> CGRect? {
+            guard let raw = r[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = raw["X"], let y = raw["Y"], let w = raw["Width"], let h = raw["Height"],
+                  x.isFinite, y.isFinite, w.isFinite, h.isFinite, w >= 0, h >= 0 else { return nil }
+            return CGRect(x: x, y: y, width: w, height: h)
+        }
+        guard row[kCGWindowOwnerPID as String] as? pid_t == owner.processID,
+              row[kCGWindowLayer as String] as? Int == 0,
+              let title = row[kCGWindowName as String] as? String, !title.isEmpty,
+              let bounds = frame(row), !bounds.isEmpty, (row[kCGWindowAlpha as String] as? Double ?? 0) > 0 else { throw Skip.geometry }
+        for above in rows.prefix(index) {
+            if let alpha = above[kCGWindowAlpha as String] as? Double, alpha == 0 { continue }
+            guard let rect = frame(above) else { throw Skip.geometry }
+            if !rect.isEmpty && rect.intersects(bounds) { throw Skip.occluded }
+        }
+        var ids = [CGDirectDisplayID](repeating: 0, count: 32)
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(32, &ids, &count) == .success,
+              let display = ids.prefix(Int(count)).first(where: { CGDisplayBounds($0).contains(bounds) }) else { throw Skip.spanning }
+        return Observation(bounds: bounds, title: title, display: display)
+    }
+    private func capture(_ filter: SCContentFilter, _ window: SCWindow, _ owner: SCRunningApplication) async {
+        do {
+            let before = try observe(window, owner)
+            let config = SCStreamConfiguration()
+            let scale = CGFloat(filter.pointPixelScale)
+            guard filter.contentRect.size == before.bounds.size, scale.isFinite, scale > 0 else { throw Skip.changed }
+            config.width = Int((before.bounds.width * scale).rounded())
+            config.height = Int((before.bounds.height * scale).rounded())
+            guard config.width > 0, config.height > 0, config.width <= 8192, config.height <= 8192,
+                  config.width * config.height <= 16_777_216 else { reply(["status": "too_large"]); return }
+            config.ignoreShadowsSingleWindow = true
+            config.showsCursor = false
+            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            guard try observe(window, owner) == before, image.width == config.width, image.height == config.height else { throw Skip.changed }
+            let data = NSMutableData()
+            guard let dest = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else { reply(["status": "unavailable"]); return }
+            CGImageDestinationAddImage(dest, image, nil)
+            guard CGImageDestinationFinalize(dest), data.length <= 8 * 1024 * 1024 else { reply(["status": "too_large"]); return }
+            reply(["status": "frame", "title": before.title, "display": String(before.display), "logical_width": before.bounds.width, "logical_height": before.bounds.height, "image": data.base64EncodedString(options: [])])
+        } catch let skip as Skip { reply(["status": skip.rawValue]) }
+        catch { reply(["status": "unavailable"]) }
+    }
+}
+
 // MARK: - screenshot (ScreenCaptureKit)
 
 func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
@@ -1760,16 +1896,9 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
             // captureImage returns a full-display buffer even for
             // desktopIndependentWindow — scaleX/Y then explode (280×380
             // window → scaleX≈6.86) and click mapping is wrong.
-            // Use the SCWindow frame × backing scale of the screen that
-            // contains the window (fallback: max screen scale, then 2.0).
-            let frame = targetWindow.frame
-            let scale: CGFloat = {
-                let screens = NSScreen.screens
-                if let hit = screens.first(where: { $0.frame.intersects(frame) }) {
-                    return hit.backingScaleFactor
-                }
-                return screens.map(\.backingScaleFactor).max() ?? 2.0
-            }()
+            // Use the dimensions and pixel scale reported by the same window filter.
+            let frame = filter.contentRect
+            let scale = CGFloat(filter.pointPixelScale)
             let outW = max(1, Int((frame.width * scale).rounded()))
             let outH = max(1, Int((frame.height * scale).rounded()))
             config.width = outW

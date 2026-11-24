@@ -17,9 +17,19 @@ export function iso(v: unknown): string | null {
   return new Date(v).toISOString()
 }
 export function validateConfig(patch: unknown): Record<string, unknown> {
-  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language', 'extraction_mode', 'extraction_prompt', 'image_ai_enabled', 'image_ai_consent', 'dedicated_vision', 'chat_scopes'])
+  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language', 'extraction_mode', 'extraction_prompt', 'image_ai_enabled', 'image_ai_consent', 'dedicated_vision', 'chat_scopes', 'fixed_windows', 'image_output_tokens'])
   for (const [key, value] of Object.entries(patch)) {
-    if (key === 'chat_scopes') validateChatScopes(value)
+    if (key === 'fixed_windows') {
+      if (!Array.isArray(value) || value.length > 8) throw new ActivityError('INVALID_REQUEST', '最多固定 8 个聊天窗口')
+      const seen = new Set<string>()
+      for (const item of value) {
+        checkObject(item, ['id', 'app_id', 'title', 'paused'])
+        if (item.paused !== undefined && typeof item.paused !== 'boolean') throw new ActivityError('INVALID_REQUEST', '窗口暂停开关无效')
+        if (typeof item.id !== 'string' || !/^[a-f0-9-]{36}$/.test(item.id) || seen.has(item.id) || !isActivityAppId(item.app_id)) throw new ActivityError('INVALID_REQUEST', '固定窗口身份无效')
+        seen.add(item.id); text(item.title, 500, true)
+      }
+    }
+    else if (key === 'chat_scopes') validateChatScopes(value)
     else if (key === 'extraction_prompt') text(value, 2000)
     else if (key === 'extraction_mode') { if (!['ocr', 'vision', 'dedicated', 'qwen'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', '图像处理方式无效') }
     else if (key === 'image_ai_consent') { if (typeof value !== 'string' || value.length > 64) throw new ActivityError('INVALID_REQUEST', '图片授权无效') }
@@ -34,7 +44,7 @@ export function validateConfig(patch: unknown): Record<string, unknown> {
     else if (key === 'allowed_apps') {
       if (!Array.isArray(value) || value.length > 20 || !value.every(isActivityAppId)) throw new ActivityError('INVALID_REQUEST', '应用白名单无效或包含敏感应用')
     } else {
-      const limits: Record<string, [number, number]> = { interval_ms: [3_000, 600_000], retention_days: [1, 90], max_storage_mb: [16, 10240] }
+      const limits: Record<string, [number, number]> = { image_output_tokens: [0, 128_000], interval_ms: [3_000, 600_000], retention_days: [1, 90], max_storage_mb: [16, 10240] }
       const [min, max] = limits[key]
       if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) throw new ActivityError('INVALID_REQUEST', '采集参数超出范围')
     }
@@ -61,8 +71,8 @@ export function validateActivityMessage(message: unknown): boolean {
     const base = ['type', 'id']
     const extras: Record<string, string[]> = {
       'activity.state': [], 'activity.apps': [], 'activity.configure': ['expected_revision', 'expected_model_target', 'patch'], 'activity.scan': [],
-      'activity.preview': ['app_id'], 'activity.preview_ocr': ['image_base64', 'rect', 'ocr_language'],
-      'activity.import': ['image_base64'], 'activity.analyze': ['source_id'], 'activity.source': ['source_id'], 'activity.delete': ['source_id'],
+      'activity.bind_window': ['app_id', 'binding_id'], 'activity.unbind_window': ['binding_id'], 'activity.pause_window': ['binding_id', 'paused'], 'activity.preview': ['app_id'], 'activity.preview_ocr': ['image_base64', 'rect', 'ocr_language'],
+      'activity.import': ['image_base64'], 'activity.analyze': ['source_id', 'queue_only'], 'activity.source': ['source_id'], 'activity.delete': ['source_id'],
       'todo.create': ['source_id', 'expected_revision', 'task'], 'todo.confirm': ['candidate_id', 'expected_revision', 'task'], 'todo.update': ['todo_id', 'expected_revision', 'patch'], 'todo.dismiss': ['candidate_id', 'expected_revision'],
     }
     if (!Object.hasOwn(extras, message.type)) return false
@@ -72,12 +82,15 @@ export function validateActivityMessage(message: unknown): boolean {
     if ('expected_revision' in message && (!Number.isSafeInteger(message.expected_revision) || Number(message.expected_revision) < 0)) return false
     if (['activity.configure', 'todo.create', 'todo.confirm', 'todo.update', 'todo.dismiss'].includes(message.type) && !('expected_revision' in message)) return false
     if (['activity.import', 'activity.preview_ocr'].includes(message.type) && (typeof message.image_base64 !== 'string' || message.image_base64.length > 8_388_608 || message.image_base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(message.image_base64) || !message.image_base64.length)) return false
-    if (message.type === 'activity.preview' && !isActivityAppId(message.app_id)) return false
+    if (message.type === 'activity.pause_window' && typeof message.paused !== 'boolean') return false
+    if ((message.type === 'activity.unbind_window' || message.type === 'activity.pause_window' || message.binding_id !== undefined) && (typeof message.binding_id !== 'string' || !/^[a-f0-9-]{36}$/.test(message.binding_id))) return false
+    if ((message.type === 'activity.preview' || message.type === 'activity.bind_window') && !isActivityAppId(message.app_id)) return false
     if (message.type === 'activity.preview_ocr') {
       validateActivityRect(message.rect)
       if (!['zh-Hans', 'zh-Hant', 'en-US'].includes(String(message.ocr_language))) return false
     }
-    if (message.type === 'activity.configure') { validateConfig(message.patch); if ('image_ai_consent' in (message.patch as object)) return false }
+    if (message.queue_only !== undefined && typeof message.queue_only !== 'boolean') return false
+    if (message.type === 'activity.configure') { validateConfig(message.patch); if ('image_ai_consent' in (message.patch as object) || 'fixed_windows' in (message.patch as object)) return false }
     if ((message.type === 'todo.confirm' || message.type === 'todo.create')) validateTask(message.task, true)
     if (message.type === 'todo.update') validateTask(message.patch)
     for (const k of ['source_id', 'candidate_id', 'todo_id']) if (message[k] !== undefined && !/^[a-f0-9-]{36}$/.test(String(message[k]))) return false

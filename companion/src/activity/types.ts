@@ -6,6 +6,8 @@ export interface ActivityChatProfile {
   window_class: string
   width: number
   height: number
+  logical_width?: number
+  logical_height?: number
   content: ActivityRect
   title: ActivityRect
   allowed_titles: string[]
@@ -13,9 +15,15 @@ export interface ActivityChatProfile {
 export interface ActivityChatScope { app_id: string; profiles: ActivityChatProfile[] }
 export interface ActivityPreview {
   app_id: string; app_name: string; window_title: string; window_class: string
+  logical_width?: number; logical_height?: number
   width: number; height: number; image_data_url: string
 }
+export interface ActivityFixedWindow { id: string; app_id: string; title: string; paused?: boolean }
+export interface ActivityWindowStatus { status: string; reason?: string; display?: string; last_checked_at?: string; last_saved_at?: string }
 export interface ActivityConfig {
+  fixed_windows?: ActivityFixedWindow[]
+  image_output_tokens?: number
+
   chat_scopes?: ActivityChatScope[]
   extraction_mode?: ActivityModelMode
   extraction_prompt?: string
@@ -32,7 +40,14 @@ export interface ActivityConfig {
   max_storage_mb: number
 }
 export interface ActivityApp { app_id: string; app_name: string; window_state?: 'visible' | 'minimized' | 'hidden' | 'none' }
+export type ActivityRecognition =
+  | { status: 'saved'; reason: string }
+  | { status: 'queued' | 'running'; target: string; automatic?: boolean }
+  | { status: 'complete'; completed_at: string; candidates: number }
+  | { status: 'failed'; completed_at: string; code: string; reason: string }
 export interface ActivitySource {
+  binding_id?: string
+  recognition?: ActivityRecognition
   id: string
   captured_at: string
   app_id: string
@@ -42,10 +57,14 @@ export interface ActivitySource {
   ocr_text: string
   sha256: string
   bytes: number
-  origin?: 'foreground' | 'manual_import'
+  origin?: 'foreground' | 'fixed_window' | 'manual_import'
   deleted?: boolean
 }
 export interface TaskEvidence {
+  action_quote?: string
+  context_quote?: string
+  deadline_text?: string
+
   source_id: string
   app_id: string
   group: string
@@ -93,6 +112,8 @@ export interface ActivityState {
 }
 export interface ActivityRuntime {
   platform: string
+  fixed_window_supported?: boolean
+  fixed_window_status?: Record<string, ActivityWindowStatus>
   chat_scope_supported?: boolean
   capture_mode?: 'automatic' | 'manual-only'
   platform_note?: string

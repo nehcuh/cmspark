@@ -108,3 +108,21 @@ test('actual recent-source component exposes newest source and its manual-review
   assert.equal(selected, sources[0].id)
   assert.equal(buttons.some(button => button.props['data-source-id'] === sources[30].id), false)
 })
+
+test('failed, pending, zero-candidate and historical captures have distinct receipts and a targeted retry', () => {
+  const source = recorded.state.state.sources[0], failed = { ...source, recognition: { status: 'failed', reason: '输出超限', completed_at: source.captured_at } }
+  const sources = [failed, { ...source, id: 'pending', recognition: { status: 'queued' } }, { ...source, id: 'zero', recognition: { status: 'complete', completed_at: source.captured_at, candidates: 0 } }, { ...source, id: 'legacy' }]
+  let retry
+  const props = { sources, onSelect: () => {}, onAnalyze: (id: string) => { retry = id } }
+  const text = renderToStaticMarkup(createElement(RecentActivitySources, props))
+  for (const expected of ['识别失败 · 输出超限', '等待识别', '0 项行动', '历史来源']) assert.ok(text.includes(expected), expected)
+  function visit(node: any) {
+    if (Array.isArray(node)) node.forEach(visit)
+    else if (node?.props) {
+      if (node.type === 'button' && node.props.children === '重试识别') node.props.onClick()
+      else visit(node.props.children)
+    }
+  }
+  visit(RecentActivitySources(props))
+  assert.equal(retry, failed.id)
+})

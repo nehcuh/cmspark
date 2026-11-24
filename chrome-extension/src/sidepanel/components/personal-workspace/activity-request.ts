@@ -1,15 +1,29 @@
 /** Wire projection of Companion activity/types.ts; personal tasks never alias Agent Board records. */
-export interface TaskEvidence { source_id: string; app_id: string; group: string; sender: string; message_time: string; quote: string }
+export interface TaskEvidence {
+  action_quote?: string
+  context_quote?: string
+  deadline_text?: string
+ source_id: string; app_id: string; group: string; sender: string; message_time: string; quote: string }
 export interface TodoCandidate { id: string; revision: number; created_at: string; title: string; owner: string; due_at: string | null; feedback_to: string; feedback_required: boolean; evidence: TaskEvidence; status: 'pending' | 'confirmed' | 'dismissed'; todo_id?: string }
 export interface PersonalTodo { id: string; revision: number; created_at: string; updated_at: string; title: string; owner: string; due_at: string | null; remind_at: string | null; feedback_to: string; feedback_required: boolean; kind: 'own' | 'supervise'; handling_status: 'open' | 'done'; feedback_status: 'pending' | 'done' | 'not_required'; evidence: TaskEvidence; reminder: { status: 'none' | 'scheduled' | 'attempting' | 'submitted' | 'failed' | 'unknown'; attempted_at?: string; error?: string } }
 export interface ActivityVisionModel { base_url: string; model_name: string; api_key: string; api_key_set?: boolean; protocol?: 'openai' | 'anthropic' }
 export interface ActivityRect { x: number; y: number; width: number; height: number }
-export interface ActivityChatProfile { window_class: string; width: number; height: number; content: ActivityRect; title: ActivityRect; allowed_titles: string[] }
+export interface ActivityChatProfile { window_class: string; logical_width?: number; logical_height?: number; width: number; height: number; content: ActivityRect; title: ActivityRect; allowed_titles: string[] }
 export interface ActivityChatScope { app_id: string; profiles: ActivityChatProfile[] }
-export interface ActivityPreview { app_id: string; app_name: string; window_title: string; window_class: string; width: number; height: number; image_data_url: string }
-export interface ActivityConfig { chat_scopes?: ActivityChatScope[]; extraction_mode?: 'ocr' | 'vision' | 'dedicated' | 'qwen'; extraction_prompt?: string; image_ai_enabled?: boolean; dedicated_vision?: ActivityVisionModel; ocr_language?: 'zh-Hans' | 'zh-Hant' | 'en-US'; enabled: boolean; allowed_apps: string[]; interval_ms: number; ocr_ai_enabled: boolean; retention_days: number; max_storage_mb: number }
-export interface ActivitySource { id: string; captured_at: string; app_id: string; app_name: string; window_title: string; conversation_title?: string; ocr_text: string; sha256: string; bytes: number; origin?: 'foreground' | 'manual_import'; deleted?: boolean }
-export interface ActivitySnapshot { version: 1; revision: number; config: ActivityConfig; candidates: TodoCandidate[]; todos: PersonalTodo[]; sources: Array<Omit<ActivitySource, 'ocr_text'>>; runtime: { capture_mode?: 'automatic' | 'manual-only'; platform_note?: string; platform: string; supported: boolean; chat_scope_supported?: boolean; running: boolean; scanning: boolean; last_scan_at: string | null; last_success_at: string | null; status: string; error: string | null; scope_note?: string | null; model_target_ids?: Record<string, string>; model_targets?: Record<string, string>; model_target?: string; model_target_id?: string; coverage: string } }
+export interface ActivityPreview { app_id: string; app_name: string; window_title: string; window_class: string; logical_width?: number; logical_height?: number; width: number; height: number; image_data_url: string }
+export interface ActivityFixedWindow { id: string; app_id: string; title: string; paused?: boolean }
+export interface ActivityWindowStatus { status: string; reason?: string; display?: string; last_checked_at?: string; last_saved_at?: string }
+export interface ActivityConfig {
+  fixed_windows?: ActivityFixedWindow[]
+  image_output_tokens?: number
+ chat_scopes?: ActivityChatScope[]; extraction_mode?: 'ocr' | 'vision' | 'dedicated' | 'qwen'; extraction_prompt?: string; image_ai_enabled?: boolean; dedicated_vision?: ActivityVisionModel; ocr_language?: 'zh-Hans' | 'zh-Hant' | 'en-US'; enabled: boolean; allowed_apps: string[]; interval_ms: number; ocr_ai_enabled: boolean; retention_days: number; max_storage_mb: number }
+export type ActivityRecognition =
+  | { status: 'saved'; reason: string }
+  | { status: 'queued' | 'running'; target: string; automatic?: boolean }
+  | { status: 'complete'; completed_at: string; candidates: number }
+  | { status: 'failed'; completed_at: string; code: string; reason: string }
+export interface ActivitySource { binding_id?: string; recognition?: ActivityRecognition; id: string; captured_at: string; app_id: string; app_name: string; window_title: string; conversation_title?: string; ocr_text: string; sha256: string; bytes: number; origin?: 'foreground' | 'fixed_window' | 'manual_import'; deleted?: boolean }
+export interface ActivitySnapshot { version: 1; revision: number; config: ActivityConfig; candidates: TodoCandidate[]; todos: PersonalTodo[]; sources: Array<Omit<ActivitySource, 'ocr_text'>>; runtime: { capture_mode?: 'automatic' | 'manual-only'; platform_note?: string; platform: string; supported: boolean; fixed_window_supported?: boolean; fixed_window_status?: Record<string, ActivityWindowStatus>; chat_scope_supported?: boolean; running: boolean; scanning: boolean; last_scan_at: string | null; last_success_at: string | null; status: string; error: string | null; scope_note?: string | null; model_target_ids?: Record<string, string>; model_targets?: Record<string, string>; model_target?: string; model_target_id?: string; coverage: string } }
 export interface ActivityApp { app_id: string; app_name: string; window_state?: 'visible' | 'minimized' | 'hidden' | 'none' }
 export interface ActivityReply { preview?: ActivityPreview; recognized_title?: string; apps?: ActivityApp[]; type: 'activity.result'; id: string; ok: boolean; state?: ActivitySnapshot; source?: ActivitySource & { image_data_url: string | null }; error?: string; error_code?: string }
 
@@ -49,7 +63,7 @@ export function requestActivity(type: string, data: Record<string, unknown> = {}
       if (message?.id !== id) return
       if (message.type !== 'activity.result') return
       if (!message.ok) {
-        const hasSourceState = (type === 'activity.scan' || type === 'activity.import') &&
+        const hasSourceState = (type === 'activity.scan' || type === 'activity.import' || type === 'activity.analyze') &&
           matchingActivityReply({ ...message, ok: true }, type, data)
         finish(new ActivityRequestError(message.error || '操作未确认，请刷新核实。', hasSourceState ? message.state : undefined))
       }
@@ -58,7 +72,7 @@ export function requestActivity(type: string, data: Record<string, unknown> = {}
     if (signal?.aborted) { cancel(); return }
     chrome.runtime.onMessage.addListener(receive)
     signal?.addEventListener('abort', cancel, { once: true })
-    timer = setTimeout(() => finish(new Error('未收到后台确认，请刷新核实；不会自动重试更改。')), type === 'activity.preview' ? 90_000 : type === 'activity.preview_ocr' ? 45_000 : type === 'activity.scan' || type === 'activity.import' || type === 'activity.analyze' ? 720_000 : 15_000)
+    timer = setTimeout(() => finish(new Error('未收到后台确认，请刷新核实；不会自动重试更改。')), type === 'activity.bind_window' ? 95_000 : type === 'activity.preview' ? 90_000 : type === 'activity.preview_ocr' ? 45_000 : type === 'activity.scan' || type === 'activity.import' || type === 'activity.analyze' ? 720_000 : 15_000)
     try {
       Promise.resolve(chrome.runtime.sendMessage({ type, ...data, id, require_connected: true })).then(ack => {
         if (ack?.ok === false) finish(new Error(ack.error || 'Companion 未连接。'))

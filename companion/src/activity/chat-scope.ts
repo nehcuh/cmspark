@@ -34,8 +34,14 @@ export function validateChatScopes(value: unknown): void {
     apps.add(scope.app_id)
     const layouts = new Set<string>()
     for (const profile of scope.profiles) {
-      keys(profile, ['window_class', 'width', 'height', 'content', 'title', 'allowed_titles'])
+      keys(profile, ['window_class', 'width', 'height', 'logical_width', 'logical_height', 'content', 'title', 'allowed_titles'])
       if (typeof profile.window_class !== 'string' || !profile.window_class.trim() || profile.window_class.length > 256 || !Number.isSafeInteger(profile.width) || !Number.isSafeInteger(profile.height) || Number(profile.width) < 1 || Number(profile.height) < 1 || Number(profile.width) > 8192 || Number(profile.height) > 8192 || Number(profile.width) * Number(profile.height) > 16_777_216) throw new ActivityError('INVALID_REQUEST', '聊天窗口布局无效')
+      if (profile.logical_width !== undefined || profile.logical_height !== undefined) {
+        const logical = [profile.logical_width, profile.logical_height]
+        if (logical.some(n => !Number.isSafeInteger(n) || Number(n) < 1 || Number(n) > 8192) ||
+          Number(profile.logical_width) * Number(profile.height) !== Number(profile.logical_height) * Number(profile.width))
+          throw new ActivityError('INVALID_REQUEST', '窗口逻辑尺寸与截图比例不一致，请重新校准')
+      }
       validateActivityRect(profile.content, Number(profile.width), Number(profile.height)); validateActivityRect(profile.title, Number(profile.width), Number(profile.height))
       if (!containsRect(profile.content, profile.title) || !Array.isArray(profile.allowed_titles) || profile.allowed_titles.length < 1 || profile.allowed_titles.length > 20 || profile.allowed_titles.some(title => typeof title !== 'string' || !title.trim() || title.length > 200 || title !== title.trim())) throw new ActivityError('INVALID_REQUEST', '标题区域须位于聊天内容内，并填写完整允许标题')
       const key = chatProfileKey(profile as unknown as ActivityChatProfile)
@@ -44,14 +50,31 @@ export function validateChatScopes(value: unknown): void {
     }
   }
 }
-export function profileForFrame(config: ActivityConfig, appId: string, windowClass: string | undefined, image: Buffer): ActivityChatProfile | undefined {
+export function profileForFrame(config: ActivityConfig, appId: string, windowClass: string | undefined, image: Buffer, logicalSize?: { width: number; height: number }): ActivityChatProfile | undefined {
   const scopes = config.chat_scopes?.filter(scope => scope.app_id === appId) || []
   if (!scopes.length) return undefined
   if (scopes.length !== 1 || !scopes[0].profiles.length) throw new ActivityScopeSkip('scope_uncalibrated', '此应用已限定对话，但尚未校准聊天区域；请先完成校准')
   const size = imageSize(image)
-  const profiles = scopes[0].profiles.filter(profile => profile.window_class === windowClass && profile.width === size.width && profile.height === size.height)
-  if (profiles.length !== 1) throw new ActivityScopeSkip('scope_layout_changed', '当前聊天窗口布局或尺寸尚未校准；请重新设置聊天区域')
-  return profiles[0]
+  const layouts = scopes[0].profiles.filter(p => p.window_class === windowClass)
+  const sameLogicalSize = (p: ActivityChatProfile) =>
+    logicalSize !== undefined && p.logical_width === logicalSize.width && p.logical_height === logicalSize.height
+  const exact = layouts.find(p => p.width === size.width && p.height === size.height &&
+    (p.logical_width === undefined || sameLogicalSize(p)))
+  if (exact) return exact
+  const scalable = layouts.filter(p => sameLogicalSize(p) && size.width * p.height === size.height * p.width)
+  if (scalable.length === 1) {
+    const p = scalable[0]
+    const scaleRect = (r: ActivityRect): ActivityRect => {
+      // Round inwards so resampling can never authorize another pixel outside the marked region.
+      const x = Math.ceil(r.x * size.width / p.width), y = Math.ceil(r.y * size.height / p.height)
+      return { x, y, width: Math.floor((r.x + r.width) * size.width / p.width) - x,
+        height: Math.floor((r.y + r.height) * size.height / p.height) - y }
+    }
+    const content = scaleRect(p.content), title = scaleRect(p.title)
+    if (title.width > 0 && title.height > 0 && containsRect(content, title))
+      return { ...p, ...size, content, title }
+  }
+  throw new ActivityScopeSkip('scope_layout_changed', '当前聊天窗口布局或尺寸尚未校准；请重新设置聊天区域')
 }
 /** Preview and live capture share the exact same OCR projection. */
 export function recognizedChatTitle(result: unknown): string {
@@ -88,8 +111,8 @@ export function activityImageCrop(image: Buffer): (rect: ActivityRect) => Buffer
 }
 
 export async function scopeLocalFrame(config: ActivityConfig, appId: string, windowClass: string | undefined, image: Buffer,
-  signal: AbortSignal, readTitle: (crop: Buffer) => Promise<string>): Promise<{ image: Buffer; conversation_title?: string }> {
-  const profile = profileForFrame(config, appId, windowClass, image)
+  signal: AbortSignal, readTitle: (crop: Buffer) => Promise<string>, logicalSize?: { width: number; height: number }): Promise<{ image: Buffer; conversation_title?: string }> {
+  const profile = profileForFrame(config, appId, windowClass, image, logicalSize)
   if (!profile) return { image }
   let crop: ReturnType<typeof activityImageCrop>, title: string
   try {
