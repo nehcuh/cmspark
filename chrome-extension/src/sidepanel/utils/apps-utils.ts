@@ -64,6 +64,20 @@ export function manualAppIdentity(input: string, platform: string | null | undef
   return platform === "darwin" && !value.startsWith("/") ? { bundleId: value } : { path: value }
 }
 
+/** Join Companion's token-keyed UI hints to the read-only local view. */
+export function appEntriesForPanel(entries: AppEntry[], modes?: Record<string, unknown>): AppEntry[] {
+  if (!modes || typeof modes !== "object" || Array.isArray(modes)) return entries
+  return entries.map(entry => {
+    const mode = Object.hasOwn(modes, entry.token) ? modes[entry.token] : undefined
+    switch (mode) {
+      case "per_app": case "browser_task": case "protected": case "missing_identity": case "unsupported":
+        return { ...entry, coordinate_mode: mode }
+      default:
+        return entry
+    }
+  })
+}
+
 export function coordinateRestriction(entry: AppEntry): string | undefined {
   if (entry.coordinateAllowed === true) return // Always allow revocation.
   if (entry.binary_drift) return "应用文件已变更，请先重新核对文件指纹"

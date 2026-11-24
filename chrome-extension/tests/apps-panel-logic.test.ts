@@ -6,6 +6,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
+  appEntriesForPanel,
   appsPlatformSupported,
   autoEligible,
   appWarnReasons,
@@ -34,6 +35,12 @@ test("coordinate menu offers the applicable authorization and always permits rev
   const editor: AppEntry = { token: "mac.app.editor", display_name: "Editor", enabled: true, source: "user",
     kind: "gui", policy: "manual", added_at: "2026-11-25" }
   assert.equal(coordinateRestriction(editor), undefined) // older Companion
+  const entries = [editor]
+  assert.equal(appEntriesForPanel(entries), entries)
+  const projected = appEntriesForPanel(entries, { [editor.token]: "browser_task", "mac.app.other": "protected" })
+  assert.match(coordinateRestriction(projected[0])!, /任务开始时确认/)
+  assert.equal(editor.coordinate_mode, undefined)
+  assert.equal(appEntriesForPanel(entries, { [editor.token]: "unknown" })[0], editor)
   assert.equal(coordinateRestriction({ ...editor, coordinate_mode: "per_app" }), undefined)
   assert.match(coordinateRestriction({ ...editor, coordinate_mode: "browser_task" })!, /任务开始时确认/)
   assert.match(coordinateRestriction({ ...editor, coordinate_mode: "protected" })!, /受保护/)

@@ -690,7 +690,7 @@ export interface AppEntry {
   uiaProbedAt?: string
   /** 坐标操作授权位(apps.set_coordinate_allowed,生物识别门在 companion 侧)。 */
   coordinateAllowed?: boolean
-  /** Read-only presentation hint from Companion. Older versions omit it. */
+  /** Local view of the Companion's optional coordinate_modes entry for this token. */
   coordinate_mode?: "per_app" | "browser_task" | "protected" | "missing_identity" | "unsupported"
 }
 

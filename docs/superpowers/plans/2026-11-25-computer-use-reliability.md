@@ -12,7 +12,12 @@ GitHub: [#906](https://github.com/nehcuh/cmspark/issues/906) · 调研基线 `47
 | [Cua Driver 平台说明](https://cua.ai/docs/cua-driver) | 驱动区分后台与必须置前的应用，Windows 依赖已登录的交互式桌面。 | 在宿主原生路径优先采用已经验证的窗口与控件操作。某个程序能够在后台读取，不代表它也能在后台输入。 |
 | [OpenAI computer use 指南](https://developers.openai.com/api/docs/guides/tools-computer-use)、[集成示例](https://developers.openai.com/api/docs/guides/tools-computer-use-integration) | 驱动负责权限、会话和清理。有序执行允许的动作，取得新的观察，用应用状态验证任务结果。 | 同应用且预先确定的步骤可组成一个有界任务；界面发生未知变化时重新观察。无法确认结果的输入保留未验证状态，避免重放。这里依据公开 API 文档。 |
 | [Microsoft UFO 控件检测](https://github.com/microsoft/UFO/blob/main/documents/docs/ufo2/core_features/control_detection/overview.md) | 原生 UI Automation 适合标准控件，视觉补充自绘界面。 | 保留已有 UIA、AX、OCR 分层。无控件或无权限时返回对应原因；增加视觉模型不会修复授权时机、窗口几何或身份错误。 |
+| [pywinauto 远程执行实务](https://pywinauto.readthedocs.io/en/latest/remote_execution.html) · [Microsoft 的 UI 自动化权限说明](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-securityoverview) | 键鼠投递依赖活动桌面。RDP 断开、窗口最小化和目标进程的完整性级别会改变可执行的操作。 | Windows 整机验收分别覆盖活动会话、断开及高权限目标；窗口枚举通过后，仍要单测输入是否到达预期控件。 |
 | [Cua Bench](https://cua.ai/docs/cua-bench) | 为同一任务设置独立的初始状态和结果检查，跨变体复用完成条件。 | 用自有窗口、固定文本和目标应用回读验收；分开记录源码测试、原生 API 与完整桌面任务。 |
+
+Cua 的两份现场记录直接影响验收设计。一份已修复的问题中，命令行探测到了父进程终端的辅助功能授权，却把它显示为驱动已获授权。CMspark 的安装包应由真正执行操作的责任进程核验权限，并记录签名身份。另一份开放问题记录了操作打开对话框后旧窗口标识仍被沿用的情况。针对这类故障，优先重新枚举应用窗口、观察新目标并核对身份，再决定下一步输入。[Cua 授权归属问题与维护者结论](https://github.com/trycua/cua/issues/1561) · [Cua 弹窗后的窗口重绑定问题](https://github.com/trycua/cua/issues/2238)
+
+CMspark 的 Mac 宿主与 DMG 当前使用 ad-hoc 签名。此次修复消除了托盘启动时由产品主动触发的 AX 请求。跨版本授权保留还取决于系统能否将更新识别为同一应用，应使用发行团队的 Developer ID 和稳定的代码签名要求构建两个版本，在同一台 Mac 上覆盖升级并实测。开发机或 CI 上验证通过的 ad-hoc 签名只能证明该次构建的身份及完整性。[Apple 的代码签名要求](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) · [项目 DMG 脚本](../../../scripts/create-dmg.sh)
 
 ## 当前调用链
 
@@ -42,8 +47,28 @@ GitHub: [#906](https://github.com/nehcuh/cmspark/issues/906) · 调研基线 `47
 
 - **设置和应用选择。** 旧界面提示填写 `com.apple.Notes`，发送的却是 `path`，在服务端绝对路径检查失败。应用发现也漏掉了 `/System/Applications`。现按 Companion 平台发送标识，异步读取系统、共享和用户目录里的应用，按 Bundle ID 去重；服务端沿用同一套策略向列表及更新广播投影授权方式。系统应用和普通应用在 Finder 中可同时显示。[Apple 开发者支持](https://developer.apple.com/forums/thread/784220)
 - **无效或重复的确认。** 原全局开关对已启用状态再次调用生物验证，等待批准时关闭也不能阻止迟到的批准。现在重叠请求共享一个在途状态，只有发起者可以完成这次授权。主对话准入复用执行器的草案校验，阻止缺少坐标与锚点、空任务、输入语料超限等请求进入确认台。有效信任路径不再额外截取一张仅为弹窗准备的预览。
+- **同一应用的重复授权。** 两个面板快速启用同一应用时，历史实现会发出两次认证；原先已关闭的应用收到撤销请求后，迟到的批准仍可能落盘。现在每个应用只允许一个授权请求在途，撤销、断开连接、身份变化或拒绝均终止原请求。回归在旧代码复现 5 个失败，修复后覆盖该逻辑的 227 项测试全部通过。
 - **macOS 的故障归因。** 发布用 Swift 宿主的急停初始化在启动时主动请求 AX。截图又把运行时错误、目标缺失与拒绝录屏混为一类。现被动检查当前 AX 和监听授权，截图按原始错误域和类别报告；捕获错误保留有限数字码。Apple 区分录屏被拒和流启动失败。[Apple 用户拒绝录屏](https://developer.apple.com/documentation/screencapturekit/scstreamerror/code/userdeclined) · [捕获启动失败](https://developer.apple.com/documentation/screencapturekit/scstreamerror/code/failedtostart)
 - **Windows 的窗口几何。** 原生私有桌面复现了标题字符丢失、矩形序列化成字符串、最大化窗口置前后被还原，以及最小化恢复截图在保存前校验失败。枚举改用 Unicode API 并完整保留矩形。仅在目标已最小化且允许主动捕获时恢复，并在恢复后读取边界。Windows 能拒绝前台请求，输入前继续检查实际前台。改后的私有桌面取得真实 560 × 400 PNG，窗口状态经 Win32 回读。[Microsoft ShowWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow) · [SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow)
+
+## 本次验证记录
+
+| 环境 | 实际执行与观测 | 覆盖边界 |
+| --- | --- | --- |
+| Windows 开发机 | 扩展全量测试通过 2,046 项。Companion 定向回归通过 615 项，按平台条件跳过 7 项。两端 TypeScript 通过编译。 | 覆盖准入、确认复用、过期、拒绝、撤权、应用策略和消息合同。 |
+| Windows 原生私有桌面 | 以包含中文和 emoji 的标题验证 Unicode 枚举，核对数值型坐标，解码恢复后得到的 560 × 400 PNG，通过 Win32 回读确认最大化状态保留。 | 用真实窗口调用系统 API，未向使用者的前台应用发送输入。 |
+| Chrome 158 临时配置 | 渲染实际 AppsPanel 组件，分别模拟 Mac 和 Windows 的 Companion，逐项点击核对手动添加、授权、撤权、断线禁用和重连刷新。 | 真实浏览器与 DOM，运行时消息及 Companion 状态模拟。 |
+| [macOS ARM64 安装包构建](https://github.com/nehcuh/cmspark/actions/runs/45508463622/job/138849691536) | 编译实际 Swift 宿主，签名后核对 `com.cmspark.agent`，执行包含 `screen_capture_permission` 的分类自检，构建并上传 DMG。 | 构建使用 ad-hoc 签名。此次自检向分类器传入原生错误对象，首次授权与覆盖升级仍需交互验收。 |
+| [Windows x64 安装包构建](https://github.com/nehcuh/cmspark/actions/runs/45508463622/job/138849692230) | 打包流程完成，已上传安装产物。 | 安装包构建与登录桌面中操作第三方应用是两项验收。 |
+
+在开发环境中，按项目要求选择 Node 版本后，可在 `companion/` 目录重跑关键回归。最后一项在 Windows 上会创建私有桌面并实际执行 PowerShell 宿主脚本。
+
+```sh
+npx tsc -p tsconfig.test.json
+node scripts/run-tests.mjs .test-dist/tests/apps-coordinate.test.js .test-dist/tests/apps-grant-race-649.test.js .test-dist/tests/apps-list-race-655.test.js .test-dist/tests/apps-gui-template-686.test.js
+node scripts/run-tests.mjs .test-dist/tests/integration/confirmation-preview-532.test.js .test-dist/tests/transient-rate-feedback-730.test.js .test-dist/tests/session-trust-v4.test.js
+node scripts/run-tests.mjs .test-dist/tests/apps-enumerate-macos.test.js .test-dist/tests/computer-darwin-estop-owner.test.js .test-dist/tests/computer-darwin-capture-degraded.test.js .test-dist/tests/computer-input-ps1.test.js
+```
 
 ## 后续优先级与验收方法
 

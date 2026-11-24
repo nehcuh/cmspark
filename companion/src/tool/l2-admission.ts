@@ -1,4 +1,5 @@
 import { readonlyComputerDraft, type ComputerReadOperation } from "../computer/readonly-session"
+import { validateComputerDraft } from "../computer/draft"
 // L2 security admission gate for createToolExecutor.
 // Extracted from server.ts (C10 Phase B mechanical split) — zero behavior change.
 //
@@ -309,8 +310,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     }
   }
   if (ctx.toolName === "host_computer" && !ctx.enterprisePermit && !ctx.finalParams.security_token && isHostComputerPlatformGated(os.platform())) {
-    const { validateComputerDraft } = await import("../computer/executor")
-    const invalid = validateComputerDraft(ctx.computerRead?.draft ?? ctx.finalParams)
+    const invalid = validateComputerDraft(ctx.computerRead?.draft ?? ctx.finalParams, os.platform())
     if (invalid) {
       ctx.computerRead?.finish(false)
       const result = { success: false as const, error: invalid.message, error_code: invalid.code }

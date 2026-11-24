@@ -94,8 +94,9 @@ test("Apps list and updates describe each native coordinate path without persist
       const list = await handleAppsMessage({ type: "apps.list" }, {}, deps({ platform, exists: () => false }))
       const updated = await handleAppsMessage({ type: "apps.set_enabled", token: originals[0], enabled: true })
       for (const result of [list, updated]) {
-        assert.deepEqual(originals.map(token => result.entries.find((e: AppEntry) => e.token === token)?.coordinate_mode),
+        assert.deepEqual(originals.map(token => result.coordinate_modes[token]),
           ["per_app", "browser_task", "protected", "missing_identity"])
+        assert.ok(result.entries.every((app: AppEntry) => !("coordinate_mode" in app)))
       }
       assert.ok(Object.values(getConfig().apps!.entries).every(app => !("coordinate_mode" in app)))
     } finally { platformMock.mock.restore() }

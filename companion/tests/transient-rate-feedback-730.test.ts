@@ -53,6 +53,9 @@ function fixture(count = 30, busy = false, policyOff = false) {
   const effects = { external: 0, issued: 0, approved: 0, injected: 0, native: 0, network: 0, confirmationUnavailable: 0, limiterLookups: 0 }
   const denied = () => { effects.external++; throw new Error("OWNED_EXTERNAL_FORBIDDEN") }
   const types = compile(source("computer/types.ts").text, { require(name: string) { assert.equal(name, "crypto"); return crypto } })
+  const draft = compile(source("computer/draft.ts").text, { require(name: string) {
+    return name === "./types" ? types : denied()
+  } })
   const blacklist = compile(source("host-use/win/blacklist.ts").text)
   const guards = compile(source("apps/guards.ts").text, { require(name: string) { assert.equal(name, "../host-use/win/blacklist"); return blacklist } })
   const appTypes = source("apps/types.ts")
@@ -91,6 +94,7 @@ function fixture(count = 30, busy = false, policyOff = false) {
   }
   const admission = compile(admissionCode, {
     readonlyComputerDraft,
+    validateComputerDraft: draft.validateComputerDraft,
     ComputerError: types.ComputerError, os: { platform: () => "darwin" }, WebSocket: { OPEN: 1 },
     getConfig: () => config, getComputerTaskAbortRegistry: () => active,
     logger: { info() {}, warn() {} }, familyOfTool: () => null, detectCriticalApis: () => [],
@@ -98,9 +102,9 @@ function fixture(count = 30, busy = false, policyOff = false) {
     require(name: string) { return Object.hasOwn(imports, name) ? imports[name] : denied() },
   })
   const finishes: unknown[][] = []
-  const request = async () => {
+  const request = async (actions: unknown[] = [{ action: "click", target: "Owned" }]) => {
     const result = await admission.runL2ToolAdmission({ toolName: "host_computer", finalParams: {
-      app: token, task: "Owned synthetic task", actions: [{ action: "click", target: "Owned" }], budget: 15,
+      app: token, task: "Owned synthetic task", actions, budget: 15,
     }, toolCallId: "owned-730", startedAt: now, ws: { readyState: 1 }, isOutboundMcpCall: false,
       logToolFinish: (...args: unknown[]) => finishes.push(args), getThreadManager: () => ({ get: () => undefined }),
       getCachedTabUrl: () => undefined, getDomainFromUrl: () => "", activeTrayConfirmsByWs: new WeakMap(), clients: new Set(), wsAuthGet: () => undefined,
@@ -119,6 +123,16 @@ function fixture(count = 30, busy = false, policyOff = false) {
   }
   return { request, limiter, advance: (ms: number) => { now += ms }, effects, finishes, noAuthority }
 }
+
+test("#730 an unsupported macOS draft is refused before a saturated limiter or confirmation", async () => {
+  const f = fixture()
+  const wire = await f.request([{ action: "key", keys: ["f1"] }])
+  assert.equal(wire.error_code, "COMPUTER_INPUT_INVALID")
+  assert.equal(f.effects.limiterLookups, 0)
+  assert.equal(f.effects.confirmationUnavailable, 0)
+  assert.equal(f.limiter.totalApproved(), 30)
+  f.noAuthority()
+})
 
 for (const elapsed of [0, 59_999]) test(`#730 actual saturated admission remains typed recoverable at ${elapsed}ms`, async t => {
   const f = fixture(); f.advance(elapsed)
