@@ -1,10 +1,12 @@
 # 版本与交付状态
 
-源码开发版本 **1.8.0（尚未正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
+源码版本 **1.8.0（已于 2026-11-24 正式发布）**。桌面会议和模型设置的验收范围见 [设计 #880](superpowers/specs/desktop-meeting-model-limits.md)。
 
 ## 1.8.0
 
-会议画面证据进入发布准备。设计、覆盖范围和数据流见[会议画面证据](superpowers/specs/meeting-visual-evidence.md)。
+2026-11-24 00:39:25 UTC 正式发布，标签指向 `bd841e56456d60f9d1674e16732b0058acd9ae7f`。发行源主线 10 项检查、三平台发布预演及安装器预演均通过。正式版共 19 项附件，已核对下载文件与公开 SHA-256。[正式发行](https://github.com/nehcuh/cmspark/releases/tag/v1.8.0) · [正式构建](https://github.com/nehcuh/cmspark/actions/runs/45296715577) · [同标签安装器](https://github.com/nehcuh/cmspark/actions/runs/45296730128)
+
+桌面会议可选择保留变化画面，确认后交给已有视觉模型识别，生成带时间和来源的纪要。实际覆盖与采样限制见[浏览器和本机模型验收](audit/meeting-visual-evidence-20261124.md)。
 
 ## 1.7.2
 
