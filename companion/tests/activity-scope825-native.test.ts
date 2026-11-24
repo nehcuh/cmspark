@@ -63,8 +63,9 @@ test('scope825 real Windows two-column chat gates local title, crops sidebar, ke
     assert.equal(service.state().runtime.status, 'scope_title_mismatch'); assert.equal(service.state().sources.length, 0); assert.equal(models, 0)
     main.allowed_titles = [String(titleReply.recognized_title)]; await scopes([main])
     assert.equal((await service.handle({ type: 'activity.scan' })).ok, true)
-    assert.equal(service.state().runtime.status, 'ready_for_review'); assert.equal(models, 1); assert.equal(service.state().sources.length, 1)
+    assert.equal(service.state().runtime.status, 'captured'); assert.equal(models, 1); assert.equal(service.state().sources.length, 1)
     const source = service.state().sources[0]; assert.equal(source.conversation_title, titleReply.recognized_title)
+    assert.ok(source.recognition?.status === 'complete' && source.recognition.candidates === 0)
     const saved = service.store.source(source.id).image_data_url!; assert.equal(colored(Buffer.from(saved.split(',')[1], 'base64'), 'sidebar'), 0)
     assert.equal((await probe()).hwnd, ready.hwnd, 'passive capture never changes foreground identity')
     async function control(command: 'resize' | 'popup') {
@@ -80,7 +81,10 @@ test('scope825 real Windows two-column chat gates local title, crops sidebar, ke
     const popupTitle = await service.handle({ type: 'activity.preview_ocr', image_base64: popup.image_data_url.split(',')[1], rect: independent.title, ocr_language: 'en-US' })
     assert.equal(popupTitle.ok, true); assert.match(popupTitle.recognized_title as string, /^ALPHA\s+GROUP$/i)
     independent.allowed_titles = [String(popupTitle.recognized_title)]; await scopes([main, independent])
-    assert.equal((await service.handle({ type: 'activity.scan' })).ok, true); assert.equal(service.state().runtime.status, 'ready_for_review'); assert.equal(models, 2)
+    assert.equal((await service.handle({ type: 'activity.scan' })).ok, true); assert.equal(service.state().runtime.status, 'captured'); assert.equal(models, 2)
+    const popupSource = service.state().sources[0]
+    assert.notEqual(popupSource.id, source.id)
+    assert.ok(popupSource.recognition?.status === 'complete' && popupSource.recognition.candidates === 0)
     assert.equal(fs.readdirSync(service.store.root).filter(name => name.startsWith('pending-')).length, 0)
     console.log(JSON.stringify({ capability: 'scope825', windowsNative: true, mainAndIndependent: true, sidebarDecoyRefused: true, localOcrAndCrop: true, modelSidebarAbsent: true, embeddedImagePreserved: true, resizeRefused: true, pendingCleaned: true }))
   } finally {
