@@ -1,10 +1,17 @@
 # 版本与交付状态
 
-源码开发版本 **1.9.1（尚未正式发布）**。当前正式安装包见 [v1.9.0](https://github.com/nehcuh/cmspark/releases/tag/v1.9.0)。
+源码版本 **1.9.1（已于 2026-11-24 正式发布）**。当前正式安装包见 [v1.9.1](https://github.com/nehcuh/cmspark/releases/tag/v1.9.1)。
 
-## 1.9.1 发布准备
+## 1.9.1 正式发布
 
-看图与截图设置新增显式「复用主模型」开关，关闭复用后使用保留的独立视觉配置。截图分析总开关与实际选模一致，输入框原生图片路径保持独立。需求与实现见 [#904](https://github.com/nehcuh/cmspark/issues/904) / [PR #905](https://github.com/nehcuh/cmspark/pull/905)。正式 tag、三平台发布预演、主线 CI、安装器及本机换装仍待完成。
+看图与截图设置新增显式「复用主模型」开关，关闭复用后使用保留的独立视觉配置。截图分析总开关与实际选模一致；输入框原生图片、文档内嵌图片保持原有独立选模，文档视觉分析仍受自己的开关控制。需求与实现见 [#904](https://github.com/nehcuh/cmspark/issues/904) / [PR #905](https://github.com/nehcuh/cmspark/pull/905)。
+
+2026-11-24 22:44:23（北京时间）正式发布，标签 `v1.9.1` 指向源码提交 `30a7356938bd5a44894be7a00b9cb7b63e5dc49f`，完整树为 `a641556c50dc6a105da5683464121a92bacb8327`。标签保留发布前准备状态，本页为发布后的交付回执。
+
+- 精确发行源的[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/45409736855)、[Linux ARM 集成](https://github.com/nehcuh/cmspark/actions/runs/45409736808)、[ARM 验收](https://github.com/nehcuh/cmspark/actions/runs/45409737085)与[Windows 会话恢复](https://github.com/nehcuh/cmspark/actions/runs/45409736813)共 10 项检查通过；同提交的[三平台发布预演](https://github.com/nehcuh/cmspark/actions/runs/45409751775)和[安装器预演](https://github.com/nehcuh/cmspark/actions/runs/45409758828)均通过。
+- [正式 Release 构建](https://github.com/nehcuh/cmspark/actions/runs/45414670226)及[同标签六平台安装器与 Chrome 扩展构建](https://github.com/nehcuh/cmspark/actions/runs/45415183192)全部通过。发行地址见 [v1.9.1](https://github.com/nehcuh/cmspark/releases/tag/v1.9.1)。
+- Windows x64 本机使用公开 Setup 安装器换装，安装器 SHA-256 为 `41603453548a7dd9fc511a1a719c0e3a80546fb5db3736c4670889ea6cecdb18`，与 GitHub digest 及基础校验清单一致；安装退出码 0。官方 ZIP 的 6,617 个文件与安装目录逐一核对一致，Windows 宿主脚本 32 个全部一致。注册表与包内 CLI 均为 1.9.1；新启动进程使用安装目录的 Node 与 Companion，健康检查正常，配置文件摘要保持不变。
+- 两个既有 Chrome 个人资料使用的扩展目录均已更新为官方 1.9.1 文件。浏览器控制工具无法可靠识别当前 URL，已停止自动操作；扩展的手动重新加载及浏览器运行版本仍待用户确认。此处不计作浏览器验收通过。
 
 ## 1.9.0 正式发布
 
