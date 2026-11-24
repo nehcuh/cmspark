@@ -1,4 +1,5 @@
 import { probeVisionConnection } from "./llm/vision-pipeline"
+import { likelyMultimodal, resolveNativeVision } from "./llm/likely-multimodal"
 // Local Web settings server for CMspark Companion
 // Spawns a temporary HTTP server on 127.0.0.1, opens browser to settings page.
 //
@@ -344,6 +345,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
       const { config, revision } = getConfigSnapshot()
       const vision = config.vision
       const llmPublic = settingsWebLlmResponse(config.llm)
+      llmPublic.native_vision_available = resolveNativeVision({ baseUrl: config.llm.base_url, modelName: config.llm.model_name, mode: config.llm.native_vision })
       jsonResponse(res, {
         config_revision: revision,
         llm: llmPublic,
@@ -458,7 +460,8 @@ async function handleTestProxy(
   if (res.writableEnded) return
 
   // Resolve the key against saved config if the user-submitted value is masked/empty.
-  const savedKey = kind === "vision" ? config.vision?.api_key || "" : config.llm.api_key
+  const reuseMain = kind === "vision" && parsed.reuse_main_model === true
+  const savedKey = kind === "vision" && !reuseMain ? config.vision?.api_key || "" : config.llm.api_key
   const key = (!api_key || (typeof api_key === "string" && api_key.includes("*"))) ? savedKey : api_key
 
   try {
@@ -496,7 +499,7 @@ async function handleTestProxy(
     } else {
       await probeVisionConnection({
         enabled: true, timeout_ms: 10000, max_tokens: 32, fallback: "error", cache_ttl_seconds: 0,
-        ...config.vision, ...parsed, base_url: validatedBaseUrl, api_key: key,
+        ...(reuseMain ? config.llm : config.vision), ...parsed, base_url: validatedBaseUrl, api_key: key,
       })
       jsonResponse(res, { ok: true, message: `success: ${model_name || "default"}` })
     }
@@ -688,12 +691,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <div id="visionFields" style="opacity:0.4;pointer-events:none">
       <div class="field" id="visionReuseBar" style="display:none">
         <div class="hint" id="visionReuseHint" style="margin-bottom:8px"></div>
-        <button class="btn btn-outline" type="button" id="useMainForVisionBtn">Use main LLM for vision</button>
-        <div class="hint" style="margin-top:6px">Copies Base URL / Model / Key from the main LLM above. Screenshots go to that host using its protocol and gateway auth. Save inherits key when endpoints match.</div>
+        <label><input type="checkbox" id="visionReuseMain" style="width:auto"> Reuse main model</label>
+        <div class="hint" style="margin-top:6px">Uses the current main model and its credentials. Independent vision settings are preserved.</div>
       </div>
       <div class="field" id="visionAnthropicWarn" style="display:none">
         <div class="hint">Vision supports OpenAI-compatible and Anthropic Messages endpoints.</div>
       </div>
+      <fieldset id="visionIndependentFields" style="border:0;padding:0;margin:0;min-width:0">
       <div class="field"><label for="visionProtocol">Vision protocol</label><select id="visionProtocol"><option value="openai">OpenAI-compatible</option><option value="anthropic">Anthropic Messages</option></select></div>
       <div class="field">
         <label>API Key</label>
@@ -723,6 +727,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           <option value="glm-4.6v">
         </datalist>
       </div>
+
+      </fieldset>
 
       <div class="field">
         <label>Timeout</label>
@@ -792,17 +798,21 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     k=(k||"").trim();
     return !k||k==="***"||/^\\*+$/.test(k)||k.indexOf("****")>=0
   }
+  var mainSupportsVision=${likelyMultimodal.toString()};
+  var mainNativeMode="auto",savedMainVision=null,visionReusePreference=true;
   function syncVisionReuseUi(){
     var on=visionEnabledEl.checked;
-    var anth=protocolEl.value==="anthropic";
-    var bar=$("visionReuseBar"),warn=$("visionAnthropicWarn"),hint=$("visionReuseHint");
-    if(!on){
-      if(bar)bar.style.display="none";
-      if(warn)warn.style.display="none";
-      return
-    }
-    if(warn)warn.style.display="none";
-    if(bar){bar.style.display="block";if(hint)hint.textContent="Screenshots will be sent to "+hostnameFromUrl(baseUrlEl.value)+" when you reuse main LLM."}
+    var known=savedMainVision&&savedMainVision.url===baseUrlEl.value&&savedMainVision.model===modelNameEl.value;
+    var canReuse=mainNativeMode==="on"||(mainNativeMode!=="off"&&(known?savedMainVision.supported:mainSupportsVision(modelNameEl.value)));
+    var reuse=$("visionReuseMain"),fields=$("visionIndependentFields"),bar=$("visionReuseBar"),hint=$("visionReuseHint");
+    reuse.checked=canReuse&&visionReusePreference;
+    reuse.disabled=!configLoaded||!canReuse||!on;
+    fields.disabled=!configLoaded||!on||reuse.checked;
+    fields.style.opacity=reuse.checked?"0.5":"1";
+    bar.style.display=on?"block":"none";
+    hint.textContent=!canReuse?"Main model image input is unavailable. Configure an independent vision model.":reuse.checked
+      ?"Using "+modelNameEl.value+" at "+hostnameFromUrl(baseUrlEl.value)+". Independent settings are preserved."
+      :"Screenshots use the independent vision model below.";
   }
   function toggleVisionFields(){
     var on=visionEnabledEl.checked;
@@ -822,9 +832,11 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   }
 
   visionEnabledEl.onchange=toggleVisionFields;
+  $("visionReuseMain").onchange=function(){visionReusePreference=this.checked;syncVisionReuseUi()};
   visionProtocolEl.onchange=function(){visionUseMainAuth=false};
   protocolEl.onchange=syncProtocolUi;
   baseUrlEl.oninput=syncVisionReuseUi;
+  modelNameEl.oninput=syncVisionReuseUi;
 
   document.querySelectorAll("#protocolPresets .preset").forEach(function(el){
     el.onclick=function(){
@@ -842,6 +854,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     fetch(url("/api/config")).then(function(r){return r.json()}).then(function(d){
       if(typeof d.config_revision!=="string"||!d.config_revision){throw new Error("CONFIG_REVISION_REQUIRED")}
       var llm=d.llm||{};
+      mainNativeMode=llm.native_vision||"auto";
+      savedMainVision=typeof llm.native_vision_available==="boolean"?{url:llm.base_url||"",model:llm.model_name||"",supported:llm.native_vision_available}:null;
       apiKeyEl.value=llm.api_key||"";
       baseUrlEl.value=llm.base_url||"";
       modelNameEl.value=llm.model_name||"";
@@ -853,6 +867,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       syncProtocolUi();
       // Vision fields
       var vision=d.vision||{};
+      visionReusePreference=vision.reuse_main_model!==false;
       visionEnabledEl.checked=!!vision.enabled;
       visionProtocolEl.value=vision.protocol||"openai";
       visionUseMainAuth=vision.use_main_auth===true;
@@ -866,6 +881,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       configRevision=d.config_revision;
       configLoaded=true;
       editControls.forEach(function(el){el.disabled=false});
+      syncVisionReuseUi();
       statusDot.classList.remove("offline");
     }).catch(function(){
       statusDot.classList.add("offline");
@@ -887,6 +903,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     if(visionEnabledEl.checked){
       data.vision={
         enabled:true,
+        reuse_main_model:visionReusePreference,
         protocol:visionProtocolEl.value,
         use_main_auth:visionUseMainAuth,
         api_key:visionApiKeyEl.value,
@@ -978,7 +995,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     fetch(url("/api/testVision"),{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({base_url:visionBaseUrlEl.value,api_key:visionApiKeyEl.value,model_name:visionModelEl.value,protocol:visionProtocolEl.value,use_main_auth:visionUseMainAuth})
+      body:JSON.stringify($("visionReuseMain").checked
+        ?{...collect().llm,reuse_main_model:true,use_main_auth:true}
+        :{base_url:visionBaseUrlEl.value,api_key:visionApiKeyEl.value,model_name:visionModelEl.value,protocol:visionProtocolEl.value,use_main_auth:visionUseMainAuth})
     }).then(function(r){return r.json()}).then(function(d){
       visionResultEl.textContent=d.ok?d.message:d.error;
       visionResultEl.className="result "+(d.ok?"success":"error");
@@ -992,25 +1011,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     });
   };
 
-  var useMainBtn=$("useMainForVisionBtn");
-  if(useMainBtn){
-    useMainBtn.onclick=function(){
-      if(!configLoaded)return;
-      visionProtocolEl.value=protocolEl.value;
-      visionUseMainAuth=true;
-      visionEnabledEl.checked=true;
-      toggleVisionFields();
-      visionBaseUrlEl.value=baseUrlEl.value||"";
-      visionModelEl.value=modelNameEl.value||"";
-      visionResultEl.textContent="Vision filled from main LLM → "+hostnameFromUrl(baseUrlEl.value)+". Save to persist. Existing dedicated vision key is kept; an empty key inherits main credentials when endpoint and protocol match. Then Test Vision.";
-      visionResultEl.className="result success";
-      syncVisionReuseUi()
-    }
-  }
-
   var presets=document.querySelectorAll(".preset");
   for(var i=0;i<presets.length;i++){
-    presets[i].onclick=function(){if(configLoaded)modelNameEl.value=this.getAttribute("data-model")};
+    presets[i].onclick=function(){if(configLoaded){modelNameEl.value=this.getAttribute("data-model");syncVisionReuseUi()}};
   }
 
   load();

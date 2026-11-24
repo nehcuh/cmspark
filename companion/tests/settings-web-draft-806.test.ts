@@ -33,20 +33,27 @@ test("settings web keeps edits while saves and conflicts are in flight", async (
   assert.equal(pending.length, 1, "pre-hydration connection tests do not run")
   element("saveBtn").onclick()
   assert.equal(pending.length, 1, "unhydrated settings cannot save")
-  pending[0].resolve({ config_revision: "epoch:1", llm: { model_name: "base" }, vision: {} })
+  pending[0].resolve({ config_revision: "epoch:1", llm: { model_name: "gpt-4o" }, vision: { enabled: true, protocol: "openai", base_url: "https://vision.invalid", model_name: "separate-vl" } })
   await flush()
   assert.equal(element("modelName").disabled, false)
   element("apiKey").value = "changed-main-owned-key"
   element("visionApiKey").value = "dedicated-vision-owned-key"
   element("protocol").value = "anthropic"
-  element("useMainForVisionBtn").onclick()
+  element("visionReuseMain").checked = true
+  element("visionReuseMain").onchange()
   assert.equal(element("visionApiKey").value, "dedicated-vision-owned-key", "reuse preserves a dedicated visual key")
-  assert.equal(element("visionProtocol").value, "anthropic")
+  assert.equal(element("visionProtocol").value, "openai")
+  assert.equal(element("visionIndependentFields").disabled, true)
+  assert.equal(element("visionBaseUrl").value, "https://vision.invalid")
+  assert.equal(element("visionModel").value, "separate-vl")
   element("visionApiKey").value = ""
-  element("useMainForVisionBtn").onclick()
+  element("visionReuseMain").checked = false
+  element("visionReuseMain").onchange()
+  assert.equal(element("visionIndependentFields").disabled, false)
   assert.equal(element("visionApiKey").value, "", "empty visual key stays in the backend inheritance path")
   element("saveBtn").onclick()
   assert.equal(pending[1].body.config_revision, "epoch:1")
+  assert.equal(pending[1].body.vision.reuse_main_model, false)
   pending[1].resolve({ ok: true, config_revision: "epoch:2" })
   await flush()
   assert.equal(element("result").className, "result")

@@ -92,6 +92,8 @@ export interface SecurityConfig {
 }
 
 export interface VisionConfig extends Pick<LlmConfig, "protocol" | "auth_style" | "client_header_profile" | "claude_code_compat_version" | "extra_headers" | "anthropic_version"> {
+  /** Missing preserves the legacy main-model preference while vision is enabled. */
+  reuse_main_model?: boolean
   use_main_auth?: boolean
   enabled: boolean
   base_url: string

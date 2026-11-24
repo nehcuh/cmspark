@@ -2,8 +2,8 @@
 // Pure functions only (model-switch-logic precedent) — node:test, no React.
 //
 // Architecture note: vision-pipeline uses the protocol-aware LLM provider.
-// Main chat loop still receives text descriptions only (pre-analyze). Reuse copies
-// credentials into config.vision; it does NOT make the agent loop natively multimodal.
+// Tool screenshots are pre-analyzed into text. Explicit model reuse resolves
+// the current main credentials at call time and preserves independent settings.
 
 export const DEFAULT_VISION_BASE_URL = "http://localhost:11434/v1"
 export const DEFAULT_VISION_MODEL = "llava:7b"
@@ -12,7 +12,11 @@ export const VISION_PLACEHOLDER_KEY = "ollama"
 
 export const VISION_COPY = {
   sectionHelp:
-    "本段只管工具截图 / analyze_image：先视觉轨转文字再进对话。输入框粘贴/选/拖的图另算——主模型能看图则直送主模型，否则才走本视觉轨。",
+    "控制工具截图 / analyze_image 的图片识别，识别结果转文字后进入对话。输入框粘贴/选/拖的图片独立判断：主模型支持看图时直接处理，否则使用已开启的截图视觉配置。",
+  reuseMain: "复用主模型",
+  reuseHelp: "使用当前主模型的协议、地址、模型和鉴权；切换主模型后自动跟随。独立视觉配置会保留。",
+  separateHelp: "单独配置视觉模型，截图将发送到下方服务地址。",
+  unavailableHelp: "当前主模型未启用或未检测到图片理解能力，请配置独立视觉模型；可在对话模型设置中测试图片输入能力。",
   railDifferentiator:
     "本段用于截图分析；工作中心可复用此配置，也可选择本机 Qwen3-VL 抽取待办。",
   bannerTitle: "主模型可能已支持图片理解",
@@ -42,6 +46,7 @@ export interface MainLlmFields {
   base_url?: string
   api_key?: string
   protocol?: string
+  native_vision?: NativeVisionMode | boolean | null
 }
 
 export interface VisionFlatFields {
@@ -172,7 +177,7 @@ export function resolveNativeVision(opts: {
  * Supports either protocol when the main model is multimodal.
  */
 export function shouldOfferVisionReuse(main: MainLlmFields): boolean {
-  return likelyMultimodal(main.model_name)
+  return resolveNativeVision({ modelName: main.model_name, baseUrl: main.base_url, mode: main.native_vision })
 }
 
 export function isVisionReusingMain(

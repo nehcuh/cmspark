@@ -85,6 +85,7 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   const vision = config.vision
   if (vision) {
     normalized.vision_enabled = !!vision.enabled
+    normalized.vision_reuse_main_model = vision.reuse_main_model !== false
     // Same masked-key pattern as the main LLM key — keep the editable field empty
     // but expose `vision_api_key_set` so the UI can show "已配置" indicators.
     const visionKeyMasked = isMaskedApiKey(vision.api_key)

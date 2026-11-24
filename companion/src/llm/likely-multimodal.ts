@@ -46,6 +46,7 @@ export function resolveNativeVision(opts: {
 
 type VisionLike = Pick<LlmConfig, "protocol" | "auth_style" | "client_header_profile" | "claude_code_compat_version" | "extra_headers" | "anthropic_version"> & {
   enabled?: boolean
+  reuse_main_model?: boolean
   base_url: string
   api_key: string
   model_name: string
@@ -64,16 +65,17 @@ type LlmLike = Pick<LlmConfig, "protocol" | "auth_style" | "client_header_profil
 }
 
 /**
- * Screenshot / analyze_image rail. Prefer the main LLM when it can see images
- * (override / heuristic / probe).
+ * Screenshot / analyze_image rail. The master switch gates this rail only;
+ * composer native-image routing continues to use resolveNativeVision directly.
  */
 export function visionConfigForAnalyze(llm: LlmLike, vision?: VisionLike | null): VisionLike | null {
+  if (!vision?.enabled) return null
   const useNative = resolveNativeVision({
       modelName: llm.model_name,
       baseUrl: llm.base_url,
       mode: llm.native_vision,
     })
-  if (useNative) {
+  if (useNative && vision.reuse_main_model !== false) {
     return {
       enabled: true,
       base_url: llm.base_url,
@@ -92,6 +94,5 @@ export function visionConfigForAnalyze(llm: LlmLike, vision?: VisionLike | null)
       prompt: vision?.prompt,
     }
   }
-  if (vision?.enabled) return vision
-  return null
+  return vision
 }

@@ -32,7 +32,9 @@ export function SettingsModelUses({ active, onOpen }: { active: boolean; onOpen:
     ? [config.vision_model_name, modelEndpointLabel(config.vision_base_url)].filter(Boolean).join(" · ")
     : undefined
   const attachmentVision = nativeVision ? main : config.file_upload_vision !== false ? vision : undefined
-  const screenshotVision = nativeVision ? main : vision
+  const screenshotVision = config.vision_enabled
+    ? nativeVision && config.vision_reuse_main_model !== false ? main : vision
+    : undefined
   const chatVision = attachmentVision === screenshotVision
     ? attachmentVision ?? "未启用视觉服务"
     : `附图 · ${attachmentVision ?? "未启用"} / 截图 · ${screenshotVision ?? "未启用"}`

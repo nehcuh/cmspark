@@ -6,7 +6,7 @@ import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { isChatOutputLimit } from "../../llm/output-budget"
 import { probeLlmConnection, probeNativeVision } from "../../llm/connection-test"
 import { rememberNativeVisionProbe } from "../../llm/native-vision-probe-cache"
-import { resolveNativeVision } from "../../llm/likely-multimodal"
+import { resolveNativeVision, visionConfigForAnalyze } from "../../llm/likely-multimodal"
 import { probeVisionConnection } from "../../llm/vision-pipeline"
 import { isPlaceholderVisionKey } from "../../llm/vision-reuse-inherit"
 import {
@@ -276,7 +276,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         }
       }
       // Vision config: normalize flat vision_* fields into nested vision object
-      const hasLegacyVisionFields = cfg.vision_protocol !== undefined || cfg.vision_use_main_auth !== undefined || cfg.vision_enabled !== undefined || typeof cfg.vision_base_url === "string" || typeof cfg.vision_model_name === "string" || !!cfg.vision_api_key
+      const hasLegacyVisionFields = cfg.vision_protocol !== undefined || cfg.vision_use_main_auth !== undefined || cfg.vision_reuse_main_model !== undefined || cfg.vision_enabled !== undefined || typeof cfg.vision_base_url === "string" || typeof cfg.vision_model_name === "string" || !!cfg.vision_api_key
       const hasValidVisionTimeout = typeof cfg.vision_timeout_ms === "number" && Number.isFinite(cfg.vision_timeout_ms)
       const hasValidVisionFallback = cfg.vision_fallback === "metadata" || cfg.vision_fallback === "passthrough" || cfg.vision_fallback === "error"
       if (cfg.vision) {
@@ -289,6 +289,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         normalized.vision = {}
         if (cfg.vision_protocol === "openai" || cfg.vision_protocol === "anthropic") normalized.vision.protocol = cfg.vision_protocol
         if (typeof cfg.vision_use_main_auth === "boolean") normalized.vision.use_main_auth = cfg.vision_use_main_auth
+        if (typeof cfg.vision_reuse_main_model === "boolean") normalized.vision.reuse_main_model = cfg.vision_reuse_main_model
         if (cfg.vision_enabled !== undefined) normalized.vision.enabled = !!cfg.vision_enabled
         if (cfg.vision_api_key && !isMaskedApiKey(cfg.vision_api_key)) normalized.vision.api_key = cfg.vision_api_key
         if (typeof cfg.vision_base_url === "string") normalized.vision.base_url = cfg.vision_base_url
@@ -516,7 +517,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
         const nativeMode = overrideMode === "auto" || overrideMode === "on" || overrideMode === "off"
           ? overrideMode : config.llm.native_vision
         const useMainVision = resolveNativeVision({ baseUrl: testConfig.base_url, modelName: testConfig.model_name, mode: nativeMode })
-        const visionFallback = rest.test_vision_fallback === true && config.vision?.enabled && !useMainVision
+        const visionFallback = rest.test_vision_fallback === true && config.vision?.enabled && (!useMainVision || config.vision.reuse_main_model === false)
           ? await testVision(config.vision)
           : undefined
         return {
@@ -540,7 +541,7 @@ export async function handleConfigFamily(type: string, rest: any): Promise<any |
       if (!config.vision?.enabled) {
         return { type: "config.testVisionResult", ok: false, error: "Vision not enabled" }
       }
-      return { type: "config.testVisionResult", ...await testVision(config.vision) }
+      return { type: "config.testVisionResult", ...await testVision(visionConfigForAnalyze(config.llm, config.vision) as VisionConfig) }
     }
 
     case "settings.get": {
