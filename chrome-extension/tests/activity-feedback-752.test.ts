@@ -30,6 +30,7 @@ function harness(platform: 'win32' | 'darwin' = 'win32', separated = false) {
     if (id === 'react') return react
     if (id === 'react/jsx-runtime') return jsx
     if (id === '../ContextPanelHost') return { CONTEXT_PANEL_TABS: [] }
+    if (id === './WindowScreenshotImport') return { WindowScreenshotImport: () => null }
     if (id === './ChatScopeEditor') return { ChatScopeEditor: () => null }
     if (id === './RecentActivitySources') return { RecentActivitySources: () => null }
     if (id === './activity-request') return { formatTaskTime: () => '—', requestActivity: async (type: string) => { if (type === 'activity.state') return { state: controller.snapshot }; assert.equal(type, 'activity.apps'); return { apps } } }

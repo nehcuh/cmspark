@@ -3,6 +3,7 @@ import { CONTEXT_PANEL_TABS, type ContextPanelId } from '../ContextPanelHost'
 import { datetimeInput, taskDatePatch, dueToday, formatTaskTime, requestActivity, taskComplete, type ActivityApp, type ActivityConfig, type ActivityReply, type PersonalTodo, type TaskEvidence, type TodoCandidate } from './activity-request'
 import type { ActivityBulkAction, ActivityBulkItem, ActivityBulkResult, ActivityController } from './useActivity'
 import { RecentActivitySources, recognitionLabel } from './RecentActivitySources'
+import { WindowScreenshotImport } from './WindowScreenshotImport'
 import { ChatScopeEditor } from './ChatScopeEditor'
 
 /** Aliases help users find a process; only app_id grants the existing capture scope. */
@@ -255,7 +256,7 @@ function ActivityPanel({ controller, connected }: { controller: ActivityControll
       {editing && <ActivityConfigEditor modelTargetIds={runtime.model_target_ids} modelTargets={runtime.model_targets} platform={runtime.platform} autoSupported={runtime.supported} scopeSupported={runtime.chat_scope_supported ?? (runtime.platform === 'win32' && runtime.supported)} config={config} revision={snapshot!.revision} busy={busy || !connected} onSave={async (patch, expected_model_target, expectedRevision) => { if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('未取得最新设置版本，请重新保存。'); const saved = await mutate('activity.configure', { expected_revision: expectedRevision, patch, ...(expected_model_target ? { expected_model_target } : {}) }, '采集设置已保存。'); if (saved) setEditing(false) }} />}
       <section className="cm-personal-config-section"><h2>保留与清理</h2><p className="cm-personal-fieldnote" style={{ margin: '12px 0' }}>来源最多保留 {config.retention_days} 天，容量上限 {config.max_storage_mb} MiB；清理截图与 OCR 后，已确认事项保留，引用原文也会移除。</p><p className="cm-personal-fieldnote">OCR 文本、来源信息和事项共享独立的 16 MiB 元数据上限；达到后会拒绝超额操作（QUOTA_EXCEEDED）。可先清理来源，再重试编辑或提醒，已确认事项会保留。</p>{deleteConfirm ? <div className="cm-personal-actions"><span className="cm-personal-fieldnote">删除全部截图、OCR 和未确认候选？此操作不可撤销。</span><button className="cm-p-button cm-p-danger" type="button" disabled={busy || !connected} onClick={async () => { if (await mutate('activity.delete', {}, '来源与未确认候选已清理；已确认事项保留。')) setDeleteConfirm(false) }}>确认清理来源</button><button className="cm-p-button" type="button" onClick={() => setDeleteConfirm(false)}>取消</button></div> : <button className="cm-p-button cm-p-danger" type="button" disabled={!connected || busy} onClick={() => setDeleteConfirm(true)}>清理全部来源</button>}</section>
     </div>
-    <ImportScreenshot busy={busy || !connected} imageMode={imageMode} authorized={!!extractionAllowed} onImport={image_base64 => mutate('activity.import', { image_base64 }, imageMode ? extractionAllowed ? '截图抽取完成，请到待整理中核对候选。' : '截图已保存在本机。核对处理目标并授权后可抽取待办。' : '截图已在本机 OCR；未发送模型。请核对来源后整理待办，或单独点击抽取。')} />
+    <ImportScreenshot windowPicker={runtime.platform === 'win32' || runtime.platform === 'linux'} busy={busy || !connected} imageMode={imageMode} authorized={!!extractionAllowed} onImport={image_base64 => mutate('activity.import', { image_base64 }, imageMode ? extractionAllowed ? '截图抽取完成，请到待整理中核对候选。' : '截图已保存在本机。核对处理目标并授权后可抽取待办。' : '截图已在本机 OCR；未发送模型。请核对来源后整理待办，或单独点击抽取。')} />
     <RecentActivitySources localRetryOnly={!extractionAllowed} sources={snapshot!.sources} visibleCount={visibleSources} onMore={() => setVisibleSources(count => count + 30)}
       onAnalyze={connected && !busy && (extractionAllowed || !imageMode) ? id => { void mutate('activity.analyze', { source_id: id, queue_only: true }, '已提交识别，可在来源列表查看进度。') } : undefined} onSelect={id => { if (id === sourceId) { sourceDetail.current?.scrollIntoView?.({ block: 'nearest' }); return }; setSourceId(id); setLoadedSource(undefined); setManual(false) }} />
     {source && <section className="cm-personal-detail" ref={sourceDetail} key={source.id} style={{ maxWidth: 900, marginTop: 20 }}><div className="cm-personal-detail-top"><h2>采集来源</h2><span>{recognitionLabel(source.recognition)}</span><button className="cm-p-link" type="button" onClick={() => setSourceId(null)}>关闭来源</button></div><SourceEvidence appName={source.app_name} connected={connected} onSource={setLoadedSource} autoLoad resultVersion={source.recognition && ('completed_at' in source.recognition ? source.recognition.completed_at : source.recognition.status === 'saved' ? source.recognition.reason : undefined)} evidence={{ source_id: source.id, app_id: source.app_id, group: '', sender: '', message_time: '', quote: '' }} />
@@ -267,12 +268,13 @@ function ActivityPanel({ controller, connected }: { controller: ActivityControll
   </>
 }
 
-function ImportScreenshot({ busy, onImport, imageMode = false, authorized = false }: { imageMode?: boolean; authorized?: boolean; busy: boolean; onImport: (image: string) => Promise<boolean> }) {
+function ImportScreenshot({ busy, onImport, windowPicker, imageMode = false, authorized = false }: { imageMode?: boolean; authorized?: boolean; windowPicker?: boolean; busy: boolean; onImport: (image: string) => Promise<boolean> }) {
   const reader = useRef<FileReader | null>(null), alive = useRef(true)
   const [reading, setReading] = useState(false), [error, setError] = useState('')
   useEffect(() => { alive.current = true; return () => { alive.current = false; reader.current?.abort() } }, [])
   return <section className="cm-personal-config-section"><h2>主动导入截图</h2>
     <p className="cm-personal-fieldnote">适用于 Wayland、无法后台采集的环境，或只想整理一张截图。选择不超过 6 MiB 的 PNG。{imageMode ? authorized ? '按已授权目标直接识别并抽取待办。' : '仅保存在本机，授权后可抽取。' : '在本机 OCR，不会自动发送模型。'}来源标为用户导入，应用、群和消息时间均需核对。</p>
+    {windowPicker && <WindowScreenshotImport busy={busy || reading} sendImage={imageMode && authorized} onImport={onImport} />}
     <label className="cm-personal-fieldnote" style={{ display: 'block', marginTop: 12 }}>{imageMode && authorized ? '选择 PNG 并抽取待办' : '选择 PNG 截图'}<input style={{ display: 'block', maxWidth: '100%', marginTop: 8 }} aria-label="主动导入 PNG 截图" type="file" accept="image/png,.png" disabled={busy || reading} onChange={event => {
       const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''
       if (!file) return

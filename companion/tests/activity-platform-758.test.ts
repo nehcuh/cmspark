@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { ActivityService } from '../src/activity/service'
 import { DEFAULT_ACTIVITY_CONFIG } from '../src/activity/types'
 import { WindowsPassiveRecorder, LinuxPassiveRecorder, platformSupport, resolveLinuxRecorder } from '../src/activity/platform'
@@ -98,7 +99,7 @@ function windowsDouble(dir:string, changes: { after?: any; desktop?: string; tar
     if(script==='activity-windows.ps1')return JSON.stringify(args.includes('Apps')?{ok:true,apps:[{app_id:id,app_name:'Owned Chat',window_state:'visible'},{app_id:'win.'+'b'.repeat(64),app_name:'1password',window_state:'none'}]}:{ok:true,window:probes++===0?win():changes.after===undefined?win():changes.after})
     if(script==='computer-probe.ps1')return JSON.stringify({desktop:changes.desktop||'Default',pid:100,ownIl:8192,targetIl:changes.targetIl??8192})
     if(script==='computer-capture.ps1'){fs.writeFileSync(args[args.indexOf('-OutPath')+1],png);changes.abort?.abort();return JSON.stringify({ok:true,restoredFromIconic:false,observation_quality:'ok',occludedBy:[]})}
-    if(script==='computer-ocr.ps1')return JSON.stringify({ok:true,words:[{text:'OWNED TEXT'}]})
+    if(script==='computer-ocr.ps1')return JSON.stringify(args.includes('-ActivityText') ? {ok:true,lines:['OWNED TEXT']} : {ok:true,words:[{text:'OWNED TEXT'}]})
     throw Error('UNEXPECTED_SCRIPT')
   }
   return {adapter:new WindowsPassiveRecorder(dir,run,name=>name),calls}
@@ -143,4 +144,29 @@ test('Windows notification uses the bundled binary with fixed argv; missing help
   for(const code of [1,2,3,4,5])await submitWindowsReminder(async()=>{throw {code}},'owned.exe')
   for(const code of ['ENOENT',-1,7])await assert.rejects(submitWindowsReminder(async()=>{throw {code}},'owned.exe'),error=>(error as any).code==='NOTIFICATION_FAILED')
   await assert.rejects(submitWindowsReminder(async()=>{throw {killed:true,signal:'SIGTERM'}},'owned.exe'),error=>(error as any).code==='NOTIFICATION_UNKNOWN')
+})
+
+test('900 Linux manual import reports a missing language even if Tesseract can read English, then retries locally', {
+  skip: process.platform !== 'linux' || !fs.existsSync('/usr/bin/tesseract'),
+}, async t => {
+  const languages = execFileSync('/usr/bin/tesseract', ['--list-langs'], { encoding: 'utf8' }).split(/\s+/)
+  if (!languages.includes('eng')) return t.skip('English OCR pack unavailable')
+  const missing = !languages.includes('chi_tra') ? 'zh-Hant' : !languages.includes('chi_sim') ? 'zh-Hans' : undefined
+  const dir = fresh(), service = new ActivityService({ dataDir: dir, platform: 'linux' })
+  try {
+    service.store.configure(0, { ocr_language: missing || 'en-US' })
+    const png = fs.readFileSync(path.resolve('tests/fixtures/activity-linux-758.png'))
+    const imported = await service.handle({ type: 'activity.import', image_base64: png.toString('base64') })
+    const item = service.state().sources[0]
+    if (missing) {
+      assert.equal(imported.error_code, 'OCR_LANGUAGE_MISSING')
+      assert.ok(item.recognition?.status === 'failed' && item.recognition.code === 'OCR_LANGUAGE_MISSING')
+      await service.handle({ type: 'activity.configure', expected_revision: service.store.revision(), patch: { ocr_language: 'en-US' } })
+      await service.analyze(item.id)
+    } else assert.equal(imported.ok, true)
+    assert.match(service.store.source(item.id).ocr_text, /PROJECT ALPHA\s+SEND REPORT FRIDAY/i)
+    assert.equal(service.state().config.enabled, false)
+    assert.equal(service.state().sources.length, 1)
+    assert.equal(service.state().candidates.length, 0)
+  } finally { await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
 })

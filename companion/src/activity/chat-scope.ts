@@ -120,7 +120,7 @@ export async function scopeLocalFrame(config: ActivityConfig, appId: string, win
     title = await readTitle(crop(profile.title))
     signal.throwIfAborted()
   } catch (error) {
-    if (signal.aborted) throw error
+    if (signal.aborted || error instanceof ActivityError && error.code === 'OCR_LANGUAGE_MISSING') throw error
     throw new ActivityScopeSkip('scope_unreadable', '当前聊天标题无法在本机识别；请核对 OCR 语言与标题区域')
   }
   if (!title) throw new ActivityScopeSkip('scope_unreadable', '未能识别当前聊天标题；请核对标题区域与本机 OCR 语言')
