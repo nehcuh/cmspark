@@ -1,3 +1,4 @@
+import type { ChatTitleCheck } from './chat-scope'
 import * as fs from 'fs'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
@@ -14,7 +15,7 @@ import { evidencedDeadline } from './deadline-evidence'
 import { languageOf, validatePng, withPendingImage, type LocalLanguage } from './image'
 import { activityImageCrop, namedWindowLayout, recognizedChatTitle, scopeLocalFrame } from './chat-scope'
 import { submitWindowsReminder } from './notifications'
-export interface CapturedWindow { logical_width?: number; logical_height?: number; display?: string; app_id: string; app_name: string; window_title: string; window_class?: string; conversation_title?: string; ocr_text: string; image: Buffer }
+export interface CapturedWindow { titleCheck?: ChatTitleCheck; logical_width?: number; logical_height?: number; display?: string; app_id: string; app_name: string; window_title: string; window_class?: string; conversation_title?: string; ocr_text: string; image: Buffer }
 export interface FixedWindowSession {
   title: string
   identity: string
@@ -45,7 +46,7 @@ export class MacPassiveRecorder implements RecorderAdapter {
       const layout = namedWindowLayout('darwin', frame.title), language = languageOf(config)
       const scoped = await scopeLocalFrame(config, appId, layout, frame.image, signal,
         async crop => recognizedChatTitle(await this.readOcr(crop, language, signal)), frame.logicalSize)
-      if (!scoped.conversation_title) throw new ActivityError('SCOPE_REQUIRED', '当前聊天范围尚未核实')
+      if (!scoped.conversation_title && !scoped.titleCheck) throw new ActivityError('SCOPE_REQUIRED', '当前聊天范围尚未核实')
       const text = (config.extraction_mode || 'ocr') === 'ocr' ? await this.ocrImage(scoped.image, language, signal) : ''
       return { ...scoped, app_id: appId, app_name: window.appName, window_title: frame.title, window_class: layout, display: frame.display, ocr_text: text }
     } }

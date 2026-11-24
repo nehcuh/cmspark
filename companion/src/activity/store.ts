@@ -77,7 +77,7 @@ export class ActivityStore {
   configure(revision: number, patch: unknown): boolean {
     const update = validateConfig(patch) as Partial<ActivityConfig>
     const affectsJobs = (Object.keys(update) as Array<keyof ActivityConfig>).some(key =>
-      !['interval_ms', 'image_output_tokens'].includes(key) &&
+      !['interval_ms', 'image_output_tokens', 'title_ai_consent', 'title_ai_enabled'].includes(key) &&
       JSON.stringify(update[key]) !== JSON.stringify(this.value.config[key]))
     if (revision !== this.value.revision) throw new ActivityError('REVISION_CONFLICT', '活动设置已变化，请刷新后重试')
     this.mutate(s => {
@@ -110,7 +110,10 @@ export class ActivityStore {
     const source: ActivitySource = { ...input, id: randomUUID(), bytes: image.length, sha256 }
     const file = this.imagePath(source.id)
     fs.writeFileSync(file, image, { flag: 'wx', mode: 0o600 })
-    try { this.mutate(s => { s.sources.unshift(source) }) } catch (e) { fs.rmSync(file, { force: true }); throw e }
+    try { this.mutate(s => {
+      const index = s.sources.findIndex(row => row.captured_at <= source.captured_at)
+      s.sources.splice(index < 0 ? s.sources.length : index, 0, source)
+    }) } catch (e) { fs.rmSync(file, { force: true }); throw e }
     return clone(source)
   }
   saveVisualTranscript(source: ActivitySource, transcript: string): ActivitySource {

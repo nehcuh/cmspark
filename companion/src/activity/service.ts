@@ -1,12 +1,12 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { DATA_DIR } from '../config'
 import { ActivityStore } from './store'
 import { extractActivity, submitReminder, type RecorderAdapter, type FixedWindowSession, type CapturedWindow } from './adapters'
-import { ActivityError, COVERAGE, type ActivityApp, type ActivityRecognition, type ActivityRuntime, type ActivitySource, type ActivityWireState, type PersonalTodo, type ActivityPreview, type ActivityRect } from './types'
+import { ActivityError, COVERAGE, type ActivityApp, type ActivityConfig, type ActivityRecognition, type ActivityRuntime, type ActivitySource, type ActivityWireState, type PersonalTodo, type ActivityPreview, type ActivityRect } from './types'
 import { createRecorder, platformSupport } from './platform'
 import { languageOf, validatePng, type LocalLanguage } from './image'
-import { ActivityScopeSkip, imageSize } from './chat-scope'
-import { activityModelTarget, hasActivityImageConsent, recognitionTarget } from './model-config'
+import { ActivityScopeSkip, imageSize, type ChatTitleCheck } from './chat-scope'
+import { activityModelTarget, hasActivityImageConsent, hasActivityTitleConsent, recognitionTarget } from './model-config'
 import type { extractActivityImage } from './model-extract'
 import { validateActivityMessage } from './validation'
 export interface ActivityDependencies {
@@ -15,6 +15,7 @@ export interface ActivityDependencies {
   now?: () => number
   recorder?: RecorderAdapter
   extract?: typeof extractActivity
+  readModelTitle?: typeof import('./title-model').readActivityModelTitle
   extractImage?: typeof extractActivityImage
   notify?: (todo: PersonalTodo) => Promise<void>
 }
@@ -28,13 +29,18 @@ export class ActivityService {
   private notify: NonNullable<ActivityDependencies['notify']>
   private timer: NodeJS.Timeout | null = null
   private pending: Promise<void> | null = null
-  private modelTail: Promise<void> | null = null
+  private modelTail: Promise<unknown> | null = null
+  private titleReads = new Map<string, Promise<string>>()
   private jobs = new Map<string, Promise<void>>()
   private calibrationPending: Promise<void> | null = null
   private automaticScan: { controller: AbortController | null; settled: Promise<unknown> } | null = null
   private reminders: Promise<void> | null = null
   private appListing: Promise<ActivityApp[]> | null = null
   private windows = new Map<string, FixedWindowSession>()
+  private readonly readModelTitle: NonNullable<ActivityDependencies['readModelTitle']>
+  private titleFrames = new Set<Promise<string>>()
+  private titleFrameBytes = 0
+  private scanNumber = 0
   private nextWindow = 0
   private generation = 0
   private abort = new AbortController()
@@ -52,12 +58,15 @@ export class ActivityService {
     this.runtime.fixed_window_supported = !!this.recorder.fixedWindowSupported
     this.runtime.fixed_window_status = {}
     this.extract = deps.extract ?? extractActivity
+    this.readModelTitle = deps.readModelTitle ?? (async (image, config, signal) =>
+      (await import('./title-model')).readActivityModelTitle(image, config, signal))
     this.extractImage = deps.extractImage
     this.notify = deps.notify ?? submitReminder
   }
   state(): ActivityWireState {
     const state = this.store.stateMetadata(), config = this.store.config(), target = activityModelTarget(config)
     state.config.image_ai_enabled = hasActivityImageConsent(config)
+    state.config.title_ai_enabled = hasActivityTitleConsent(config)
     const targets = (["ocr", "vision", "dedicated", "qwen"] as const).map(mode => [mode, activityModelTarget({ ...config, extraction_mode: mode })] as const)
     return { ...state, runtime: { ...this.runtime, fixed_window_status: { ...this.runtime.fixed_window_status }, ...(config.fixed_windows?.length ? { coverage: '仅记录已固定、完整可见且通过允许对话核对的窗口。失焦后仍会检查，最小化、遮挡和锁屏时暂停。' } : {}), model_target: target.label, model_target_id: target.id, model_targets: Object.fromEntries(targets.map(([mode, value]) => [mode, value.label])), model_target_ids: Object.fromEntries(targets.map(([mode, value]) => [mode, value.id])) } }
   }
@@ -110,6 +119,13 @@ export class ActivityService {
     return { status: 'queued', target: recognitionTarget(config), automatic }
   }
 
+  private queueModelWork<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.modelTail ? this.modelTail.then(work, work) : work()
+    const done = result.finally(() => { if (this.modelTail === done) this.modelTail = null })
+    this.modelTail = done
+    return done
+  }
+
   private recognize(sourceId: string, target: string, requestCurrent: () => boolean): Promise<void> {
     const existing = this.jobs.get(sourceId)
     if (existing) return existing
@@ -135,13 +151,8 @@ export class ActivityService {
         throw failure
       }
     }
-    const job = this.modelTail ? this.modelTail.then(work, work) : work()
-    const done = job.finally(() => {
-      this.jobs.delete(sourceId)
-      if (this.modelTail === done) this.modelTail = null
-    })
+    const done = this.queueModelWork(work).finally(() => { this.jobs.delete(sourceId) })
     this.jobs.set(sourceId, done)
-    this.modelTail = done
     // Automatic requests have no waiting UI. Their failure is durable on the source.
     void done.catch(() => {})
     return done
@@ -170,6 +181,7 @@ export class ActivityService {
   private fence(cancelRecognition = true): void {
     this.generation++
     this.abort.abort()
+    this.titleReads.clear()
     this.abort = new AbortController()
     if (cancelRecognition) {
       this.modelAbort.abort()
@@ -181,7 +193,7 @@ export class ActivityService {
     for (const session of this.windows.values()) session.close()
     this.windows.clear()
     this.timer = null; this.stopping = true; this.runtime.running = false; this.fence()
-    await Promise.allSettled([this.pending, this.calibrationPending, this.reminders, this.appListing, this.modelTail])
+    await Promise.allSettled([this.pending, this.calibrationPending, this.reminders, this.appListing, this.modelTail, ...this.titleFrames])
     this.runtime.status = 'stopped'
   }
   private maintain(): void {
@@ -293,8 +305,41 @@ export class ActivityService {
   async scan(requestCurrent: () => boolean = () => true): Promise<void> {
     return this.runScan(requestCurrent, false)
   }
+  private verifyFrameTitle(check: ChatTitleCheck, config: ActivityConfig, bytes: number, signal: AbortSignal, current: () => boolean): Promise<string> {
+    if (!hasActivityTitleConsent(config)) throw new ActivityScopeSkip('scope_unreadable', '请核对标题模型授权')
+    // Only confirmed frames may go to disk. Bound the cropped frames awaiting a reply in RAM.
+    if (this.titleFrames.size >= 32 || this.titleFrameBytes + bytes > 64 * 1024 * 1024)
+      throw new ActivityScopeSkip('scope_unreadable', '等待核验标题的画面已满，本帧已跳过')
+    const key = config.title_ai_consent + ':' + createHash('sha256').update(check.image).digest('hex')
+    let read = this.titleReads.get(key)
+    if (!read) {
+      read = this.queueModelWork(async () => {
+        signal.throwIfAborted()
+        if (!current() || !hasActivityTitleConsent(this.store.config())) throw new ActivityScopeSkip('scope_unreadable', '标题核验已取消')
+        return this.readModelTitle(check.image, config, signal)
+      }).finally(() => { if (this.titleReads.get(key) === read) this.titleReads.delete(key) })
+      this.titleReads.set(key, read)
+    }
+    const verify = async () => {
+      let title: string
+      try { title = await read! }
+      catch { throw new ActivityScopeSkip('scope_unreadable', '标题模型未能完成识别，本帧已跳过；请核对模型服务和标题框') }
+      signal.throwIfAborted()
+      const latest = this.store.config()
+      if (!hasActivityTitleConsent(latest) || latest.title_ai_consent !== config.title_ai_consent)
+        throw new ActivityScopeSkip('scope_unreadable', '标题核验授权或目标已变化，本帧已丢弃')
+      if (!title || !check.allowedTitles.includes(title))
+        throw new ActivityScopeSkip('scope_title_mismatch', '模型未读到完整的允许标题，已丢弃此帧')
+      return title
+    }
+    this.titleFrameBytes += bytes
+    const checked = verify().finally(() => { this.titleFrames.delete(checked); this.titleFrameBytes -= bytes })
+    this.titleFrames.add(checked)
+    return checked
+  }
   private async runScan(requestCurrent: () => boolean, automatic: boolean): Promise<void> {
     if (this.pending || this.calibrationPending) throw new ActivityError('BUSY', '上一轮采集尚未完成')
+    const scanNumber = ++this.scanNumber
     const config = this.store.config()
     if (!config.enabled) throw new ActivityError('RECORDING_DISABLED', '请先选择应用并明确开启记录')
     if (!this.runtime.supported) throw new ActivityError('UNSUPPORTED_PLATFORM', this.runtime.platform_note || '当前环境不支持自动采集')
@@ -302,7 +347,8 @@ export class ActivityService {
     const epoch = this.generation, signal = this.abort.signal
     const controller = automatic ? new AbortController() : null
     this.lastPoll = this.now(); this.runtime.scanning = true; this.runtime.status = 'scanning'; this.runtime.error = null; this.runtime.scope_note = null
-    this.runtime.last_scan_at = new Date(this.now()).toISOString()
+    const scanTime = new Date(this.now()).toISOString()
+    this.runtime.last_scan_at = scanTime
     const current = (): boolean => epoch === this.generation && !signal.aborted && requestCurrent()
     let recognition: Promise<void> | undefined
     const windows = (config.fixed_windows || []).filter(w => !w.paused)
@@ -318,7 +364,7 @@ export class ActivityService {
         const captureSignal = controller ? AbortSignal.any([signal, controller.signal]) : signal
         // Title OCR still gates the captured region. Body OCR reads the saved region on the worker.
         const deferBodyOcr = (config.extraction_mode || 'ocr') === 'ocr' && !!this.recorder.ocrImage
-        const captureConfig = deferBodyOcr ? { ...config, extraction_mode: 'vision' as const } : config
+        const captureConfig = deferBodyOcr ? { ...config, extraction_mode: 'vision' as const, title_ai_enabled: false } : config
         let capturing: Promise<CapturedWindow | null>
         if (binding) {
           this.runtime.fixed_window_status![binding.id] = { ...this.runtime.fixed_window_status![binding.id], status: '检查中', last_checked_at: this.runtime.last_scan_at! }
@@ -334,20 +380,50 @@ export class ActivityService {
         if (controller?.signal.aborted) return
         if (this.automaticScan) this.automaticScan.controller = null
         if (!current() || !capture) { if (current()) this.runtime.status = 'no_visible_allowed_window'; return }
-        if (binding && (capture.app_id !== binding.app_id || !capture.conversation_title)) throw new ActivityError('SCOPE_REQUIRED', '固定窗口身份或聊天范围未能核实')
-        const receipt: ActivityRecognition = deferBodyOcr && !capture.ocr_text.trim()
-          ? { status: 'queued', target: this.canExtract() ? recognitionTarget(config) : 'local-ocr', automatic }
-          : this.initialRecognition(automatic, true, !!capture.ocr_text.trim())
-        const source = this.store.addSource({ recognition: receipt, ...(binding ? { binding_id: binding.id } : {}), app_id: capture.app_id, app_name: capture.app_name, window_title: capture.window_title, ...(capture.conversation_title ? { conversation_title: capture.conversation_title } : {}), origin: binding ? 'fixed_window' : 'foreground', ocr_text: capture.ocr_text, captured_at: new Date(this.now()).toISOString() }, capture.image)
-        if (!current()) return
-        if (binding) {
-          const previous = this.runtime.fixed_window_status![binding.id]
-          this.runtime.fixed_window_status![binding.id] = { ...previous, status: source ? '已保存' : '画面重复', reason: undefined, display: capture.display, ...(source ? { last_saved_at: source.captured_at } : {}) }
+        if (binding && (capture.app_id !== binding.app_id || (!capture.conversation_title && !capture.titleCheck))) throw new ActivityError('SCOPE_REQUIRED', '固定窗口身份或聊天范围未能核实')
+        const capturedAt = new Date(this.now()).toISOString()
+        const save = () => {
+          const receipt: ActivityRecognition = deferBodyOcr && !capture.ocr_text.trim()
+            ? { status: 'queued', target: this.canExtract() ? recognitionTarget(config) : 'local-ocr', automatic }
+            : this.initialRecognition(automatic, true, !!capture.ocr_text.trim())
+          const source = this.store.addSource({ recognition: receipt, ...(binding ? { binding_id: binding.id } : {}), app_id: capture.app_id, app_name: capture.app_name, window_title: capture.window_title, ...(capture.conversation_title ? { conversation_title: capture.conversation_title } : {}), origin: binding ? 'fixed_window' : 'foreground', ocr_text: capture.ocr_text, captured_at: capturedAt }, capture.image)
+          if (!current()) return
+          if (binding) {
+            const previous = this.runtime.fixed_window_status![binding.id]
+            this.runtime.fixed_window_status![binding.id] = { ...previous,
+              ...(previous.last_checked_at === scanTime ? { status: source ? '已保存' : '画面重复', reason: undefined, display: capture.display } : {}),
+              ...(source && (!previous.last_saved_at || previous.last_saved_at < capturedAt) ? { last_saved_at: capturedAt } : {}) }
+          }
+          if (source && (!this.runtime.last_success_at || source.captured_at > this.runtime.last_success_at)) this.runtime.last_success_at = source.captured_at
+          if (scanNumber === this.scanNumber) { this.runtime.status = source ? 'captured' : 'unchanged'; this.runtime.scope_note = null }
+          if (current()) this.store.prune(this.now())
+          if (source && receipt.status === 'queued') return this.recognize(source.id, receipt.target, requestCurrent)
         }
-        if (source) this.runtime.last_success_at = source.captured_at
-        this.runtime.status = source ? 'captured' : 'unchanged'
-        if (source && receipt.status === 'queued') recognition = this.recognize(source.id, receipt.target, requestCurrent)
-        if (current()) this.store.prune(this.now())
+        const check = capture.titleCheck
+        if (!check) { recognition = save(); return }
+        const verified = this.verifyFrameTitle(check, config, check.image.length + capture.image.length, signal, current)
+        this.runtime.status = 'scope_title_pending'
+        this.runtime.scope_note = '正在用已授权模型核验标题，消息区暂存本机内存'
+        if (binding) this.runtime.fixed_window_status![binding.id].status = '正在核验标题'
+        recognition = verified.then(title => {
+          if (!current()) return
+          capture.conversation_title = title
+          try { return save() }
+          catch (error) {
+            const reason = error instanceof ActivityError ? error.message : '已核验的截图保存失败，请检查本机存储'
+            if (scanNumber === this.scanNumber) { this.runtime.status = 'error'; this.runtime.error = reason; this.runtime.scope_note = null }
+            if (binding && this.runtime.fixed_window_status![binding.id]?.last_checked_at === scanTime)
+              this.runtime.fixed_window_status![binding.id] = { ...this.runtime.fixed_window_status![binding.id], status: '已跳过', reason }
+            throw error
+          }
+        }, error => {
+          if (!current()) return
+          const reason = error instanceof ActivityScopeSkip ? error.message : '标题核验未完成，本帧已跳过'
+          if (binding && this.runtime.fixed_window_status![binding.id]?.last_checked_at === scanTime)
+            this.runtime.fixed_window_status![binding.id] = { ...this.runtime.fixed_window_status![binding.id], status: '已跳过', reason }
+          if (scanNumber === this.scanNumber) { this.runtime.status = error instanceof ActivityScopeSkip ? error.status : 'scope_unreadable'; this.runtime.scope_note = reason }
+        })
+        void recognition.catch(() => {})
       } catch (error) {
         if (controller?.signal.aborted) return
         if (binding && current()) {
@@ -452,6 +528,13 @@ export class ActivityService {
             patch.image_ai_consent = target
           }
           else if (changed || patch.image_ai_enabled === false) { patch.image_ai_enabled = false; patch.image_ai_consent = '' }
+          if (patch.title_ai_enabled === true) {
+            if (next.extraction_mode !== 'vision' && next.extraction_mode !== 'dedicated') throw new ActivityError('INVALID_REQUEST', '请先选择复用或专用图像模型')
+            const target = activityModelTarget(next).id
+            if (next.extraction_mode === 'vision' && message.expected_model_target !== target) throw new ActivityError('MODEL_TARGET_CHANGED', '标题核验模型已变化，请重新核对并授权')
+            if (next.extraction_mode === 'dedicated' && !(patch.dedicated_vision?.base_url && patch.dedicated_vision?.model_name && patch.dedicated_vision?.protocol) && message.expected_model_target !== target) throw new ActivityError('MODEL_TARGET_CHANGED', '请核对专用标题模型后授权')
+            patch.title_ai_consent = target
+          } else if (changed || patch.title_ai_enabled === false) { patch.title_ai_enabled = false; patch.title_ai_consent = '' }
           const cancelRecognition = this.store.configure(Number(message.expected_revision), patch)
           this.fence(cancelRecognition)
           for (const binding of previous.fixed_windows || []) {

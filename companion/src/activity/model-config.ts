@@ -31,6 +31,11 @@ export function activityModelTarget(config: ActivityConfig): { id: string; label
   return { id, label: `${mode === 'dedicated' ? '专用图像模型' : '复用视觉配置'} · ${host} · ${model?.model_name || '未配置模型'} · ${model?.protocol || 'openai'}` }
 }
 
+export function hasActivityTitleConsent(config: ActivityConfig): boolean {
+  return config.title_ai_enabled === true && (config.extraction_mode === 'vision' || config.extraction_mode === 'dedicated') &&
+    config.title_ai_consent === activityModelTarget(config).id
+}
+
 export function hasActivityImageConsent(config: ActivityConfig): boolean {
   return config.extraction_mode !== undefined && config.extraction_mode !== 'ocr' &&
     config.image_ai_enabled === true && config.image_ai_consent === activityModelTarget(config).id

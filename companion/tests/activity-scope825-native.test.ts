@@ -33,7 +33,17 @@ test('scope825 real Windows two-column chat gates local title, crops sidebar, ke
       for (let n = 0; n < pixels.length; n += 4) if (color === 'sidebar' ? pixels[n] > 200 && pixels[n + 1] < 15 && pixels[n + 2] > 200 : pixels[n] < 15 && pixels[n + 1] > 25 && pixels[n + 1] < 55 && pixels[n + 2] > 200) count++
       return count
     }
-    service = new ActivityService({ dataDir: root, platform: 'win32', recorder: adapter, extractImage: async (_source, image, _config, _root, signal) => {
+    let titleCheckCalls = 0
+    let expectedTitleRect: ActivityRect | undefined
+    service = new ActivityService({ dataDir: root, platform: 'win32', recorder: adapter,
+      readModelTitle: async (image, _config, signal) => {
+        titleCheckCalls++
+        assert.equal(image.readUInt32BE(16), expectedTitleRect!.width)
+        assert.equal(image.readUInt32BE(20), expectedTitleRect!.height)
+        assert.equal(colored(image, 'sidebar'), 0)
+        assert.equal(colored(image, 'picture'), 0)
+        return (await adapter.ocrImage(image, 'en-US', signal)).trim()
+      }, extractImage: async (_source, image, _config, _root, signal) => {
       models++; assert.equal(colored(image, 'sidebar'), 0, 'the model receives no sidebar pixels'); assert.ok(colored(image, 'picture') > 50, 'embedded image remains inside permitted content')
       const transcript = await adapter.ocrImage(image, 'en-US', signal)
       assert.match(transcript, /SEND\s+REPORT/i); assert.match(transcript, /FRIDAY/i); assert.doesNotMatch(transcript, /SIDEBAR\s+PRIVATE/i)
@@ -85,6 +95,17 @@ test('scope825 real Windows two-column chat gates local title, crops sidebar, ke
     const popupSource = service.state().sources[0]
     assert.notEqual(popupSource.id, source.id)
     assert.ok(popupSource.recognition?.status === 'complete' && popupSource.recognition.candidates === 0)
+    // The native title crop still excludes the sidebar and body when local title reading fails.
+    expectedTitleRect = independent.title
+    adapter.ocrTitle = async () => { throw new Error('owned local OCR failure') }
+    assert.equal((await service.handle({ type: 'activity.configure', expected_revision: service.state().revision, patch: {
+      extraction_mode: 'dedicated', dedicated_vision: { base_url: 'http://127.0.0.1:8822', model_name: 'owned-fixture', protocol: 'openai' },
+      title_ai_enabled: true, image_ai_enabled: false,
+    } })).ok, true)
+    assert.equal((await service.handle({ type: 'activity.scan' })).ok, true)
+    assert.equal(titleCheckCalls, 1)
+    assert.equal(service.state().runtime.status, 'unchanged', 'same qualified popup is deduplicated after a title-only check')
+    assert.equal(models, 2)
     assert.equal(fs.readdirSync(service.store.root).filter(name => name.startsWith('pending-')).length, 0)
     console.log(JSON.stringify({ capability: 'scope825', windowsNative: true, mainAndIndependent: true, sidebarDecoyRefused: true, localOcrAndCrop: true, modelSidebarAbsent: true, embeddedImagePreserved: true, resizeRefused: true, pendingCleaned: true }))
   } finally {

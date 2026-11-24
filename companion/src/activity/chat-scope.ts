@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { decodePngToRgba } from '../computer/png-decode'
 import { encodePngRgba } from '../llm/image-preview'
 import { ActivityError, isActivityAppId, type ActivityChatProfile, type ActivityConfig, type ActivityRect } from './types'
+import { hasActivityTitleConsent } from './model-config'
 import { validatePng } from './image'
 
 /** An expected refusal: no source or model request may follow it. */
@@ -110,20 +111,30 @@ export function activityImageCrop(image: Buffer): (rect: ActivityRect) => Buffer
   }
 }
 
+export interface ChatTitleCheck { image: Buffer; allowedTitles: string[] }
+export interface ScopedTitle { conversation_title?: string; titleCheck?: ChatTitleCheck }
+
+export async function checkChatTitle(config: ActivityConfig, profile: ActivityChatProfile, signal: AbortSignal,
+  local: () => Promise<string>, titleCrop: () => Buffer | Promise<Buffer>): Promise<ScopedTitle> {
+  let title = '', localError: unknown
+  try { title = await local() } catch (error) { localError = error }
+  signal.throwIfAborted()
+  if (title && profile.allowed_titles.includes(title)) return { conversation_title: title }
+  if (hasActivityTitleConsent(config)) {
+    if (profile.title.width === profile.content.width && profile.title.height === profile.content.height)
+      throw new ActivityScopeSkip('scope_unreadable', '请在消息区内单独框选标题文字，再使用模型标题核验')
+    return { titleCheck: { image: await titleCrop(), allowedTitles: profile.allowed_titles } }
+  }
+  if (localError instanceof ActivityError && localError.code === 'OCR_LANGUAGE_MISSING') throw localError
+  if (!title) throw new ActivityScopeSkip('scope_unreadable', '当前聊天标题无法在本机识别；请核对 OCR 语言与标题区域')
+  throw new ActivityScopeSkip('scope_title_mismatch', '当前聊天标题不在允许名单，已跳过且未保存截图')
+}
+
 export async function scopeLocalFrame(config: ActivityConfig, appId: string, windowClass: string | undefined, image: Buffer,
-  signal: AbortSignal, readTitle: (crop: Buffer) => Promise<string>, logicalSize?: { width: number; height: number }): Promise<{ image: Buffer; conversation_title?: string }> {
+  signal: AbortSignal, readTitle: (crop: Buffer) => Promise<string>, logicalSize?: { width: number; height: number }): Promise<{ image: Buffer } & ScopedTitle> {
   const profile = profileForFrame(config, appId, windowClass, image, logicalSize)
   if (!profile) return { image }
-  let crop: ReturnType<typeof activityImageCrop>, title: string
-  try {
-    crop = activityImageCrop(image)
-    title = await readTitle(crop(profile.title))
-    signal.throwIfAborted()
-  } catch (error) {
-    if (signal.aborted || error instanceof ActivityError && error.code === 'OCR_LANGUAGE_MISSING') throw error
-    throw new ActivityScopeSkip('scope_unreadable', '当前聊天标题无法在本机识别；请核对 OCR 语言与标题区域')
-  }
-  if (!title) throw new ActivityScopeSkip('scope_unreadable', '未能识别当前聊天标题；请核对标题区域与本机 OCR 语言')
-  if (!profile.allowed_titles.includes(title)) throw new ActivityScopeSkip('scope_title_mismatch', '当前聊天标题不在允许名单，已跳过且未保存截图')
-  return { image: crop(profile.content), conversation_title: title }
+  const crop = activityImageCrop(image), title = crop(profile.title)
+  const scoped = await checkChatTitle(config, profile, signal, () => readTitle(title), () => title)
+  return { image: crop(profile.content), ...scoped }
 }

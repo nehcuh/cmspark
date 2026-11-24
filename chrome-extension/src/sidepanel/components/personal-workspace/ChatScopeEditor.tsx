@@ -23,7 +23,7 @@ function RectInputs({ label, rect, change, disabled }: { label: string; rect: Ac
   return <fieldset className="cm-chat-scope-coordinates" disabled={disabled}><legend>{label}</legend>{(['x', 'y', 'width', 'height'] as const).map((key, index) => <label key={key}>{['左边距', '上边距', '宽', '高'][index]}<input aria-label={`${label} ${key}`} type="number" min={key === 'x' || key === 'y' ? 0 : 1} max={8192} step={1} value={rect?.[key] ?? ''} onChange={e => change({ x: rect?.x ?? 0, y: rect?.y ?? 0, width: rect?.width ?? 0, height: rect?.height ?? 0, [key]: Number(e.target.value) })} /></label>)}</fieldset>
 }
 
-export function ChatScopeEditor({ appIds, apps, scopes, language, busy, onChange }: { appIds: string[]; apps: ActivityApp[]; scopes: ActivityChatScope[]; language: 'zh-Hans' | 'zh-Hant' | 'en-US'; busy: boolean; onChange: (value: ActivityChatScope[]) => void }) {
+export function ChatScopeEditor({ appIds, apps, scopes, language, busy, modelTitleCheck, onChange }: { modelTitleCheck?: boolean; appIds: string[]; apps: ActivityApp[]; scopes: ActivityChatScope[]; language: 'zh-Hans' | 'zh-Hant' | 'en-US'; busy: boolean; onChange: (value: ActivityChatScope[]) => void }) {
   const [editingApp, setEditingApp] = useState<string | null>(null), [preview, setPreview] = useState<ActivityPreview | null>(null)
   const [content, setContent] = useState<ActivityRect | null>(null), [title, setTitle] = useState<ActivityRect | null>(null), [drawing, setDrawing] = useState<'content' | 'title'>('content')
   const [recognized, setRecognized] = useState<string | null>(null), [names, setNames] = useState(''), [phase, setPhase] = useState<'waiting' | 'preview' | 'ocr' | null>(null), [error, setError] = useState('')
@@ -89,7 +89,7 @@ export function ChatScopeEditor({ appIds, apps, scopes, language, busy, onChange
   const editingScope = scopes.find(scope => scope.app_id === editingApp)
   const replacing = preview && editingScope?.profiles.some(p => profileLayoutKey(p) === profileLayoutKey(preview))
   function addProfile() {
-    if (!editingApp || !preview || !rectsValid || !recognized || !namesValid) return
+    if (!editingApp || !preview || !rectsValid || (!recognized && !modelTitleCheck) || !namesValid) return
     const profile = { window_class: preview.window_class, ...(preview.logical_width && preview.logical_height ? { logical_width: preview.logical_width, logical_height: preview.logical_height } : {}), width: preview.width, height: preview.height, content: content!, title: title!, allowed_titles: allowed }
     const profiles = (scopes.find(scope => scope.app_id === editingApp)?.profiles || []).filter(p => profileLayoutKey(p) !== profileLayoutKey(profile))
     if (profiles.length >= 8) { setError('每个应用最多保留 8 种窗口布局；请先移除不再使用的范围。'); return }
@@ -113,7 +113,7 @@ export function ChatScopeEditor({ appIds, apps, scopes, language, busy, onChange
         <details><summary>用像素精确调整区域</summary><RectInputs label="聊天内容" rect={content} change={r => changeRect('content', r)} disabled={busy} /><RectInputs label="聊天标题" rect={title} change={r => changeRect('title', r)} disabled={busy} /></details>
         {!rectsValid && <p className="cm-personal-fieldnote">需要两个有效区域，标题框须完全位于聊天内容框内。</p>}
         <button type="button" className="cm-p-button" disabled={busy || !!phase || !rectsValid} onClick={() => void readTitle()}>{phase === 'ocr' ? '正在本机核对标题…' : '3. 本机识别标题'}</button>
-        {recognized && <><p role="status">实际识别标题：<strong>{recognized}</strong></p><label>允许的完整标题（每行一个，最多 20 个）<textarea value={names} onChange={e => setNames(e.target.value)} disabled={busy || !!phase} /></label><p className="cm-personal-fieldnote">按完整识别文字匹配，保留空格、标点及群人数。同名对话无法据此区分；可填写完整标题变体。</p><button type="button" className="cm-p-button" disabled={busy || !!phase || !rectsValid || !namesValid} onClick={addProfile}>{replacing ? '替换此窗口布局的范围草稿' : '添加范围草稿'}</button><p className="cm-personal-fieldnote">添加后仍需点击“保存范围与隐私设置”。</p></>}
+        {(recognized || modelTitleCheck && rectsValid) && <>{recognized ? <p role="status">实际识别标题：<strong>{recognized}</strong></p> : <p>请对照预览填写完整群名或联系人。保存授权后，采集时可使用模型核验标题。</p>}<label>允许的完整标题（每行一个，最多 20 个）<textarea value={names} onChange={e => setNames(e.target.value)} disabled={busy || !!phase} /></label><p className="cm-personal-fieldnote">按完整识别文字匹配，保留空格、标点及群人数。同名对话无法据此区分；可填写完整标题变体。</p><button type="button" className="cm-p-button" disabled={busy || !!phase || !rectsValid || !namesValid} onClick={addProfile}>{replacing ? '替换此窗口布局的范围草稿' : '添加范围草稿'}</button><p className="cm-personal-fieldnote">添加后仍需点击“保存范围与隐私设置”。</p></>}
       </>}{error && <p role="alert">{error}</p>}
     </div>}
   </section>

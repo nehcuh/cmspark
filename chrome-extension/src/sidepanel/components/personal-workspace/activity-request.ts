@@ -16,7 +16,7 @@ export interface ActivityWindowStatus { status: string; reason?: string; display
 export interface ActivityConfig {
   fixed_windows?: ActivityFixedWindow[]
   image_output_tokens?: number
- chat_scopes?: ActivityChatScope[]; extraction_mode?: 'ocr' | 'vision' | 'dedicated' | 'qwen'; extraction_prompt?: string; image_ai_enabled?: boolean; dedicated_vision?: ActivityVisionModel; ocr_language?: 'zh-Hans' | 'zh-Hant' | 'en-US'; enabled: boolean; allowed_apps: string[]; interval_ms: number; ocr_ai_enabled: boolean; retention_days: number; max_storage_mb: number }
+ chat_scopes?: ActivityChatScope[]; extraction_mode?: 'ocr' | 'vision' | 'dedicated' | 'qwen'; extraction_prompt?: string; image_ai_enabled?: boolean; title_ai_enabled?: boolean; dedicated_vision?: ActivityVisionModel; ocr_language?: 'zh-Hans' | 'zh-Hant' | 'en-US'; enabled: boolean; allowed_apps: string[]; interval_ms: number; ocr_ai_enabled: boolean; retention_days: number; max_storage_mb: number }
 export type ActivityRecognition =
   | { status: 'saved'; reason: string }
   | { status: 'queued' | 'running'; target: string; automatic?: boolean }

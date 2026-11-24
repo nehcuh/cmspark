@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { resolveWinScript, runPs, type PsRunner } from '../host-use/win/powershell'
 import { MacPassiveRecorder, type CapturedWindow, type RecorderAdapter } from './adapters'
 import { ActivityError, PROTECTED_APPS, type ActivityApp, type ActivityConfig, type ActivityRect } from './types'
-import { ActivityScopeSkip, activityImageCrop, imageSize, namedWindowLayout, profileForFrame, recognizedChatTitle, scopeLocalFrame, validateActivityRect } from './chat-scope'
+import { checkChatTitle, type ScopedTitle, ActivityScopeSkip, activityImageCrop, imageSize, namedWindowLayout, profileForFrame, recognizedChatTitle, scopeLocalFrame, validateActivityRect } from './chat-scope'
 import { decodeWindowsActivityApps } from './windows-apps'
 
 const exec = promisify(execFile)
@@ -86,19 +86,15 @@ export class WindowsPassiveRecorder implements RecorderAdapter {
       const logicalSize = verifiedDpi && (width * 96) % dpi === 0 && (height * 96) % dpi === 0
         ? { width: width * 96 / dpi, height: height * 96 / dpi } : undefined
       const profile = profileForFrame(config, window.app_id, window.window_class, image, logicalSize)
-      let conversationTitle: string | undefined
+      let scoped: ScopedTitle = {}
       if (profile) {
-        try { conversationTitle = await this.ocrTitle(image, profile.title, languageOf(config), signal) }
-        catch (error) {
-          if (signal.aborted || error instanceof ActivityError && error.code === 'OCR_LANGUAGE_MISSING') throw error
-          throw new ActivityScopeSkip('scope_unreadable', '当前聊天标题无法在本机识别；请核对 OCR 语言与标题区域')
-        }
-        if (!conversationTitle) throw new ActivityScopeSkip('scope_unreadable', '未能识别当前聊天标题；请核对标题区域与本机 OCR 语言')
-        if (!profile.allowed_titles.includes(conversationTitle)) throw new ActivityScopeSkip('scope_title_mismatch', '当前聊天标题不在允许名单，已跳过且未保存截图')
+        scoped = await checkChatTitle(config, profile, signal,
+          () => this.ocrTitle(image, profile.title, languageOf(config), signal),
+          () => this.crop(file, profile.title, signal))
         image = await this.crop(file, profile.content, signal)
       }
       const ocrText = (config.extraction_mode || 'ocr') !== 'ocr' ? '' : profile ? await this.ocrImage(image, languageOf(config), signal) : await this.ocr(file, languageOf(config), signal)
-      return { app_id: window.app_id, app_name: window.app_name, window_title: window.title.slice(0, 500), ...(logicalSize ? { logical_width: logicalSize.width, logical_height: logicalSize.height } : {}), ...(window.window_class ? { window_class: window.window_class } : {}), ...(conversationTitle ? { conversation_title: conversationTitle } : {}), image, ocr_text: ocrText }
+      return { app_id: window.app_id, app_name: window.app_name, window_title: window.title.slice(0, 500), ...(logicalSize ? { logical_width: logicalSize.width, logical_height: logicalSize.height } : {}), ...(window.window_class ? { window_class: window.window_class } : {}), ...scoped, image, ocr_text: ocrText }
     })
   }
 }

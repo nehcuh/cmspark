@@ -27,6 +27,8 @@ export interface ActivityConfig {
   chat_scopes?: ActivityChatScope[]
   extraction_mode?: ActivityModelMode
   extraction_prompt?: string
+  title_ai_enabled?: boolean
+  title_ai_consent?: string
   image_ai_enabled?: boolean
   /** Backend-owned binding to the exact processing target. */
   image_ai_consent?: string

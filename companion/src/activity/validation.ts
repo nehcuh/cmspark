@@ -17,7 +17,7 @@ export function iso(v: unknown): string | null {
   return new Date(v).toISOString()
 }
 export function validateConfig(patch: unknown): Record<string, unknown> {
-  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language', 'extraction_mode', 'extraction_prompt', 'image_ai_enabled', 'image_ai_consent', 'dedicated_vision', 'chat_scopes', 'fixed_windows', 'image_output_tokens'])
+  checkObject(patch, ['enabled', 'allowed_apps', 'interval_ms', 'ocr_ai_enabled', 'retention_days', 'max_storage_mb', 'ocr_language', 'extraction_mode', 'extraction_prompt', 'image_ai_enabled', 'image_ai_consent', 'title_ai_enabled', 'title_ai_consent', 'dedicated_vision', 'chat_scopes', 'fixed_windows', 'image_output_tokens'])
   for (const [key, value] of Object.entries(patch)) {
     if (key === 'fixed_windows') {
       if (!Array.isArray(value) || value.length > 8) throw new ActivityError('INVALID_REQUEST', '最多固定 8 个聊天窗口')
@@ -32,7 +32,7 @@ export function validateConfig(patch: unknown): Record<string, unknown> {
     else if (key === 'chat_scopes') validateChatScopes(value)
     else if (key === 'extraction_prompt') text(value, 2000)
     else if (key === 'extraction_mode') { if (!['ocr', 'vision', 'dedicated', 'qwen'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', '图像处理方式无效') }
-    else if (key === 'image_ai_consent') { if (typeof value !== 'string' || value.length > 64) throw new ActivityError('INVALID_REQUEST', '图片授权无效') }
+    else if (key === 'image_ai_consent' || key === 'title_ai_consent') { if (typeof value !== 'string' || value.length > 64) throw new ActivityError('INVALID_REQUEST', '图片授权无效') }
     else if (key === 'dedicated_vision') {
       checkObject(value, ['base_url', 'model_name', 'api_key', 'protocol'])
       for (const name of ['base_url', 'model_name', 'api_key']) if (value[name] !== undefined) text(value[name], name === 'api_key' ? 4096 : 1000)
@@ -40,7 +40,7 @@ export function validateConfig(patch: unknown): Record<string, unknown> {
       if (value.base_url) { let url: URL; try { url = new URL(String(value.base_url)) } catch { throw new ActivityError('INVALID_REQUEST', '模型地址须为 HTTP(S) URL') }; if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new ActivityError('INVALID_REQUEST', '模型地址无效') }
     }
     else if (key === 'ocr_language') { if (!['zh-Hans', 'zh-Hant', 'en-US'].includes(String(value))) throw new ActivityError('INVALID_REQUEST', 'OCR 语言无效') }
-    else if (key === 'enabled' || key === 'ocr_ai_enabled' || key === 'image_ai_enabled') { if (typeof value !== 'boolean') throw new ActivityError('INVALID_REQUEST', '开关必须是布尔值') }
+    else if (key === 'enabled' || key === 'ocr_ai_enabled' || key === 'image_ai_enabled' || key === 'title_ai_enabled') { if (typeof value !== 'boolean') throw new ActivityError('INVALID_REQUEST', '开关必须是布尔值') }
     else if (key === 'allowed_apps') {
       if (!Array.isArray(value) || value.length > 20 || !value.every(isActivityAppId)) throw new ActivityError('INVALID_REQUEST', '应用白名单无效或包含敏感应用')
     } else {
@@ -90,7 +90,7 @@ export function validateActivityMessage(message: unknown): boolean {
       if (!['zh-Hans', 'zh-Hant', 'en-US'].includes(String(message.ocr_language))) return false
     }
     if (message.queue_only !== undefined && typeof message.queue_only !== 'boolean') return false
-    if (message.type === 'activity.configure') { validateConfig(message.patch); if ('image_ai_consent' in (message.patch as object) || 'fixed_windows' in (message.patch as object)) return false }
+    if (message.type === 'activity.configure') { validateConfig(message.patch); if ('image_ai_consent' in (message.patch as object) || 'title_ai_consent' in (message.patch as object) || 'fixed_windows' in (message.patch as object)) return false }
     if ((message.type === 'todo.confirm' || message.type === 'todo.create')) validateTask(message.task, true)
     if (message.type === 'todo.update') validateTask(message.patch)
     for (const k of ['source_id', 'candidate_id', 'todo_id']) if (message[k] !== undefined && !/^[a-f0-9-]{36}$/.test(String(message[k]))) return false
