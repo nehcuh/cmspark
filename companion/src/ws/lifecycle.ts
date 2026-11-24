@@ -1088,7 +1088,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           return
         }
         // Stricter message validation (P2)
-        const validation = validateWsMessage(msg)
+        const validation = validateWsMessage(msg, rawLen)
         if (!validation.valid) {
           logger.warn("ws.invalid_message", {
             error: validation.error,
@@ -1117,6 +1117,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               )
             } else {
               ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}`,
+                ...(typeof msg?.type === "string" && msg.type.startsWith("meeting.visual.") && typeof msg.id === "string" &&
+                    msg.id.length <= 100 ? { id: msg.id } : {}),
                 ...(msg?.type === "board.add_hint" ? { family: "board", request_type: "board.add_hint",
                   id: msg.id, thread_id: msg.thread_id } : {}),
                 ...(typeof msg?.type === "string" && msg.type.startsWith("computer.lcu.") &&

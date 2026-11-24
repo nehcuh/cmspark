@@ -3,11 +3,12 @@ import { createMeetingContinuousCapture } from "./meeting-continuous-capture"
 import { createMeetingRuntimeChannel } from "./meeting-runtime-channel"
 import { createDesktopMeetingInput } from "./meeting-desktop-input"
 import type { DesktopMeetingMedia } from "./desktop-meeting-media"
+import type { FrameReporter } from "./meeting-frame-sampler"
 
 /** One explicit plugin Begin. Current-connection capability precedes record/mic admission. */
 export function createPanelMeetingCapture(options: {
   liveAsr?: string; canAcquire?: () => boolean;
-  desktop?: { select: (signal: AbortSignal) => Promise<DesktopMeetingMedia>; report: (message: string) => void };
+  desktop?: { select: (signal: AbortSignal) => Promise<DesktopMeetingMedia>; report: (message: string) => void; onFrameStatus?: FrameReporter };
   meetingId: string; modelId: string; lang?: string; speaker?: string;
   /** Owned audio seam; live callers omit it. */ env?: any;
   onStarted: (meeting: any) => void; onStart: () => void; onStopped: () => void;
@@ -20,17 +21,17 @@ export function createPanelMeetingCapture(options: {
   const stale = () => destroyed || stopped || options.canAcquire?.() === false
   let releaseLock: (() => void) | null = null
   const release = () => { releaseLock?.(); releaseLock = null }
+  const captureId = crypto.randomUUID()
   const desktop = options.desktop && createDesktopMeetingInput(options.meetingId, options.desktop.select, options.desktop.report, () => {
     stopped = true
     stopCode = "desktop_source_lost"
     if (receiving) void controller?.stop("input_gap")
     else void controller?.abort()
-  })
+  }, options.desktop.onFrameStatus, captureId)
   const channel = createMeetingRuntimeChannel(message => controller?.handleStatus(message), () => {
     if (destroyed) return
     destroyed = true; desktop?.close("interrupted"); release(); controller?.destroy(); options.onError("network_unknown"); channel.destroy()
   })
-  const captureId = crypto.randomUUID()
   // Snapshot synchronously at the explicit Begin, before any transport await.
   const speaker = options.speaker?.trim().slice(0, 32) || undefined
   async function start() {
@@ -90,7 +91,7 @@ export function createPanelMeetingCapture(options: {
       if (!destroyed) options.onError(stopped ? stopCode : error instanceof Error ? error.message : "contract_unavailable")
     }
   }
-  return { start,
+  return { start, markFrame() { desktop?.markFrame() },
     stop() { stopped = true; desktop?.close("stop"); return desktop && !receiving ? controller?.abort() : controller?.stop() },
     abort() { stopped = true; desktop?.close("interrupted"); return controller?.abort() },
     destroy() { destroyed = true; stopped = true; desktop?.close("interrupted"); release(); controller?.destroy(); if (!beginPending) channel.destroy() } }

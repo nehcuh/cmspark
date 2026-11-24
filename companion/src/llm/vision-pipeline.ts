@@ -118,8 +118,8 @@ export function visionImageDataUrl(image: { base64: string }): string | null {
 }
 
 /** Resolve reusable gateway auth in Companion; secrets never need to enter the UI. */
-export function resolveVisionLlmConfig(config: VisionConfig): LlmConfig {
-  const main = config.use_main_auth ? getConfig().llm : undefined
+export function resolveVisionLlmConfig(config: VisionConfig, mainConfig?: LlmConfig): LlmConfig {
+  const main = config.use_main_auth ? mainConfig ?? getConfig().llm : undefined
   const inherited = main && endpointsMatch(main, config) &&
     (main.protocol ?? "openai") === (config.protocol ?? "openai") ? main : undefined
   return {

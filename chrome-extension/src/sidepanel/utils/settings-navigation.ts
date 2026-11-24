@@ -15,6 +15,7 @@ export const SETTINGS_DESTINATIONS = {
   "model-chat": { category: "models", section: "model", title: "对话模型", description: "文本模型、服务地址与推理预算" },
   "model-vision": { category: "models", section: "model", title: "看图与截图", description: "截图分析、独立视觉服务与降级策略" },
   "model-meeting-transcribe": { category: "models", section: "model", title: "会议转写", description: "本机转写与导入音频的外部转写服务" },
+  "model-meeting-visual": { category: "models", section: "model", title: "会议画面理解", description: "选择识别会议截图的模型服务" },
   "model-meeting-minutes": { category: "models", section: "model", title: "会议纪要", description: "继承对话模型或指定文本模型" },
   "model-activity": { category: "models", section: "model", title: "活动提取", description: "活动记录的 OCR、视觉与本机模型" },
   "model-local": { category: "models", section: "experimental", title: "本机模型", description: "本地视觉定位的下载、许可与启用" },

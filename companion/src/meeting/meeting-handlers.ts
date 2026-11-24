@@ -18,7 +18,10 @@ import type { LlmExtractConfig } from "../llm/llm-extract"
 import { displayModelEndpoint, resolveMeetingTextModel } from "../model-center"
 import { assertLlmEndpointUrlAllowed } from "../security"
 import { generateMeetingMinutes } from "./meeting-minutes"
+import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence } from "./meeting-visual-store"
+import { visualMinutesMaterial, visualSourceList } from "./minutes-evidence"
 import { createTranslationService } from "./meeting-translation"
+import { createMeetingVisualService } from "./meeting-visual-handlers"
 import { consumeMinutesConsent, minutesConsentFingerprint, prepareMinutesConsent } from "./minutes-consent"
 import { importMeetingReference, MEETING_REFERENCE_MAX_CHARS, MEETING_REFERENCE_MAX_NAME_CHARS } from "./meeting-reference"
 import { MEETING_MINUTES_MAX_INPUT_CHARS, MEETING_MINUTES_MAX_TEMPLATE_CHARS } from "./minutes-prompt"
@@ -71,6 +74,7 @@ import {
 } from "./diarize-pcm-store"
 
 export interface MeetingHandlerContext {
+  isCurrentSession?: () => boolean
   origin?: string
   peerId?: string
   send?: (data: any) => void
@@ -112,12 +116,14 @@ function err(code: string, message: string, extra?: Record<string, unknown>) {
 
 const minutesInFlight = new Set<string>()
 const translations = createTranslationService()
+const meetingVisual = createMeetingVisualService()
 const externalAsr = createMeetingExternalAsr({
   config: () => getConfig().voice?.meetingAsr,
   save: meetingAsr => { setVoiceFields({ meetingAsr }) },
 })
 
 export function disconnectMeetingAsr(peerId: string) {
+  meetingVisual.disconnect(peerId)
   externalAsr.disconnect(peerId)
   translations.disconnect(peerId)
 }
@@ -177,6 +183,10 @@ export async function handleMeetingMessage(
       surface: ctx.surface,
     })
     return err("origin_denied", "chrome-extension origin required")
+  }
+  if (typeof type === "string" && type.startsWith("meeting.visual.")) {
+    if (ctx.surface !== "panel" || !ctx.isCurrentSession?.()) return err("origin_denied", "connected extension panel required")
+    return meetingVisual.handle(msg, ctx.peerId, ctx.isCurrentSession)
   }
   if (typeof type === "string" && type.startsWith("meeting.translation.")) return translations.handle(msg, ctx.peerId)
   if (typeof type === "string" && type.startsWith("meeting.asr.")) {
@@ -347,7 +357,7 @@ export async function handleMeetingMessage(
 
   if (type === "meeting.get") {
     const id = resolveMeetingId(msg)
-    const m = loadMeeting(id)
+    const m = loadMeeting(id, DATA_DIR, "meeting-read")
     if (!m) return err("not_found", "meeting not found", { id })
     return { type: "meeting.get_result", v: 1, meeting: m }
   }
@@ -713,6 +723,8 @@ export async function handleMeetingMessage(
       const transcriptText = (msg.text !== undefined ? msg.text : storedTranscript).trim()
       const referenceNotes = msg.reference_notes ?? meeting?.reference_notes ?? ""
       const referenceName = msg.reference_name ?? meeting?.reference_name ?? ""
+      const visualEvidence = meeting ? readMeetingVisualEvidence(meeting.id) : []
+      const visualChars = visualEvidence.length ? JSON.stringify(visualMinutesMaterial(visualEvidence)).length : 0
       const templateMd = msg.template_md?.trim() || undefined
       if (!transcriptText) return err("empty_transcript", "empty transcript", { id })
       if (transcriptText.length > MEETING_MINUTES_MAX_INPUT_CHARS) return err("transcript_too_long", "转写不能超过 200000 字", { id })
@@ -720,6 +732,9 @@ export async function handleMeetingMessage(
         return err("reference_too_long", "转写与参考笔记合计不能超过 200000 字，参考笔记不能超过 100000 字", { id })
       }
       if (referenceName.length > MEETING_REFERENCE_MAX_NAME_CHARS) return err("invalid_reference", "参考文件名不能超过 255 字", { id })
+      if (visualChars && transcriptText.length + referenceNotes.length + visualChars > MEETING_MINUTES_MAX_INPUT_CHARS) {
+        return err("visual_material_too_long", "转写、参考笔记和画面材料合计不能超过 200000 字；请精简后重试", { id })
+      }
       if (msg.template_md?.length > MEETING_MINUTES_MAX_TEMPLATE_CHARS) return err("template_too_long", "纪要模板过长", { id })
 
       const configSnapshot = getConfigSnapshot()
@@ -730,7 +745,7 @@ export async function handleMeetingMessage(
       const llm = meetingExtractConfig(resolved.llm)
       if (assertLlmEndpointUrlAllowed(llm.base_url)) return err("llm_endpoint_invalid", "纪要模型端点无效，请在模型与服务中检查配置", { id })
       const owner = JSON.stringify([ctx.origin, ctx.surface, ctx.peerId])
-      const fingerprint = meetingSourceFingerprint(transcriptText, referenceNotes, referenceName)
+      const fingerprint = meetingSourceFingerprint(transcriptText, referenceNotes, referenceName, visualEvidence)
       const consentFingerprint = minutesConsentFingerprint([
         configSnapshot.revision, resolved.profileId, resolved.profileName, llm, id, fingerprint, templateMd,
         meeting ? meetingSourceFingerprint(storedTranscript, meeting.reference_notes ?? "", meeting.reference_name ?? "") : null,
@@ -739,11 +754,16 @@ export async function handleMeetingMessage(
         return {
           type: "meeting.minutes_prepared", v: 1, id: msg.id, consent_token: prepareMinutesConsent(owner, consentFingerprint),
           target: { model_name: llm.model_name, base_url: displayModelEndpoint(llm.base_url), profile_name: resolved.profileName },
-          material: { transcript_chars: transcriptText.length, reference_chars: referenceNotes.trim().length, reference_name: referenceName.trim(), template_chars: templateMd?.length ?? 0 },
+          material: { transcript_chars: transcriptText.length, reference_chars: referenceNotes.trim().length, reference_name: referenceName.trim(), template_chars: templateMd?.length ?? 0,
+            ...(visualEvidence.length ? { visual_frames: visualEvidence.length, visual_chars: visualChars, visual_sources: visualSourceList(visualEvidence) } : {}) },
         }
       }
       if (typeof msg.consent_token !== "string" || !msg.consent_token) return err("minutes_consent_required", "请确认本次纪要的材料和模型端点", { id })
       if (!consumeMinutesConsent(msg.consent_token, owner, consentFingerprint)) return err("minutes_consent_changed", "纪要材料或配置已变化，请重新核对并确认", { id })
+      // Older clients can echo the token without showing the newly added visual materials.
+      if (visualEvidence.length && msg.visual_frames_confirmed !== visualEvidence.length) {
+        return err("visual_confirmation_required", "请在支持画面材料确认的会议界面核对发送范围", { id })
+      }
       generating = true
       if (id) minutesInFlight.add(id)
       if (meeting) {
@@ -757,12 +777,13 @@ export async function handleMeetingMessage(
         saveMeeting(meeting) // persistence failure must prevent the LLM call
       }
       const generate = deps.generate ?? generateMeetingMinutes
-      const result = await generate({ transcriptText, config: llm, templateMd, referenceNotes, referenceName })
+      const result = await generate({ transcriptText, config: llm, templateMd, referenceNotes, referenceName,
+        ...(visualEvidence.length ? { visualEvidence } : {}) })
       if (!result.ok) {
         if (id) setMeetingStatus(id, "error", result.message)
         return err(result.code, result.message, { id })
       }
-      const minutes = { ...result.minutes, raw_md: `> ${meetingCaptureSourceNotice(meeting?.capture_summary)}\n\n${result.minutes.raw_md}`, source_transcript: transcriptText, source_fingerprint: fingerprint, stale: false }
+      const minutes = { ...result.minutes, raw_md: `> ${meetingCaptureSourceNotice(meeting?.capture_summary, visualEvidence.length)}\n\n${result.minutes.raw_md}`, source_transcript: transcriptText, source_fingerprint: fingerprint, stale: false }
       if (id) {
         // setMinutes rechecks live materials: edits during inference stay marked stale.
         const updated = setMinutes(id, minutes)
@@ -771,6 +792,10 @@ export async function handleMeetingMessage(
       }
       return { type: "meeting.minutes_result", v: 1, meeting: null, minutes }
     } catch (cause) {
+      if (cause instanceof MeetingVisualEvidenceUnavailableError) {
+        try { if (id && generating) setMeetingStatus(id, "ready") } catch { /* storage may still be unavailable */ }
+        return err(cause.code, cause.message, { id })
+      }
       logger.warn("meeting.minutes.failed", { id, error: cause instanceof Error ? cause.message : "meeting minutes failed" })
       try { if (id && generating) setMeetingStatus(id, "error", "会议纪要生成或保存失败") } catch { /* storage may still be unavailable */ }
       return err("minutes_failed", "会议纪要生成或保存失败，原始转写仍保留，请重试", { id })

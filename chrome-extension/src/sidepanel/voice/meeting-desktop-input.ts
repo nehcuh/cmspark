@@ -1,4 +1,5 @@
 import { openDesktopMeetingMedia, type DesktopMeetingMedia } from "./desktop-meeting-media"
+import type { FrameReporter } from "./meeting-frame-sampler"
 
 /** The picker must be opened by a fresh click after the asynchronous Companion checks. */
 export function chooseDesktopMeetingInput(signal: AbortSignal, includeMicrophone: boolean, offer: (choose: () => void) => void) {
@@ -20,12 +21,15 @@ export function createDesktopMeetingInput(
   select: (signal: AbortSignal) => Promise<DesktopMeetingMedia>,
   report: (message: string) => void,
   onInterrupted: () => void,
+  onFrameStatus?: FrameReporter,
+  captureId?: string,
 ) {
   const chooser = new AbortController()
   let media: DesktopMeetingMedia | undefined
   let writing: Promise<void> | undefined
   let closing = false
   let failed = false
+  let markFrame: (() => void) | undefined
   const interrupted = () => {
     if (closing || failed) return
     failed = true
@@ -52,7 +56,8 @@ export function createDesktopMeetingInput(
       const selected = media
       if (!selected || closing || selected.signal.aborted) throw new Error("desktop_source_lost")
       await new Promise<void>((resolve, reject) => {
-        writing = selected.startRecording(meetingId, resolve).then(row => {
+        const frames = onFrameStatus && { report: onFrameStatus, bindMark(mark: () => void) { markFrame = mark } }
+        writing = selected.startRecording(meetingId, resolve, frames, captureId).then(row => {
           if (row.state === "complete" && row.bytes > 0) report("会议视频已保存，可在工作台的「录屏」中预览或导出。")
           else {
             report(`会议视频未完整保存：${row.detail}。已写入的分块可在「录屏」中查看。`)
@@ -71,6 +76,7 @@ export function createDesktopMeetingInput(
       return selected.audio
     },
     close,
+    markFrame() { if (!closing) markFrame?.() },
     get failed() { return failed },
   }
 }

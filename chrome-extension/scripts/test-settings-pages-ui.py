@@ -103,11 +103,12 @@ with tempfile.TemporaryDirectory() as out:
         model.fill('fixture-model-draft')
         settings.get_by_role('button', name='返回模型与服务', exact=True).click()
         model_center = settings.get_by_role('region', name='模型与服务', exact=True)
-        for label in ['对话模型', '看图与截图', '听写纠错', '聊天听写', '会议转写', '会议纪要', '活动提取', '本机模型', '后台任务']:
+        for label in ['对话模型', '看图与截图', '听写纠错', '聊天听写', '会议转写', '会议纪要', '会议画面理解', '活动提取', '本机模型', '后台任务']:
             model_center.get_by_role('button', name=label, exact=True).wait_for()
         assert model_center.get_by_text('未配置模型', exact=True).count() > 0
         page.evaluate("""() => {
-            window.fakeModelView = {chat_profile_id:null, meeting_minutes_profile_id:'owned-minutes',
+            window.fakeModelView = {chat_profile_id:null, meeting_minutes_profile_id:'owned-minutes', meeting_visual_profile_id:null,
+                configured_vision:{model_name:'fixture-vision',base_url:'http://localhost:1234/v1'},
                 profiles:[{id:'owned-minutes',name:'纪要用模型',base_url:'https://minutes.example.test/v1',model_name:'minutes-model',has_key:true},
                     {id:'alternate',name:'备选模型',base_url:'https://alternate.example.test/v1',model_name:'alternate-model',has_key:true}]};
             window.fixtureResponse = (message, callback) => {
@@ -121,7 +122,8 @@ with tempfile.TemporaryDirectory() as out:
                 if (message.type === 'model.center.save') {
                     if (message.action.kind === 'bind') {
                         if (message.action.scope === 'chat') window.fakeModelView.chat_profile_id = message.action.profile_id;
-                        else window.fakeModelView.meeting_minutes_profile_id = message.action.profile_id;
+                        else if (message.action.scope === 'meeting_visual') window.fakeModelView.meeting_visual_profile_id = message.action.profile_id;
+                        else if (message.action.scope === 'meeting_minutes') window.fakeModelView.meeting_minutes_profile_id = message.action.profile_id;
                     }
                     if (message.action.kind === 'create') window.fakeModelView.profiles.push({id:'fixture-profile',name:message.action.name,
                         base_url:message.action.provider.base_url,model_name:message.action.provider.model_name,has_key:true});
@@ -476,6 +478,17 @@ with tempfile.TemporaryDirectory() as out:
         assert settings.is_visible()
         page.wait_for_function('document.activeElement?.placeholder=== "输入模型名称或从列表选择"')
         assert not page.evaluate('window.sent.some(x=>x.type.includes("license_response"))')
+        page.evaluate("window.dispatchUI({type:'OPEN_SETTINGS_SECTION',section:'model-meeting-visual'})")
+        visual = settings.locator('[data-settings-destination="model-meeting-visual"]')
+        visual_model = visual.get_by_role('combobox')
+        assert visual_model.input_value() == ''
+        saved_minutes_model = page.evaluate('window.fakeModelView.meeting_minutes_profile_id')
+        visual_model.select_option('configured_vision')
+        assert page.evaluate('window.fakeModelView.meeting_visual_profile_id') is None
+        footer_save.click()
+        page.wait_for_function("window.fakeModelView.meeting_visual_profile_id === 'configured_vision'")
+        visual.get_by_text('当前 已配置的视觉服务 · fixture-vision', exact=True).wait_for()
+        assert page.evaluate('window.fakeModelView.meeting_minutes_profile_id') == saved_minutes_model
         # The composer handles a missing local model through the same destination.
         settings.get_by_role('button', name='关闭设置', exact=True).click()
         page.evaluate("""window.dispatchUI({type:'SET_ACTIVE_THREAD',threadId:window.demoThreads[0].id});

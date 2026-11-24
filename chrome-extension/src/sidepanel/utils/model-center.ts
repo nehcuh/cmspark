@@ -2,6 +2,8 @@ export type ModelProfile = { id: string; name: string; model_name: string; base_
 export type ModelCenterView = {
   profiles: ModelProfile[]
   chat_profile_id: string | null
+  meeting_visual_profile_id?: string | null
+  configured_vision?: { model_name: string; base_url: string } | null
   meeting_minutes_profile_id: string | null
 }
 export type ModelCenterState = {
@@ -15,7 +17,7 @@ export type ModelCenterAction =
   | { kind: "create"; name: string; provider: { protocol: "openai" | "anthropic"; base_url: string; model_name: string; api_key?: string } }
   | { kind: "rename"; profile_id: string; name: string }
   | { kind: "remove"; profile_id: string }
-  | { kind: "bind"; scope: "chat" | "meeting_minutes"; profile_id: string | null }
+  | { kind: "bind"; scope: "chat" | "meeting_minutes" | "meeting_visual"; profile_id: string | null }
 
 const errors: Record<string, string> = {
   CONFIG_REVISION_CONFLICT: "其他页面已修改配置。请刷新后重新核对。",

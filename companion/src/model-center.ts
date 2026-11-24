@@ -9,9 +9,12 @@ import {
   saveModelCenterConfig,
   type CompanionConfig,
   type LlmConfig,
+  type VisionConfig,
 } from "./config"
 import { matchesTextModel, snapshotTextModel, type ModelCenterConfig, type TextModelProfile } from "./model-profiles"
 import { assertLlmEndpointUrlAllowed } from "./security"
+import { resolveVisionLlmConfig } from "./llm/vision-pipeline"
+import { shouldBlockVisionRequest } from "./llm/vision-reuse-inherit"
 
 const MAX_PROFILES = 32
 const PROFILE_ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/
@@ -21,7 +24,7 @@ export type ModelCenterAction =
   | { kind: "create"; name: string; provider: { protocol: "openai" | "anthropic"; base_url: string; model_name: string; api_key?: string } }
   | { kind: "rename"; profile_id: string; name: string }
   | { kind: "remove"; profile_id: string }
-  | { kind: "bind"; scope: "chat" | "meeting_minutes"; profile_id: string | null }
+  | { kind: "bind"; scope: "chat" | "meeting_minutes" | "meeting_visual"; profile_id: string | null }
 
 export function isModelCenterAction(action: unknown): action is ModelCenterAction {
   if (!action || typeof action !== "object" || Array.isArray(action)) return false
@@ -40,7 +43,8 @@ export function isModelCenterAction(action: unknown): action is ModelCenterActio
     }
     case "rename": return id && name
     case "remove": return id
-    case "bind": return (value.scope === "chat" || value.scope === "meeting_minutes") && (id || value.profile_id === null)
+    case "bind": return (value.scope === "chat" || value.scope === "meeting_minutes" || value.scope === "meeting_visual") &&
+      (id || value.profile_id === null || value.scope === "meeting_visual" && value.profile_id === "configured_vision")
     default: return false
   }
 }
@@ -71,6 +75,7 @@ function currentCenter(config: CompanionConfig): ModelCenterConfig {
     chat_profile_id: chat && namedEndpointAllowed(chat.llm.base_url) && matchesTextModel(config.llm, getStoredMainModelKey(), chat) ? chat.id : null,
     // Keep a broken independent binding visible to the resolver so it fails closed.
     meeting_minutes_profile_id: typeof center?.meeting_minutes_profile_id === "string" ? center.meeting_minutes_profile_id : null,
+    meeting_visual_profile_id: typeof center?.meeting_visual_profile_id === "string" ? center.meeting_visual_profile_id : null,
   }
 }
 
@@ -91,6 +96,9 @@ function publicState({ config, revision }: ReturnType<typeof getConfigSnapshot>)
     model_center: {
       chat_profile_id: center.chat_profile_id,
       meeting_minutes_profile_id: center.meeting_minutes_profile_id,
+      meeting_visual_profile_id: center.meeting_visual_profile_id,
+      configured_vision: config.vision?.enabled && namedEndpointAllowed(config.vision.base_url)
+        ? { model_name: config.vision.model_name, base_url: displayModelEndpoint(config.vision.base_url) } : null,
       profiles: center.profiles.map(profile => ({
         id: profile.id,
         name: profile.name,
@@ -104,6 +112,23 @@ function publicState({ config, revision }: ReturnType<typeof getConfigSnapshot>)
 
 export function readModelCenter() {
   return publicState(getConfigSnapshot())
+}
+
+export function resolveMeetingVisualModel({ config }: ReturnType<typeof getConfigSnapshot>) {
+  const center = currentCenter(config)
+  const profileId = center.meeting_visual_profile_id
+  if (!profileId) return null
+  const profile = center.profiles.find(item => item.id === profileId)
+  const source = profileId === "configured_vision"
+    ? config.vision?.enabled ? config.vision : undefined
+    : profile && profileLlm(profile)
+  if (!source || !source.model_name?.trim() || !namedEndpointAllowed(source.base_url) ||
+    isMaskedApiKey(source.api_key) || shouldBlockVisionRequest({ baseUrl: source.base_url, apiKey: source.api_key }).block) return null
+  const vision: VisionConfig = {
+    ...source, enabled: true, cache_ttl_seconds: 0, timeout_ms: 30_000, max_tokens: 4096, fallback: "error",
+  }
+  Object.assign(vision, resolveVisionLlmConfig(vision, config.llm), { use_main_auth: false })
+  return { vision, profileId, profileName: profile?.name ?? "已配置的视觉服务" }
 }
 
 export function resolveMeetingTextModel({ config }: ReturnType<typeof getConfigSnapshot>) {
@@ -124,7 +149,8 @@ export function saveModelCenter(action: ModelCenterAction, expectedRevision: str
   const { config } = snapshot
   const center = currentCenter(config)
   const profile = "profile_id" in action ? center.profiles.find(item => item.id === action.profile_id) : undefined
-  if ("profile_id" in action && action.profile_id !== null && !profile) throw new Error("MODEL_PROFILE_NOT_FOUND")
+  const configuredVision = action.kind === "bind" && action.scope === "meeting_visual" && action.profile_id === "configured_vision"
+  if ("profile_id" in action && action.profile_id !== null && !profile && !configuredVision) throw new Error("MODEL_PROFILE_NOT_FOUND")
   let replacement: LlmConfig | undefined
   switch (action.kind) {
     case "create":
@@ -149,10 +175,15 @@ export function saveModelCenter(action: ModelCenterAction, expectedRevision: str
       break
     }
     case "remove":
-      if (center.chat_profile_id === action.profile_id || center.meeting_minutes_profile_id === action.profile_id) throw new Error("MODEL_PROFILE_IN_USE")
+      if ([center.chat_profile_id, center.meeting_minutes_profile_id, center.meeting_visual_profile_id].includes(action.profile_id)) throw new Error("MODEL_PROFILE_IN_USE")
       center.profiles = center.profiles.filter(item => item.id !== action.profile_id)
       break
     case "bind":
+      if (action.scope === "meeting_visual") {
+        center.meeting_visual_profile_id = action.profile_id
+        if (action.profile_id && !resolveMeetingVisualModel({ ...snapshot, config: { ...config, model_center: center } })) throw new Error("MODEL_NOT_CONFIGURED")
+        break
+      }
       if (profile) {
         if (!usableLlm(profileLlm(profile))) throw new Error("MODEL_NOT_CONFIGURED")
         if (!namedEndpointAllowed(profile.llm.base_url)) throw new Error("MODEL_ENDPOINT_INVALID")

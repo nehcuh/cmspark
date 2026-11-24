@@ -307,7 +307,7 @@ export class WSClient {
     if ((data as any)?.queue_contract !== undefined) return this.sendMeetingPcm(data)
     if ((data as { chat_context?: unknown }).chat_context !== undefined && !this.supportsChatContext()) return false
     const type = (data as { type?: unknown }).type
-    if (typeof type === "string" && (type.startsWith("meeting.asr.") || type.startsWith("meeting.translation.")) &&
+    if (typeof type === "string" && (type.startsWith("meeting.asr.") || type.startsWith("meeting.translation.") || type.startsWith("meeting.visual.")) &&
         (!this.authenticated || this.ws?.readyState !== WebSocket.OPEN)) return false
     // Not paired yet — don't open a connection just to have it rejected; the
     // WSClient stays parked until setSecret() supplies a secret.

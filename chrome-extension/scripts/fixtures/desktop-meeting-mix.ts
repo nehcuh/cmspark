@@ -2,7 +2,9 @@
 import { openDesktopMeetingMedia } from "../../src/sidepanel/voice/desktop-meeting-media"
 import { createDesktopMeetingInput } from "../../src/sidepanel/voice/meeting-desktop-input"
 import { createMeetingContinuousCapture } from "../../src/sidepanel/voice/meeting-continuous-capture"
-import { recordingStore } from "../../src/sidepanel/voice/workbench-recording-store"
+import { listMeetingFrames, recordingStore } from "../../src/sidepanel/voice/workbench-recording-store"
+import { exerciseRecordingUpgrade } from "./meeting-frame-store"
+import { exerciseFrameHeartbeat } from "./meeting-frame-heartbeat"
 
 const tones = [500, 1300, 2100] as const
 
@@ -83,8 +85,12 @@ async function run(includeMic: boolean) {
   })
   const meetingId = includeMic ? "fixture-both" : "fixture-shared-only"
   const failures: string[] = []
+  let savedFrame!: () => void
+  const sampled = new Promise<void>(resolve => { savedFrame = resolve })
   const desktop = createDesktopMeetingInput(meetingId, signal => openDesktopMeetingMedia(signal, includeMic),
-    () => {}, () => failures.push("interrupted"))
+    () => {}, () => failures.push("interrupted"), includeMic ? status => {
+      if (status.saved === 1) savedFrame()
+    } : undefined, meetingId + "-capture")
   const asrSamples: number[] = []
   let collected!: () => void
   const enough = new Promise<void>(resolve => { collected = resolve })
@@ -113,6 +119,7 @@ async function run(includeMic: boolean) {
     await desktop.select()
     await capture.start()
     await enough
+    if (includeMic) await sampled
     const saved = desktop.close("stop")
     await capture.stop()
     await saved
@@ -121,7 +128,20 @@ async function run(includeMic: boolean) {
     if (row?.state !== "complete") throw new Error("Missing complete meeting recording")
     const blob = await recordingStore.read(row)
     const decoded = await context.decodeAudioData(await blob.arrayBuffer())
+    const frames = await listMeetingFrames(meetingId)
+    const evidence = await Promise.all(frames.map(async f => {
+      const bitmap = await createImageBitmap(f.blob)
+      const output = document.createElement("canvas").getContext("2d")!
+      output.drawImage(bitmap, 0, 0)
+      bitmap.close()
+      const digest = await crypto.subtle.digest("SHA-256", await f.blob.arrayBuffer())
+      return { recordingId: f.recordingId, timeMs: f.timeMs, width: f.width, height: f.height,
+        mime: f.mime, validHash: Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("") === f.sha256,
+        red: output.getImageData(40, 45, 1, 1).data[0], blue: output.getImageData(120, 45, 1, 1).data[2] }
+    }))
+    await recordingStore.remove(row.id)
     return { micOpens, samples: asrSamples.length, bytes: row.bytes, chunks: row.chunks,
+      evidence, remainingFrames: (await listMeetingFrames(meetingId)).length, coverage: row.frameStatus,
       pcm: spectrum(Float32Array.from(asrSamples), 16000), webm: spectrum(decoded.getChannelData(0), decoded.sampleRate),
       frame: await frame(blob) }
   } finally {
@@ -134,5 +154,7 @@ async function run(includeMic: boolean) {
 }
 
 document.querySelector("button")!.onclick = () => {
-  Object.assign(window, { result: run(location.hash === "#both") })
+  const result = location.hash === "#store" ? exerciseRecordingUpgrade()
+    : location.hash === "#heartbeat" ? exerciseFrameHeartbeat() : run(location.hash === "#both")
+  Object.assign(window, { result })
 }

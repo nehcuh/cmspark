@@ -12,11 +12,15 @@ import {
   MEETING_MINUTES_MAX_TEMPLATE_CHARS,
   MEETING_MINUTES_TEMP_CAP,
   MEETING_MINUTES_TIMEOUT_MS,
+  MEETING_MINUTES_VISUAL_RULE,
+  MEETING_VISUAL_JSON_PROMPT,
 } from "./minutes-prompt"
 import { meetingSourceFingerprint, type MeetingMinutes } from "./meeting-store"
 import { MEETING_REFERENCE_MAX_CHARS, parseReferenceMinutes } from "./meeting-reference"
 import { estimateTokens } from "../file-chunker"
-import { groundDefaultMinutes } from "./minutes-evidence"
+import { isLoopbackVisionHost } from "../llm/vision-reuse-inherit"
+import { groundDefaultMinutes, groundDefaultVisualMinutes, groundVisualMinutes, visualMinutesMaterial, visualSourceList } from "./minutes-evidence"
+import type { MeetingVisualEvidence } from "./meeting-visual-store"
 
 export type GenerateMinutesResult =
   | { ok: true; minutes: MeetingMinutes }
@@ -47,6 +51,7 @@ export async function generateMeetingMinutes(params: {
   templateMd?: string
   referenceNotes?: string
   referenceName?: string
+  visualEvidence?: readonly MeetingVisualEvidence[]
   extract?: typeof llmExtract
   signal?: AbortSignal
 }): Promise<GenerateMinutesResult> {
@@ -60,24 +65,38 @@ export async function generateMeetingMinutes(params: {
   const tmpl = params.templateMd?.trim() || ""
   const referenceNotes = params.referenceNotes?.trim() || ""
   const referenceName = params.referenceName?.trim() || ""
+  const evidence = params.visualEvidence ?? []
+  const visualMaterial = visualMinutesMaterial(evidence)
   if (referenceNotes.length > MEETING_REFERENCE_MAX_CHARS || raw.length + referenceNotes.length > MEETING_MINUTES_MAX_INPUT_CHARS) {
     return { ok: false, code: "reference_too_long", message: "转写与参考笔记合计不能超过 200000 字，参考笔记不能超过 100000 字" }
   }
   if (tmpl.length > MEETING_MINUTES_MAX_TEMPLATE_CHARS) {
     return { ok: false, code: "template_too_long", message: "template too long" }
   }
+  if (evidence.length && raw.length + referenceNotes.length + JSON.stringify(visualMaterial).length > MEETING_MINUTES_MAX_INPUT_CHARS) {
+    return { ok: false, code: "visual_material_too_long", message: "转写、参考笔记和画面材料合计不能超过 200000 字；请精简后重试" }
+  }
   if (params.signal?.aborted) {
     return { ok: false, code: "aborted", message: "aborted" }
   }
 
-  const systemPrompt = referenceNotes ? buildReferenceMinutesSystemPrompt(tmpl || undefined)
-    : tmpl ? buildMinutesSystemPrompt(tmpl) : `${buildMinutesSystemPrompt()}\n\n${MEETING_MINUTES_CITATION_RULE}`
-  const userContent = referenceNotes ? JSON.stringify({ transcript: raw, reference_notes: referenceNotes, reference_name: referenceName }) : raw
-  if (referenceNotes) {
+  const withVisual = evidence.length > 0
+  const structuredVisual = withVisual && !referenceNotes && !tmpl
+  const basePrompt = referenceNotes ? buildReferenceMinutesSystemPrompt(tmpl || undefined, withVisual)
+    : buildMinutesSystemPrompt(tmpl || undefined, withVisual)
+  const citationRule = withVisual ? MEETING_MINUTES_VISUAL_RULE : !tmpl && !referenceNotes ? MEETING_MINUTES_CITATION_RULE : ""
+  const systemPrompt = structuredVisual ? MEETING_VISUAL_JSON_PROMPT : citationRule ? basePrompt + "\n\n" + citationRule : basePrompt
+  const userContent = referenceNotes || evidence.length ? JSON.stringify({ transcript: raw,
+    ...(referenceNotes ? { reference_notes: referenceNotes, reference_name: referenceName } : {}),
+    ...(evidence.length ? { visual_evidence: visualMaterial } : {}),
+  }) : raw
+  if (referenceNotes || evidence.length) {
     const contextWindow = params.config.context_window ?? 100_000
     const outputReserve = Math.min(params.config.max_tokens ?? 4096, Math.floor(contextWindow / 4))
     if (Number.isFinite(contextWindow) && estimateTokens(systemPrompt) + estimateTokens(userContent) + outputReserve + 128 > contextWindow) {
-      return { ok: false, code: "context_too_small", message: "完整转写和参考笔记超过当前模型上下文，请精简材料或选择更大上下文；未截断任何材料" }
+      return { ok: false, code: "context_too_small", message: evidence.length
+        ? "完整转写、笔记和画面材料超过当前模型上下文，请精简材料或选择更大上下文；未截断任何材料"
+        : "完整转写和参考笔记超过当前模型上下文，请精简材料或选择更大上下文；未截断任何材料" }
     }
   }
   const extract = params.extract ?? llmExtract
@@ -89,6 +108,8 @@ export async function generateMeetingMinutes(params: {
       config: { ...params.config, rejectRedirects: true },
       temperatureCap: MEETING_MINUTES_TEMP_CAP,
       timeout: MEETING_MINUTES_TIMEOUT_MS,
+      ...(evidence.length && params.config.reasoning_effort === "none" && params.config.protocol !== "anthropic" &&
+        isLoopbackVisionHost(params.config.base_url) ? { reasoningEffort: "none" as const } : {}),
       signal: params.signal,
     })
   } catch (e: any) {
@@ -116,9 +137,13 @@ export async function generateMeetingMinutes(params: {
   if (!responseMd) {
     return { ok: false, code: "empty_output", message: "empty minutes" }
   }
-  const md = referenceNotes || tmpl ? responseMd : groundDefaultMinutes(responseMd, raw)
+  const md = structuredVisual ? groundDefaultVisualMinutes(responseMd, raw, evidence)
+    : evidence.length ? groundVisualMinutes(responseMd, raw, evidence, tmpl)
+    : referenceNotes || tmpl ? responseMd : groundDefaultMinutes(responseMd, raw)
   if (!md) {
-    return { ok: false, code: "invalid_minutes_evidence", message: "模型未提供可核对的逐字稿依据，请重试或更换纪要模型。未写入本次结果。" }
+    return { ok: false, code: "invalid_minutes_evidence", message: evidence.length
+      ? "模型未同时提供可核对的逐字稿和画面依据，请重试或更换纪要模型。未写入本次结果。"
+      : "模型未提供可核对的逐字稿依据，请重试或更换纪要模型。未写入本次结果。" }
   }
   // Soft structure check — require at least TL;DR heading
   if (!/###\s*TL;DR/i.test(md)) {
@@ -131,12 +156,13 @@ export async function generateMeetingMinutes(params: {
     decisions: partial.decisions,
     actions: partial.actions,
     risks: partial.risks,
+    ...referenceResult,
     raw_md: md,
     generated_at: new Date().toISOString(),
     source_transcript: raw,
-    source_fingerprint: meetingSourceFingerprint(raw, referenceNotes, referenceName),
+    source_fingerprint: meetingSourceFingerprint(raw, referenceNotes, referenceName, evidence),
     stale: false,
-    ...referenceResult,
+    ...(evidence.length ? { visual_sources: visualSourceList(evidence) } : {}),
   }
   logger.info("meeting.minutes.ok", {
     input_len: raw.length,

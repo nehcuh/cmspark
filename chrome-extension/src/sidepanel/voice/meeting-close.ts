@@ -1,3 +1,5 @@
+import type { FrameSource } from "./meeting-visual-client"
+
 type MeetingTransport = {
   send: (message: Record<string, unknown>, callback: (reply: any) => void) => void
   subscribe: (listener: (message: any) => void) => () => void
@@ -7,7 +9,8 @@ type MeetingTransport = {
 export type PreparedMinutes = {
   consent_token: string
   target: { model_name: string; base_url: string; profile_name?: string | null }
-  material: { transcript_chars: number; reference_chars: number; reference_name: string; template_chars: number }
+  material: { transcript_chars: number; reference_chars: number; reference_name: string; template_chars: number
+    visual_frames?: number; visual_chars?: number; visual_sources?: FrameSource[] }
 }
 
 function preparedMinutes(message: any): PreparedMinutes {
@@ -17,6 +20,16 @@ function preparedMinutes(message: any): PreparedMinutes {
       typeof target?.model_name !== "string" || !count(material?.transcript_chars) ||
       !count(material?.reference_chars) || !count(material?.template_chars) || typeof material?.reference_name !== "string") {
     throw new Error("无法核对纪要接收方和发送范围，未生成纪要。")
+  }
+  if (material.visual_frames !== undefined || material.visual_chars !== undefined || material.visual_sources !== undefined) {
+    const sources = material.visual_sources
+    if (!count(material.visual_frames) || !material.visual_frames || material.visual_frames > 240 ||
+        !count(material.visual_chars) || !material.visual_chars || !Array.isArray(sources) || sources.length !== material.visual_frames ||
+        !sources.every(source => typeof source?.frameId === "string" && !!source.frameId && typeof source.recordingId === "string" &&
+          !!source.recordingId && count(source.timeMs) && typeof source.sha256 === "string" && /^[0-9a-f]{64}$/.test(source.sha256)) ||
+        new Set(sources.map(source => source.frameId)).size !== sources.length) {
+      throw new Error("无法核对发送给纪要模型的画面材料。")
+    }
   }
   return { consent_token, target, material }
 }

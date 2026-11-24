@@ -1315,7 +1315,8 @@ async function handleRequest(
         jsonResponse(res, { type: "meeting.error", v: 1, code: "minutes_consent_required", message: "请确认本次纪要的材料和模型端点" }, 400)
         return
       }
-      jsonResponse(res, await dispatchAllowed("meeting.generate_minutes", { v: 1, id, consent_token: body.consent_token }))
+      jsonResponse(res, await dispatchAllowed("meeting.generate_minutes", { v: 1, id, consent_token: body.consent_token,
+        ...(body.visual_frames_confirmed !== undefined ? { visual_frames_confirmed: body.visual_frames_confirmed } : {}) }))
       return
     }
 

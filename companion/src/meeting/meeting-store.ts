@@ -9,6 +9,8 @@ import * as crypto from "crypto"
 import { DATA_DIR } from "../config"
 import { logger } from "../logger"
 import { MEETING_MINUTES_MAX_INPUT_CHARS } from "./minutes-prompt"
+import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence, type MeetingVisualEvidence } from "./meeting-visual-store"
+import { visualMinutesMaterial, visualSourceList } from "./minutes-evidence"
 import type { CaptureStatus } from "../voice/meeting-pcm-contract"
 
 export type MeetingCaptureSummary = {
@@ -38,6 +40,7 @@ export type MeetingMinutes = {
   generated_at: string
   source_fingerprint?: string
   source_transcript?: string
+  visual_sources?: ReturnType<typeof visualSourceList>
   stale?: boolean
   corrected_transcript?: string
   corrections?: Array<{ original: string; replacement: string; reference_excerpt: string; reason: string }>
@@ -78,10 +81,12 @@ export type MeetingMeta = {
   error?: string | null
   capture_epoch?: number
   capture_summary?: MeetingCaptureSummary
+  capture_ids?: string[]
 }
 
 export type MeetingSession = MeetingMeta & {
   transcript: TranscriptLine[]
+  visual_evidence_unavailable?: true
   /** Original ASR utterances; editing/generation never rewrites this archive. */
   original_transcript?: TranscriptLine[]
   reference_notes?: string
@@ -98,24 +103,40 @@ export class MeetingTranscriptSegmentCollisionError extends Error {
 }
 
 /** Fixed source-range disclosure, never renderer authority or an ASR accuracy claim. */
-export function meetingCaptureSourceNotice(summary?: MeetingCaptureSummary): string {
-  if (!summary || !Number.isSafeInteger(summary.committed_end) || summary.committed_end < 0) return "采集范围未知；本纪要仅基于已保存文字。"
+export function meetingCaptureSourceNotice(summary?: MeetingCaptureSummary, visualCount = 0): string {
+  const materials = visualCount ? `本纪要使用已保存文字及 ${visualCount} 张选定画面的识别结果。` : "本纪要仅基于已保存文字。"
+  if (!summary || !Number.isSafeInteger(summary.committed_end) || summary.committed_end < 0) return "采集范围未知；" + materials
   const seconds = (summary.committed_end / 16000).toFixed(3)
-  if (summary.sticky_incomplete) return `采集曾提前停止或取消，范围不完整；本次已保存前缀到 ${seconds} 秒，本纪要仅基于已保存文字。`
-  if (summary.outcome === "complete") return `已采集前缀已处理并保存到 ${seconds} 秒；此状态不独立证明物理麦克风连续，本纪要仅基于已保存文字。`
-  return `采集边界尚未完整确认；本次已保存前缀到 ${seconds} 秒，本纪要仅基于已保存文字。`
+  if (summary.sticky_incomplete) return `采集曾提前停止或取消，范围不完整；本次已保存前缀到 ${seconds} 秒，${materials}`
+  if (summary.outcome === "complete") return `已采集前缀已处理并保存到 ${seconds} 秒；此状态不独立证明物理麦克风连续，${materials}`
+  return `采集边界尚未完整确认；本次已保存前缀到 ${seconds} 秒，${materials}`
 }
 
 /** Material identity, independent of recording status and generated artifacts. */
-export function meetingSourceFingerprint(transcript: string, referenceNotes = "", referenceName = ""): string {
-  return crypto.createHash("sha256").update(JSON.stringify([transcript.trim(), referenceNotes.trim(), referenceName.trim()])).digest("hex")
+export function meetingSourceFingerprint(transcript: string, referenceNotes = "", referenceName = "", evidence: readonly MeetingVisualEvidence[] = []): string {
+  const parts: unknown[] = [transcript.trim(), referenceNotes.trim(), referenceName.trim()]
+  if (evidence.length) parts.push(visualSourceList(evidence), visualMinutesMaterial(evidence, false),
+    evidence.map(frame => [frame.meetingId, frame.profileId, frame.endpoint, frame.width, frame.height, frame.mime, frame.status]))
+  return crypto.createHash("sha256").update(JSON.stringify(parts)).digest("hex")
 }
 
-function reconcileMinutesSource(session: MeetingSession): void {
-  if (!session.minutes) return
-  const fingerprint = meetingSourceFingerprint(transcriptToText(session.transcript), session.reference_notes, session.reference_name)
-  session.minutes.stale = session.minutes.source_fingerprint !== fingerprint
-  if (session.minutes.stale && session.status === "done") session.status = "ready"
+function reconcileMinutesSource(session: MeetingSession, dataDir: string): boolean {
+  let hasVisualMaterial = !!session.minutes?.visual_sources?.length
+  try {
+    const evidence = readMeetingVisualEvidence(session.id, dataDir)
+    delete session.visual_evidence_unavailable
+    hasVisualMaterial ||= evidence.length > 0
+    if (!session.minutes) return hasVisualMaterial
+    const fingerprint = meetingSourceFingerprint(transcriptToText(session.transcript), session.reference_notes, session.reference_name, evidence)
+    session.minutes.stale = session.minutes.source_fingerprint !== fingerprint
+  } catch (cause) {
+    if (!(cause instanceof MeetingVisualEvidenceUnavailableError)) throw cause
+    session.visual_evidence_unavailable = true
+    hasVisualMaterial = true
+    if (session.minutes) session.minutes.stale = true
+  }
+  if (session.minutes?.stale && session.status === "done") session.status = "ready"
+  return hasVisualMaterial
 }
 
 function meetingsRoot(dataDir = DATA_DIR): string {
@@ -150,7 +171,7 @@ function resolveContained(id: string, dataDir = DATA_DIR): string | null {
   return dir
 }
 
-function writeJsonAtomic(filePath: string, data: unknown): void {
+export function writeJsonAtomic(filePath: string, data: unknown): void {
   const dir = path.dirname(filePath)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   const tmp = `${filePath}.${process.pid}.tmp`
@@ -175,15 +196,25 @@ function readJson<T>(filePath: string): T | null {
 /** Hard cap on retained meeting sessions (P2 disk bound). */
 export const MAX_MEETINGS = 100
 
-/**
- * Delete an entire meeting directory (meta + transcript + minutes + audio).
- * Returns false if id invalid or dir missing.
- */
+const deletionListeners = new Map<string, Set<() => void>>()
+export function watchMeetingDeletion(id: string, dataDir: string, callback: () => void): () => void {
+  const key = meetingDir(id, dataDir)
+  const listeners = deletionListeners.get(key) ?? new Set()
+  listeners.add(callback)
+  deletionListeners.set(key, listeners)
+  return () => {
+    listeners.delete(callback)
+    if (!listeners.size) deletionListeners.delete(key)
+  }
+}
+
+/** Remove the entire meeting, including its visual evidence, and retire any active extraction. */
 export function deleteMeeting(id: string, dataDir = DATA_DIR): boolean {
   const dir = resolveContained(id, dataDir)
   if (!dir || !fs.existsSync(dir)) return false
   try {
     fs.rmSync(dir, { recursive: true, force: true })
+    for (const notify of deletionListeners.get(meetingDir(id, dataDir)) ?? []) notify()
     logger.info("meeting.deleted", { id })
     return true
   } catch (e: any) {
@@ -284,7 +315,7 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
   const dir = resolveContained(session.id, dataDir)
   if (!dir) throw new Error("invalid meeting id")
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-  reconcileMinutesSource(session)
+  reconcileMinutesSource(session, dataDir)
   const meta: MeetingMeta = {
     id: session.id,
     thread_id: session.thread_id,
@@ -297,6 +328,7 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
     error: session.error ?? null,
     capture_epoch: session.capture_epoch,
     capture_summary: session.capture_summary,
+    capture_ids: session.capture_ids,
   }
   writeJsonAtomic(path.join(dir, "meta.json"), meta)
   writeJsonAtomic(path.join(dir, "transcript.json"), session.transcript)
@@ -316,9 +348,10 @@ export function beginMeetingCapture(id: string, captureId: string, expectedEpoch
   const dir = resolveContained(id, dataDir)
   if (!dir) return null
   const { transcript: _transcript, original_transcript: _original, reference_notes: _notes,
-    reference_name: _name, minutes: _minutes, ...meta } = s
+    reference_name: _name, minutes: _minutes, visual_evidence_unavailable: _visual, ...meta } = s
   if (liveEngine) meta.privacy = { ...meta.privacy, stt_engine: liveEngine }
   meta.capture_epoch = expectedEpoch + 1
+  meta.capture_ids = [...new Set([...(s.capture_ids ?? []), ...(s.capture_summary ? [s.capture_summary.last_capture_id] : []), captureId])]
   meta.capture_summary = { capture_epoch: meta.capture_epoch, last_capture_id: captureId,
     phase: "starting", outcome: null, server_received_end: 0, committed_end: 0,
     known_unprocessed_end: null, reason: null, sticky_incomplete: s.capture_summary?.sticky_incomplete ?? false }
@@ -333,7 +366,7 @@ export function checkpointMeetingCapture(status: CaptureStatus, dataDir = DATA_D
   if (!s || s.capture_epoch !== status.capture_epoch || s.capture_summary?.last_capture_id !== status.capture_id) throw new Error("stale_capture")
   const dir = resolveContained(s.id, dataDir)!
   const { transcript: _transcript, original_transcript: _original, reference_notes: _notes,
-    reference_name: _name, minutes: _minutes, ...meta } = s
+    reference_name: _name, minutes: _minutes, visual_evidence_unavailable: _visual, ...meta } = s
   const terminal = status.phase === "finished" || status.phase === "failed"
   const received = Math.max(s.capture_summary.server_received_end, status.server_received_end)
   const committed = Math.max(s.capture_summary.committed_end, status.committed_end)
@@ -349,7 +382,7 @@ export function checkpointMeetingCapture(status: CaptureStatus, dataDir = DATA_D
   writeJsonAtomic(path.join(dir, "meta.json"), meta)
 }
 
-export function loadMeeting(id: string, dataDir = DATA_DIR): MeetingSession | null {
+export function loadMeeting(id: string, dataDir = DATA_DIR, cache?: "meeting-read" | "evidence-change"): MeetingSession | null {
   const dir = resolveContained(id, dataDir)
   if (!dir || !fs.existsSync(path.join(dir, "meta.json"))) return null
   const meta = readJson<MeetingMeta>(path.join(dir, "meta.json"))
@@ -370,7 +403,16 @@ export function loadMeeting(id: string, dataDir = DATA_DIR): MeetingSession | nu
     reference_name: typeof reference?.name === "string" ? reference.name : "",
     minutes: minutes || null,
   }
-  reconcileMinutesSource(session)
+  const previouslyStale = minutes?.stale
+  const hasVisualMaterial = reconcileMinutesSource(session, dataDir)
+  if (cache && minutes && (minutes.stale !== previouslyStale || meta.status !== session.status) &&
+      (hasVisualMaterial || cache === "evidence-change" || fs.existsSync(path.join(dir, "visual-evidence.json")))) {
+    // The sidecar is authoritative. Retry interrupted cache writes without hiding the raw meeting.
+    try {
+      if (minutes.stale !== previouslyStale) writeJsonAtomic(path.join(dir, "minutes.json"), minutes)
+      if (meta.status !== session.status) writeJsonAtomic(path.join(dir, "meta.json"), { ...meta, status: session.status })
+    } catch { logger.warn("meeting.visual_minutes_status_deferred", { id }) }
+  }
   return session
 }
 
@@ -379,10 +421,21 @@ export function listMeetings(dataDir = DATA_DIR): MeetingMeta[] {
   const out: MeetingMeta[] = []
   for (const name of fs.readdirSync(root)) {
     const meta = readJson<MeetingMeta>(path.join(root, name, "meta.json"))
-    if (meta?.id) out.push(meta)
+    if (!meta?.id) continue
+    // A previous cache update may have failed after the evidence file committed.
+    if (meta.status === "done" && fs.existsSync(path.join(root, name, "visual-evidence.json"))) {
+      meta.status = loadMeeting(meta.id, dataDir, "meeting-read")?.status ?? meta.status
+    }
+    out.push(meta)
   }
   out.sort((a, b) => (a.started_at < b.started_at ? 1 : -1))
   return out
+}
+
+/** Keep history's metadata-only list in sync when the independent evidence file changes. */
+export function refreshVisualMinutesStatus(id: string, dataDir = DATA_DIR): void {
+  const dir = resolveContained(id, dataDir)
+  if (dir && fs.existsSync(path.join(dir, "minutes.json"))) loadMeeting(id, dataDir, "evidence-change")
 }
 
 export function setTranscript(
@@ -482,6 +535,8 @@ export function setMinutes(
 ): MeetingSession | null {
   const s = loadMeeting(id, dataDir)
   if (!s) return null
+  // Do not replace an earlier result if the sidecar became unreadable during inference.
+  if (s.visual_evidence_unavailable) readMeetingVisualEvidence(id, dataDir)
   s.minutes = {
     ...minutes,
     source_fingerprint: minutes.source_fingerprint ?? meetingSourceFingerprint(transcriptToText(s.transcript), s.reference_notes, s.reference_name),

@@ -9,6 +9,7 @@ import { normalizeSavedChatOutputLimit } from "../sidepanel/utils/normalize-conf
 import { createCockpitNativeRelay, COCKPIT_NATIVE_PORT } from "./cockpit-native-bridge"
 import { projectMetadataSenderAllowed } from "./project-metadata"
 import { forwardWorkspaceRequest, workspaceSenderAllowed } from "./workspace-sender"
+import { createMeetingVisualRelay, MEETING_VISUAL_PORT } from "./meeting-visual-relay"
 import {
   attachTerminalPort,
   buildTerminalOpenBinding,
@@ -81,6 +82,7 @@ import {
 
 const desktopBrowserPeer = createDesktopBrowserPeerHandler()
 let wsClient: WSClient
+const meetingVisualRelay = createMeetingVisualRelay()
 const cockpitNativeRelay = createCockpitNativeRelay(() => {
   const current = wsClient?.desktopBrowserConnectionCurrent() ?? (() => false)
   return { current, send: frame => current() && wsClient.send(frame) }
@@ -323,6 +325,7 @@ function init() {
 
   // Long-lived ports keep the service worker alive while UI surfaces are open
   chrome.runtime.onConnect.addListener((port) => {
+    if (port.name === MEETING_VISUAL_PORT) { meetingVisualRelay.attach(port, chrome.runtime.id, wsClient); return }
     if (port.name === COCKPIT_NATIVE_PORT) { void cockpitNativeRelay.attach(port); return }
     if (port.name === "cmspark-sidepanel") {
       logToCompanion("info", "extension.sidepanel_port_connected", {})
@@ -368,6 +371,7 @@ function handleStateChange(state: "connected" | "connecting" | "disconnected") {
   chrome.runtime.sendMessage({ type: "thread.mutation.connection", state }).catch(() => {})
 
   if (state === "disconnected") {
+    meetingVisualRelay.disconnect()
     cockpitNativeRelay.disconnect()
     scheduleDisconnectNotification()
     // #374: 断线后旧 socket 的在途 graph 请求不会有响应——清空注册表防悬挂
@@ -405,6 +409,7 @@ const pendingLlmOneshot = new Map<
 >()
 
 async function handleCompanionMessage(msg: any) {
+  if (meetingVisualRelay.receive(msg)) return
   if (cockpitNativeRelay.receive(msg)) return
   if (msg.type === "desktop.browser.peer.cancel") {desktopBrowserPeer.cancel(msg);return}
   if (msg.type === "desktop.browser.peer.request") {
@@ -742,6 +747,14 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "meeting.translation.run":
       case "meeting.translation.cancel":
         sendResponse(forwardWorkspaceRequest(message, sender, chrome.runtime.id, wsClient))
+        return false
+      case "meeting.visual.list":
+      case "meeting.visual.prepare":
+      case "meeting.visual.execute":
+      case "meeting.visual.cancel":
+      case "meeting.visual.remove":
+      case "meeting.visual.recover":
+        sendResponse(meetingVisualRelay.forward(message, sender, chrome.runtime.id, wsClient))
         return false
       case "getStatus":
         sendResponse({
