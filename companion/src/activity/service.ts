@@ -147,11 +147,11 @@ export class ActivityService {
       } catch (error) {
         const failure = error instanceof ActivityError ? error : new ActivityError('EXTRACTION_FAILED', '识别失败，请核对模型服务、输出格式后重试')
         // Unclaimed automatic work survives a clean shutdown. In-flight delivery is ambiguous.
-        if (!this.stopping || started) this.store.setRecognition(sourceId, { status: 'failed', code: failure.code, reason: failure.message, completed_at: new Date(this.now()).toISOString() })
+        if ((!this.stopping || started) && (!signal.aborted || !this.jobs.has(sourceId))) this.store.setRecognition(sourceId, { status: 'failed', code: failure.code, reason: failure.message, completed_at: new Date(this.now()).toISOString() })
         throw failure
       }
     }
-    const done = this.queueModelWork(work).finally(() => { this.jobs.delete(sourceId) })
+    const done = this.queueModelWork(work).finally(() => { if (this.jobs.get(sourceId) === done) this.jobs.delete(sourceId) })
     this.jobs.set(sourceId, done)
     // Automatic requests have no waiting UI. Their failure is durable on the source.
     void done.catch(() => {})
@@ -184,6 +184,7 @@ export class ActivityService {
     this.titleReads.clear()
     this.abort = new AbortController()
     if (cancelRecognition) {
+      this.jobs.clear()
       this.modelAbort.abort()
       this.modelAbort = new AbortController()
     }

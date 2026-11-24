@@ -205,3 +205,36 @@ test('withdrawal stops delivery of the queued source and rejects late results of
     assert.equal(service.state().candidates.length, 0)
   } finally { release(); await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
 })
+
+test('retry after settings change queues behind a canceled OCR without letting the old result replace the receipt', async () => {
+  const dir = temp()
+  let release!: () => void, calls = 0
+  const waiting = new Promise<void>(resolve => { release = resolve })
+  const recorder: RecorderAdapter = {
+    capture: async () => null,
+    ocrImage: async () => {
+      calls++
+      if (calls === 1) { await waiting; throw new ActivityError('CANCELLED', '旧识别已取消') }
+      return '重新识别后的内容'
+    },
+  }
+  const service = new ActivityService({ dataDir: dir, platform: 'darwin', recorder })
+  try {
+    service.store.configure(0, config)
+    const source = service.store.addSource({ ...sourceInput, ocr_text: '',
+      recognition: { status: 'saved', reason: '等待识别' } }, png)!
+    assert.equal((await service.handle({ type: 'activity.analyze', source_id: source.id, queue_only: true })).ok, true)
+    await turn()
+    assert.equal(calls, 1)
+    assert.equal((await service.handle({ type: 'activity.configure', expected_revision: service.store.revision(),
+      patch: { ocr_language: 'en-US' } })).ok, true)
+    assert.equal((await service.handle({ type: 'activity.analyze', source_id: source.id, queue_only: true })).ok, true)
+    assert.equal(service.store.sourceMetadata(source.id).recognition?.status, 'queued')
+    release()
+    for (let i = 0; i < 20 && calls < 2; i++) await turn()
+    for (let i = 0; i < 20 && service.store.sourceMetadata(source.id).recognition?.status !== 'saved'; i++) await turn()
+    assert.equal(calls, 2)
+    assert.equal(service.store.source(source.id).ocr_text, '重新识别后的内容')
+    assert.equal(service.store.sourceMetadata(source.id).recognition?.status, 'saved')
+  } finally { release(); await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
+})
