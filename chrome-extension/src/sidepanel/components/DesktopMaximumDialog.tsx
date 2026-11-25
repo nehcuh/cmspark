@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react"
-import { createPortal } from "react-dom"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { AUTOPILOT_ARM_PHRASE } from "./autopilot-tier"
@@ -40,7 +39,7 @@ export function DesktopMaximumDialog({ onClose }: { onClose(): void }) {
       if (!reply?.ok) throw new Error()
     } catch { setPending(false); setError("请求未送达，请重新连接后再试。") }
   }
-  return createPortal(<Modal open onClose={onClose} role="alertdialog" ariaLabel="桌面最大权限" backdropDismiss={false}
+  return <Modal open onClose={onClose} role="alertdialog" ariaLabel="桌面最大权限" backdropDismiss={false}
     overlayStyle={{ position: "fixed", inset: 0, zIndex: 20000, background: tokens.scrim, display: "grid", alignItems: "center", padding: 12 }}
     panelStyle={{ background: tokens.bgElevated, color: tokens.text, padding: 16, borderRadius: 12, lineHeight: 1.55, maxHeight: "85vh", overflow: "auto", overflowWrap: "anywhere" }}>
     <strong>桌面最大权限</strong>
@@ -58,5 +57,5 @@ export function DesktopMaximumDialog({ onClose }: { onClose(): void }) {
       <button type="button" disabled={pending || (!active && (!offer?.apps.length || phrase !== AUTOPILOT_ARM_PHRASE))}
         onClick={submit}>{active ? "解除桌面最大权限" : "确认授权"}</button>
     </div>
-  </Modal>, document.body)
+  </Modal>
 }
