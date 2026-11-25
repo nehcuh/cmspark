@@ -316,7 +316,7 @@ export interface LocateHit {
  * "qwen-vl" = L2 experimental local VLM (re-L2 gated),
  * "cloud" = L3 stub. Degradation is one-way down the chain.
  */
-export type LocateLayer = "uia" | "ocr" | "qwen-vl" | "cloud"
+export type LocateLayer = "uia" | "ocr" | "main-model" | "qwen-vl" | "cloud"
 
 /**
  * WP3: one layer attempt in the locate chain (structured degradation log —

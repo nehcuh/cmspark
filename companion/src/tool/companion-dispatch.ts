@@ -37,7 +37,7 @@ import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
-import { registerComputerInputStop } from "../computer/task-abort-registry"
+import { registerComputerInputStop, onComputerTaskAbort } from "../computer/task-abort-registry"
 import { gateHostComputerFocusLease, releaseCuFocusLease } from "../loop/cu-focus-lease"
 import { proposeRunProgress } from "../threads/run-progress"
 import { acpSessionLookupFailure, currentAcpSessions } from "../acp/session-recovery"
@@ -133,6 +133,7 @@ export interface CompanionToolExecOptions {
    * lives) into runComputerTask deps; absent = every re-L2 asks.
    */
   computerRead?: ComputerReadOperation
+  inspectDesktop?: import("../computer/main-model-vision").InspectDesktopFrame
   computerSessionId?: string
   /**
    * LLM-loop AbortSignal (chat.abort / supersede). shell_exec listens and
@@ -2186,6 +2187,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         cuLeaseHeld = lease.acquired
       }
       computerTaskAbort.set(computerTaskId, false)
+      const visionStop = execOpts?.inspectDesktop ? new AbortController() : undefined
+      const unregisterVisionStop = visionStop && onComputerTaskAbort(id => {
+        if (id === "*" || id === computerTaskId) visionStop.abort()
+      })
       let unregisterInputStop: (() => void) | undefined
       try {
         // NOTE (2026-07-21 crash): the Windows estop preflight used to run
@@ -2194,15 +2199,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         // daemon. The win preflight now lives in the Windows branch below;
         // macOS runs only the darwin-estop preflight.
         const { runComputerTask } = await import("../computer/executor")
-
-        // #360 (CU-B): vault-browser one-shot tasks never admit — and therefore
-        // never spawn — the Qwen3-VL worker. The seam is platform-independent
-        // (WIN_BROWSER_VAULT_TOKENS exe identity + MAC_BROWSER_VAULT_BUNDLE_IDS),
-        // so macOS Chrome/Safari bundleId entries are covered too. OSR whitelist
-        // apps (persistent coordinateAllowed, non-browser) are unaffected.
-        const { isVaultBrowserAppToken } = await import("../computer/policy")
-        const { VAULT_BROWSER_NO_VLM_REASON } = await import("../computer/vault-browser-oneshot")
-        const vaultBrowserNoVlm = isVaultBrowserAppToken(getConfig(), String(params.app || ""))
 
         let result: Awaited<ReturnType<typeof runComputerTask>>
 
@@ -2267,6 +2263,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               currentSecurity: () => getConfig().security,
               beforeReadCapture: () => consumeComputerReadAttempt(),
               readScope: execOpts?.computerRead,
+              inspectDesktop: execOpts?.inspectDesktop,
+              desktopVisionSignal: visionStop?.signal,
+              currentConfig: getConfig,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
@@ -2286,41 +2285,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               },
               uiaProber: new MacAxProber(),
               uiaWatcherFactory: (t, opts) => startMacAxWindowWatcher(t, opts),
-              // Qwen3-VL works on macOS (MPS/CPU via Python transformers)
-              // #360 (CU-B): browser one-shot skips admission entirely — the
-              // worker is never spawned; the chain records vault-browser-no-vlm.
-              ...(vaultBrowserNoVlm
-                ? {
-                    experimentalLocator: null,
-                    experimentalSkipReason: VAULT_BROWSER_NO_VLM_REASON,
-                  }
-                : await (async () => {
-                    try {
-                      const { resolveModelAdmissionSafe } = await import("../computer/model-admission")
-                      const { computerModelSession } = await import("../computer/model-handlers")
-                      const adm = await resolveModelAdmissionSafe({
-                        config: getConfig().computer,
-                        holder: computerModelSession,
-                        deps: {
-                          broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
-                          log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
-                          stillEnabled: () => getConfig().computer?.modelEnabled === true,
-                        },
-                      })
-                      return {
-                        experimentalLocator: adm.locator,
-                        ...(adm.locator
-                          ? {}
-                          : { experimentalSkipReason: adm.reason || "model-not-admitted" }),
-                      }
-                    } catch (e) {
-                      return {
-                        experimentalLocator: null,
-                        experimentalSkipReason:
-                          e instanceof Error ? `admission-error:${e.message.slice(0, 80)}` : "model-admission-error",
-                      }
-                    }
-                  })()),
               onUiaVerdict: (token, verdict, probedAt) => {
                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
@@ -2365,23 +2329,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             }
           } catch { /* best-effort */ }
           const sealer = new PsEvidenceSealer()
-          // WP5-I4 experimental (Qwen3-VL) admission
-          // #360 (CU-B): browser one-shot skips admission entirely — the worker
-          // is never spawned; the chain records vault-browser-no-vlm.
-          const { resolveModelAdmissionSafe } = await import("../computer/model-admission")
-          const { computerModelSession } = await import("../computer/model-handlers")
-          const experimentalAdmission = vaultBrowserNoVlm
-            ? { locator: null, reason: VAULT_BROWSER_NO_VLM_REASON }
-            : await resolveModelAdmissionSafe({
-            config: getConfig().computer,
-            holder: computerModelSession,
-            deps: {
-              broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
-              log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
-              stillEnabled: () => getConfig().computer?.modelEnabled === true,
-            },
-          })
-
           result = await runComputerTask(
             {
               task: String(params.task || ""),
@@ -2403,6 +2350,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               currentSecurity: () => getConfig().security,
               beforeReadCapture: () => consumeComputerReadAttempt(),
               readScope: execOpts?.computerRead,
+              inspectDesktop: execOpts?.inspectDesktop,
+              desktopVisionSignal: visionStop?.signal,
+              currentConfig: getConfig,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
@@ -2422,10 +2372,6 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               },
               uiaProber: new PsUiaProber(),
               uiaWatcherFactory: (t, opts) => startUiaWindowWatcher(t, opts),
-              experimentalLocator: experimentalAdmission.locator,
-              ...(experimentalAdmission.locator
-                ? {}
-                : { experimentalSkipReason: experimentalAdmission.reason || "model-not-admitted" }),
               onUiaVerdict: (token, verdict, probedAt) => {
                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
@@ -2465,6 +2411,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         // R1 (§E.6.2): release the single-task slot on EVERY exit path —
         // success, typed refusal, abort, or throw. Runs after the return
         // value is computed; delete is idempotent.
+        unregisterVisionStop?.()
         unregisterInputStop?.()
         computerTaskAbort.delete(computerTaskId)
         if (cuLeaseHeld && cuThreadId) {

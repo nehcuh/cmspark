@@ -38,7 +38,7 @@ export const SETTINGS_DESTINATIONS = {
   "tools-capabilities": { category: "tools", section: "integrations", title: "本机能力", description: "场景、本机工具、电源与工作区限制" },
   "tools-network": { category: "tools", section: "integrations", title: "网络授权", description: "网络与扫描工具的适用范围" },
   "tools-mcp": { category: "tools", section: "integrations", title: "出站 MCP 授权", description: "管理本机工具经 MCP 对外提供的授权" },
-  "tools-lcu": { category: "tools", section: "integrations", title: "桌面操作", description: "macOS 与 Windows 原生应用授权、实验性 LCU 后端" },
+  "tools-desktop": { category: "tools", section: "integrations", title: "桌面操作", description: "macOS 与 Windows 原生应用授权和主模型看图" },
   "tools-coding": { category: "tools", section: "integrations", title: "编程接力", description: "编程助手、终端及并发设置" },
   "connection-pairing": { category: "connection", section: "connection", title: "配对 Companion", description: "使用本机密钥建立鉴权连接" },
   "connection-maintenance": { category: "connection", section: "connection", title: "连接状态与升级", description: "查看连接状态与配置版本" },

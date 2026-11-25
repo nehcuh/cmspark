@@ -110,7 +110,6 @@ import { getMcpManager } from "./mcp"
 import { logger } from "./logger"
 import { handleAppsMessage } from "./apps/handlers"
 import { handleComputerMessage } from "./computer/handlers"
-import { handleLcuSettingsMessage } from "./computer/lcu/settings"
 import { handleComputerModelMessage } from "./computer/model-handlers"
 import { handleVoiceModelMessage } from "./voice/whisper-handlers"
 import { handleVoiceSttMessage } from "./voice/stt-handlers"
@@ -1113,20 +1112,6 @@ export async function handleMessage(
   } finally { releaseAdmission() }
 }
 
-/** Stop an owned desktop turn as soon as this thread loses its execution scope. */
-async function retireRevokedLcuThread(threadId: string, threadManager: ThreadManager): Promise<void> {
-  try {
-    const { lcuThreadAdmitted } = await import("./computer/lcu/runtime")
-    if (!lcuThreadAdmitted(threadId, id => threadManager.get(id), name => threadManager.isToolAllowed(threadId, name))) {
-      const { notifyComputerTaskAbort } = await import("./computer/task-abort-registry")
-      notifyComputerTaskAbort(threadId)
-    }
-  } catch {
-    // A broken optional backend cannot retain an old live authorization.
-    abortControllers.get(threadId)?.abort()
-  }
-}
-
 async function dispatchMessage(
   msg: any,
   services: Services,
@@ -1527,10 +1512,7 @@ async function dispatchMessage(
         assertNativeCurrent()
         await chatCreate({
           ...(session?.appsOwnerCurrent && session?.isCurrentSession && session?.requestConfirmation && !session?.nativeDialog ? {
-            lcuChannel: {
-              current: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
-              request: (details, signal) => session!.requestConfirmation!(details, signal),
-            },
+            desktopVisionOwner: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
           } : {}),
           ...(nativeOwner ? { assertCurrentRun: assertNativeCurrent } : {}),
           ...(nativeOwner?.browserTarget ? { nativeBrowserTarget: nativeOwner.browserTarget } : {}),
@@ -2167,10 +2149,7 @@ async function dispatchMessage(
 
         await chatCreate({
           ...(session?.appsOwnerCurrent && session?.isCurrentSession && session?.requestConfirmation && !session?.nativeDialog ? {
-            lcuChannel: {
-              current: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
-              request: (details, signal) => session!.requestConfirmation!(details, signal),
-            },
+            desktopVisionOwner: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
           } : {}),
           threadId: thread_id,
           surface: stampedSurface === "summoner" ? "summoner" : "tray",
@@ -2583,10 +2562,7 @@ async function dispatchMessage(
 
         await chatCreate({
           ...(session?.appsOwnerCurrent && session?.isCurrentSession && session?.requestConfirmation && !session?.nativeDialog ? {
-            lcuChannel: {
-              current: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
-              request: (details, signal) => session!.requestConfirmation!(details, signal),
-            },
+            desktopVisionOwner: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
           } : {}),
           threadId: thread_id,
           surface: stampedSurface === "summoner" ? "summoner" : "tray",
@@ -3356,15 +3332,12 @@ async function dispatchMessage(
           return { type: "error", error: "只有子线程可以继承主线程工具" }
         }
       }
-      const lcuWasSelected = threadManager.get(rest.thread_id)?.active_mcp_server_ids?.includes("cmspark_lcu") === true
       try {
         const thread = threadManager.update(rest.thread_id, allowedUpdates)
         if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
         return { type: "thread.updated", thread }
       } catch (e: any) {
         return { type: "error", error: e.message || String(e) }
-      } finally {
-        if (lcuWasSelected) await retireRevokedLcuThread(rest.thread_id, threadManager)
       }
     }
 
@@ -3449,10 +3422,6 @@ async function dispatchMessage(
         return { type: "thread.execution_policy.updated", thread }
       } catch (e: any) {
         return { type: "error", error: e.message || String(e) }
-      } finally {
-        if (rest.policy === "plan_readonly" && targetThread.active_mcp_server_ids?.includes("cmspark_lcu")) {
-          await retireRevokedLcuThread(rest.thread_id, threadManager)
-        }
       }
     }
 
@@ -3671,14 +3640,6 @@ async function dispatchMessage(
       })
     // --- Coordinate computer-use (A10 global switch; per-app bit lives under
     // apps.set_coordinate_allowed above) ---
-    case "computer.lcu.get_state":
-    case "computer.lcu.probe":
-    case "computer.lcu.configure":
-    case "computer.lcu.set_enabled":
-      return handleLcuSettingsMessage(msg, {
-        ownerCurrent: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
-        requestConfirmation: session?.requestConfirmation,
-      })
     case "computer.get_state":
     case "computer.set_enabled":
     case "computer.evidence.open":
@@ -3694,6 +3655,7 @@ async function dispatchMessage(
     // 生物识别门（P5：requestConfirmation 通道注入，apps 系 :961-966 先例） ---
     case "computer.model.get_state":
     case "computer.model.reset_circuit_breaker":
+    case "computer.model.get_license":
     case "computer.model.set_enabled":
     case "computer.model.license_response":
     case "computer.model.download":

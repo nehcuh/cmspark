@@ -60,7 +60,6 @@ import {
   type DownloadSource,
 } from "./qwen-vl-preflight"
 import type { QwenVlSession } from "./qwen-vl-session"
-import { requireAppsBiometric } from "../apps/biometric-gate"
 import { DATA_DIR } from "../config"
 
 /**
@@ -88,17 +87,10 @@ export interface ComputerModelHandlerContext {
 
 /** 可注入依赖（测试替身；生产取默认实现）。 */
 export interface ComputerModelHandlerDeps {
-  gate?: typeof requireAppsBiometric
   downloadImpl?: typeof downloadQwenVlVariant
   deleteImpl?: typeof deleteQwenVlVariant
   /** P3 节流时钟（测试 seam，同 deps 族纪律）；默认 Date.now。 */
   now?: () => number
-  /**
-   * L-QW-1: probe whether experimental layer may be enabled (model ready + deps).
-   * Tests inject; production uses preflight + probeQwenModelDir.
-   * Return false → set_enabled(true) hard-refuses with zero config write.
-   */
-  canEnableProbe?: () => boolean | Promise<boolean>
   /**
    * B1 test seam: override canDownload gate for download / license auto-download.
    * Production uses runQwenVlPreflight().canDownload.
@@ -223,7 +215,7 @@ async function statePayload(
 
   return {
     type: "computer.model.state" as const,
-    modelEnabled,
+    modelEnabled: false,
     licenseAccepted: modelLicenseAccepted(cfg),
     ...(typeof cfg.modelLicenseAcceptedAt === "string" ? { licenseAcceptedAt: cfg.modelLicenseAcceptedAt } : {}),
     modelLicenseDeclined: cfg.modelLicenseDeclined === true,
@@ -281,7 +273,7 @@ async function statePayload(
           readinessSummary: "正在检测本机环境（Python / 磁盘 / 硬件）…",
           nextSteps: [
             "请稍候；若长时间无结果，请重启 CMspark 后再打开本页。",
-            "实验层依赖本机 Python 与下载组件，不会在浏览器插件内下载模型。",
+            "工作中心本机模型依赖 Python 与下载组件，不会在浏览器插件内下载模型。",
           ],
           modelRootDir: (() => {
             try {
@@ -364,6 +356,7 @@ export async function handleComputerModelMessage(
   // 未来直调；validateWsMessage 是第一层）。license_response/set_enabled 形状
   // 字段由 validateWsMessage 强制，此处只复核 source。
   const SETTINGS_SOURCE_TYPES = new Set([
+    "computer.model.get_license",
     "computer.model.set_enabled",
     "computer.model.license_response",
     "computer.model.download",
@@ -387,6 +380,9 @@ export async function handleComputerModelMessage(
     case "computer.model.get_state":
       return statePayload(holder, deps)
 
+    case "computer.model.get_license":
+      return { type: "computer.model.license_required", licenseText: LICENSE_DOOR_TEXT, notice: "接受后可下载本机模型，用于工作中心图像处理。" }
+
     case "computer.model.set_enabled": {
       const enabled = rest.enabled === true
       // 禁用永远免费（fail-closed 方向，computer.set_enabled 先例）：
@@ -406,77 +402,7 @@ export async function handleComputerModelMessage(
         ctx.broadcast?.(state)
         return state
       }
-      const cfg = getConfig().computer ?? { coordinateEnabled: false }
-      // 许可证状态机（裁决 2）：已拒绝 → 跳过；未接受/条款漂移（P1 哈希
-      // 不符）→ license_required（config 零写入）。
-      if (cfg.modelLicenseDeclined === true) {
-        return modelError(
-          "实验层许可证已被拒绝。可在设置页实验层点击「复位许可拒绝」后重新阅读并接受条款（无需手改 config.json）",
-          { code: "LICENSE_DECLINED" },
-        )
-      }
-      if (!modelLicenseAccepted(cfg)) {
-        return {
-          type: "computer.model.license_required" as const,
-          licenseText: LICENSE_DOOR_TEXT,
-          notice: "阅读并接受许可证与免责声明后可开启实验层；拒绝则本层跳过，其余定位层不受影响。之后可在设置页「复位许可拒绝」重新打开流程。",
-        }
-      }
-      // L-QW-1 / SoT D1: hard-disable enable unless canEnable (model + infer deps).
-      // Zero config write on fail — UI may show canEnable:false but API must not arm.
-      {
-        let can = true
-        if (deps.canEnableProbe) {
-          can = await deps.canEnableProbe()
-        } else {
-          try {
-            const probe = probeQwenModelDir(currentVariant(cfg))
-            if (probe.status !== "ready") {
-              can = false
-            } else {
-              const pre = await runQwenVlPreflight({
-                variant: currentVariant(cfg),
-                downloadSource: (cfg as any).modelDownloadSource as DownloadSource | undefined,
-                dataDir: DATA_DIR,
-              })
-              can = pre.canEnable === true
-            }
-          } catch {
-            can = false
-          }
-        }
-        if (!can) {
-          return modelError(
-            "实验层尚未就绪（模型未下载、推理依赖未齐或 worker 不可用），无法开启",
-            { code: "CANNOT_ENABLE" },
-          )
-        }
-      }
-      // 已接受 → D2 生物识别门（裁决 1：持久能力授权，apps coordinateAllowed 先例）
-      if (!ctx.requestConfirmation) {
-        return modelError("computer.model.set_enabled(true) requires an interactive confirmation channel", {
-          code: "NO_CONFIRMATION_CHANNEL",
-        })
-      }
-      const gate = deps.gate ?? requireAppsBiometric
-      const outcome = await gate({
-        action: "computer.model.set_enabled",
-        reason:
-          "Enable Qwen3-VL experimental locate layer (uncalibrated local-model suggestions; every hit still requires per-action human confirmation)",
-        requestConfirmation: ctx.requestConfirmation,
-      })
-      if (!outcome.approved) {
-        logger.warn("computer.model.enable_denied", { reason: outcome.reason })
-        return modelError(
-          `enabling experimental layer ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — stays OFF`,
-          { code: "BIOMETRIC_DENIED", reason: outcome.reason },
-        )
-      }
-      setComputerModelFields({ modelEnabled: true })
-      logger.info("computer.model.enabled", { method: outcome.method })
-      const state = await statePayload(holder, deps)
-      ctx.broadcast?.(state)
-      return state
+      return modelError("桌面点击定位已改用原生控件、OCR 和可选的主模型。", { code: "DESKTOP_LOCATOR_RETIRED" })
     }
 
     case "computer.model.license_response": {
@@ -804,7 +730,7 @@ export async function handleComputerModelMessage(
         const state = await statePayload(holder, deps)
         ctx.broadcast?.(state)
         return modelError(
-          `模型删除失败：${err instanceof Error ? err.message : String(err)}——可重试删除；实验层会话已关闭，UIA / OCR / 用户框选定位不受影响。`,
+          `模型删除失败：${err instanceof Error ? err.message : String(err)}——可重试删除；实验层会话已关闭，桌面操作不受影响。`,
           { code: "DELETE_FAILED" },
         )
       } finally {

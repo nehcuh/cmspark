@@ -144,7 +144,7 @@
     "type": "function",
     "function": {
       "name": "analyze_image",
-      "description": "分析页面中指定图片的内容（走 Companion config.vision：OpenAI 兼容视觉 API，如云端 glm-4v / gpt-4o，或用户自建的 Ollama llava 等）。支持 CSS 选择器。适用于产品图、图表、验证码、地图等。需要设置页启用 Vision 且端点可用；若返回余额不足/不可用，如实告知用户，勿扫描本机 ollama/qwen3-vl HTTP。本机 Qwen3-VL 实验层只用于 host_computer 点击定位，不是本工具的后端。",
+      "description": "分析页面中指定图片的内容（走 Companion config.vision：OpenAI 兼容视觉 API，如云端 glm-4v / gpt-4o，或用户自建的 Ollama llava 等）。支持 CSS 选择器。适用于产品图、图表、验证码、地图等。需要设置页启用 Vision 且端点可用；若返回余额不足/不可用，如实告知用户，勿扫描本机 ollama/qwen3-vl HTTP。工作中心的本机 Qwen3-VL 由工作中心单独配置。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1836,7 +1836,7 @@
           },
           "actions": {
             "type": "array",
-            "description": "Draft action sequence for ONE host_computer call: aggregate all same-app steps here (do not split one user goal across many host_computer tasks). click family: {action, x?, y?, target?} — target is an OCR text anchor; x/y are client-logical points [0, clientW)×[0, clientH) (NOT PNG pixels; on Retina divide image coords by scale). type: {action:'type', text} — enumerated in confirmation; tool may return posted=true,verified=false — never claim message sent unless verified. key: {action:'key', keys} — named-key chords, e.g. ['win','enter'] for Command+Enter on macOS. macOS requires a non-modifier key and supports navigation keys. F1–F12 are available on Windows. scroll/drag/wait as documented. screenshot = capture window; describe = host Vision OCR of that window as untrustedText (reading-order lines). Prefer describe/screenshot over shell_exec screencapture or custom OCR. Prefer host_write/host_read for Notes/Mail when available.",
+            "description": "Draft action sequence for ONE host_computer call: aggregate all same-app steps here (do not split one user goal across many host_computer tasks). click family: {action, x?, y?, target?} — target is an OCR text anchor; x/y are client-logical points [0, clientW)×[0, clientH) (NOT PNG pixels; on Retina divide image coords by scale). type: {action:'type', text} — enumerated in confirmation; tool may return posted=true,verified=false — never claim message sent unless verified. key: {action:'key', keys} — named-key chords, e.g. ['win','enter'] for Command+Enter on macOS. macOS requires a non-modifier key and supports navigation keys. F1–F12 are available on Windows. scroll/drag/wait as documented. screenshot = capture window and optionally ask permission to describe its image using this chat model; describe = host Vision OCR of that window as untrustedText (reading-order lines). Prefer describe/screenshot over shell_exec screencapture or custom OCR. Prefer host_write/host_read for Notes/Mail when available.",
             "items": {
               "type": "object"
             }

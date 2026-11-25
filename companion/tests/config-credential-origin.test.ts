@@ -166,7 +166,6 @@ const writers: ReadonlyArray<readonly [string, (config: Config) => void]> = [
   ["replaceMcpServers", config => { config.replaceMcpServers({}) }],
   ["replaceAppsEntries", config => { config.replaceAppsEntries({}) }],
   ["setComputerCoordinateEnabled", config => { config.setComputerCoordinateEnabled(false) }],
-  ["setComputerLcuFields", config => { config.setComputerLcuFields({ enabled: false }) }],
   ["setComputerModelFields", config => { config.setComputerModelFields({ modelEnabled: false }) }],
   ["setVoiceFields", config => { config.setVoiceFields({ sttEngine: "browser" }) }],
 ]

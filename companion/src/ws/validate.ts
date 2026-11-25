@@ -19,19 +19,6 @@ import { validBinaryDriftMessage } from "../apps/binary-drift-state"
 import { validateActivityMessage } from "../activity"
 import { validateSettingsAssistantMessage } from "../settings-assistant"
 import { isModelCenterAction } from "../model-center"
-import { validLcuCommand } from "../computer/lcu/contract"
-
-function validateLcuSettings(message: any, field?: "command" | "enabled"): WsValidationResult {
-  const keys = ["type", "source", "request_id", ...(field ? [field] : [])]
-  if (message.source !== "settings" || typeof message.request_id !== "string" ||
-      !/^[a-zA-Z0-9_-]{1,128}$/.test(message.request_id) || Object.keys(message).some(key => !keys.includes(key))) {
-    return { valid: false, error: "Invalid LCU settings request" }
-  }
-  if (field === "command" && message.command !== null && !validLcuCommand(message.command)) return { valid: false, error: "Invalid LCU executable path" }
-  if (field === "enabled" && typeof message.enabled !== "boolean") return { valid: false, error: "Invalid LCU enabled flag" }
-  return { valid: true }
-}
-
 function personalWorkspaceSchema(message: any): WsValidationResult {
   const valid = message.type.startsWith("settings.assistant.") ? validateSettingsAssistantMessage(message) : validateActivityMessage(message)
   return valid ? { valid: true } : { valid: false, error: "Invalid personal workspace request" }
@@ -562,6 +549,7 @@ export function validateWsMessage(msg: any, rawBytes?: number): WsValidationResu
     },
     // WP5-I4 WI-4.2 开关族（plan:538）：四路由同样仅设置页来源（双层围栏第一
     // 层；handler belt 为第二层，P6）。set_enabled/license_response 另强制形状。
+    "computer.model.get_license": (m) => m.source === "settings" ? { valid: true } : { valid: false, error: "Settings source required" },
     "computer.model.set_enabled": (m) => {
       if (typeof m.enabled !== "boolean") return { valid: false, error: "computer.model.set_enabled requires enabled:boolean" }
       if (m.source !== "settings") return { valid: false, error: 'computer.model.set_enabled requires source:"settings" (settings-page only)' }
@@ -1834,10 +1822,6 @@ export function validateWsMessage(msg: any, rawBytes?: number): WsValidationResu
     },
     "security.unattended.disarm": () => ({ valid: true }),
     "computer.get_state": () => ({ valid: true }),
-    "computer.lcu.get_state": (m) => validateLcuSettings(m),
-    "computer.lcu.probe": (m) => validateLcuSettings(m),
-    "computer.lcu.configure": (m) => validateLcuSettings(m, "command"),
-    "computer.lcu.set_enabled": (m) => validateLcuSettings(m, "enabled"),
     "computer.set_enabled": (m) => {
       if (typeof m.enabled !== "boolean") {
         return { valid: false, error: "computer.set_enabled requires boolean enabled" }

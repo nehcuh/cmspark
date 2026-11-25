@@ -143,7 +143,8 @@ for (const scenario of ["uia-moved", "ocr-moved", "twice-drift", "post-approval-
   }
 test("#563 experimental post-approval region refusal uses the same existing typed code", async () => {
   const created = unique(executor, n => ts.isNewExpression(n) && n.expression.getText(executor) === "ComputerError"
-    && n.arguments?.[0]?.getText(executor) === '"STALE_SCREENSHOT"') as ts.NewExpression
+    && n.arguments?.[0]?.getText(executor) === '"STALE_SCREENSHOT"'
+    && n.arguments[1]?.getText(executor).includes("experimental suggestion region went unstable")) as ts.NewExpression
   // Actual fixed constructor expression only; not a full authorized executor.
   const error = body(["ComputerError"], "return " + created.getText(executor))(ComputerError)
   assert.match(error.message, /experimental suggestion region went unstable/)

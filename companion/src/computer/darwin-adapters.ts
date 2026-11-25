@@ -364,6 +364,7 @@ export class MacSecurityEnvironment implements SecurityEnvironment {
       rethrowDarwinExecError(err as ExecFileException | Error, "security-check")
     }
     const parsed = parseComputerJson(stdout, "security-check")
+    if (parsed.desktopAvailable === false) throw new ComputerError("DESKTOP_DENIED", "computer: unlock the active Mac desktop to continue")
     if (parsed.axTrusted !== true) {
       throw new ComputerError(
         "INTEGRITY_LEVEL_DENIED",

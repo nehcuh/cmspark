@@ -45,6 +45,7 @@ import type { EvidenceFactory, EvidenceSink } from "./evidence"
 import { formatOcrWordsAsDescribeText } from "./ocr-describe"
 import { captureObservation, observationFields, observationMarker } from "./observation"
 import { locateTargetWithChain, DRIFT_THRESHOLD_PX, type WitnessVerdict } from "./locate-chain"
+import { desktopImagePoint, type InspectDesktopFrame } from "./main-model-vision"
 import type { ExperimentalLocator } from "./locate-chain"
 import {
   extractGuiThought,
@@ -63,7 +64,7 @@ import {
 import { isCompanionUiOwner } from "./self-ui"
 import { assertClickClearsCompanionUi } from "./companion-ui-rects"
 import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
-import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
+import { clientToImage, maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
 import {
   ComputerError,
   corpusHashOf,
@@ -101,6 +102,7 @@ import {
 const FORCE_INTERACTIVE_DANGEROUS = new Set([
   "computer.danger_detected",
   "computer.experimental_suggestion",
+  "computer.main_model_suggestion",
 ])
 
 /** Re-L2 channel (budget / dialog / danger pauses). Origin-bound by construction. */
@@ -210,6 +212,9 @@ export interface ComputerExecutorDeps {
    * L2 Qwen3-VL 实验层。ADMISSION 由调用方决定；命中永不直接注入（re-L2）。
    * 缺省 = 层关闭。
    */
+  desktopVisionSignal?: AbortSignal
+  inspectDesktop?: InspectDesktopFrame
+  currentConfig?: () => CompanionConfig
   experimentalLocator?: ExperimentalLocator | null
   /** When experimentalLocator is null, honest skip reason for locate-chain logs. */
   experimentalSkipReason?: string
@@ -608,7 +613,7 @@ export async function runComputerTask(
     // 否则「值守中仍逐步弹窗」与 JTBD 矛盾。硬拒绝仍走 throw，不经 reL2。
     try {
       const { isUnattendedArmed } = require("./unattended-grant") as typeof import("./unattended-grant")
-      if (isUnattendedArmed() && !vaultBrowserOneShot) {
+      if (isUnattendedArmed() && !vaultBrowserOneShot && !dangerous.includes("computer.main_model_suggestion")) {
         log("computer.task.reconfirm.auto_approved", {
           taskId,
           reason,
@@ -691,6 +696,48 @@ export async function runComputerTask(
     return decision.approved === true
   }
 
+  // A frame belongs to this task, window and application. Never offer an
+  // uncertain capture or a credential/payment window to a model endpoint.
+  let assertModelPointCurrent: (() => void) | undefined
+  const inspectFrame = async (shot: CaptureMeta, ocr: OcrResult, image: string | null | undefined, target?: string) => {
+    if (!deps.inspectDesktop || !image || vaultBrowserOneShot || shot.hwnd !== hwnd ||
+        shot.black || shot.fallbackUsed || shot.osrBlackSuspected ||
+        (os.platform() === "win32" && captureObservation(shot)?.observation_quality !== "ok")) return
+    const area = { x: 0, y: 0, width: shot.imageWidth ?? shot.rect.width, height: shot.imageHeight ?? shot.rect.height }
+    const danger = scanDanger(ocr.words, area, REGION_CROP_SIZE)
+    if (danger.windowLevel === "hard" || danger.credentialRects.length) return
+    const currentConfig = deps.currentConfig ?? (() => deps.config)
+    const owner = assertCoordinateAllowed(currentConfig(), params.app)
+    if (entry !== owner) throw new ComputerError("APP_NOT_WHITELISTED", "computer: application grant changed since task start")
+    await deps.securityEnv.assertInjectable(hwnd)
+    const liveWindow = await deps.windows.infoForHwnd(hwnd)
+    assertHwndOwnedByEntry(liveWindow, owner)
+    if (liveWindow.pid !== targetPid) throw new ComputerError("HWND_NOT_OWNED", "computer: window process changed")
+    const assertCurrent = () => {
+      const aborted = deps.abortCheck?.()
+      if (aborted) throw abortChannelError(aborted, "computer: stopped during model observation")
+      deps.readScope?.assertCurrent()
+      if (!deps.inspectDesktop?.current() || assertCoordinateAllowed(currentConfig(), params.app) !== owner) {
+        throw new ComputerError("APP_NOT_WHITELISTED", "computer: application authorization changed during observation")
+      }
+    }
+    assertCurrent()
+    const description = await deps.inspectDesktop.inspect({ app: owner.display_name, image, target, assertCurrent, signal: deps.desktopVisionSignal })
+    assertCurrent()
+    if (target && description) assertModelPointCurrent = assertCurrent
+    return description
+  }
+  const mainLocator: ExperimentalLocator | undefined = deps.inspectDesktop ? {
+    layer: "main-model",
+    locate: async ({ command, shot }) => {
+      const ocr = await deps.locator.ocr(shot.path)
+      const image = await deps.previewBuilder?.build(shot.path, undefined,
+        scanDanger(ocr.words, shot.rect, REGION_CROP_SIZE).credentialRects)
+      const point = desktopImagePoint(await inspectFrame(shot, ocr, image, command), shot)
+      return point ? { kind: "hit", point } : { kind: "skipped", reason: "main-model-no-suggestion" }
+    },
+  } : undefined
+
   let seq = 0
   for (const action of params.actions) {
     seq += 1
@@ -763,6 +810,13 @@ export async function runComputerTask(
           }
         }
         deps.readScope?.assertCurrent()
+        if (action.action === "screenshot" && deps.inspectDesktop) {
+          const description = await inspectFrame(shot, ocrRes, previewImage)
+          const observationText = description
+            ? "[untrusted main-model window observation]\n" + description
+            : "[No model observation. Use describe for local window text.]"
+          untrustedText = [untrustedText, observationText].filter(Boolean).join("\n")
+        }
         await evidence.sealScreenshot(shot.path, seq, "before", blur)
         deps.readScope?.assertCurrent()
         sealConsumed(shot.path)
@@ -871,7 +925,7 @@ export async function runComputerTask(
             locator: deps.locator,
             capturer: deps.capturer,
             ocrAvailable,
-            experimental: deps.experimentalLocator ?? null,
+            experimental: mainLocator ?? deps.experimentalLocator ?? null,
             ...(deps.experimentalLocator
               ? {}
               : { experimentalSkipReason: deps.experimentalSkipReason || "model-not-admitted" }),
@@ -949,6 +1003,7 @@ export async function runComputerTask(
       // (Grok non-blocker ack: post-resize locate points may be residual-stale).
       const infoLive = await deps.windows.infoForHwnd(hwnd)
       if (rectDriftPx(infoLive.rect, shot.rect) > DRIFT_THRESHOLD_PX) {
+        if (hit?.layer === "main-model") throw new ComputerError("STALE_SCREENSHOT", "computer: model observation window moved")
         log("computer.coords.drift_recapture", {
           taskId, seq, hwnd,
           locateRect: shot.rect,
@@ -1043,10 +1098,11 @@ export async function runComputerTask(
         }
         throw err
       }
-      const regionImg: RectPx = pointClient
+      const imagePoint = pointClient && clientToImage(pointClient, shot)
+      const regionImg: RectPx = imagePoint
         ? {
-            x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
-            y: Math.max(0, pointClient.y + shot.client.y - REGION_CROP_SIZE / 2),
+            x: Math.max(0, imagePoint.x - REGION_CROP_SIZE / 2),
+            y: Math.max(0, imagePoint.y - REGION_CROP_SIZE / 2),
             width: REGION_CROP_SIZE,
             height: REGION_CROP_SIZE,
           }
@@ -1113,7 +1169,7 @@ export async function runComputerTask(
         let suggestionPreview: string | undefined
         if (deps.previewBuilder) {
           try {
-            const imgPoint = { x: shot.client.x + pointClient.x, y: shot.client.y + pointClient.y }
+            const imgPoint = hit ? { x: hit.x, y: hit.y } : undefined
             suggestionPreview = (await deps.previewBuilder.build(shot.path, imgPoint, scan.credentialRects)) ?? undefined
           } catch {
             /* best-effort preview — the gate itself never degrades */
@@ -1128,6 +1184,9 @@ export async function runComputerTask(
         })
         // Path C: optional Thought snippet from experimental VLM raw (sanitized).
         const experimentalThought = extractGuiThought(experimentalRaw)
+        if (hit?.layer === "main-model" && !suggestionPreview) {
+          throw new ComputerError("ELEMENT_NOT_FOUND", "computer: model point preview unavailable")
+        }
         const ok = await reL2(
           formatExperimentalSuggestionCaption({
             target: experimentalTarget ?? "",
@@ -1135,14 +1194,14 @@ export async function runComputerTask(
             clientY: pointClient.y,
             thought: experimentalThought,
           }),
-          ["computer.experimental_suggestion"],
+          [hit?.layer === "main-model" ? "computer.main_model_suggestion" : "computer.experimental_suggestion"],
           seq,
           suggestionPreview,
         )
         if (!ok) {
           locateAttempts = [
             ...(locateAttempts ?? []),
-            { layer: "qwen-vl", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
+            { layer: hit?.layer ?? "qwen-vl", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
           ]
           throw new ComputerError(
             "ELEMENT_NOT_FOUND",
@@ -1183,7 +1242,7 @@ export async function runComputerTask(
       // danger scan re-runs on the new OCR — but only UPGRADES are
       // actionable: the user JUST approved this same level (re-asking would
       // be a prompt loop), while a NEW hard verdict fails closed.
-      if (reL2ApprovedMidAction && now() - shotAt > PIXEL_STALE_MS) {
+      if (reL2ApprovedMidAction && (hit?.layer === "main-model" || now() - shotAt > PIXEL_STALE_MS)) {
         const staleFrame = shot
         if (experimentalSuggestion && pointClient) {
           // G4/A1: the approval endorsed THIS point — freshness is a pixel-region
@@ -1191,6 +1250,13 @@ export async function runComputerTask(
           // would emit a fresh suggestion requiring a fresh human gate — a
           // prompt loop). Unstable region → STALE, never inject stale coords.
           const fresh = await trackCapture(hwnd)
+          if (hit?.layer === "main-model" && (fresh.hwnd !== shot.hwnd ||
+              rectDriftPx(fresh.rect, shot.rect) !== 0 || rectDriftPx(fresh.client, shot.client) !== 0 ||
+              fresh.imageWidth !== shot.imageWidth || fresh.imageHeight !== shot.imageHeight ||
+              fresh.black || fresh.fallbackUsed || fresh.osrBlackSuspected ||
+              (os.platform() === "win32" && captureObservation(fresh)?.observation_quality !== "ok"))) {
+            throw new ComputerError("STALE_SCREENSHOT", "computer: model observation geometry or capture quality changed")
+          }
           const { diffRatio } = await deps.capturer.diffRegion(fresh.path, shot.path, regionImg)
           if (diffRatio > PIXEL_DIFF_THRESHOLD) {
             throw new ComputerError(
@@ -1271,15 +1337,19 @@ export async function runComputerTask(
             )
           }
         }
-        const refreshRegion: RectPx = pointClient
+        const refreshPoint = pointClient && clientToImage(pointClient, shot)
+        const refreshRegion: RectPx = refreshPoint
           ? {
-              x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
-              y: Math.max(0, pointClient.y + shot.client.y - REGION_CROP_SIZE / 2),
+              x: Math.max(0, refreshPoint.x - REGION_CROP_SIZE / 2),
+              y: Math.max(0, refreshPoint.y - REGION_CROP_SIZE / 2),
               width: REGION_CROP_SIZE,
               height: REGION_CROP_SIZE,
             }
           : { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
         scan = scanDanger(ocrRes!.words, refreshRegion, REGION_CROP_SIZE)
+        if (hit?.layer === "main-model" && (scan.credentialRects.length || scan.windowLevel === "hard")) {
+          throw new ComputerError("DANGER_HARD_DENY", "computer: sensitive surface appeared after model observation")
+        }
         if ((action.action === "type" || action.action === "key") && scan.credentialRects.length > 0) {
           throw new ComputerError(
             "DANGER_HARD_DENY",
@@ -1309,6 +1379,7 @@ export async function runComputerTask(
       // SendInput — a stop requested during locate/danger/re-L2 phases must
       // still prevent injection. The ps1 side additionally polls the stop
       // flag mid-type (-StopFile).
+      if (hit?.layer === "main-model") assertModelPointCurrent?.()
       const abortedPreInject = deps.abortCheck?.() ?? null
       if (abortedPreInject) {
         log("computer.task.aborted", { taskId, seq, channel: abortedPreInject, during: "pre-inject" })
@@ -1583,7 +1654,7 @@ export async function runComputerTask(
         if (deps.previewBuilder) {
           try {
             const imgPoint = pointClient
-              ? { x: afterShot.client.x + pointClient.x, y: afterShot.client.y + pointClient.y }
+              ? clientToImage(pointClient, afterShot)
               : undefined
             previewImage = (await deps.previewBuilder.build(afterShot.path, imgPoint, afterBlur)) ?? undefined
           } catch {

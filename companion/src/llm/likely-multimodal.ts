@@ -13,6 +13,7 @@ export function likelyMultimodal(modelName: string | undefined | null): boolean 
   if (/kimi-k2/.test(m) && !/vl|vision|omni/.test(m)) return false
   if (/moonshot-v1/.test(m) && !/vl|vision|omni/.test(m)) return false
   if (/gpt-5|gpt-4o|gpt-4\.1|gpt-4\.5|gpt-4-turbo|gpt-4-vision|o[1-9].*vision|chatgpt-4o/.test(m)) return true
+  if (/^(?:grok\/)?grok-4\.7(?:@\d+k)?$/.test(m)) return true
   if (/claude|sonnet|opus|haiku/.test(m)) return true
   if (/gemini|gemma.*vision/.test(m)) return true
   if (/kimi|moonshot/.test(m)) return true

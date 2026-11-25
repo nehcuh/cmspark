@@ -117,8 +117,6 @@ export interface FileUploadConfig {
 export interface ComputerConfig {
   /** A10 global switch — default false. Coordinate tools fail-closed when off. */
   coordinateEnabled: boolean
-  /** #775: separately approved optional runtime; missing means disabled. */
-  lcu?: { enabled: boolean; command?: string }
   /** Per-task action budget ceiling override (default 15, max 30). */
   budget?: number
   /**
@@ -993,7 +991,8 @@ export function getConfig(): CompanionConfig {
     )
     cachedConfig.computer.modelEnabled = false
   }
-  cachedConfig.computer.modelEnabled = cachedConfig.computer.modelEnabled === true
+  // Pre-908 opt-in was for the retired on-device click locator.
+  cachedConfig.computer.modelEnabled = false
   if (cachedConfig.computer.modelLicenseDeclined !== undefined && typeof cachedConfig.computer.modelLicenseDeclined !== "boolean") {
     console.error(
       `[cmspark-agent] computer.modelLicenseDeclined 非布尔——coerce false (config tampering?)`,
@@ -1053,11 +1052,6 @@ export function getConfig(): CompanionConfig {
     cachedConfig.computer.modelDownloadSource = "auto"
   }
   cachedConfig.computer.modelDownloadSource = cachedConfig.computer.modelDownloadSource ?? "auto"
-  if (cachedConfig.computer.modelEnabled === true) {
-    console.error(
-      `[cmspark-agent] WARNING: computer.modelEnabled=true —— Qwen3-VL 实验定位层处于开启状态（设置页经门开启 或 手改 config.json opt-in；ADR-010）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
-    )
-  }
   // Path B voice (ADR-023): ensure block + coerce illegal hand-edits to safe defaults.
   // deepMerge fills defaults for omitted keys; shape/value validation is load-time only.
   if (!cachedConfig.voice || typeof cachedConfig.voice !== "object") {
@@ -1251,23 +1245,6 @@ export function setComputerCoordinateEnabled(enabled: boolean): CompanionConfig 
     computer: {
       ...(current.computer ?? {}),
       coordinateEnabled: enabled === true,
-    },
-  }
-  return saveConfigSnapshot(updated)
-}
-
-/** #775: authenticated settings handler owns validation and human authorization. */
-export function setComputerLcuFields(patch: { enabled?: boolean; command?: string | null }): CompanionConfig {
-  const current = getConfig()
-  const previous = current.computer?.lcu
-  const updated: CompanionConfig = {
-    ...current,
-    computer: {
-      ...(current.computer ?? { coordinateEnabled: false }),
-      lcu: {
-        enabled: patch.enabled === undefined ? previous?.enabled === true : patch.enabled === true,
-        ...(patch.command !== undefined ? patch.command === null ? {} : { command: patch.command } : previous?.command ? { command: previous.command } : {}),
-      },
     },
   }
   return saveConfigSnapshot(updated)

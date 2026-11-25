@@ -1,3 +1,4 @@
+import { clientToImage } from "./coords"
 import * as os from "os"
 import { isCompanionCockpitWindow } from "./policy"
 import { observationMarker } from "./observation"
@@ -137,7 +138,7 @@ export async function buildComputerL2PreviewImage(
           const hit = deps.locator.locate(ocr, first.target)
           if (hit) point = { x: hit.x, y: hit.y }
         } else if (typeof first.x === "number" && typeof first.y === "number") {
-          point = { x: shot.client.x + first.x, y: shot.client.y + first.y }
+          point = clientToImage({ x: first.x, y: first.y }, shot)
         }
       }
       failureReason = "render_failed"

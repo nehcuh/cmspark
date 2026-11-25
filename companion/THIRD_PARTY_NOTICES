@@ -1,4 +1,4 @@
-THIRD_PARTY_NOTICES — CMspark Agent（实验定位模型层）
+THIRD_PARTY_NOTICES — CMspark Agent
 ================================================================================
 
 Office compatibility runtime (#611)
@@ -19,12 +19,12 @@ retain their own license files and notices in the shipped node_modules tree.
 下载前须经许可证门确认）。
 
 --------------------------------------------------------------------------------
-1. Qwen3-VL Instruct（本地实验定位层）
+1. Qwen3-VL Instruct（工作中心本机图像处理）
 --------------------------------------------------------------------------------
 Source:   https://huggingface.co/Qwen
 Variants: Qwen3-VL-2B / 4B / 8B Instruct
 License:  以各模型卡与 Qwen 许可条款为准（请以 Hugging Face 页面最新 LICENSE 为准）
-Notes:    用于「截屏 + 自然语言 → 建议点击坐标」；输出未校准，注入前必经确认台。
+Notes:    用于从用户选择的工作中心图片中提取文字和待办。
 
 --------------------------------------------------------------------------------
 2. Cairn (protocol inspiration only — NOT linked, NOT redistributed)

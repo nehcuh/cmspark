@@ -1758,15 +1758,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "computer.get_state":
       case "computer.set_enabled":
       case "computer.evidence.open":
-      case "computer.lcu.get_state":
-      case "computer.lcu.probe":
-      case "computer.lcu.configure":
-      case "computer.lcu.set_enabled":
       // WP5-I4 实验层开关族:设置页六路由透传。开启由 companion 生物识别门
       // 承担(D2,同 :727-728 坐标开关先例);license/download/delete/reset 由
       // companion validateWsMessage + handler belt 双层围栏(source:"settings"
       // 在面板侧固定注入,扩展不做信任判定)。
       case "computer.model.get_state":
+      case "computer.model.get_license":
       case "computer.model.set_enabled":
       case "computer.model.license_response":
       case "computer.model.download":

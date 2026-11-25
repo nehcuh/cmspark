@@ -1121,9 +1121,6 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                     msg.id.length <= 100 ? { id: msg.id } : {}),
                 ...(msg?.type === "board.add_hint" ? { family: "board", request_type: "board.add_hint",
                   id: msg.id, thread_id: msg.thread_id } : {}),
-                ...(typeof msg?.type === "string" && msg.type.startsWith("computer.lcu.") &&
-                    typeof msg.request_id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(msg.request_id)
-                  ? { family: "computer.lcu", code: "LCU_SETTINGS_REQUEST_INVALID", request_id: msg.request_id } : {}),
               }))
             }
           }

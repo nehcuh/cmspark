@@ -143,51 +143,11 @@ test("get_state：含 availableVariants 与 resourceTip", async () => {
   assert.ok(r.minRamGb >= 8)
 })
 
-test("set_enabled(true): !canEnable → CANNOT_ENABLE, zero config write", async () => {
-  resetModelConfig({
-    coordinateEnabled: false,
-    modelVariant: "2b",
-    modelLicenseAcceptedAt: new Date().toISOString(),
-    modelLicenseAcceptedTextHash: LICENSE_DOOR_TEXT_HASH,
-    modelEnabled: false,
-  })
-  const r: any = await handleComputerModelMessage(
-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
-    {
-      requestConfirmation: async () => ({ approved: true, method: "test" }),
-    },
-    holderWith(null),
-    {
-      canEnableProbe: () => false,
-      gate: async () => ({ approved: true, method: "touchid" as const, nonce: "n1" }),
-    },
-  )
-  assert.equal(r.type, "error")
-  assert.equal(r.code, "CANNOT_ENABLE")
+test("a legacy client cannot enable the retired computer locator", async () => {
+  resetModelConfig({ coordinateEnabled: true, modelEnabled: false })
+  const r = await handleComputerModelMessage({ type: "computer.model.set_enabled", enabled: true, source: "settings" })
+  assert.equal(r.code, "DESKTOP_LOCATOR_RETIRED")
   assert.equal(getConfig().computer?.modelEnabled, false)
-})
-
-test("set_enabled(true): canEnable + gate approve → modelEnabled true", async () => {
-  resetModelConfig({
-    coordinateEnabled: false,
-    modelVariant: "2b",
-    modelLicenseAcceptedAt: new Date().toISOString(),
-    modelLicenseAcceptedTextHash: LICENSE_DOOR_TEXT_HASH,
-    modelEnabled: false,
-  })
-  const r: any = await handleComputerModelMessage(
-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
-    {
-      requestConfirmation: async () => ({ approved: true, method: "test" }),
-    },
-    holderWith(null),
-    {
-      canEnableProbe: () => true,
-      gate: async () => ({ approved: true, method: "touchid" as const, nonce: "n1" }),
-    },
-  )
-  assert.notEqual(r.type, "error")
-  assert.equal(getConfig().computer?.modelEnabled, true)
 })
 
 test("license_response reset_decline clears permanent skip", async () => {

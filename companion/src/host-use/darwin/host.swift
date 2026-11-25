@@ -865,7 +865,7 @@ do {
         out = cuPreview(imagePath: img, x: px, y: py, blurRectsJSON: argValue("--blur-rects"))
     case "evidence-seal":
         guard let inp = argValue("--input"), let outp = argValue("--output") else { fputs("evidence-seal: --input and --output required\n", stderr); exit(2) }
-        out = cuEvidenceSeal(inputPath: inp, outputPath: outp)
+        out = cuEvidenceSeal(inputPath: inp, outputPath: outp, blurRectsJSON: argValue("--blur-rects"))
     case "estop":
         // Long-running emergency-stop helper (WP3 darwin-estop.ts expects this
         // subcommand): CGEventTap hotkey + UNIX socket proof-of-life. Never
@@ -1509,6 +1509,7 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
 //     deliberately rather than incidentally.
 func cuAXInvoke(windowId: UInt32, target: String, action: String, value: String?,
                 expectRole: String?, expectName: String?, estopFlag: String?) -> String {
+    guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
     func stopRaised() -> Bool {
         guard let p = estopFlag, !p.isEmpty else { return false }
         return FileManager.default.fileExists(atPath: p)
@@ -1575,6 +1576,7 @@ func cuAXInvoke(windowId: UInt32, target: String, action: String, value: String?
                     return cuError("name mismatch: expected '\(en)' got '\(name)'", code: "AX_ELEMENT_MISMATCH")
                 }
                 // Last check immediately before the act.
+                guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
                 if stopRaised() { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
 
                 var posRef: CFTypeRef?
@@ -1709,10 +1711,7 @@ private final class ActivityWindowPicker: NSObject, SCContentSharingPickerObserv
     }
     // CG lists front-to-back in Quartz coordinates on the current Space.
     private func observe(_ window: SCWindow, _ owner: SCRunningApplication) throws -> Observation {
-        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
-              session[kCGSessionOnConsoleKey as String] as? Bool == true,
-              session[kCGSessionLoginDoneKey as String] as? Bool == true,
-              session["CGSSessionScreenIsLocked"] as? Bool != true else { throw Skip.locked }
+        guard cuDesktopAvailable() else { throw Skip.locked }
         guard AXIsProcessTrusted() else { throw Skip.permission }
         guard !IsSecureEventInputEnabled() else { throw Skip.secureInput }
         guard selectedApp?.isTerminated == false,
@@ -1777,6 +1776,7 @@ private func cuScreenCapturePermissionDenied(_ error: NSError) -> Bool {
 }
 
 func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+    guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
     // Prefer IncludingWindow, but ALWAYS fall back to optionAll filtered by
     // kCGWindowNumber. WeChat/Electron often return [] for IncludingWindow
     // while the id is still present in optionAll (pgvexn 2026-07-25).
@@ -2296,6 +2296,19 @@ func cuSelfTestClassifier() -> String {
         failures.append("empty_and_clause: must be false — sizeGuard is the safety net for empty bitmaps")
     }
 
+    // Sample opposite rows to catch either a missing mask or an inverted Y axis.
+    if let ctx = CGContext(data: nil, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 0,
+                           space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        if let source = ctx.makeImage(),
+           let masked = cuMaskedImage(source, #"[{"x":4,"y":2,"width":10,"height":6}]"#) {
+            let luma = cuDownsampleToBitmap(masked, side: 32)
+            if luma.count != 1024 || luma[4 * 32 + 8] > 5 || luma[28 * 32 + 8] < 245 ||
+               cuMaskedImage(source, "invalid") != nil { failures.append("window_preview_mask") }
+        } else { failures.append("window_preview_mask_render") }
+    } else { failures.append("window_preview_mask_fixture") }
+
     // Exercise the same NSError classifier as the real SCK capture path.
     let declinedCode = SCStreamError.Code.userDeclined.rawValue
     for (domain, code, denied) in [
@@ -2439,6 +2452,7 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         return FileManager.default.fileExists(atPath: path)
     }
     func stopError() -> String { cuError("E-Stop flag present", code: "TASK_ABORTED") }
+    guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
     if checkSecureInput && IsSecureEventInputEnabled() { return cuError("Secure Input active", code: "DESKTOP_DENIED") }
     if stopped() { return stopError() }
     let pid = cuPidForWindow(windowId)
@@ -2592,19 +2606,51 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
     }
 }
 
+private func cuDesktopAvailable() -> Bool {
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return session[kCGSessionOnConsoleKey as String] as? Bool == true &&
+           session[kCGSessionLoginDoneKey as String] as? Bool == true &&
+           session["CGSSessionScreenIsLocked"] as? Bool != true
+}
+
 func cuSecurityCheck() -> String {
-    return cuJson(["ok": true, "axTrusted": AXIsProcessTrusted(), "secureInput": IsSecureEventInputEnabled()])
+    return cuJson(["ok": true, "axTrusted": AXIsProcessTrusted(), "secureInput": IsSecureEventInputEnabled(), "desktopAvailable": cuDesktopAvailable()])
+}
+
+private struct CUMaskRect: Decodable {
+    let x, y, width, height: CGFloat
+}
+
+// OCR coordinates have their origin at the top left. Apply the opaque mask
+// at capture resolution before any annotations, resizing or encoding.
+private func cuMaskedImage(_ image: CGImage, _ json: String?) -> CGImage? {
+    guard let json else { return image }
+    guard let rects = try? JSONDecoder().decode([CUMaskRect].self, from: Data(json.utf8)),
+          let ctx = CGContext(data: nil, width: image.width, height: image.height,
+              bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    ctx.draw(image, in: bounds)
+    ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+    for r in rects {
+        guard r.width > 0, r.height > 0 else { return nil }
+        let box = CGRect(x: r.x, y: bounds.height - r.y - r.height, width: r.width, height: r.height).integral.intersection(bounds)
+        guard !box.isEmpty else { return nil }
+        ctx.fill(box)
+    }
+    return ctx.makeImage()
 }
 
 func cuPreview(imagePath: String, x: Int?, y: Int?, blurRectsJSON: String?) -> String {
     guard let srcImage = CGImageSourceCreateWithURL(URL(fileURLWithPath: imagePath) as CFURL, nil),
-          let cgImage = CGImageSourceCreateImageAtIndex(srcImage, 0, nil) else { return cuJson(["ok": true]) }
+          let original = CGImageSourceCreateImageAtIndex(srcImage, 0, nil),
+          let cgImage = cuMaskedImage(original, blurRectsJSON) else { return cuJson(["ok": false]) }
     let w = cgImage.width; let h = cgImage.height
-    var pixels = [UInt8](repeating: 0, count: w * h * 4)
-    guard let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cuJson(["ok": true]) }
+    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cuJson(["ok": false]) }
     ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
 
-    if let px = x, let py = y {
+    if let px = x, let imageY = y {
+        let py = h - imageY
         ctx.setStrokeColor(CGColor(red: 1, green: 0, blue: 0, alpha: 0.8)); ctx.setLineWidth(2)
         let s = 20
         ctx.move(to: CGPoint(x: px - s, y: py)); ctx.addLine(to: CGPoint(x: px + s, y: py))
@@ -2643,12 +2689,30 @@ func cuLoadEvidenceKey() -> SymmetricKey {
     evidenceKey = k; return k
 }
 
-func cuEvidenceSeal(inputPath: String, outputPath: String) -> String {
-    guard let inputData = try? Data(contentsOf: URL(fileURLWithPath: inputPath)) else { return cuJson(["ok": false, "error": "cannot read input", "error_code": "EVIDENCE_ERROR"]) }
+func cuEvidenceSeal(inputPath: String, outputPath: String, blurRectsJSON: String?) -> String {
+    let inputURL = URL(fileURLWithPath: inputPath)
+    let inputData: Data
+    if let mask = blurRectsJSON {
+        let encoded = NSMutableData()
+        guard let source = CGImageSourceCreateWithURL(inputURL as CFURL, nil),
+              let original = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let masked = cuMaskedImage(original, mask),
+              let dest = CGImageDestinationCreateWithData(encoded, "public.png" as CFString, 1, nil) else {
+            return cuError("cannot mask evidence", code: "EVIDENCE_ERROR")
+        }
+        CGImageDestinationAddImage(dest, masked, nil)
+        guard CGImageDestinationFinalize(dest) else { return cuError("cannot encode evidence", code: "EVIDENCE_ERROR") }
+        inputData = encoded as Data
+    } else {
+        guard let data = try? Data(contentsOf: inputURL) else { return cuError("cannot read input", code: "EVIDENCE_ERROR") }
+        inputData = data
+    }
     let key = cuLoadEvidenceKey()
     guard let sealed = try? AES.GCM.seal(inputData, using: key).combined else { return cuJson(["ok": false, "error": "encryption failed", "error_code": "EVIDENCE_ERROR"]) }
-    try? sealed.write(to: URL(fileURLWithPath: outputPath))
-    try? FileManager.default.removeItem(atPath: inputPath)
+    do {
+        try sealed.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+        try FileManager.default.removeItem(at: inputURL)
+    } catch { return cuError("cannot finish sealing evidence", code: "EVIDENCE_ERROR") }
     let sha256 = SHA256.hash(data: sealed).compactMap { String(format: "%02x", $0) }.joined()
     return cuJson(["ok": true, "sha256": sha256])
 }

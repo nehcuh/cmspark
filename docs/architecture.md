@@ -701,7 +701,7 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 
 | 路径 | 职责 |
 |------|------|
-| `companion/src/computer/` | policy · executor · session-trust · estop · evidence · adapters · **Qwen3-VL 实验定位**（TinyClick/Florence 已移除） |
+| `companion/src/computer/` | policy · executor · session-trust · estop · evidence · adapters · 可选的主模型窗口观察与候选位置 |
 | `companion/src/voice/` · `chrome-extension/.../voice/` | 本机 Whisper Path B（含 M2 渐进假设）· 听写+ / 会议工作台 |
 | `companion/src/host-use/` | HostAdapter · 平台 adapter · blacklist · nonce |
 | `companion/src/apps/` | 枚举 · 启动 · guards · biometric-gate |

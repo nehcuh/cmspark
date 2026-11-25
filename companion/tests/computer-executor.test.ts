@@ -2500,3 +2500,51 @@ test("#360: macOS Safari bundleId（com.apple.Safari）同样 skip（seam 不止
   assert.equal(r.errorCode, "ELEMENT_NOT_FOUND")
   assert.equal(tc.calls.length, 0)
 })
+
+test("#908 native screenshot sends only an eligible frame and keeps its pixels out of the tool result", async () => {
+  class RenderedWindow extends FakeCapturer {
+    override async captureWindow(): Promise<CaptureMeta> {
+      return { ...await super.captureWindow(), capture_method: "printwindow", observation_quality: "ok", occludedBy: [] }
+    }
+  }
+  for (const sensitive of [false, true]) {
+    let observations = 0
+    const deps = makeDeps({
+      capturer: new RenderedWindow(),
+      locator: new FakeLocator(sensitive ? [{ ...OK_WORDS[0], text: "Password" }] : OK_WORDS),
+      previewBuilder: fakePreviewBuilder([]),
+      inspectDesktop: { current: () => true, inspect: async frame => {
+        frame.assertCurrent()
+        assert.equal(frame.image, "PREVIEW_B64")
+        observations++
+        return "A red circle"
+      } },
+    })
+    const result = await runComputerTask({ app: "win.app.test", task: "observe", actions: [{ action: "screenshot" }] }, deps)
+    assert.equal(result.success, true, result.error)
+    assert.equal(observations, sensitive ? 0 : 1)
+    assert.equal(JSON.stringify(result).includes("A red circle"), !sensitive)
+    assert.ok(!JSON.stringify(result).includes("PREVIEW_B64"))
+  }
+})
+
+test("#908 an origin refusing a main-model suggested click leaves the target untouched", async () => {
+  class RenderedWindow extends FakeCapturer {
+    override async captureWindow(): Promise<CaptureMeta> {
+      return { ...await super.captureWindow(), capture_method: "printwindow", observation_quality: "ok", occludedBy: [] }
+    }
+  }
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ capturer: new RenderedWindow(), locator: new FakeLocator([]), injector,
+    previewBuilder: fakePreviewBuilder([]), confirm: confirm.fn,
+    inspectDesktop: { current: () => true, inspect: async frame => {
+      assert.equal(frame.target, "circle")
+      return '{"x":0.25,"y":0.5}'
+    } },
+  })
+  const result = await runComputerTask({ app: "win.app.test", task: "select circle", actions: [{ action: "click", target: "circle" }] }, deps)
+  assert.equal(result.success, false)
+  assert.ok(confirm.captured.some(c => c.details.dangerousApis.includes("computer.main_model_suggestion")), result.error)
+  assert.equal(injector.clicks.length, 0)
+})

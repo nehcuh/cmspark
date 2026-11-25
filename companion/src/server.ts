@@ -14,6 +14,7 @@ import { checkEnterprisePermit, claimEnterpriseDispatch, type EnterprisePermit }
 import { getConfig, saveConfig, initDataDir, getConfigDir } from "./config"
 import type { EvidenceScope } from "./business-evidence/content"
 import { captureLocalPageResult } from "./business-evidence/executor"
+import { desktopFrameInspector } from "./computer/main-model-vision"
 import { bindChatEvidenceScope } from "./business-evidence/chat-scope"
 import { setOutboundContextEngine } from "./outbound-mcp/companion-http"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
@@ -452,6 +453,7 @@ export function seedThreadManagerForTests(): ThreadManager {
  * runner (or tests) may pass `trustedOutbound: true` after Bearer auth.
  */
 export type ToolExecuteInvokeOpts = {
+  desktopVision?: import("./computer/main-model-vision").DesktopVisionRoute
   enterprisePermit?: EnterprisePermit
   trustedOutbound?: boolean
   /** Server-owned Chat metadata resolution; never read this from tool args. */
@@ -840,6 +842,15 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
           evidenceScope,
           computerRead,
+          inspectDesktop: toolName === "host_computer" && evidenceScope?.kind === "chat" &&
+            !nativeOwner && !enterprisePermit && !invokeOpts?.trustedOutbound && invokeOpts?.desktopVision &&
+            getWsAuthState(ws)?.surface === "panel"
+            ? desktopFrameInspector(invokeOpts.desktopVision, async (details, approvalSignal) => {
+              const decision = await confirmations.request(data => {
+                if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data))
+              }, details, { originWs: ws, signal: approvalSignal })
+              return confirmations.isOriginApproval(decision, ws)
+            }, signal) : undefined,
           // Only authenticated, local-chat server-bound scope may pull terminal text.
           // Adapter final __thread_id injection is preserved, but JSON is not this authority.
           readTerminalTail: toolName === "terminal_tail_read" && evidenceScope?.kind === "chat" && !invokeOpts?.trustedOutbound && !nativeOwner

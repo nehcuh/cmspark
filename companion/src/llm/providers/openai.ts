@@ -187,6 +187,7 @@ export class OpenAIProvider implements LlmProvider {
       else createParams.max_tokens = limit
     }
 
+    params.beforeSend?.()
     const response = await this.client.chat.completions.create(createParams, {
       signal: params.signal,
       ...(params.rejectRedirects ? { fetchOptions: { redirect: "error" } } : {}),

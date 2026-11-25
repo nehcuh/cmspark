@@ -20,7 +20,7 @@
 //   - docs/decisions/v1.3/plan-approach-c-minus-v4-1-grok.md (variance classifier)
 //   - docs/decisions/v1.3/review-pi-plan-v4-1.txt (Pi RESOLVED verdict)
 
-import type { RectPx } from "./types"
+import type { CaptureMeta, RectPx } from "./types"
 
 export interface PointClient {
   x: number
@@ -70,6 +70,14 @@ export function imageToClient(
   return {
     x: p.x / sx - clientLogical.x,
     y: p.y / sy - clientLogical.y,
+  }
+}
+
+/** Client point in the full window bitmap, including its non-client area. */
+export function clientToImage(p: PointClient, shot: CaptureMeta): PointImage {
+  return {
+    x: (p.x + shot.client.x) * (shot.scaleX ?? 1),
+    y: (p.y + shot.client.y) * (shot.scaleY ?? 1),
   }
 }
 

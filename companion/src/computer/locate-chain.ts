@@ -53,6 +53,7 @@ export type ExperimentalLocateOutcome =
   | { kind: "error"; reason: string }
 
 export type ExperimentalLocator = {
+  layer?: "main-model"
   locate(args: { command: string; shot: CaptureMeta }): Promise<ExperimentalLocateOutcome>
 }
 import { rectDriftPx, imageToClient, type CoordScales } from "./coords"
@@ -638,16 +639,17 @@ export async function locateTargetWithChain(args: {
     attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: VAULT_BROWSER_NO_VLM_REASON, ms: 0 })
     log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: VAULT_BROWSER_NO_VLM_REASON })
   } else if (deps.experimental) {
+    const layer = deps.experimental.layer ?? "qwen-vl"
     const t0 = now()
     const outcome = await deps.experimental.locate({ command: target, shot })
     if (outcome.kind === "hit") {
-      attempts.push({ layer: "qwen-vl", outcome: "hit", ms: now() - t0 })
-      log("computeruse.locate", { layer: "qwen-vl", hit: true, ms: now() - t0 })
+      attempts.push({ layer, outcome: "hit", ms: now() - t0 })
+      log("computeruse.locate", { layer, hit: true, ms: now() - t0 })
       const hit: LocateHit = {
         x: outcome.point.x,
         y: outcome.point.y,
         bbox: { x: outcome.point.x, y: outcome.point.y, width: 0, height: 0 },
-        layer: "qwen-vl",
+        layer,
         matchedText: "",
       }
       return {
@@ -665,8 +667,8 @@ export async function locateTargetWithChain(args: {
           : {}),
       }
     }
-    attempts.push({ layer: "qwen-vl", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
-    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: outcome.reason, ms: now() - t0 })
+    attempts.push({ layer, outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
+    log("computeruse.locate", { layer, hit: false, reason: outcome.reason, ms: now() - t0 })
   } else {
     const skipReason = deps.experimentalSkipReason || "model-not-admitted"
     attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: skipReason, ms: 0 })
