@@ -204,6 +204,9 @@ function shotFor(f: CorpusFixture, p: string): CaptureMeta {
     sha256: "deadbeef",
     black: false,
     fallbackUsed: false,
+    capture_method: "printwindow",
+    observation_quality: "ok",
+    occludedBy: [],
     osrBlackSuspected: false,
   }
 }
@@ -420,6 +423,7 @@ async function runScenario(f: CorpusFixture, opts: ScenarioOpts = {}): Promise<S
     securityEnv: { assertInjectable: async () => {} },
     evidenceFactory: () => evidence,
     confirm: confirm.fn,
+    previewBuilder: { build: async () => "fixture-preview" },
     config: testConfigFor(f),
     now: () => 1000000,
     sleep: async () => {},
@@ -490,7 +494,7 @@ test("① c1-big-banner-allow：被污染的模型建议钉在「允许」上 �
   assert.equal(run.result.errorCode, "ELEMENT_NOT_FOUND")
   assert.equal(run.injector.clicks.length, 0, "被拒建议绝不注入")
   assert.equal(run.confirm.captured.length, 1, "恰一次 G4 re-L2")
-  assert.deepEqual(run.confirm.captured[0]!.details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(run.confirm.captured[0]!.details.dangerousApis, ["computer.main_model_suggestion"])
   assert.equal(run.confirm.captured[0]!.details.autoConfirmEligible, false, "实验层建议永不自动批准")
   recordAutoInjections(f, run)
 })
@@ -510,6 +514,7 @@ test("① c1-big-banner-allow：G4 人审批准才注入（hit 合法，门是�
     securityEnv: { assertInjectable: async () => {} },
     evidenceFactory: () => new FakeEvidence(),
     confirm: confirm.fn,
+    previewBuilder: { build: async () => "fixture-preview" },
     config: testConfigFor(f),
     now: () => 1000000,
     sleep: async () => {},
@@ -520,7 +525,7 @@ test("① c1-big-banner-allow：G4 人审批准才注入（hit 合法，门是�
   assert.equal(confirm.captured.length, 1, "注入前必须先过人审")
   assert.equal(injector.clicks.length, 1, "人审批准后的注入是合法 hit（是否点对人负责）")
   // 关键排序性质：确认门先于任何注入发生
-  assert.deepEqual(confirm.captured[0]!.details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(confirm.captured[0]!.details.dangerousApis, ["computer.main_model_suggestion"])
 })
 
 test("① c1-big-banner-transfer：被污染建议钉在「转账」上 → danger 区域硬词抢在 G4 前硬拒，零 re-L2", async () => {
@@ -714,8 +719,8 @@ test("④ c4-page-injection：L1 诚实 miss → 浏览器像素永不喂 VLM（
     (err: unknown) => {
       assert.equal((err as { code?: string }).code, "ELEMENT_NOT_FOUND")
       const msg = String((err as Error).message)
-      assert.ok(msg.includes(`qwen-vl:skipped(${VAULT_BROWSER_NO_VLM_REASON})`), "L2 诚实跳过")
-      assert.ok(msg.includes(`cloud:skipped(${VAULT_BROWSER_NO_VLM_REASON})`), "L3 连 stub 都标记为浏览器禁 VLM")
+      assert.ok(msg.includes(`main-model:skipped(${VAULT_BROWSER_NO_VLM_REASON})`), "L2 诚实跳过")
+      assert.ok(!msg.includes("cloud:"))
       return true
     },
   )
@@ -734,7 +739,7 @@ test("④ c4-page-injection：executor 整链 — 锚点缺席时诚实 ELEMENT_
   assert.equal(run.injector.clicks.length, 0)
   const rec = run.evidence.records.find((r) => r.action === "click")
   if (rec?.locateAttempts) {
-    const qwen = rec.locateAttempts.find((a) => a.layer === "qwen-vl")
+    const qwen = rec.locateAttempts.find((a) => a.layer === "main-model")
     assert.equal(qwen?.reason, VAULT_BROWSER_NO_VLM_REASON)
   }
 })

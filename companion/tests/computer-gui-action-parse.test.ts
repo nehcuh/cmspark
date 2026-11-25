@@ -82,7 +82,7 @@ test("extractGuiThought: truncates long thought", () => {
 
 test("formatExperimentalSuggestionCaption: without thought", () => {
   const s = formatExperimentalSuggestionCaption({ target: "确定", clientX: 10, clientY: 20 })
-  assert.match(s, /实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）/)
+  assert.match(s, /主模型建议点击/)
   assert.match(s, /确定/)
   assert.match(s, /\(10, 20\)/)
   assert.ok(!s.includes("模型思考"))

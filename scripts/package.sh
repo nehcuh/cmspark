@@ -164,7 +164,7 @@ if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ] && [[ "${PLATFORM}" == windows-* ]
   elif [ -f "${ROOT_DIR}/companion/src/computer/qwen-vl-worker.py" ]; then
     qwen_worker_src="src"
   else
-    echo "ERROR: qwen-vl-worker.py missing (need dist/computer or src/computer) — Qwen3-VL locate hard-gate" >&2
+    echo "ERROR: qwen-vl-worker.py missing (need dist/computer or src/computer) — required by Work Center local extraction" >&2
     exit 1
   fi
   echo "GATE-ONLY: windows host-scripts-win=${win_count} ps1 + qwen-vl-worker.py (${qwen_worker_src}) OK — exiting 0"
@@ -217,7 +217,7 @@ if [ -f companion/dist/computer/qwen-vl-worker.py ]; then
 elif [ -f companion/src/computer/qwen-vl-worker.py ]; then
   cp companion/src/computer/qwen-vl-worker.py "${STAGING}/qwen-vl-worker.py"
 else
-  echo "ERROR: qwen-vl-worker.py missing (need dist/computer or src/computer) — Qwen3-VL locate hard-gate" >&2
+  echo "ERROR: qwen-vl-worker.py missing (need dist/computer or src/computer) — required by Work Center local extraction" >&2
   exit 1
 fi
 echo "  qwen-vl-worker.py (Qwen3-VL experimental locate; models on-demand)"

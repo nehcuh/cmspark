@@ -18,7 +18,7 @@ import {
 
 test("reL2ShouldPrompt: PROMPT_ALWAYS tags return true", () => {
   assert.equal(reL2ShouldPrompt(["computer.danger_detected"]), true)
-  assert.equal(reL2ShouldPrompt(["computer.experimental_suggestion"]), true)
+  assert.equal(reL2ShouldPrompt(["computer.main_model_suggestion"]), true)
   assert.equal(reL2ShouldPrompt(["computer.foreground_yielded"]), true)
 })
 
@@ -56,7 +56,7 @@ test("reL2ShouldPrompt: exhaustive — all executor.ts emit-site tags registered
     "computer.budget_exhausted",                       // line 749
     "computer.uncrossverified_exceeded",               // line 851, 1031
     "computer.danger_detected",                        // line 971
-    "computer.experimental_suggestion",                // line 1005
+    "computer.main_model_suggestion",                // line 1005
     "computer.foreground_yielded",                     // line 1435 (fgYielded)
     "computer.task_induced_dialog",                    // line 1435 (!fgYielded)
   ]

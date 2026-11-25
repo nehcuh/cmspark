@@ -58,6 +58,7 @@ function actualInvokeBindingPrefix571(h,options={}){
  ['func stopRaised() -> Bool {','function stopRaised(){'],
  ['guard let p = estopFlag, !p.isEmpty else { return false }','const p=estopFlag;if(p==null||p.length===0)return false'],
  ['FileManager.default.fileExists(atPath: p)','stopFlag(p)'],
+ ['guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }','if(!cuDesktopAvailable())return cuError("locked desktop", "DESKTOP_DENIED")'],
  ['guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }','if(pid===0)return cuError("cannot find PID for window", "HWND_DEAD")'],
  ['guard let appElement = cuAppElementForPid(pid) else {\n        return cuError("cannot create AX app element for pid \\(pid)", code: "AX_WINDOW_GONE")\n    }','const appElement=cuAppElementForPid(pid);if(appElement==null)return cuError("inert source error", "AX_WINDOW_GONE")'],
  ['let wantedAction: String','let wantedAction'],['switch action {','switch(action){'],
@@ -66,7 +67,7 @@ function actualInvokeBindingPrefix571(h,options={}){
  prefix=prefix.replace(/^    case ("[^"]+"): wantedAction = ([^\n]+)/gm,'    case $1: wantedAction=$2;break;').replace(/ as String/g,'').replace(/code: /g,'').replace(/if stopRaised\(\) \{/g,'if(stopRaised()){')
  assert.doesNotMatch(prefix,/\bguard\b|\bnil\b|\bfunc\b| as String|code:|\.isEmpty/)
  let binds=0,pids=0
- const context={...h.context,kAXPressAction:'press',kAXIncrementAction:'increment',kAXDecrementAction:'decrement',kAXConfirmAction:'confirm',kAXCancelAction:'cancel',stopFlag:p=>{assert.equal(p,'OWNED_STOP');return h.stopped()},cuPidForWindow:()=>{pids++;return options.pid??42},cuAppElementForPid:()=>options.noApp?null:h.app,cuError:(_message,error_code)=>({error_code}),cuAXTargetWindow:(...args)=>{binds++;return h.context.bind(...args)}}
+ const context={...h.context,cuDesktopAvailable:()=>!options.locked,kAXPressAction:'press',kAXIncrementAction:'increment',kAXDecrementAction:'decrement',kAXConfirmAction:'confirm',kAXCancelAction:'cancel',stopFlag:p=>{assert.equal(p,'OWNED_STOP');return h.stopped()},cuPidForWindow:()=>{pids++;return options.pid??42},cuAppElementForPid:()=>options.noApp?null:h.app,cuError:(_message,error_code)=>({error_code}),cuAXTargetWindow:(...args)=>{binds++;return h.context.bind(...args)}}
  vm.createContext(context);vm.runInContext('function invoke(windowId,target,action,value,expectRole,expectName,estopFlag){'+prefix+'return {windowElement,wantedAction,isSetValue}};this.invoke=invoke;',context,{timeout:1000})
  return{run:(action='press',value=null)=>context.invoke(101,'OwnedAX571Press',action,value,null,null,'OWNED_STOP'),counts:()=>({binds,pids})}
 }
@@ -74,7 +75,8 @@ test('#571 actual invoke prefix validates action/value before binding and gives 
  for(const [action,value]of [['UNKNOWN',null],['setvalue',null],['setvalue','']]){const h=harness();h.state.rows=null;const p=actualInvokeBindingPrefix571(h);assert.equal(p.run(action,value).error_code,'INVALID_ACTION');assert.equal(p.counts().binds,0)}
  const h=harness(),p=actualInvokeBindingPrefix571(h);assert.equal(p.run().windowElement,h.window);assert.equal(p.counts().binds,1)
  for(const [options,expected]of [[{pid:0},'HWND_DEAD'],[{noApp:true},'AX_WINDOW_GONE']]){const q=actualInvokeBindingPrefix571(harness(),options);assert.equal(q.run('UNKNOWN').error_code,expected);assert.equal(q.counts().binds,0)}
- const before=harness();before.state.stop=true;const b=actualInvokeBindingPrefix571(before);assert.equal(b.run('UNKNOWN').error_code,'TASK_ABORTED');assert.deepEqual(b.counts(),{binds:0,pids:0})
+ const locked=actualInvokeBindingPrefix571(harness(),{locked:true});assert.equal(locked.run().error_code,'DESKTOP_DENIED');assert.deepEqual(locked.counts(),{binds:0,pids:0})
+ const before=harness();before.state.stop=true;const b=actualInvokeBindingPrefix571(before,{locked:true});assert.equal(b.run('UNKNOWN').error_code,'TASK_ABORTED');assert.deepEqual(b.counts(),{binds:0,pids:0})
  const after=harness();after.state.hook=kind=>{if(kind==='metadata'&&after.state.metadataReads===4)after.state.stop=true};const a=actualInvokeBindingPrefix571(after);assert.equal(a.run().error_code,'TASK_ABORTED');assert.equal(a.counts().binds,1)
 })
 

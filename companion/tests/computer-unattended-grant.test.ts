@@ -261,7 +261,7 @@ describe("PROMPT_ALWAYS / re-L2 floors (G1 session-trust spirit)", () => {
   it("reL2ShouldPrompt still marks danger / experimental / foreground as must-prompt for G1", async () => {
     const { reL2ShouldPrompt } = await import("../src/computer/session-trust")
     assert.equal(reL2ShouldPrompt(["computer.danger_detected"]), true)
-    assert.equal(reL2ShouldPrompt(["computer.experimental_suggestion"]), true)
+    assert.equal(reL2ShouldPrompt(["computer.main_model_suggestion"]), true)
     assert.equal(reL2ShouldPrompt(["computer.foreground_yielded"]), true)
     assert.equal(reL2ShouldPrompt(["computer.budget_exhausted"]), false)
   })

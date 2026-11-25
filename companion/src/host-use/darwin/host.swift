@@ -1509,12 +1509,12 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
 //     deliberately rather than incidentally.
 func cuAXInvoke(windowId: UInt32, target: String, action: String, value: String?,
                 expectRole: String?, expectName: String?, estopFlag: String?) -> String {
-    guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
     func stopRaised() -> Bool {
         guard let p = estopFlag, !p.isEmpty else { return false }
         return FileManager.default.fileExists(atPath: p)
     }
     if stopRaised() { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
+    guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
 
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
@@ -2446,6 +2446,22 @@ func postEventDual(_ event: CGEvent, pid: pid_t, useHid: Bool) -> Bool {
     return skyOk || useHid
 }
 
+// Quartz returns windows front to back. A global mouse event is safe only
+// while its exact landing point belongs to the approved window and process.
+func cuClickPointOwned(_ point: CGPoint, windowId: UInt32, pid: pid_t) -> Bool {
+    guard cuDesktopAvailable(), !IsSecureEventInputEnabled(),
+          let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+    for row in rows {
+        if let alpha = row[kCGWindowAlpha as String] as? Double, alpha == 0 { continue }
+        guard let raw = row[kCGWindowBounds as String] as? [String: Any],
+              let rect = CGRect(dictionaryRepresentation: raw as CFDictionary) else { return false }
+        if rect.contains(point) {
+            return cuWindowNumber(row) == windowId && row[kCGWindowOwnerPID as String] as? pid_t == pid
+        }
+    }
+    return false
+}
+
 func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?, chord: String?, delta: Int?, checkOcclusion: Bool, checkSecureInput: Bool, checkOnscreen: Bool, estopFlag: String?) -> String {
     func stopped() -> Bool {
         guard let path = estopFlag else { return false }
@@ -2498,37 +2514,42 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         guard let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseMoved construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
-        if stopped() { return stopError() }
-        if !postEventDual(me, pid: pid, useHid: useHid) {
-            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        func canLand() -> Bool {
+            return !(useHid || checkOcclusion || checkOnscreen) || cuClickPointOwned(screenPt, windowId: windowId, pid: pid)
         }
-        usleep(50000)
-        guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn),
-              let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
-            return cuError("CGEvent mouse button construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
-        }
-        if stopped() { return stopError() }
-        if !postEventDual(de, pid: pid, useHid: useHid) {
-            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
-        }
-        for _ in 1..<cc {
-            usleep(100000)
-            if stopped() { break }
-            if !postEventDual(de, pid: pid, useHid: useHid) {
-                return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        func postClickEvent(_ event: CGEvent) -> Bool {
+            if useHid {
+                guard AXIsProcessTrusted() else { return false }
+                event.post(tap: .cghidEventTap)
+                return true
             }
+            return postEventDual(event, pid: pid, useHid: false)
         }
+        if stopped() { return stopError() }
+        guard canLand() else { return cuError("Target does not own click point", code: "CLICK_OCCLUDED") }
+        guard postClickEvent(me) else { return cuError("Mouse move failed", code: "SKYLIGHT_POST_FAILED") }
         usleep(50000)
-        // Finish a button release even when a stop arrived after the down.
-        if !postEventDual(ue, pid: pid, useHid: useHid) {
-            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        for clickCount in 1...cc {
+            if stopped() { return stopError() }
+            guard canLand() else { return cuError("Target does not own click point", code: "CLICK_OCCLUDED") }
+            guard let down = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn),
+                  let up = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
+                return cuError("CGEvent mouse button construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+            }
+            down.setIntegerValueField(.mouseEventClickState, value: clickCount)
+            up.setIntegerValueField(.mouseEventClickState, value: clickCount)
+            guard postClickEvent(down) else { return cuError("Mouse down failed", code: "SKYLIGHT_POST_FAILED") }
+            usleep(50000)
+            // Always release a button that was pressed, including after stop.
+            guard postClickEvent(up) else { return cuError("Mouse up failed", code: "SKYLIGHT_POST_FAILED") }
+            if clickCount < cc { usleep(50000) }
         }
         if stopped() { return stopError() }
         // x/y remain client coords (Windows computer-input.ps1 parity); screenX/Y report landing.
         return cuJson([
             "ok": true, "action": action, "x": px, "y": py,
             "screenX": screenX, "screenY": screenY,
-            "delivery": useHid ? "skylight+hid" : "skylight",
+            "delivery": useHid ? "hid" : "skylight",
             "axTrusted": AXIsProcessTrusted(),
         ])
 

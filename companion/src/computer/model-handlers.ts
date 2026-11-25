@@ -1,41 +1,5 @@
-// WP5 I3 登记项③ + WP5-I4 WI-4.2 — computer.model.* WS handlers。
-//
-// ③ 围栏（父指令 + plan:480 M3）：reset_circuit_breaker 仅接受设置页声明来源
-// （source:"settings"）——validateWsMessage 形状校验（server.ts）+ 本 handler
-// 二次核查（belt：防校验面被绕过 / 未来调用方直调）+ 审计日志。
-// 诚实边界：source 是声明式来源（同一 WS 连接内的页面标识），非密码学校验——
-// 真正的安全性质来自动作本身无副作用（只复位熔断计数，不注入、不授权、不改
-// 配置）；围栏防的是自动化循环调用把崩溃模型维持在「崩溃→复位→再崩溃」DoS
-// 循环里（plan 攻击面 3 / A8）。
-//
-// WI-4.2 四路由（I4 详案 plan:536-542 + 设计裁决 1/2/4/5 + P1/P3/P5/P6）：
-//   - set_enabled(true)：license 未接受/条款漂移 → license_required（config 零
-//     写入）；已拒绝 → LICENSE_DECLINED（跳过，无 UI 复位）；已接受 →
-//     D2 生物识别门（裁决 1：持久能力授权与 apps coordinateAllowed 同级；
-//     clear 免费）。license_response/download/delete 不过门，但均 settings
-//     双层围栏（validateWsMessage + 本 handler belt 复核，P6）。
-//   - license_response accepted:true → 写时间戳 + LICENSE_DOOR_TEXT_HASH（P1
-//     文本版本绑定；漂移重门在 set_enabled/admission 侧比对）+ 自动触发 download；
-//     accepted:false → modelLicenseDeclined=true（跳过）。
-//   - download：按当前配置变体下载文件组（P3）；占位主机 .invalid 且未配镜像
-//     → fail-fast download-host-unset（零网络请求，裁决 5）；进程级单飞幂等
-//     （P10：防并发不防轮询——轮询 DoS 残余声明入 i4-implementation-notes）。
-//   - delete：dispose 会话 + holder=null + 删除当前变体目录（fail-closed 方向
-//     免费，仅 settings 双层围栏）。
-//   - disable/delete → dispose + holder=null（裁决 4）；熔断保活不 dispose
-//     （reset_circuit_breaker 真复位语义维持 I2 终审）。
-//
-// I4 对抗修复 P1（2026-07-21，LOW-MED 必修）：download/delete handler 级状态
-// 互斥——handler 是信任边界，围栏不设于 UI 按钮态假设之上：
-//   - 下载中 delete → 拒（DOWNLOAD_IN_PROGRESS）：否则 Windows 上 rm 撞 .part
-//     写流占用 → EPERM 裸错误穿透、会话已 dispose、下载完成后文件复现；
-//     类 Unix 上 rm 胜 → 下载终段 stat 失败、以误导性 network-error 收尾。
-//   - delete 中 download（含 license_response 自动触发）→ 拒（DELETE_IN_PROGRESS
-//     / note=delete-in-progress）：否则 mkdir recursive 与 rm recursive 竞态
-//     （ENOTEMPTY 或「删除成功但文件随即重建」）。
-//   - delete×delete → already-running 幂等（与 download 单飞同型）。
-//   - deleteImpl 错误归一为结构化返回（DELETE_FAILED + 状态广播），不穿透裸
-//     fs 错误。互斥只防并发不防轮询（P10 同型，损害有界声明在案）。
+// Work Center local-model management. Accepting the current license can start
+// a download. Download and delete are mutually exclusive for each variant.
 
 import * as path from "node:path"
 
@@ -62,13 +26,6 @@ import {
 import type { QwenVlSession } from "./qwen-vl-session"
 import { DATA_DIR } from "../config"
 
-/**
- * 进程级模型会话持有器——写入点仅三处（P8 符号级注释契约，WI-4.5 grep 在案化）：
- *   ① admission 全通过懒建（model-admission.ts，WI-4.3）
- *   ② disable/delete dispose 后置 null（本文件）
- *   ③ 测试注入自有实例
- * 单例即进程级真相（模型会话全局至多一个，与 host_computer 全局单任务不变量同型）。
- */
 export interface ComputerModelSessionHolder {
   session: Pick<
     QwenVlSession,
@@ -76,13 +33,10 @@ export interface ComputerModelSessionHolder {
   > | null
 }
 
-/** 生产默认持有器（server.ts 与 admission 接线共享同一实例；测试注入自有实例）。 */
 export const computerModelSession: ComputerModelSessionHolder = { session: null }
 
 export interface ComputerModelHandlerContext {
   broadcast?: (data: any) => void
-  /** P5：生物识别门依赖的确认通道（apps/computer set_enabled 先例）；缺则 NO_CONFIRMATION_CHANNEL。 */
-  requestConfirmation?: (...args: any[]) => Promise<any>
 }
 
 /** 可注入依赖（测试替身；生产取默认实现）。 */

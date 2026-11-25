@@ -101,7 +101,6 @@ import {
  *  so we do not re-allocate a Set on every reL2 call (dual-review nit). */
 const FORCE_INTERACTIVE_DANGEROUS = new Set([
   "computer.danger_detected",
-  "computer.experimental_suggestion",
   "computer.main_model_suggestion",
 ])
 
@@ -133,7 +132,7 @@ export interface ComputerExecutorDeps {
    * present AND sessionTrust reports the (sessionId, app) tuple as already
    * approved, mid-task re-L2 pauses auto-approve (audit logged) instead of
    * re-asking — except force-interactive reasons (danger_detected /
-   * experimental_suggestion; P0-C). The INITIAL task L2 is unaffected — only
+   * main_model_suggestion; P0-C). The INITIAL task L2 is unaffected — only
    * reL2() consults it. Absent = every re-L2 asks (unit tests / legacy callers).
    */
   sessionId?: string
@@ -209,7 +208,7 @@ export interface ComputerExecutorDeps {
    */
   uiaWatcherFactory?: UiaWatcherFactory
   /**
-   * L2 Qwen3-VL 实验层。ADMISSION 由调用方决定；命中永不直接注入（re-L2）。
+   * L2 主模型视觉。候选点必须经用户确认。
    * 缺省 = 层关闭。
    */
   desktopVisionSignal?: AbortSignal
@@ -632,7 +631,7 @@ export async function runComputerTask(
       /* fall through */
     }
     // P0-C / experimental G4 carve-out (also applies under full-autonomy cruise):
-    // computer.danger_detected / computer.experimental_suggestion always need
+    // computer.danger_detected / computer.main_model_suggestion always need
     // fresh human eyes — content-sensitive / uncalibrated gates. Cruise may
     // silence routine re-asks (budget / uncross / dialog) only.
     // (Unattended path already returned above — this carve-out is for non-unattended.)
@@ -734,7 +733,6 @@ export async function runComputerTask(
     return description
   }
   const mainLocator: ExperimentalLocator | undefined = deps.inspectDesktop ? {
-    layer: "main-model",
     locate: async ({ command, shot }) => {
       const ocr = await deps.locator.ocr(shot.path)
       const image = await deps.previewBuilder?.build(shot.path, undefined,
@@ -936,8 +934,7 @@ export async function runComputerTask(
               ? {}
               : { experimentalSkipReason: deps.experimentalSkipReason || "model-not-admitted" }),
             // #360 (CU-B): 浏览器 one-shot 永不调用实验层（链内记
-            // vault-browser-no-vlm skipped，证据链可见）；OSR 白名单应用
-            // （coordinateAllowed 非浏览器）不受影响仍走 Qwen。
+            // vault-browser-no-vlm skipped，证据链可见）；已授权普通应用可申请主模型辅助。
             vaultBrowserNoVlm: vaultBrowserOneShot,
             log: (event, data) => log(event, { taskId, seq, ...data }),
           },
@@ -1200,14 +1197,14 @@ export async function runComputerTask(
             clientY: pointClient.y,
             thought: experimentalThought,
           }),
-          [hit?.layer === "main-model" ? "computer.main_model_suggestion" : "computer.experimental_suggestion"],
+          ["computer.main_model_suggestion"],
           seq,
           suggestionPreview,
         )
         if (!ok) {
           locateAttempts = [
             ...(locateAttempts ?? []),
-            { layer: hit?.layer ?? "qwen-vl", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
+            { layer: hit?.layer ?? "main-model", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
           ]
           throw new ComputerError(
             "ELEMENT_NOT_FOUND",
@@ -1385,7 +1382,18 @@ export async function runComputerTask(
       // SendInput — a stop requested during locate/danger/re-L2 phases must
       // still prevent injection. The ps1 side additionally polls the stop
       // flag mid-type (-StopFile).
-      if (hit?.layer === "main-model") assertModelPointCurrent?.()
+      if (hit?.layer === "main-model") {
+        await deps.securityEnv.assertInjectable(hwnd)
+        const live = await deps.windows.infoForHwnd(hwnd)
+        assertHwndOwnedByEntry(live, entry)
+        if (!live.alive || live.pid !== targetPid) {
+          throw new ComputerError("HWND_NOT_OWNED", "computer: model target window process changed")
+        }
+        if (rectDriftPx(live.rect, shot.rect) !== 0) {
+          throw new ComputerError("STALE_SCREENSHOT", "computer: model target window moved before click")
+        }
+        assertModelPointCurrent?.()
+      }
       const abortedPreInject = deps.abortCheck?.() ?? null
       if (abortedPreInject) {
         log("computer.task.aborted", { taskId, seq, channel: abortedPreInject, during: "pre-inject" })

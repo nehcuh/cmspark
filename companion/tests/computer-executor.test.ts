@@ -86,6 +86,9 @@ function shot(path: string): CaptureMeta {
     sha256: "deadbeef",
     black: false,
     fallbackUsed: false,
+    capture_method: "printwindow",
+    observation_quality: "ok",
+    occludedBy: [],
     osrBlackSuspected: false,
   }
 }
@@ -225,6 +228,7 @@ function makeDeps(overrides: Partial<ComputerExecutorDeps> = {}): ComputerExecut
     securityEnv: { assertInjectable: async () => {} },
     evidenceFactory: () => new FakeEvidence(),
     confirm: scriptedConfirm([true]).fn,
+    previewBuilder: fakePreviewBuilder([]),
     config: testConfig(),
     now: () => 1000000,
     sleep: async () => {},
@@ -1536,7 +1540,7 @@ test("executor P0-C: session trust does NOT auto-approve computer.experimental_s
   })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(confirm.captured.length, 1, "G4 re-L2 must still surface under session trust")
-  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.main_model_suggestion"])
   assert.equal(r.errorCode, "ELEMENT_NOT_FOUND", "deny → honest degrade")
   assert.equal(injector.clicks.length, 0, "deny → zero inject")
 })
@@ -2097,9 +2101,9 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
   // 恰好一次 re-L2：实验层建议门（无其他 re-L2 触发）
   assert.equal(confirm.captured.length, 1)
   const details = confirm.captured[0].details
-  assert.deepEqual(details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(details.dangerousApis, ["computer.main_model_suggestion"])
   assert.ok(details.criticalApis?.includes("computer.coordinate_injection"))
-  assert.ok(details.code.includes("实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）"), "caption 必须明示实验层+未校准+可能完全错误")
+  assert.ok(details.code.includes("主模型建议点击"), "caption 必须明示实验层+未校准+可能完全错误")
   assert.ok(details.code.includes("(150, 168)"), "caption 标注建议点客户端坐标")
   assert.equal(details.previewImage, "PREVIEW_B64", "建议点标注预览走 §F.1 通道")
   assert.equal(details.autoConfirmEligible, false, "实验层建议永不自动批准")
@@ -2107,12 +2111,12 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
   assert.deepEqual(previewCalls[0].point, { x: 160, y: 208 })
   // 证据链：layer qwen-vl（L2 实验层；deps.experimental 槽位名历史保留）、confidence 缺省（G3）、uncrossverified（A1.3）
   const rec = evidence.records.find((x) => x.action === "click")!
-  assert.equal(rec.layer, "qwen-vl")
+  assert.equal(rec.layer, "main-model")
   assert.equal(rec.confidence, undefined, "G3：未校准置信度不上证据链")
   assert.equal(rec.uncrossverified, true)
   assert.equal(rec.crossverified, false)
-  assert.ok(rec.locateAttempts!.some((a) => a.layer === "qwen-vl" && a.outcome === "hit"))
-  assert.equal(r.steps[0].layer, "qwen-vl")
+  assert.ok(rec.locateAttempts!.some((a) => a.layer === "main-model" && a.outcome === "hit"))
+  assert.equal(r.steps[0].layer, "main-model")
   assert.equal(r.steps[0].confidence, undefined)
 })
 
@@ -2134,7 +2138,7 @@ test("executor G4 Path C: experimental raw Thought → re-L2 caption 模型思�
   assert.equal(confirm.captured.length, 1)
   const code = confirm.captured[0].details.code
   assert.ok(code.includes("模型思考：工具栏右侧的保存按钮"), "Path C Thought must surface in re-L2 caption")
-  assert.ok(code.includes("实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）"))
+  assert.ok(code.includes("主模型建议点击"))
   assert.deepEqual(injector.clicks.map((c) => [c.x, c.y]), [[150, 168]])
 })
 
@@ -2228,7 +2232,7 @@ test("executor M1: 预算耗尽快照下实验层建议被拒 → 零消耗（�
   assert.equal(r.errorCode, "ELEMENT_NOT_FOUND", "G4 拒绝 → 诚实降级（预算扣减不得先于拒绝发生）")
   assert.equal(injector.clicks.length, 3, "仅前 3 个显式坐标注入")
   assert.equal(confirm.captured.length, 1, "被拒建议不得触发续期弹窗（三连上界消解：只剩 G4 一窗）")
-  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.main_model_suggestion"])
 })
 
 test("executor M1: 实验层建议批准后才计预算（G4 窗在前，续期窗在后）", async () => {
@@ -2249,7 +2253,7 @@ test("executor M1: 实验层建议批准后才计预算（G4 窗在前，续期�
   assert.equal(r.success, true, r.error)
   assert.equal(injector.clicks.length, 4, "G4 批准 + 续期批准后建议点真注入")
   assert.equal(confirm.captured.length, 2)
-  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"], "第一窗 = G4 门")
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.main_model_suggestion"], "第一窗 = G4 门")
   assert.ok(confirm.captured[1].details.code.includes("交叉验证"), "第二窗 = A1.3 续期（批准后才计数）")
 })
 
@@ -2271,7 +2275,7 @@ test("executor M1: G4 批准但续期被拒 → UNCROSS_DENIED，该建议零注
   assert.equal(r.errorCode, "UNCROSS_DENIED")
   assert.equal(injector.clicks.length, 3, "续期被拒 → 建议点不得注入")
   assert.equal(confirm.captured.length, 2)
-  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.main_model_suggestion"])
 })
 
 
@@ -2316,9 +2320,9 @@ test("P7 回归：admission 开启态下批准后刷新链 deps.experimental 恒
   assert.equal(injector.clicks.length, 0, "刷新路径零注入")
   assert.equal(tc.calls.length, 0, "刷新链 deps.experimental 恒 null——实验层全任务零调用（P7 锁）")
   // 结构证据（executor log 通道）：刷新链以 experimental:null 跳过，可观测形态 =
-  // computeruse.locate{layer:"qwen-vl", hit:false, reason:"refresh-no-experimental",
+  // computeruse.locate{layer:"main-model", hit:false, reason:"refresh-no-experimental",
   // refresh:true}（初次链 L1 hit 不触及实验层；G4 命中链不走刷新分支）。
-  const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "qwen-vl")
+  const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "main-model")
   assert.ok(tcLogs.length >= 1, "刷新链须留下 qwen-vl 层跳过日志")
   for (const l of tcLogs) {
     assert.equal(l.data.hit, false, "刷新通道绝不产生实验层命中（未经 G4 人审的建议不得借道）")
@@ -2457,10 +2461,10 @@ test("#360: Windows tokens 浏览器 one-shot（win.chrome）→ admitted 实验
   assert.equal(tc.calls.length, 0, "admitted 实验层在浏览器 one-shot 上零调用")
   assert.equal(injector.clicks.length, 0)
   assert.equal(confirm.captured.length, 0, "无实验层建议 → G4 门不触发")
-  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "qwen-vl")
+  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "main-model")
   const cloudLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "cloud")
   assert.equal(qwenLog?.reason, "vault-browser-no-vlm", "证据链可见 skip 原因")
-  assert.equal(cloudLog?.reason, "vault-browser-no-vlm")
+  assert.equal(cloudLog, undefined)
 })
 
 test("#360: macOS bundleId 浏览器 one-shot（com.google.Chrome）→ admitted 实验层零调用（macOS 不裸奔）", { skip: os.platform() !== "darwin" }, async () => {
@@ -2484,7 +2488,7 @@ test("#360: macOS bundleId 浏览器 one-shot（com.google.Chrome）→ admitted
   assert.equal(tc.calls.length, 0, "macOS bundleId seam：实验层零调用")
   assert.equal(injector.clicks.length, 0)
   assert.equal(confirm.captured.length, 0)
-  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "qwen-vl")
+  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "main-model")
   assert.equal(qwenLog?.reason, "vault-browser-no-vlm")
 })
 
@@ -2502,15 +2506,10 @@ test("#360: macOS Safari bundleId（com.apple.Safari）同样 skip（seam 不止
 })
 
 test("#908 native screenshot sends only an eligible frame and keeps its pixels out of the tool result", async () => {
-  class RenderedWindow extends FakeCapturer {
-    override async captureWindow(): Promise<CaptureMeta> {
-      return { ...await super.captureWindow(), capture_method: "printwindow", observation_quality: "ok", occludedBy: [] }
-    }
-  }
   for (const sensitive of [false, true]) {
     let observations = 0
     const deps = makeDeps({
-      capturer: new RenderedWindow(),
+      capturer: new FakeCapturer(),
       locator: new FakeLocator(sensitive ? [{ ...OK_WORDS[0], text: "Password" }] : OK_WORDS),
       previewBuilder: fakePreviewBuilder([]),
       inspectDesktop: { current: () => true, inspect: async frame => {
@@ -2529,14 +2528,9 @@ test("#908 native screenshot sends only an eligible frame and keeps its pixels o
 })
 
 test("#908 an origin refusing a main-model suggested click leaves the target untouched", async () => {
-  class RenderedWindow extends FakeCapturer {
-    override async captureWindow(): Promise<CaptureMeta> {
-      return { ...await super.captureWindow(), capture_method: "printwindow", observation_quality: "ok", occludedBy: [] }
-    }
-  }
   const confirm = scriptedConfirm([false])
   const injector = new RecordingInjector()
-  const deps = makeDeps({ capturer: new RenderedWindow(), locator: new FakeLocator([]), injector,
+  const deps = makeDeps({ capturer: new FakeCapturer(), locator: new FakeLocator([]), injector,
     previewBuilder: fakePreviewBuilder([]), confirm: confirm.fn,
     inspectDesktop: { current: () => true, inspect: async frame => {
       assert.equal(frame.target, "circle")
@@ -2547,4 +2541,39 @@ test("#908 an origin refusing a main-model suggested click leaves the target unt
   assert.equal(result.success, false)
   assert.ok(confirm.captured.some(c => c.details.dangerousApis.includes("computer.main_model_suggestion")), result.error)
   assert.equal(injector.clicks.length, 0)
+})
+
+
+test("#908 approved Retina point uses client coordinates and rejects changed pixels or window ownership", async () => {
+  class RetinaCapturer extends FakeCapturer {
+    override async captureWindow(): Promise<CaptureMeta> {
+      return { ...await super.captureWindow(), scaleX: 2, scaleY: 2, imageWidth: 1280, imageHeight: 960 }
+    }
+  }
+  for (const scenario of ["stable", "pixel-change", "process-change", "revoked"]) {
+    const capturer = new RetinaCapturer([scenario === "pixel-change" ? 1 : 0])
+    const injector = new RecordingInjector()
+    let approved = false
+    const windows = new FakeWindows()
+    windows.infoForHwnd = async () => winInfo({ pid: approved && scenario === "process-change" ? 4321 : 1234 })
+    const deps = makeDeps({
+      windows, capturer, injector, locator: new FakeLocator([]),
+      inspectDesktop: {
+        current: () => !(approved && scenario === "revoked"),
+        inspect: async () => '{"x":0.25,"y":0.5}',
+      },
+      confirm: async details => {
+        assert.equal(details.requireImageReview, true)
+        assert.match(details.code, /主模型建议点击「circle」/)
+        approved = true
+        return { confirmationId: "point", approved, reason: "approved" }
+      },
+    })
+    const result = await runComputerTask({ app: "win.app.test", task: "select circle", actions: [{ action: "click", target: "circle" }] }, deps)
+    assert.equal(approved, true)
+    assert.equal(result.success, scenario === "stable", result.error)
+    const expected = { "pixel-change": "STALE_SCREENSHOT", "process-change": "HWND_NOT_OWNED", revoked: "APP_NOT_WHITELISTED" }
+    if (scenario !== "stable") assert.equal(result.errorCode, expected[scenario as keyof typeof expected])
+    assert.deepEqual(injector.clicks.map(({ x, y }) => [x, y]), scenario === "stable" ? [[150, 200]] : [])
+  }
 })

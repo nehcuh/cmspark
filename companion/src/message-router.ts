@@ -3669,7 +3669,6 @@ async function dispatchMessage(
     case "computer.model.ensure_python_env":
     case "computer.model.install_deps":
       return handleComputerModelMessage(msg, {
-        requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
       })
     // Path B M0 — voice.model.* / voice.binary.* (settings dual fence; ADR-023 L7)

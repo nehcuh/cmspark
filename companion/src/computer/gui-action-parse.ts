@@ -183,9 +183,7 @@ export function formatExperimentalSuggestionCaption(args: {
   thought?: string | null
 }): string {
   const target = sanitizeComputerCaption(args.target)
-  // Keep the Qwen3-VL product contract string (executor G4 tests + user-facing
-  // honesty). Generic "本地视觉定位" is reserved for a future multi-model slot.
-  const base = `实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）：建议点击「${target}」于客户端坐标 (${args.clientX}, ${args.clientY})`
+  const base = `主模型建议点击「${target}」于客户端坐标 (${args.clientX}, ${args.clientY})。请核对预览中的标记位置`
   const thought = args.thought ? sanitizeComputerCaption(args.thought) : ""
   if (!thought) {
     return `${base}。批准以执行此次点击，拒绝以放弃该建议。`

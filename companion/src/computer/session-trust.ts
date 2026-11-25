@@ -43,7 +43,7 @@
 //     still uses isTrusted() for either key form after an interactive approve.
 //   - Force-interactive carve-out (PROMPT_ALWAYS_TAGS + reL2ShouldPrompt /
 //     executor reL2): computer.danger_detected and
-//     computer.experimental_suggestion (experimental G4) NEVER auto-approve under
+//     computer.main_model_suggestion (experimental G4) NEVER auto-approve under
 //     session trust. v4.1 also keeps computer.foreground_yielded always-prompt.
 //
 //   - Grill Q2 (2026-07-26): grant.explicitOptIn is set only when the user
@@ -116,7 +116,7 @@ export function g1InitialSkipEligible(args: {
  */
 const PROMPT_ALWAYS_TAGS = new Set<string>([
   "computer.danger_detected",         // real risk surface detected
-  "computer.experimental_suggestion", // Qwen3-VL uncalibrated experimental layer
+  "computer.main_model_suggestion", // uncalibrated main model suggestion
   "computer.foreground_yielded",      // foreign process took frontmost
 ])
 
@@ -129,7 +129,7 @@ const PROMPT_ALWAYS_TAGS = new Set<string>([
  */
 const KNOWN_TAGS = new Set<string>([
   "computer.danger_detected",
-  "computer.experimental_suggestion",
+  "computer.main_model_suggestion",
   "computer.foreground_yielded",
   "computer.task_induced_dialog",
   "computer.budget_exhausted",
