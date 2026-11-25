@@ -1,6 +1,10 @@
 # 版本与交付状态
 
-源码版本 **1.9.1（已于 2026-11-24 正式发布）**。当前正式安装包见 [v1.9.1](https://github.com/nehcuh/cmspark/releases/tag/v1.9.1)。
+源码版本 **1.10.0（发布准备）**。当前正式安装包见 [v1.9.1](https://github.com/nehcuh/cmspark/releases/tag/v1.9.1)。
+
+## 1.10.0 发布准备
+
+自研电脑操控、可选主模型视觉与桌面最大权限的变更正在验收。Mac 四类任务与表单光标修复结果见[实测记录](audit/reviews/native-computer-macos-paired-20261125.md)。Windows 登录桌面、干净 macOS 用户首次安装及 Developer ID 覆盖升级尚待验收。
 
 ## 1.9.1 正式发布
 
