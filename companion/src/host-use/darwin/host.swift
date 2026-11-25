@@ -2433,6 +2433,17 @@ func postEventToOwnedPid(_ event: CGEvent, pid: pid_t) -> Bool {
     return slPostToPid(pid, event)
 }
 
+private func cuIsSystemCursor(_ row: [String: Any]) -> Bool {
+    // A caller can choose its window level or display name. Check the owning
+    // process against the system executable before ignoring this Quartz row.
+    guard row[kCGWindowLayer as String] as? CGWindowLevel == CGWindowLevelForKey(.cursorWindow),
+          let owner = row[kCGWindowOwnerPID as String] as? pid_t else { return false }
+    var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+    guard proc_pidpath(owner, &path, UInt32(path.count)) > 0 else { return false }
+    let server = URL(fileURLWithPath: "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer")
+    return String(cString: path) == server.resolvingSymlinksInPath().path
+}
+
 // Quartz returns windows front to back. A global mouse event is safe only
 // while its exact landing point belongs to the approved window and process.
 func cuClickPointOwned(_ point: CGPoint, windowId: UInt32, pid: pid_t) -> Bool {
@@ -2443,6 +2454,7 @@ func cuClickPointOwned(_ point: CGPoint, windowId: UInt32, pid: pid_t) -> Bool {
         guard let raw = row[kCGWindowBounds as String] as? [String: Any],
               let rect = CGRect(dictionaryRepresentation: raw as CFDictionary) else { return false }
         if rect.contains(point) {
+            if cuIsSystemCursor(row) { continue }
             return cuWindowNumber(row) == windowId && row[kCGWindowOwnerPID as String] as? pid_t == pid
         }
     }
