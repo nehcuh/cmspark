@@ -2579,13 +2579,16 @@ test("#908 approved Retina point uses client coordinates and rejects changed pix
 })
 
 
-test("revocation during local OCR discards the window text and preview", async () => {
+for (const channel of ["revoke", "hotkey"] as const) test(`${channel} during local OCR discards the window text and preview`, async () => {
   let active = true
   const events: import("../src/computer/preview").ComputerTaskEvent[] = []
-  const deps = makeDeps({ maximumDesktop: { current: () => active, allowsModel: () => false, signal: new AbortController().signal },
+  let hotkey = false
+  const deps = makeDeps({ abortCheck: () => { if (!hotkey) return null; hotkey = false; return "hotkey" },
+    maximumDesktop: { current: () => active, allowsModel: () => false, signal: new AbortController().signal },
     onEvent: event => events.push(event) })
   deps.locator.ocr = async () => {
-    active = false
+    if (channel === "hotkey") hotkey = true
+    else active = false
     return { language: "en", words: [{ text: "Private910", x: 5, y: 5, w: 50, h: 12 }] }
   }
   const result = await runComputerTask({ app: "win.app.test", task: "read", actions: [{ action: "describe" }] }, deps)

@@ -358,6 +358,15 @@ export async function runComputerTask(
     }
   }
 
+  // Native hotkeys use a consumable stop flag. Once observed, keep the task stopped.
+  let stoppedBy: ReturnType<NonNullable<typeof deps.abortCheck>> = null
+  const pollStop = () => stoppedBy ??= deps.abortCheck?.() ?? null
+  const assertReadCurrent = () => {
+    assertObservationCurrent()
+    const channel = pollStop()
+    if (channel) throw abortChannelError(channel, `computer: observation stopped by emergency stop (${channel})`)
+  }
+
   const fail = async (err: ComputerError): Promise<ComputerTaskResult> => {
     log("computer.task.failed", { taskId, code: err.code, error: err.message })
     try {
@@ -724,7 +733,7 @@ export async function runComputerTask(
     assertHwndOwnedByEntry(liveWindow, owner)
     if (liveWindow.pid !== targetPid) throw new ComputerError("HWND_NOT_OWNED", "computer: window process changed")
     const assertCurrent = () => {
-      const aborted = deps.abortCheck?.()
+      const aborted = pollStop()
       if (aborted) throw abortChannelError(aborted, "computer: stopped during model observation")
       assertObservationCurrent()
       if (!deps.inspectDesktop?.current() || assertCoordinateAllowed(currentConfig(), params.app) !== owner) {
@@ -754,7 +763,7 @@ export async function runComputerTask(
 
     // WP2 (§E.6): emergency stop — polled before EVERY action of any kind.
     try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
-    const abortedAtTop = deps.abortCheck?.() ?? null
+    const abortedAtTop = pollStop() ?? null
     if (abortedAtTop) {
       log("computer.task.aborted", { taskId, seq, channel: abortedAtTop })
       return fail(abortChannelError(abortedAtTop, `computer: task aborted by emergency stop (${abortedAtTop})`))
@@ -768,7 +777,7 @@ export async function runComputerTask(
         const chunk = Math.min(remaining, 50)
         await sleep(chunk)
         remaining -= chunk
-        const abortedMidWait = deps.abortCheck?.() ?? null
+        const abortedMidWait = pollStop() ?? null
         if (abortedMidWait) {
           log("computer.task.aborted", { taskId, seq, channel: abortedMidWait, during: "wait" })
           return fail(abortChannelError(abortedMidWait, `computer: task aborted by emergency stop (${abortedMidWait}) during wait`))
@@ -781,10 +790,10 @@ export async function runComputerTask(
     }
     if (action.action === "screenshot" || action.action === "describe") {
       try {
-        assertObservationCurrent()
+        assertReadCurrent()
         deps.beforeReadCapture?.()
         const shot = await trackCapture(hwnd, true)
-        assertObservationCurrent()
+        assertReadCurrent()
         const observation = observationFields(shot)
         // R2: read-only frames go through the same credential-neighborhood
         // scan as injection frames — the evidence chain must never persist an
@@ -792,7 +801,7 @@ export async function runComputerTask(
         // for BOTH actions (screenshot too); a missing language pack fails
         // closed, same as the injection paths.
         const ocrRes = await deps.locator.ocr(shot.path)
-        assertObservationCurrent()
+        assertReadCurrent()
         const wholeImg: RectPx = { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
         const blur = scanDanger(ocrRes.words, wholeImg, REGION_CROP_SIZE).credentialRects
         deps.readScope?.credential(blur.length > 0)
@@ -818,7 +827,7 @@ export async function runComputerTask(
             /* degrade to no image */
           }
         }
-        assertObservationCurrent()
+        assertReadCurrent()
         if (action.action === "screenshot" && deps.inspectDesktop) {
           const description = await inspectFrame(shot, ocrRes, previewImage)
           const observationText = description
@@ -827,10 +836,10 @@ export async function runComputerTask(
           untrustedText = [untrustedText, observationText].filter(Boolean).join("\n")
         }
         await evidence.sealScreenshot(shot.path, seq, "before", blur)
-        assertObservationCurrent()
+        assertReadCurrent()
         sealConsumed(shot.path)
         await evidence.appendAction({ seq, action: action.action, ...observation, crossverified: true, uncrossverified: false, durationMs: now() - startedAt })
-        assertObservationCurrent()
+        assertReadCurrent()
         steps.push({ seq, action: action.action, ok: true, ...observation, ...(untrustedText !== undefined ? { untrustedText } : {}) })
         emit({
           event: "step",
@@ -1400,7 +1409,7 @@ export async function runComputerTask(
         }
         assertModelPointCurrent?.()
       }
-      const abortedPreInject = deps.abortCheck?.() ?? null
+      const abortedPreInject = pollStop() ?? null
       if (abortedPreInject) {
         log("computer.task.aborted", { taskId, seq, channel: abortedPreInject, during: "pre-inject" })
         throw abortChannelError(abortedPreInject, `computer: task aborted by emergency stop (${abortedPreInject}) before injection`)
@@ -1507,7 +1516,7 @@ export async function runComputerTask(
             // Observation unavailable: retain the existing conservative check.
           }
           // This observation adds an await after the common pre-inject fence.
-          const abortedBeforeUia = deps.abortCheck?.() ?? null
+          const abortedBeforeUia = pollStop() ?? null
           if (abortedBeforeUia !== null) {
             throw abortChannelError(abortedBeforeUia, `computer: task aborted by emergency stop (${abortedBeforeUia}) before uia delivery`)
           }
@@ -1534,7 +1543,7 @@ export async function runComputerTask(
             // task. The coordinate path only survives this today because computer-input.ps1
             // separately re-checks the same flag — i.e. by luck, not by design. Abort here so
             // it is design.
-            const channel = deps.abortCheck?.() ?? "hotkey"
+            const channel = pollStop() ?? "hotkey"
             log("computer.task.aborted", { taskId, seq, channel, via: "uia_invoke" })
             throw abortChannelError(channel, "computer: task aborted by emergency stop (uia delivery)")
           } else if (!r.ok && r.terminal === true) {
@@ -1558,7 +1567,7 @@ export async function runComputerTask(
           deliveryRoute = deliveryRoute ?? "sendinput"
           // UIA delivery awaited above: a stop may have arrived after the common fence.
           if (deliveryRoute === "uia_fallback") {
-            const abortedBeforeFallback = deps.abortCheck?.() ?? null
+            const abortedBeforeFallback = pollStop() ?? null
             if (abortedBeforeFallback !== null) {
               log("computer.task.aborted", { taskId, seq, channel: abortedBeforeFallback, via: "coordinate_fallback" })
               throw abortChannelError(abortedBeforeFallback, `computer: task aborted by emergency stop (${abortedBeforeFallback}) before coordinate fallback`)
@@ -1866,7 +1875,7 @@ export async function runComputerTask(
     /* best-effort — the ps1 self-destructs at -MaxSeconds regardless */
   }
   await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions, uiaWatcher: uiaWatcherLiveness() })
-  try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
+  try { assertReadCurrent() } catch (error) { return fail(error as ComputerError) }
   if (cacheVisualProbeAfterTask && deps.currentConfig?.().apps?.entries?.[entry.token] === entry) {
     try { cacheVisualProbeAfterTask() } catch { /* optional UIA cache */ }
   }

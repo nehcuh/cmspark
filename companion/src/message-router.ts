@@ -5668,7 +5668,9 @@ async function dispatchMessage(
       const peer = session?.desktopPanelPeer
       if (!peer || !session?.appsOwnerCurrent?.()) return { type: "computer.maximum.error", error: "请从已配对的扩展侧栏操作。" }
       if (type === "computer.maximum.review") return reviewDesktopMaximum(peer)
-      if (type === "computer.maximum.arm") return armDesktopMaximum(peer, rest)
+      if (type === "computer.maximum.arm") return armDesktopMaximum(peer, rest, getConfig(), () => {
+        if (session.appsOwnerCurrent?.()) session.sendToExtension(desktopMaximumStatus(peer))
+      })
       if (type === "computer.maximum.revoke") revokeDesktopMaximum(peer)
       return desktopMaximumStatus(peer)
     }

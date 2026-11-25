@@ -12,6 +12,7 @@ import os from "node:os"
 
 import { handleAppsMessage, type AppsHandlerDeps } from "../src/apps/handlers"
 import { EvidenceOpenRateLimiter, handleComputerMessage } from "../src/computer/handlers"
+import { armDesktopMaximum, desktopMaximumPermit, reviewDesktopMaximum, revokeDesktopMaximum } from "../src/computer/desktop-maximum"
 import type { AppEntry } from "../src/apps/types"
 import * as path from "path"
 
@@ -269,6 +270,36 @@ test("apps.set_coordinate_allowed: clearing on a vault binary is still free (wei
 })
 
 // --- computer.set_enabled --------------------------------------------------------
+
+test("settings revocation signals active native input and cannot revive the old permit", async t => {
+  reset()
+  const first = seedEntry({ coordinateAllowed: true })
+  const second = seedEntry({ token: "win.app.other", coordinateAllowed: true })
+  const entries = { [first.token]: first, [second.token]: second }
+  replaceAppsEntries(entries)
+  setComputerCoordinateEnabled(true)
+  const peer = {}
+  let ended = 0
+  const offer = reviewDesktopMaximum(peer)
+  assert.equal(offer.apps.length, 2)
+  armDesktopMaximum(peer, { review_id: offer.review_id, confirmation_phrase: "我了解风险", images: false }, getConfig(), () => ended++)
+  t.after(() => revokeDesktopMaximum(peer))
+  const permit = desktopMaximumPermit(peer, first.token, () => true)!
+  const other = desktopMaximumPermit(peer, second.token, () => true)!
+  const stop = t.mock.fn()
+  permit.signal.addEventListener("abort", stop, { once: true })
+  assert.equal((await handleAppsMessage({ type: "apps.set_coordinate_allowed", token: first.token, allowed: false }, {}, deps())).type, "apps.updated")
+  assert.equal(stop.mock.callCount(), 1)
+  assert.equal(permit.current(), false)
+  assert.equal(other.current(), true)
+  replaceAppsEntries(entries)
+  assert.equal(desktopMaximumPermit(peer, first.token, () => true), undefined)
+  assert.equal(ended, 0)
+  const settings = await handleComputerMessage({ type: "computer.set_enabled", enabled: false }, {})
+  assert.equal(settings.type, "computer.state")
+  assert.equal(other.signal.aborted, true)
+  assert.equal(ended, 1)
+})
 
 test("an already enabled coordinate switch requires no second biometric", async () => {
   reset()

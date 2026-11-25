@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { getConfig, type CompanionConfig, type LlmConfig } from "../config"
+import { CONFIG_CHANGE_EVENT, configEvents, getConfig, type CompanionConfig, type LlmConfig } from "../config"
 import { isValidSecurityArmPhrase } from "../security-arm"
 import { logger } from "../logger"
 import { assertCoordinateAllowed } from "./policy"
@@ -38,7 +38,8 @@ function snapshot(cfg: CompanionConfig) {
 
 type Offer = ReturnType<typeof snapshot> & { id: string; until: number }
 const offers = new WeakMap<object, Offer>()
-type Grant = { peer: object; offer: Offer; images: boolean; expiresAt: number; stop: AbortController; timer: NodeJS.Timeout }
+type Grant = { peer: object; offer: Offer; images: boolean; expiresAt: number; appStops: Map<string, AbortController>;
+  onSettingsChange: (cfg: CompanionConfig) => void; timer: NodeJS.Timeout }
 let active: Grant | undefined
 
 export function revokeDesktopMaximum(peer?: object): boolean {
@@ -47,7 +48,8 @@ export function revokeDesktopMaximum(peer?: object): boolean {
   const grant = active
   active = undefined
   clearTimeout(grant.timer)
-  grant.stop.abort()
+  configEvents.off(CONFIG_CHANGE_EVENT, grant.onSettingsChange)
+  for (const stop of grant.appStops.values()) stop.abort()
   logger.info("computer.maximum.revoked", {})
   return true
 }
@@ -69,7 +71,7 @@ export function reviewDesktopMaximum(peer: object, cfg = getConfig()) {
     receiver: offer.receiver }
 }
 
-export function armDesktopMaximum(peer: object, input: Record<string, unknown>, cfg = getConfig()) {
+export function armDesktopMaximum(peer: object, input: Record<string, unknown>, cfg = getConfig(), onEnded?: () => void) {
   const offer = offers.get(peer)
   offers.delete(peer)
   const now = Date.now()
@@ -81,9 +83,18 @@ export function armDesktopMaximum(peer: object, input: Record<string, unknown>, 
       (input.images && (!current.receiver || current.route !== offer.route))) {
     return { type: "computer.maximum.error", error: "应用或主模型配置已变更，请重新查看授权范围。" }
   }
-  const timer = setTimeout(() => revokeDesktopMaximum(peer), UNATTENDED_HARD_TTL_MS)
+  const appStops = new Map(offer.apps.map(app => [app.token, new AbortController()]))
+  const end = () => { if (revokeDesktopMaximum(peer)) onEnded?.() }
+  const onSettingsChange = (next: CompanionConfig) => {
+    for (const app of offer.apps) {
+      if (applicationIdentity(next, app.token) !== app.identity) appStops.get(app.token)!.abort()
+    }
+    if (offer.apps.every(app => appStops.get(app.token)!.signal.aborted)) end()
+  }
+  const timer = setTimeout(end, UNATTENDED_HARD_TTL_MS)
   timer.unref()
-  active = { peer, offer, images: input.images, expiresAt: now + UNATTENDED_HARD_TTL_MS, stop: new AbortController(), timer }
+  active = { peer, offer, images: input.images, expiresAt: now + UNATTENDED_HARD_TTL_MS, appStops, onSettingsChange, timer }
+  configEvents.on(CONFIG_CHANGE_EVENT, onSettingsChange)
   logger.info("computer.maximum.armed", { app_count: offer.apps.length, images: input.images, expires_at: active.expiresAt })
   return desktopMaximumStatus(peer)
 }
@@ -101,10 +112,11 @@ export function desktopMaximumPermit(peer: object, token: string, ownerCurrent: 
   const grant = live()
   if (grant?.peer !== peer) return
   const app = grant.offer.apps.find(item => item.token === token)
-  if (!app) return
-  const current = () => live() === grant && ownerCurrent() && applicationIdentity(configuration(), token) === app.identity
+  const signal = grant.appStops.get(token)?.signal
+  if (!app || !signal) return
+  const current = () => live() === grant && !signal.aborted && ownerCurrent() && applicationIdentity(configuration(), token) === app.identity
   if (!current()) return
-  return { current, signal: grant.stop.signal, allowsModel(model) {
+  return { current, signal, allowsModel(model) {
     const cfg = configuration()
     return current() && grant.images && !!receiver(cfg) && routeIdentity(cfg.llm) === grant.offer.route &&
       routeIdentity(model) === grant.offer.route
