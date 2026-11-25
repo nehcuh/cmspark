@@ -863,7 +863,9 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "computer.maximum.get":
       case "computer.maximum.review":
       case "computer.maximum.revoke": {
-        const panel = sender.id === chrome.runtime.id && sender.url?.split(/[?#]/)[0] === chrome.runtime.getURL("sidepanel.html")
+        const url = sender?.url?.split(/[?#]/)[0]
+        const panel = sender?.id === chrome.runtime.id && (url === chrome.runtime.getURL("sidepanel.html") ||
+          url === chrome.runtime.getURL("tabs/workspace.html"))
         sendResponse({ ok: panel && wsClient?.getState() === "connected" && wsClient.send(message) })
         return false
       }

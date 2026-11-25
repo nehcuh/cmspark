@@ -74,12 +74,9 @@ if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" != "1" ]; then
   bash "${ROOT_DIR}/scripts/release-guard.sh" || exit 1
 fi
 
-# Experimental locate layer is Qwen3-VL (on-demand model + Python env under
-# ~/.cmspark-agent/); the legacy TinyClick ONNX worker is product-replaced and
-# NOT staged. onnxruntime-node IS staged (#260 speaker diarize — 本机声纹
-# embedding), per-platform napi binary only (strip step [5/9]); missing target
-# binary degrades gracefully to diarize_runtime_unavailable. See
-# docs/qwen-vl-experimental-layer.md.
+# Work Center uses the optional local Qwen3-VL worker for screenshot extraction.
+# Native computer control uses accessibility, OCR and the configured main model.
+# Speaker diarization separately ships the target onnxruntime-node binary (#260).
 
 echo "=== CMspark Package Builder ==="
 echo "Platform:  ${PLATFORM}"
@@ -187,7 +184,7 @@ esac
 echo "[3/9] Bundling with esbuild..."
 cd "${ROOT_DIR}/companion"
 # Keep onnxruntime-node external if any residual import remains in the graph;
-# we do NOT stage ORT into the zip (Qwen3-VL is the experimental locate layer).
+# the platform strip step selects the binary needed by speaker diarization.
 # SoT: companion/scripts/esbuild-bundle-args.json via run-esbuild-bundle.mjs
 if [ "${PLATFORM}" = "macos-arm64" ]; then
   node scripts/run-esbuild-bundle.mjs --packaged-macos-arm64-tray 2>&1 | tail -3
@@ -220,7 +217,7 @@ else
   echo "ERROR: qwen-vl-worker.py missing (need dist/computer or src/computer) — required by Work Center local extraction" >&2
   exit 1
 fi
-echo "  qwen-vl-worker.py (Qwen3-VL experimental locate; models on-demand)"
+echo "  qwen-vl-worker.py (Work Center image extraction; models on-demand)"
 
 # Native activity resources must survive flattened JS and Windows SEA packaging.
 case "${PLATFORM}" in
@@ -393,7 +390,6 @@ case "${PLATFORM}" in
     elif [ -f companion/dist/cmspark-tray ]; then
       cp companion/dist/cmspark-tray "${STAGING}/"
     fi
-    # No ORT/TinyClick stage — experimental locate is Qwen3-VL (qwen-vl-worker.py).
     # Path B: optional cmspark-whisper binary (local STT). Soft-warn if missing.
     case "${PLATFORM}" in
       macos-arm64) _WHISPER_BIN="cmspark-whisper-darwin-arm64" ;;
@@ -537,7 +533,6 @@ case "${PLATFORM}" in
     chmod 0755 "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
     if [ "${PLATFORM}" = "linux-arm64" ]; then strip_ort_napi linux arm64; else strip_ort_napi linux x64; fi
     strip_ort_optional_providers
-    # No ORT/TinyClick stage — experimental locate is Qwen3-VL.
     # cmspark-whisper-linux-x64 is intentionally NOT staged (#379): the
     # runtime pin matrix has no linux-x64 entry (whisper-binary-pins.ts) and
     # the download manifest has no linux URL, so production mode fail-closed

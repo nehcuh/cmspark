@@ -4,7 +4,7 @@ import test from "node:test"
 import { getConfig } from "../src/config"
 import { armDesktopMaximum, desktopMaximumPermit, desktopMaximumStatus, reviewDesktopMaximum, revokeDesktopMaximum } from "../src/computer/desktop-maximum"
 
-test("one reviewed desktop grant binds the connection, existing apps, image recipient and revocation", () => {
+test("one reviewed desktop grant binds the connection, existing apps, image recipient and revocation", t => {
   const peer = {}, other = {}, initial = getConfig()
   const token = "mac.app.pad"
   const pad = { token, display_name: "Pad", kind: "gui" as const, policy: "manual" as const, source: "user" as const,
@@ -49,5 +49,13 @@ test("one reviewed desktop grant binds the connection, existing apps, image reci
     assert.equal(granted.current(), false)
     assert.equal(revokeDesktopMaximum(other), false)
     assert.equal(revokeDesktopMaximum(peer), true)
+    pad.coordinateAllowed = true
+    armDesktopMaximum(peer, fields(review().review_id, true), cfg)
+    const last = permit()!
+    const expiry = desktopMaximumStatus(peer).expiresAt!
+    t.mock.method(Date, "now", () => expiry)
+    assert.equal(last.current(), false)
+    assert.equal(last.signal.aborted, true)
+    assert.equal(desktopMaximumStatus(peer).expiresAt, null)
   } finally { revokeDesktopMaximum() }
 })
