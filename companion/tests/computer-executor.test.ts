@@ -76,7 +76,7 @@ function winInfo(overrides: Partial<WindowInfo> = {}): WindowInfo {
   }
 }
 
-function shot(path: string): CaptureMeta {
+function shot(path: string, source: "printwindow" | "unknown" = "printwindow"): CaptureMeta {
   return {
     hwnd: HWND,
     rect: { x: 100, y: 100, width: 640, height: 480 },
@@ -86,9 +86,7 @@ function shot(path: string): CaptureMeta {
     sha256: "deadbeef",
     black: false,
     fallbackUsed: false,
-    capture_method: "printwindow",
-    observation_quality: "ok",
-    occludedBy: [],
+    ...(source === "printwindow" ? { capture_method: source, observation_quality: "ok" as const, occludedBy: [] } : {}),
     osrBlackSuspected: false,
   }
 }
@@ -100,12 +98,12 @@ class FakeCapturer implements ScreenCapturer {
   captures = 0
   paths: string[] = []
   diffs: number[] = []
-  constructor(private diffScript: DiffScriptEntry[] = []) {}
+  constructor(private diffScript: DiffScriptEntry[] = [], private source: "printwindow" | "unknown" = "printwindow") {}
   async captureWindow(): Promise<CaptureMeta> {
     this.captures += 1
     const p = `cap-${this.captures}.png`
     this.paths.push(p)
-    return shot(p)
+    return shot(p, this.source)
   }
   async crop(_s: string, _r: any, out: string): Promise<string> { return out }
   async diff(): Promise<DiffMetrics> {
@@ -881,7 +879,7 @@ test("executor R2: clean window -> read-only frames seal with empty blur (no ove
 
 test("executor: screenshot/describe/wait do not consume the action budget", async () => {
   const injector = new RecordingInjector()
-  const deps = makeDeps({ injector })
+  const deps = makeDeps({ injector, capturer: new FakeCapturer([], "unknown") })
   const actions: ComputerAction[] = [
     { action: "screenshot" },
     { action: "describe" },
