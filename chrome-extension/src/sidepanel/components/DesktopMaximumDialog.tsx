@@ -43,7 +43,7 @@ export function DesktopMaximumDialog({ onClose }: { onClose(): void }) {
     overlayStyle={{ position: "fixed", inset: 0, zIndex: 20000, background: tokens.scrim, display: "grid", alignItems: "center", padding: 12 }}
     panelStyle={{ background: tokens.bgElevated, color: tokens.text, padding: 16, borderRadius: 12, lineHeight: 1.55, maxHeight: "85vh", overflow: "auto", overflowWrap: "anywhere" }}>
     <strong>桌面最大权限</strong>
-    {active ? <p role="status">已授权至 {new Date(state.desktopMaximumExpiresAt!).toLocaleTimeString()}。解除会停止正在执行的桌面操作。</p> : <>
+    {active ? <p role="status">已授权至 {new Date(state.desktopMaximumExpiresAt!).toLocaleTimeString()}。更换模型、接收地址或密钥后，需解除并重新授权才能向新配置发图。解除会停止正在执行的桌面操作。</p> : <>
       <p>允许本次扩展连接下的所有普通对话（包括新建对话）自动启动、查看、点击和键入以下应用。操作可能修改文件或提交表单，执行前不会逐步预览。</p>
       {offer ? (offer.apps.length ? <ul>{offer.apps.map(app => <li key={app.token}>{app.name}（{app.token}）</li>)}</ul>
         : <p>请先在“应用”中开启电脑操控，并授权至少一个应用。</p>) : !error && <p role="status">正在读取已授权应用…</p>}

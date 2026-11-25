@@ -693,7 +693,7 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 |----|-------------|-----|
 | Apps 白名单 | `host_app` · `apps.enabled` · AppEntry | 每应用 policy；Apps 面板可切换全局坐标开关 |
 | Host 语义 API | `host_read` · `host_write` | L2；写操作生物识别/nonce；opaque TargetId |
-| Computer 坐标 | `host_computer` · `computer.coordinateEnabled` · `coordinateAllowed` | 双开关 + 任务级 L2：**god-mode / auto_approve 永不跳过**；**浏览器**走一次性 L2（值守/三旗/G1 永不 skip）；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions/thread key）可跳过同线程同 **非浏览器** App 后续任务的 **initial L2**；danger / experimental / foreground_yielded **始终 prompt** |
+| Computer 坐标 | `host_computer` · `computer.coordinateEnabled` · `coordinateAllowed` | 双开关 + 任务级 L2：**god-mode / auto_approve 永不跳过**；**浏览器**走一次性 L2（值守/三旗/G1 永不 skip）；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions/thread key）可跳过同线程同 **非浏览器** App 后续任务的 **initial L2**；普通模式下 danger / experimental / foreground_yielded 均提示。独立的桌面最大权限可替当前连接内已列出的应用确认操作。主模型建议还需勾选接收方。硬拒绝与窗口复核始终生效 |
 
 桌面面由 Companion 调 OS 适配器（darwin Swift/AppleScript、win PowerShell/UIA 等），**不是** Extension CDP。
 
