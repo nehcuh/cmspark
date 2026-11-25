@@ -37,7 +37,7 @@ import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
-import { registerComputerInputStop, onComputerTaskAbort } from "../computer/task-abort-registry"
+import { requestComputerTaskAbort, registerComputerInputStop, onComputerTaskAbort } from "../computer/task-abort-registry"
 import { gateHostComputerFocusLease, releaseCuFocusLease } from "../loop/cu-focus-lease"
 import { proposeRunProgress } from "../threads/run-progress"
 import { acpSessionLookupFailure, currentAcpSessions } from "../acp/session-recovery"
@@ -133,6 +133,7 @@ export interface CompanionToolExecOptions {
    * lives) into runComputerTask deps; absent = every re-L2 asks.
    */
   computerRead?: ComputerReadOperation
+  desktopMaximum?: import("../computer/desktop-maximum").DesktopMaximumPermit
   inspectDesktop?: import("../computer/main-model-vision").InspectDesktopFrame
   computerSessionId?: string
   /**
@@ -1939,7 +1940,13 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       const launchStartedAt = Date.now()
       try {
         const { launchApp } = await import("../apps/launch")
-        const outcome = await launchApp(entry)
+        const { assertExeNotDrifted } = await import("../computer/policy")
+        const beforeLaunch = () => {
+          if (!execOpts?.desktopMaximum) return
+          if (!execOpts.desktopMaximum.current()) throw new Error("桌面最大权限已失效")
+          assertExeNotDrifted(entry)
+        }
+        const outcome = await launchApp(entry, { beforeLaunch })
         // Design §7.10: per-app audit {token, action, policy, tier_used,
         // confirmation_id?, evidence, duration_ms}. confirmation_id is not
         // plumbed through the gate; tool_call_id is the correlation key.
@@ -2187,6 +2194,10 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         cuLeaseHeld = lease.acquired
       }
       computerTaskAbort.set(computerTaskId, false)
+      const maximum = execOpts?.desktopMaximum
+      const stopMaximumTask = () => { requestComputerTaskAbort(computerTaskId) }
+      maximum?.signal.addEventListener("abort", stopMaximumTask, { once: true })
+      if (maximum && !maximum.current()) stopMaximumTask()
       const visionStop = execOpts?.inspectDesktop ? new AbortController() : undefined
       const unregisterVisionStop = visionStop && onComputerTaskAbort(id => {
         if (id === "*" || id === computerTaskId) visionStop.abort()
@@ -2263,13 +2274,14 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               currentSecurity: () => getConfig().security,
               beforeReadCapture: () => consumeComputerReadAttempt(),
               readScope: execOpts?.computerRead,
+              maximumDesktop: maximum,
               inspectDesktop: execOpts?.inspectDesktop,
               desktopVisionSignal: visionStop?.signal,
               currentConfig: getConfig,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
-                computerTaskAbort.get(computerTaskId)
+                (computerTaskAbort.get(computerTaskId) || (maximum && !maximum.current()))
                   ? "panel"
                   : darwinEstop.consumeEstopFlag()
                     ? "hotkey"
@@ -2350,13 +2362,14 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               currentSecurity: () => getConfig().security,
               beforeReadCapture: () => consumeComputerReadAttempt(),
               readScope: execOpts?.computerRead,
+              maximumDesktop: maximum,
               inspectDesktop: execOpts?.inspectDesktop,
               desktopVisionSignal: visionStop?.signal,
               currentConfig: getConfig,
               sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
-                computerTaskAbort.get(computerTaskId)
+                (computerTaskAbort.get(computerTaskId) || (maximum && !maximum.current()))
                   ? "panel"
                   : consumeEstopFlag()
                     ? "hotkey"
@@ -2411,6 +2424,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
         // R1 (§E.6.2): release the single-task slot on EVERY exit path —
         // success, typed refusal, abort, or throw. Runs after the return
         // value is computed; delete is idempotent.
+        maximum?.signal.removeEventListener("abort", stopMaximumTask)
         unregisterVisionStop?.()
         unregisterInputStop?.()
         computerTaskAbort.delete(computerTaskId)

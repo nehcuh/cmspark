@@ -1,3 +1,4 @@
+import { desktopMaximumPermit } from "./computer/desktop-maximum"
 import { assertCoordinateAllowed } from "./computer/policy"
 import { getComputerSessionTrust, resolveComputerTrustKey } from "./computer/session-trust"
 import { computerReadConnectionFor, readonlyComputerDraft, type ComputerReadConnection, type ComputerReadOperation } from "./computer/readonly-session"
@@ -453,6 +454,7 @@ export function seedThreadManagerForTests(): ThreadManager {
  * runner (or tests) may pass `trustedOutbound: true` after Bearer auth.
  */
 export type ToolExecuteInvokeOpts = {
+  desktopControl?: () => boolean
   desktopVision?: import("./computer/main-model-vision").DesktopVisionRoute
   enterprisePermit?: EnterprisePermit
   trustedOutbound?: boolean
@@ -696,13 +698,16 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
     let computerRead: ComputerReadOperation | undefined
     let computerReadSucceeded = false
     try {
+    const desktopMaximum = invokeOpts?.desktopControl && !nativeOwner && !enterprisePermit && !invokeOpts.trustedOutbound &&
+      evidenceScope?.kind === "chat" && (toolName === "host_computer" || (toolName === "host_app" && finalParams.action === "launch"))
+      ? desktopMaximumPermit(ws, String(finalParams.app), invokeOpts.desktopControl) : undefined
     if (toolName === "host_computer") {
       const draft = readonlyComputerDraft(finalParams)
       if (!draft) computerReads?.retire()
       const thread = evidenceScope?.kind === "chat" ? threadManager.get(evidenceScope.threadId) : undefined
       const threadOwner = thread && threadManager.getComputerReadOwner(evidenceScope!.threadId)
       const auth = getWsAuthState(ws), configuration = getConfig(), app = draft && configuration.apps?.entries?.[String(draft.app)]
-      if (draft && thread && threadOwner && app && !nativeOwner && !invokeOpts?.trustedOutbound && !enterprisePermit &&
+      if (!desktopMaximum && draft && thread && threadOwner && app && !nativeOwner && !invokeOpts?.trustedOutbound && !enterprisePermit &&
           thread.agent_role !== "worker" && thread.agent_role !== "orchestrator" && !thread.parent_thread_id && auth?.authenticated === true &&
           auth.surface === "panel" && /^chrome-extension:\/\//i.test(auth.origin || "")) {
         computerReads ??= computerReadConnectionFor(ws)
@@ -747,6 +752,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
 
     // L2 confirmation gate — extracted to tool/l2-admission.ts (C10-B)
     const l2Outcome = await runL2ToolAdmission({
+      desktopMaximum,
       ...(nativeOwner ? { nativeConfirmationUnavailable: denyNativeConfirmation } : {}),
       computerRead,
       enterprisePermit,
@@ -842,15 +848,17 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
           evidenceScope,
           computerRead,
+          desktopMaximum,
           inspectDesktop: toolName === "host_computer" && evidenceScope?.kind === "chat" &&
             !nativeOwner && !enterprisePermit && !invokeOpts?.trustedOutbound && invokeOpts?.desktopVision &&
             getWsAuthState(ws)?.surface === "panel"
+            && (!desktopMaximum || desktopMaximum.allowsModel(invokeOpts.desktopVision.model))
             ? desktopFrameInspector(invokeOpts.desktopVision, async (details, approvalSignal) => {
               const decision = await confirmations.request(data => {
                 if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data))
               }, details, { originWs: ws, signal: approvalSignal })
               return confirmations.isOriginApproval(decision, ws)
-            }, signal) : undefined,
+            }, signal, desktopMaximum) : undefined,
           // Only authenticated, local-chat server-bound scope may pull terminal text.
           // Adapter final __thread_id injection is preserved, but JSON is not this authority.
           readTerminalTail: toolName === "terminal_tail_read" && evidenceScope?.kind === "chat" && !invokeOpts?.trustedOutbound && !nativeOwner

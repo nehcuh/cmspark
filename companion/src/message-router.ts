@@ -1,3 +1,4 @@
+import { armDesktopMaximum, desktopMaximumStatus, hasDesktopMaximum, reviewDesktopMaximum, revokeDesktopMaximum } from "./computer/desktop-maximum"
 import { retireComputerReadonlyThread } from "./computer/readonly-session"
 // Message router — dispatches incoming WebSocket messages to handlers
 // FREEZE (C10 multi-adv 2026-08-10 / phase-A 2026-08-11):
@@ -346,6 +347,7 @@ interface SessionCallbacks {
   nativeDialog?: { current(): boolean; messageId: string; browserTarget?(): number | undefined; started(run: Readonly<{ id?: string; current(): boolean; stop(): boolean }>): void }
 
   /** #689 current originating socket/auth identity, not caller-controlled. */
+  desktopPanelPeer?: object
   appsOwnerCurrent?: () => boolean
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal, options?: { siteContextTabId?: number; siteContextRequireActive?: boolean }) => Promise<{ success: boolean; data?: any; error?: string }>
@@ -5659,7 +5661,19 @@ async function dispatchMessage(
     }
 
     // ADR-021: process-memory unattended desktop grant (not config SoT)
+    case "computer.maximum.get":
+    case "computer.maximum.review":
+    case "computer.maximum.arm":
+    case "computer.maximum.revoke": {
+      const peer = session?.desktopPanelPeer
+      if (!peer || !session?.appsOwnerCurrent?.()) return { type: "computer.maximum.error", error: "请从已配对的扩展侧栏操作。" }
+      if (type === "computer.maximum.review") return reviewDesktopMaximum(peer)
+      if (type === "computer.maximum.arm") return armDesktopMaximum(peer, rest)
+      if (type === "computer.maximum.revoke") revokeDesktopMaximum(peer)
+      return desktopMaximumStatus(peer)
+    }
     case "security.unattended.arm": {
+      if (hasDesktopMaximum()) return { type: "error", error: "请先解除桌面最大权限。" }
       const {
         armUnattended,
         captureCruiseSnapshot,
@@ -5734,6 +5748,9 @@ async function dispatchMessage(
       return { type: "security.unattended.status", ...result.status }
     }
     case "security.unattended.disarm": {
+      if (session?.desktopPanelPeer && revokeDesktopMaximum(session.desktopPanelPeer)) {
+        session.sendToExtension(desktopMaximumStatus(session.desktopPanelPeer))
+      }
       const {
         disarmUnattended,
         restoreCruiseFromSnapshot,

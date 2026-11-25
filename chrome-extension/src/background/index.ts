@@ -859,6 +859,14 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
       }
 
+      case "computer.maximum.arm":
+      case "computer.maximum.get":
+      case "computer.maximum.review":
+      case "computer.maximum.revoke": {
+        const panel = sender.id === chrome.runtime.id && sender.url?.split(/[?#]/)[0] === chrome.runtime.getURL("sidepanel.html")
+        sendResponse({ ok: panel && wsClient?.getState() === "connected" && wsClient.send(message) })
+        return false
+      }
       case "file.upload.part": {
         const extensionPage = sender?.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(""))
         if (!extensionPage || wsClient?.getState() !== "connected") sendResponse({ ok: false })

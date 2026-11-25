@@ -59,6 +59,18 @@ test("desktop image consent applies to one frame, model and request only", async
       assert.equal(await redirect.inspect(frame), undefined)
       assert.equal(received.length, start + 2)
       assert.ok(received.at(-1)!.path.startsWith("/redirect/"))
+      const stop = new AbortController()
+      let authorized = true
+      const automatic = desktopFrameInspector({ model, current: () => true }, async () => {
+        throw new Error("unexpected per-frame prompt")
+      }, undefined, { current: () => authorized, allowsModel: m => m === model && authorized, signal: stop.signal })
+      assert.equal(await automatic.inspect(frame), "synthetic circle")
+      authorized = false
+      assert.equal(await automatic.inspect(frame), undefined)
+      authorized = true
+      stop.abort()
+      assert.equal(await automatic.inspect(frame), undefined)
+      assert.equal(received.length, start + 3)
     }
   } finally {
     server.closeAllConnections()

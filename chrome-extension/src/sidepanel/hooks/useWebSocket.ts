@@ -1000,6 +1000,10 @@ export function useWebSocket() {
           chrome.runtime.sendMessage({ type: "fleet.status" })
           break
 
+        case "computer.maximum.status": {
+          dispatch({ type: "SET_DESKTOP_MAXIMUM", expiresAt: typeof msg.expiresAt === "number" ? msg.expiresAt : null })
+          break
+        }
         case "security.unattended.status": {
           const armed = msg.armed === true
           const expiresAt =

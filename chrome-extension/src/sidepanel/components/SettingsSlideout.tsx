@@ -1,3 +1,4 @@
+import { DesktopMaximumDialog } from "./DesktopMaximumDialog"
 // Settings slideout panel for LLM configuration + NetSec (migrated from 场景 panel)
 
 import { useState, useEffect, useCallback, useRef } from "react"
@@ -190,6 +191,7 @@ export function SettingsSlideout() {
   const [autopilotBusy, setAutopilotBusy] = useState(false)
   const [advancedGatesOpen, setAdvancedGatesOpen] = useState(false)
   // Vision reuse UX (multi-adversarial P0): banner session + advanced collapse when reused
+  const [desktopMaximumDialog, setDesktopMaximumDialog] = useState(false)
   const [unattendedAckDesktop, setUnattendedAckDesktop] = useState(false)
   const [unattendedAckSession, setUnattendedAckSession] = useState(false)
   const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
@@ -3129,6 +3131,8 @@ export function SettingsSlideout() {
                   background: tokens.dangerSoft,
                 }}>有开关已开</span>
               ) : null}>
+          <button type="button" onClick={() => setDesktopMaximumDialog(true)}>桌面最大权限{state.desktopMaximumExpiresAt ? "（已开启）" : ""}</button>
+          {desktopMaximumDialog && <DesktopMaximumDialog onClose={() => setDesktopMaximumDialog(false)} />}
           {/* --- 运行自主度 (Trust packaging / Autopilot + ADR-021 unattended) --- */}
           {(() => {
             const armFlags = {
@@ -3776,7 +3780,7 @@ export function SettingsSlideout() {
           <SettingsPage id="tools-desktop" active={activeDestination === "tools-desktop"}>
           <section style={styles.field} aria-label="原生桌面操作">
             <strong>原生桌面操作 · macOS / Windows</strong>
-            <p style={styles.helpText}>标准控件与文字在本机定位。启用截图视觉分析并复用支持图片的主模型后，可逐次确认将目标窗口图交给当前模型。</p>
+            <p style={styles.helpText}>标准控件与文字在本机定位。启用截图视觉分析并复用支持图片的主模型后，默认逐张确认。也可在桌面最大权限中一次授权当前模型接收目标窗口图并建议点击。</p>
             <p style={styles.helpText}>打开应用面板，开启「坐标操作」，再从目标应用的「···」菜单查看可用的授权方式。</p>
             <button type="button" className="cm-settings-text-link" disabled={!host} onClick={() => void openSettingsPanel("apps")}>打开应用面板</button>
           </section>

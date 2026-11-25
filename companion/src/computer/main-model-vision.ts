@@ -1,3 +1,5 @@
+import type { DesktopMaximumPermit } from "./desktop-maximum"
+import { logger } from "../logger"
 import type { LlmConfig } from "../config"
 import { createProvider } from "../llm/provider"
 import { shouldBlockVisionRequest } from "../llm/vision-reuse-inherit"
@@ -19,19 +21,19 @@ export interface DesktopFrame {
 }
 
 export interface InspectDesktopFrame {
+  automatic?: boolean
   current(): boolean
   inspect(frame: DesktopFrame): Promise<string | undefined>
 }
 
-/** A tool-free request to the exact model used by this chat. The origin must
- * approve the displayed frame and destination before each transmission. */
+/** Tool-free vision on the chat route. A frame requires origin approval or the live, recipient-bound desktop grant. */
 export function desktopFrameInspector(route: DesktopVisionRoute,
   approve: (request: SecurityConfirmationDetails, signal?: AbortSignal) => Promise<boolean>,
-  signal?: AbortSignal): InspectDesktopFrame {
-  const current = () => !signal?.aborted && route.current()
+  signal?: AbortSignal, maximum?: DesktopMaximumPermit): InspectDesktopFrame {
+  const current = () => !signal?.aborted && route.current() && (!maximum || maximum.allowsModel(route.model))
   async function inspect(frame: DesktopFrame) {
     const { model } = route
-    const signals = [signal, frame.signal].filter((s): s is AbortSignal => !!s)
+    const signals = [signal, frame.signal, maximum?.signal].filter((s): s is AbortSignal => !!s)
     const requestSignal = AbortSignal.any(signals)
     if (requestSignal.aborted || !current() || shouldBlockVisionRequest({ baseUrl: model.base_url, apiKey: model.api_key }).block) return
     let url: URL
@@ -47,7 +49,7 @@ export function desktopFrameInspector(route: DesktopVisionRoute,
       "模型 " + JSON.stringify(model.model_name),
       frame.target ? "查找控件 " + JSON.stringify(frame.target) : "读取窗口内容",
     ].join("\n")
-    const ok = await approve({ toolName: "computer.share_window_image", code, fullPreview: code,
+    const ok = maximum ? maximum.allowsModel(model) : await approve({ toolName: "computer.share_window_image", code, fullPreview: code,
       requireImageReview: true, previewImage: frame.image, previewCaption: "本次发送的窗口图", dangerousApis: ["computer.share_window_image"],
       criticalApis: ["computer.share_window_image"], riskLevel: "high", autoConfirmEligible: false }, requestSignal)
     frame.assertCurrent()
@@ -66,6 +68,7 @@ export function desktopFrameInspector(route: DesktopVisionRoute,
         beforeSend: () => {
           frame.assertCurrent()
           if (requestSignal.aborted || !current()) throw new Error("Desktop image consent expired")
+          if (maximum) logger.info("computer.maximum.image_authorized", {})
         },
         signal: AbortSignal.any([requestSignal, timeout]),
       })
@@ -73,7 +76,7 @@ export function desktopFrameInspector(route: DesktopVisionRoute,
     frame.assertCurrent()
     if (!requestSignal.aborted && current() && (result.finish_reason === "stop" || result.finish_reason === "end_turn")) return result.content.trim().slice(0, 2000)
   }
-  return { current, inspect }
+  return { current, inspect, automatic: !!maximum }
 }
 
 export function desktopImagePoint(reply: string | undefined, shot: Pick<CaptureMeta, "imageWidth" | "imageHeight" | "rect">): { x: number; y: number } | undefined {

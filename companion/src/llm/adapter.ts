@@ -1131,19 +1131,19 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   }
   const configAtStart = getConfig()
   const overrideAtStart = threadManager.get(threadId)?.config_override
-  const desktopVisionCurrent = () => {
+  const desktopControlCurrent = () => {
     const cfg = getConfig(), active = threadManager.get(threadId)
     return !!active && !active.trashed_at && !active.parent_thread_id &&
       active.agent_role !== "worker" && active.agent_role !== "orchestrator" &&
       (params.surface === "panel" || params.surface === "tray") && params.desktopVisionOwner?.() === true &&
       !signal?.aborted && runTerminalEpochIsCurrent(threadId, runEpoch) &&
       cfg.llm === configAtStart.llm && cfg.computer === configAtStart.computer && cfg.vision === configAtStart.vision &&
-      active.config_override === overrideAtStart &&
-      cfg.vision?.enabled === true && cfg.vision.reuse_main_model !== false &&
-      active.config_override?.vision_enabled !== false && useNative && cfg.computer?.coordinateEnabled === true &&
+      active.config_override === overrideAtStart && cfg.computer?.coordinateEnabled === true &&
       resolveEffectiveExecutionPolicy(threadId, id => threadManager.get(id)) === "default" &&
       threadManager.isToolAllowed(threadId, "host_computer")
   }
+  const desktopVisionCurrent = () => desktopControlCurrent() && configAtStart.vision?.enabled === true &&
+    configAtStart.vision.reuse_main_model !== false && overrideAtStart?.vision_enabled !== false && useNative
   const executeToolBeforeCatalog = executeTool
   executeTool = async (toolCallId, toolName, execParams, execSignal) => {
     const gated = gateUnofferedMcpTool(toolName, offeredToolNames)
@@ -1151,7 +1151,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     if (toolName === "lcu_js" || toolName === "lcu_js_reset") return { success: false, error: "DESKTOP_TOOL_RETIRED" }
     const desktopVision = toolName === "host_computer" && offeredToolNames.has(toolName) && desktopVisionCurrent()
       ? { model: config, current: desktopVisionCurrent } : undefined
-    return executeToolBeforeCatalog(toolCallId, toolName, execParams, execSignal, desktopVision ? { desktopVision } : undefined)
+    const desktopControl = (toolName === "host_app" || toolName === "host_computer") &&
+      offeredToolNames.has(toolName) && desktopControlCurrent() ? desktopControlCurrent : undefined
+    return executeToolBeforeCatalog(toolCallId, toolName, execParams, execSignal, desktopControl ? { desktopControl, desktopVision } : undefined)
   }
   let proposedThisRequest = false
 

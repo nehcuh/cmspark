@@ -210,6 +210,7 @@ function resolveHostUseApp(toolName: string, params: any): string {
 export type L2AdmissionContext = {
   /** Trusted native lifecycle only: no supported native tool-confirmation UI yet. */
   nativeConfirmationUnavailable?: () => Promise<void>
+  desktopMaximum?: import("../computer/desktop-maximum").DesktopMaximumPermit
   computerRead?: ComputerReadOperation
   enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit
   signal?: AbortSignal
@@ -1216,7 +1217,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         return { success: false, error: msg }
       }
     }
-    if ((!skipConfirmation || forceConfirm) && !hostComputerTrustSkip && !enterpriseSkip) {
+    const maximumSkip = ctx.desktopMaximum?.current() === true &&
+      ((hostComputerGated && !vaultBrowserOneShot && Array.isArray(finalParams.actions) && finalParams.actions.length <= 30) ||
+       (hostApp?.entry.kind === "gui" && finalParams.action === "launch"))
+    if ((!skipConfirmation || forceConfirm) && !maximumSkip && !hostComputerTrustSkip && !enterpriseSkip) {
       if (ctx.nativeConfirmationUnavailable) { await ctx.nativeConfirmationUnavailable(); return { success: false, error: "DESKTOP_CONFIRMATION_UNAVAILABLE", error_code: "DESKTOP_CONFIRMATION_UNAVAILABLE" } }
       // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
       // interactive confirmation unless whitelisted above. The regex match
@@ -2011,7 +2015,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // P5 (Pi final-review caveat 3 2026-07-24): hostComputerTrustSkip has
       // its own audit reason so silent-skip is distinguishable from god-mode
       // / whitelist in the audit log.
-      const autoReason = hostComputerTrustSkip
+      const autoReason = maximumSkip ? "desktop_maximum" : hostComputerTrustSkip
         ? (hostComputerTrustSkipReason || "session_trust_corpus_subset")
         : securityConfig.allow_all_schemes ? "god_mode"
         : securityConfig.auto_approve_dangerous ? "global_toggle"

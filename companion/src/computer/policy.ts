@@ -10,6 +10,8 @@
 
 import * as path from "path"
 import * as os from "os"
+import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
 import type { CompanionConfig } from "../config"
 import type { AppEntry } from "../apps/types"
 import { aumidToVault, basenameToVault, isLolbinPath } from "../apps/guards"
@@ -358,7 +360,7 @@ export function assertHwndOwnedByEntry(
  *
  * macOS: no-op — code signing is the trust anchor (adversarial review M5).
  */
-export function assertExeNotDrifted(entry: AppEntry, hashFile: (p: string) => string): void {
+export function assertExeNotDrifted(entry: AppEntry, hashFile = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex")): void {
   // macOS entries use code signing as the integrity anchor — no binary hash drift check
   const isMacEntry = os.platform() === "darwin" && entry.bundleId != null
   if (isMacEntry) return

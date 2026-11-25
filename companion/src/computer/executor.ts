@@ -35,7 +35,7 @@ import { validateComputerDraft } from "./draft"
 // through the injected origin-bound confirmation channel (danger/experimental
 // never auto-approved, including under cruise).
 
-import { createHash, randomUUID } from "crypto"
+import { randomUUID } from "crypto"
 import * as fs from "fs"
 import * as os from "os"
 import type { CompanionConfig } from "../config"
@@ -212,6 +212,7 @@ export interface ComputerExecutorDeps {
    * 缺省 = 层关闭。
    */
   desktopVisionSignal?: AbortSignal
+  maximumDesktop?: import("./desktop-maximum").DesktopMaximumPermit
   inspectDesktop?: InspectDesktopFrame
   currentConfig?: () => CompanionConfig
   experimentalLocator?: ExperimentalLocator | null
@@ -403,9 +404,7 @@ export async function runComputerTask(
     vaultBrowserOneShot = isVaultBrowserEntry(entry)
     // WP2: exe sha256 drift vs the add-time record (§E.2.1) — computed once,
     // fail-closed; the per-action path + vault/LOLBIN rechecks stay fresh.
-    const hashFile =
-      deps.hashFile ?? ((p: string) => createHash("sha256").update(fs.readFileSync(p)).digest("hex"))
-    assertExeNotDrifted(entry, hashFile)
+    assertExeNotDrifted(entry, deps.hashFile)
   } catch (err) {
     return fail(err as ComputerError)
   }
@@ -480,7 +479,7 @@ export async function runComputerTask(
         // Mixed/injection tasks retain their original write-back behavior.
         if (!deps.readScope) {
           const cache = () => deps.onUiaVerdict?.(entry.token, verdict, probedAt)
-          if (deps.inspectDesktop) cacheVisualProbeAfterTask = cache
+          if (deps.inspectDesktop || deps.maximumDesktop) cacheVisualProbeAfterTask = cache
           else cache()
         }
       } catch {
@@ -572,6 +571,7 @@ export async function runComputerTask(
   log("computer.task.started", { taskId, app: entry.token, hwnd, budget })
   // WP4: started 附 budget(任务条「已用/总量」分母)。
   emit({ event: "started", taskId, app: entry.display_name, task: params.task, total: params.actions.length, budget,
+    ...(deps.maximumDesktop ? { desktop_maximum: true } : {}),
     ...(readDraft ? { read_only_observation: true } : {}) })
 
   /** Grill Q5: same-text TYPE_NO_EFFECT attempt counts this task (max 1 recovery). */
@@ -601,6 +601,11 @@ export async function runComputerTask(
 
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
+    if (!vaultBrowserOneShot && deps.maximumDesktop?.current() &&
+        (!dangerous.includes("computer.main_model_suggestion") || deps.inspectDesktop?.automatic === true && deps.inspectDesktop.current())) {
+      log("computer.task.reconfirm.auto_approved", { taskId, tags: dangerous, app: params.app, reason_skip: "desktop_maximum" })
+      return true
+    }
     // Owner 2026-08: 无人值守 armed = 用户已短语+双勾选风险自担。
     // Mid-task re-L2 (含 danger/experimental/foreground) 全部静默通过；
     // 否则「值守中仍逐步弹窗」与 JTBD 矛盾。硬拒绝仍走 throw，不经 reL2。

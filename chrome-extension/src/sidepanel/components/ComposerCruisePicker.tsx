@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { DesktopMaximumDialog } from "./DesktopMaximumDialog"
 import { Modal } from "./ui/Modal"
 import { AutopilotConsequenceMatrix } from "./AutopilotConsequenceMatrix"
 import { popupMenuStyles } from "../ui/popupMenuStyles"
@@ -51,7 +52,18 @@ export function ComposerCruisePicker() {
   const { state, dispatch } = useAgentStore()
   const flags = liveFlags(state.config)
   const unattendedArmed = state.unattended?.armed === true
-  const chipLabel = composerCruiseChipLabel(flags, unattendedArmed)
+  const maximum = (state.desktopMaximumExpiresAt ?? 0) > Date.now()
+  const chipLabel = maximum ? "桌面最大权限" : composerCruiseChipLabel(flags, unattendedArmed)
+  const [desktopDialog, setDesktopDialog] = useState(false)
+  useEffect(() => {
+    if (state.connectionState !== "connected") return
+    const refresh = () => { chrome.runtime.sendMessage({ type: "computer.maximum.get" }).catch(() => {}) }
+    refresh()
+    if (state.desktopMaximumExpiresAt) {
+      const timer = setTimeout(refresh, Math.max(0, state.desktopMaximumExpiresAt - Date.now()) + 20)
+      return () => clearTimeout(timer)
+    }
+  }, [state.connectionState, state.desktopMaximumExpiresAt])
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [pendingSlot, setPendingSlot] = useState<ComposerCruiseSlot | null>(null)
@@ -164,6 +176,9 @@ export function ComposerCruisePicker() {
           style={{ ...popupMenuStyles.menu, ...styles.menu }}
         >
           <div style={styles.scope}>{COMPOSER_CRUISE_SCOPE_NOTE}</div>
+          <button type="button" role="menuitem" style={popupMenuStyles.menuItem} onClick={() => { setMenuOpen(false); setDesktopDialog(true) }}>
+            桌面最大权限{maximum ? " ✓" : ""}
+          </button>
           {COMPOSER_CRUISE_SLOTS.map((slot) => {
             const label = tierShortLabel(slot)
             const selected = label === chipLabel
@@ -187,6 +202,7 @@ export function ComposerCruisePicker() {
         </div>
       )}
 
+      {desktopDialog && <DesktopMaximumDialog onClose={() => setDesktopDialog(false)} />}
       <Modal
         open={pendingSlot != null}
         onClose={() => {
