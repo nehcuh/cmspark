@@ -19,7 +19,7 @@ import { decideActiveThreadList } from "../navigation/startup-destination"
 import { normalizeDocumentWarning, parseDocumentNotices } from "../utils/document-warning"
 import { codingControlAction } from "../utils/coding-control-message"
 import type { ComputerTaskEventView, LLMConfig, Message, MessageAttachment, VoiceExternalState } from "../types"
-import { isAppsErrorMessage } from "../utils/apps-utils"
+import { appEntriesForPanel, isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 import { isBrowserTool } from "../mode/mode-controller"
 import { isUserEnvErrorMessage, mapUserEnvError, normalizeUserEnvPublic } from "../utils/user-env-utils"
@@ -1000,6 +1000,10 @@ export function useWebSocket() {
           chrome.runtime.sendMessage({ type: "fleet.status" })
           break
 
+        case "computer.maximum.status": {
+          dispatch({ type: "SET_DESKTOP_MAXIMUM", expiresAt: typeof msg.expiresAt === "number" ? msg.expiresAt : null })
+          break
+        }
         case "security.unattended.status": {
           const armed = msg.armed === true
           const expiresAt =
@@ -1660,7 +1664,7 @@ export function useWebSocket() {
           dispatch({
             type: "SET_APPS_STATE",
             enabled: msg.enabled !== false,
-            entries: Array.isArray(msg.entries) ? msg.entries : [],
+            entries: appEntriesForPanel(msg.entries, msg.coordinate_modes),
             presets: Array.isArray(msg.presets) ? msg.presets : [],
             // WP6a (Finding 2): companion's process.platform — gates the
             // add/enumerate UI off win32.
@@ -1672,7 +1676,7 @@ export function useWebSocket() {
           dispatch({
             type: "SET_APPS_STATE",
             enabled: msg.enabled !== false,
-            entries: Array.isArray(msg.entries) ? msg.entries : [],
+            entries: appEntriesForPanel(Array.isArray(msg.entries) ? msg.entries : [], msg.coordinate_modes),
           })
           // Only the apps.add response carries warnings — the broadcast copy
           // doesn't, and must NOT clear the follow-up render area (D8).

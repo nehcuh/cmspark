@@ -17,6 +17,7 @@ import { CONFIG_CHANGE_EVENT, configEvents, getConfig, replaceAppsEntries } from
 import { logger } from "../logger"
 import { getThreadApprovals } from "../host-use/thread-approvals"
 import { getComputerSessionTrust } from "../computer/session-trust"
+import { appCoordinateMode } from "../computer/policy"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
@@ -40,7 +41,7 @@ import {
 import { enumerateAppsDetailed, enumerateMacApps, type EnumeratedAppCandidate, type WindowsAppEnumeration } from "./enumerate"
 import { basenameToVault, isLolbinPath } from "./guards"
 import { materializePresets } from "./presets"
-import { requireAppsBiometric } from "./biometric-gate"
+import { requireAppsBiometric, type BiometricMethod } from "./biometric-gate"
 import { guiTemplateConfigError } from "./gui-templates"
 import { handleBinaryDrift, type BinaryDriftDeps } from "./binary-drift"
 import { binaryDriftRecordError, invalidateBinaryDrift } from "./binary-drift-state"
@@ -134,9 +135,12 @@ function watchGrantSubject(token: string, entry: AppEntry) {
       const entries = config.apps?.entries ?? {}
       return { entries, entry: entries[token] }
     },
+    revoke() { stale = true },
     close() { configEvents.off(CONFIG_CHANGE_EVENT, onChange) },
   }
 }
+
+const pendingCoordinateGrants = new Map<string, ReturnType<typeof watchGrantSubject>>()
 
 /** #665: pending additions must not commit an older App authority snapshot. */
 function addSubject(config: ReturnType<typeof getConfig>): string {
@@ -196,19 +200,27 @@ function hasPrototypePollutionKey(obj: any): boolean {
   return false
 }
 
-/** entries map → sorted array with the policy ceiling attached (WP4 badge). */
 function entriesList(entries: Record<string, AppEntry>) {
   return Object.values(entries)
     .map((e) => {
       const { templates, ...rest } = e
-      if (templates === undefined) return { ...rest, max_policy: maxPolicyForEntry(e) }
+      const view = { ...rest, max_policy: maxPolicyForEntry(e) }
+      if (templates === undefined) return view
       const error = guiTemplateConfigError(templates, e)
-      return { ...rest, max_policy: maxPolicyForEntry(e),
+      return { ...view,
         templates: error ? [] : templates.map(({ id, name, profile, risk }) => ({ id, name, profile, risk })),
         ...(error ? { template_unavailable: "模板配置不支持；请检查现有应用配置。" } : {}),
       }
     })
     .sort((a, b) => a.added_at.localeCompare(b.added_at))
+}
+
+// Keep platform-dependent UI hints outside the persisted-entry projection.
+function appsEntryViews(entries: Record<string, AppEntry>, platform = os.platform()) {
+  return {
+    entries: entriesList(entries),
+    coordinate_modes: Object.fromEntries(Object.values(entries).map(entry => [entry.token, appCoordinateMode(entry, platform)])),
+  }
 }
 
 /**
@@ -226,7 +238,7 @@ function appsUpdatedPayload(entries: Record<string, AppEntry>) {
   return {
     type: "apps.updated",
     enabled: getConfig().apps?.enabled ?? true,
-    entries: entriesList(entries),
+    ...appsEntryViews(entries),
   }
 }
 
@@ -282,11 +294,9 @@ export async function handleAppsMessage(
         return {
           type: "apps.list",
           enabled: after.enabled,
-          entries: entriesList(after.entries),
+          ...appsEntryViews(after.entries, deps.platform ?? os.platform()),
           presets: presets.map(p => ({ ...p, persisted: Object.hasOwn(after.entries, p.token) })),
-          // WP6a (Finding 2): the extension can't see process.platform — ship it
-          // so the panel renders an honest「仅 Windows 可用」state off win32
-          // instead of a dead add button.
+          // The browser and Companion can run on different platforms.
           platform: deps.platform ?? os.platform(),
         }
       } finally { configEvents.off(CONFIG_CHANGE_EVENT, onChange) }
@@ -302,7 +312,6 @@ export async function handleAppsMessage(
         })
       }
       if (platform === "darwin") {
-        // macOS: scan /Applications and ~/Applications for .app bundles
         const candidates = await enumerateMacApps()
         return { type: "apps.enumerate.result", candidates }
       }
@@ -605,7 +614,14 @@ const cap = maxPolicyForEntry(entry)
         return appsError("Binary drift requires a fresh App re-approval", { code: "APP_DRIFT_REAPPROVAL_REQUIRED" })
       }
       const watch = rest.allowed === true ? watchGrantSubject(token, entry) : undefined
+      // Claim the app before the policy import yields. Turning it off must revoke
+      // a pending approval even if the persisted bit was already false.
+      if (!watch) pendingCoordinateGrants.get(token)?.revoke()
+      else if (entry.coordinateAllowed !== true && ctx.requestConfirmation && !pendingCoordinateGrants.has(token)) {
+        pendingCoordinateGrants.set(token, watch)
+      }
       let coordinateCheck: typeof import("../computer/policy").canEverCoordinate | undefined
+      let approvalMethod: BiometricMethod | undefined
       try {
         // A10.3 — structural exclusion: vault-mapped / LOLBIN binaries can never
         // persist coordinateAllowed (macOS Chrome is bundleId-only — path basename
@@ -614,7 +630,7 @@ const cap = maxPolicyForEntry(entry)
           const { canEverCoordinate } = await import("../computer/policy")
           coordinateCheck = canEverCoordinate
           const subject = watch!.current()
-          if (!subject) return staleGrantError()
+          if (!subject || ctx.ownerCurrent?.() === false) return staleGrantError()
           if (!canEverCoordinate(subject.entry)) {
             logger.warn("apps.coordinate_structural_deny", { token, bundleId: entry.bundleId, exe: entry.exe?.path })
             return appsError(
@@ -636,6 +652,9 @@ const cap = maxPolicyForEntry(entry)
               code: "NO_CONFIRMATION_CHANNEL",
             })
           }
+          if (pendingCoordinateGrants.get(token) !== watch) {
+            return appsError("这个应用的坐标操作授权正在等待确认。", { code: "APP_COORDINATE_ENABLE_PENDING" })
+          }
           const gate = deps.gate ?? requireAppsBiometric
           const outcome = await gate({
             action: "apps.set_coordinate_allowed",
@@ -649,12 +668,10 @@ const cap = maxPolicyForEntry(entry)
               { code: "BIOMETRIC_DENIED", reason: outcome.reason },
             )
           }
-          logger.info("apps.coordinate_enabled", { token, method: outcome.method })
-        } else {
-          logger.info("apps.coordinate_disabled", { token })
+          approvalMethod = outcome.method
         }
         const subject = watch?.current()
-        if (watch && !subject) return staleGrantError()
+        if (watch && (!subject || ctx.ownerCurrent?.() === false)) return staleGrantError()
         const currentEntry = subject?.entry ?? entry
         const currentEntries = subject?.entries ?? existing
         if (rest.allowed === true && !coordinateCheck!(currentEntry)) {
@@ -665,11 +682,18 @@ const cap = maxPolicyForEntry(entry)
         const next = rest.allowed === false ? invalidateBinaryDrift(currentEntry) : currentEntry
         const newEntries = { ...currentEntries, [token]: { ...next, coordinateAllowed: rest.allowed } }
         replaceAppsEntries(newEntries)
+        if (approvalMethod) logger.info("apps.coordinate_enabled", { token, method: approvalMethod })
+        else logger.info("apps.coordinate_disabled", { token })
         return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), {
           token,
           coordinateAllowed: rest.allowed,
         })
-      } finally { watch?.close() }
+      } finally {
+        if (watch) {
+          if (pendingCoordinateGrants.get(token) === watch) pendingCoordinateGrants.delete(token)
+          watch.close()
+        }
+      }
     }
 
     default:

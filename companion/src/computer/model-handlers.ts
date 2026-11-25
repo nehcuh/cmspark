@@ -1,41 +1,5 @@
-// WP5 I3 登记项③ + WP5-I4 WI-4.2 — computer.model.* WS handlers。
-//
-// ③ 围栏（父指令 + plan:480 M3）：reset_circuit_breaker 仅接受设置页声明来源
-// （source:"settings"）——validateWsMessage 形状校验（server.ts）+ 本 handler
-// 二次核查（belt：防校验面被绕过 / 未来调用方直调）+ 审计日志。
-// 诚实边界：source 是声明式来源（同一 WS 连接内的页面标识），非密码学校验——
-// 真正的安全性质来自动作本身无副作用（只复位熔断计数，不注入、不授权、不改
-// 配置）；围栏防的是自动化循环调用把崩溃模型维持在「崩溃→复位→再崩溃」DoS
-// 循环里（plan 攻击面 3 / A8）。
-//
-// WI-4.2 四路由（I4 详案 plan:536-542 + 设计裁决 1/2/4/5 + P1/P3/P5/P6）：
-//   - set_enabled(true)：license 未接受/条款漂移 → license_required（config 零
-//     写入）；已拒绝 → LICENSE_DECLINED（跳过，无 UI 复位）；已接受 →
-//     D2 生物识别门（裁决 1：持久能力授权与 apps coordinateAllowed 同级；
-//     clear 免费）。license_response/download/delete 不过门，但均 settings
-//     双层围栏（validateWsMessage + 本 handler belt 复核，P6）。
-//   - license_response accepted:true → 写时间戳 + LICENSE_DOOR_TEXT_HASH（P1
-//     文本版本绑定；漂移重门在 set_enabled/admission 侧比对）+ 自动触发 download；
-//     accepted:false → modelLicenseDeclined=true（跳过）。
-//   - download：按当前配置变体下载文件组（P3）；占位主机 .invalid 且未配镜像
-//     → fail-fast download-host-unset（零网络请求，裁决 5）；进程级单飞幂等
-//     （P10：防并发不防轮询——轮询 DoS 残余声明入 i4-implementation-notes）。
-//   - delete：dispose 会话 + holder=null + 删除当前变体目录（fail-closed 方向
-//     免费，仅 settings 双层围栏）。
-//   - disable/delete → dispose + holder=null（裁决 4）；熔断保活不 dispose
-//     （reset_circuit_breaker 真复位语义维持 I2 终审）。
-//
-// I4 对抗修复 P1（2026-07-21，LOW-MED 必修）：download/delete handler 级状态
-// 互斥——handler 是信任边界，围栏不设于 UI 按钮态假设之上：
-//   - 下载中 delete → 拒（DOWNLOAD_IN_PROGRESS）：否则 Windows 上 rm 撞 .part
-//     写流占用 → EPERM 裸错误穿透、会话已 dispose、下载完成后文件复现；
-//     类 Unix 上 rm 胜 → 下载终段 stat 失败、以误导性 network-error 收尾。
-//   - delete 中 download（含 license_response 自动触发）→ 拒（DELETE_IN_PROGRESS
-//     / note=delete-in-progress）：否则 mkdir recursive 与 rm recursive 竞态
-//     （ENOTEMPTY 或「删除成功但文件随即重建」）。
-//   - delete×delete → already-running 幂等（与 download 单飞同型）。
-//   - deleteImpl 错误归一为结构化返回（DELETE_FAILED + 状态广播），不穿透裸
-//     fs 错误。互斥只防并发不防轮询（P10 同型，损害有界声明在案）。
+// Work Center local-model management. Accepting the current license can start
+// a download. Download and delete are mutually exclusive for each variant.
 
 import * as path from "node:path"
 
@@ -60,16 +24,8 @@ import {
   type DownloadSource,
 } from "./qwen-vl-preflight"
 import type { QwenVlSession } from "./qwen-vl-session"
-import { requireAppsBiometric } from "../apps/biometric-gate"
 import { DATA_DIR } from "../config"
 
-/**
- * 进程级模型会话持有器——写入点仅三处（P8 符号级注释契约，WI-4.5 grep 在案化）：
- *   ① admission 全通过懒建（model-admission.ts，WI-4.3）
- *   ② disable/delete dispose 后置 null（本文件）
- *   ③ 测试注入自有实例
- * 单例即进程级真相（模型会话全局至多一个，与 host_computer 全局单任务不变量同型）。
- */
 export interface ComputerModelSessionHolder {
   session: Pick<
     QwenVlSession,
@@ -77,28 +33,18 @@ export interface ComputerModelSessionHolder {
   > | null
 }
 
-/** 生产默认持有器（server.ts 与 admission 接线共享同一实例；测试注入自有实例）。 */
 export const computerModelSession: ComputerModelSessionHolder = { session: null }
 
 export interface ComputerModelHandlerContext {
   broadcast?: (data: any) => void
-  /** P5：生物识别门依赖的确认通道（apps/computer set_enabled 先例）；缺则 NO_CONFIRMATION_CHANNEL。 */
-  requestConfirmation?: (...args: any[]) => Promise<any>
 }
 
 /** 可注入依赖（测试替身；生产取默认实现）。 */
 export interface ComputerModelHandlerDeps {
-  gate?: typeof requireAppsBiometric
   downloadImpl?: typeof downloadQwenVlVariant
   deleteImpl?: typeof deleteQwenVlVariant
   /** P3 节流时钟（测试 seam，同 deps 族纪律）；默认 Date.now。 */
   now?: () => number
-  /**
-   * L-QW-1: probe whether experimental layer may be enabled (model ready + deps).
-   * Tests inject; production uses preflight + probeQwenModelDir.
-   * Return false → set_enabled(true) hard-refuses with zero config write.
-   */
-  canEnableProbe?: () => boolean | Promise<boolean>
   /**
    * B1 test seam: override canDownload gate for download / license auto-download.
    * Production uses runQwenVlPreflight().canDownload.
@@ -223,7 +169,7 @@ async function statePayload(
 
   return {
     type: "computer.model.state" as const,
-    modelEnabled,
+    modelEnabled: false,
     licenseAccepted: modelLicenseAccepted(cfg),
     ...(typeof cfg.modelLicenseAcceptedAt === "string" ? { licenseAcceptedAt: cfg.modelLicenseAcceptedAt } : {}),
     modelLicenseDeclined: cfg.modelLicenseDeclined === true,
@@ -281,7 +227,7 @@ async function statePayload(
           readinessSummary: "正在检测本机环境（Python / 磁盘 / 硬件）…",
           nextSteps: [
             "请稍候；若长时间无结果，请重启 CMspark 后再打开本页。",
-            "实验层依赖本机 Python 与下载组件，不会在浏览器插件内下载模型。",
+            "工作中心本机模型依赖 Python 与下载组件，不会在浏览器插件内下载模型。",
           ],
           modelRootDir: (() => {
             try {
@@ -364,6 +310,7 @@ export async function handleComputerModelMessage(
   // 未来直调；validateWsMessage 是第一层）。license_response/set_enabled 形状
   // 字段由 validateWsMessage 强制，此处只复核 source。
   const SETTINGS_SOURCE_TYPES = new Set([
+    "computer.model.get_license",
     "computer.model.set_enabled",
     "computer.model.license_response",
     "computer.model.download",
@@ -387,6 +334,9 @@ export async function handleComputerModelMessage(
     case "computer.model.get_state":
       return statePayload(holder, deps)
 
+    case "computer.model.get_license":
+      return { type: "computer.model.license_required", licenseText: LICENSE_DOOR_TEXT, notice: "接受后可下载本机模型，用于工作中心图像处理。" }
+
     case "computer.model.set_enabled": {
       const enabled = rest.enabled === true
       // 禁用永远免费（fail-closed 方向，computer.set_enabled 先例）：
@@ -406,77 +356,7 @@ export async function handleComputerModelMessage(
         ctx.broadcast?.(state)
         return state
       }
-      const cfg = getConfig().computer ?? { coordinateEnabled: false }
-      // 许可证状态机（裁决 2）：已拒绝 → 跳过；未接受/条款漂移（P1 哈希
-      // 不符）→ license_required（config 零写入）。
-      if (cfg.modelLicenseDeclined === true) {
-        return modelError(
-          "实验层许可证已被拒绝。可在设置页实验层点击「复位许可拒绝」后重新阅读并接受条款（无需手改 config.json）",
-          { code: "LICENSE_DECLINED" },
-        )
-      }
-      if (!modelLicenseAccepted(cfg)) {
-        return {
-          type: "computer.model.license_required" as const,
-          licenseText: LICENSE_DOOR_TEXT,
-          notice: "阅读并接受许可证与免责声明后可开启实验层；拒绝则本层跳过，其余定位层不受影响。之后可在设置页「复位许可拒绝」重新打开流程。",
-        }
-      }
-      // L-QW-1 / SoT D1: hard-disable enable unless canEnable (model + infer deps).
-      // Zero config write on fail — UI may show canEnable:false but API must not arm.
-      {
-        let can = true
-        if (deps.canEnableProbe) {
-          can = await deps.canEnableProbe()
-        } else {
-          try {
-            const probe = probeQwenModelDir(currentVariant(cfg))
-            if (probe.status !== "ready") {
-              can = false
-            } else {
-              const pre = await runQwenVlPreflight({
-                variant: currentVariant(cfg),
-                downloadSource: (cfg as any).modelDownloadSource as DownloadSource | undefined,
-                dataDir: DATA_DIR,
-              })
-              can = pre.canEnable === true
-            }
-          } catch {
-            can = false
-          }
-        }
-        if (!can) {
-          return modelError(
-            "实验层尚未就绪（模型未下载、推理依赖未齐或 worker 不可用），无法开启",
-            { code: "CANNOT_ENABLE" },
-          )
-        }
-      }
-      // 已接受 → D2 生物识别门（裁决 1：持久能力授权，apps coordinateAllowed 先例）
-      if (!ctx.requestConfirmation) {
-        return modelError("computer.model.set_enabled(true) requires an interactive confirmation channel", {
-          code: "NO_CONFIRMATION_CHANNEL",
-        })
-      }
-      const gate = deps.gate ?? requireAppsBiometric
-      const outcome = await gate({
-        action: "computer.model.set_enabled",
-        reason:
-          "Enable Qwen3-VL experimental locate layer (uncalibrated local-model suggestions; every hit still requires per-action human confirmation)",
-        requestConfirmation: ctx.requestConfirmation,
-      })
-      if (!outcome.approved) {
-        logger.warn("computer.model.enable_denied", { reason: outcome.reason })
-        return modelError(
-          `enabling experimental layer ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — stays OFF`,
-          { code: "BIOMETRIC_DENIED", reason: outcome.reason },
-        )
-      }
-      setComputerModelFields({ modelEnabled: true })
-      logger.info("computer.model.enabled", { method: outcome.method })
-      const state = await statePayload(holder, deps)
-      ctx.broadcast?.(state)
-      return state
+      return modelError("桌面点击定位已改用原生控件、OCR 和可选的主模型。", { code: "DESKTOP_LOCATOR_RETIRED" })
     }
 
     case "computer.model.license_response": {
@@ -804,7 +684,7 @@ export async function handleComputerModelMessage(
         const state = await statePayload(holder, deps)
         ctx.broadcast?.(state)
         return modelError(
-          `模型删除失败：${err instanceof Error ? err.message : String(err)}——可重试删除；实验层会话已关闭，UIA / OCR / 用户框选定位不受影响。`,
+          `模型删除失败：${err instanceof Error ? err.message : String(err)}——可重试删除；实验层会话已关闭，桌面操作不受影响。`,
           { code: "DELETE_FAILED" },
         )
       } finally {

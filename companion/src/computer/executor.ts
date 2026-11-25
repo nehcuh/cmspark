@@ -1,4 +1,5 @@
 import { readonlyComputerDraft, type ComputerReadOperation } from "./readonly-session"
+import { validateComputerDraft } from "./draft"
 // WP1 task executor — the minimal coordinate computer-use loop with the
 // adversary-mandated invariants baked in:
 //
@@ -34,7 +35,7 @@ import { readonlyComputerDraft, type ComputerReadOperation } from "./readonly-se
 // through the injected origin-bound confirmation channel (danger/experimental
 // never auto-approved, including under cruise).
 
-import { createHash, randomUUID } from "crypto"
+import { randomUUID } from "crypto"
 import * as fs from "fs"
 import * as os from "os"
 import type { CompanionConfig } from "../config"
@@ -44,6 +45,7 @@ import type { EvidenceFactory, EvidenceSink } from "./evidence"
 import { formatOcrWordsAsDescribeText } from "./ocr-describe"
 import { captureObservation, observationFields, observationMarker } from "./observation"
 import { locateTargetWithChain, DRIFT_THRESHOLD_PX, type WitnessVerdict } from "./locate-chain"
+import { desktopImagePoint, type InspectDesktopFrame } from "./main-model-vision"
 import type { ExperimentalLocator } from "./locate-chain"
 import {
   extractGuiThought,
@@ -56,15 +58,14 @@ import {
   assertExeNotDrifted,
   assertHwndOwnedByEntry,
   isVaultBrowserEntry,
-  isCompanionCockpitWindow,
+  selectComputerWindow,
   normalizeExePath,
 } from "./policy"
 import { isCompanionUiOwner } from "./self-ui"
 import { assertClickClearsCompanionUi } from "./companion-ui-rects"
 import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
-import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
+import { clientToImage, maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
 import {
-  ALLOWED_KEY_SET,
   ComputerError,
   corpusHashOf,
   corpusOf,
@@ -73,11 +74,7 @@ import {
   DIALOG_BLOB_THRESHOLD,
   DIALOG_ZONE_THRESHOLD,
   DEFAULT_TASK_BUDGET,
-  INJECTIVE_ACTIONS,
-  MAX_KEY_CHORD,
-  MAX_SCROLL_DELTA,
   MAX_TASK_BUDGET,
-  MAX_TYPE_TEXT_CHARS,
   MAX_WAIT_MS,
   PIXEL_DIFF_THRESHOLD,
   PIXEL_STALE_MS,
@@ -104,7 +101,7 @@ import {
  *  so we do not re-allocate a Set on every reL2 call (dual-review nit). */
 const FORCE_INTERACTIVE_DANGEROUS = new Set([
   "computer.danger_detected",
-  "computer.experimental_suggestion",
+  "computer.main_model_suggestion",
 ])
 
 /** Re-L2 channel (budget / dialog / danger pauses). Origin-bound by construction. */
@@ -135,7 +132,7 @@ export interface ComputerExecutorDeps {
    * present AND sessionTrust reports the (sessionId, app) tuple as already
    * approved, mid-task re-L2 pauses auto-approve (audit logged) instead of
    * re-asking — except force-interactive reasons (danger_detected /
-   * experimental_suggestion; P0-C). The INITIAL task L2 is unaffected — only
+   * main_model_suggestion; P0-C). The INITIAL task L2 is unaffected — only
    * reL2() consults it. Absent = every re-L2 asks (unit tests / legacy callers).
    */
   sessionId?: string
@@ -211,9 +208,13 @@ export interface ComputerExecutorDeps {
    */
   uiaWatcherFactory?: UiaWatcherFactory
   /**
-   * L2 Qwen3-VL 实验层。ADMISSION 由调用方决定；命中永不直接注入（re-L2）。
+   * L2 主模型视觉。候选点必须经用户确认。
    * 缺省 = 层关闭。
    */
+  desktopVisionSignal?: AbortSignal
+  maximumDesktop?: import("./desktop-maximum").DesktopMaximumPermit
+  inspectDesktop?: InspectDesktopFrame
+  currentConfig?: () => CompanionConfig
   experimentalLocator?: ExperimentalLocator | null
   /** When experimentalLocator is null, honest skip reason for locate-chain logs. */
   experimentalSkipReason?: string
@@ -260,85 +261,6 @@ export interface ComputerTaskResult {
   errorCode?: string
 }
 
-function validateDraft(params: ComputerTaskParams): ComputerError | null {
-  if (!params || typeof params.task !== "string" || params.task.trim() === "") {
-    return new ComputerError("INVALID_ACTION", "computer: task must be a non-empty string")
-  }
-  if (!Array.isArray(params.actions) || params.actions.length === 0) {
-    return new ComputerError("INVALID_ACTION", "computer: actions must be a non-empty draft sequence")
-  }
-  for (const a of params.actions) {
-    if (!a || typeof a !== "object") return new ComputerError("INVALID_ACTION", "computer: malformed action")
-    const kind = (a as any).action
-    if (INJECTIVE_ACTIONS.has(kind)) {
-      if (kind === "type") {
-        if (typeof (a as any).text !== "string" || (a as any).text.length === 0) {
-          return new ComputerError("INVALID_ACTION", "computer: type action requires non-empty text")
-        }
-        // X4 layer 2 (schema is layer 1, ps1 layer 3): bound the foreground
-        // hijack window — per-text cap.
-        if ((a as any).text.length > MAX_TYPE_TEXT_CHARS) {
-          return new ComputerError(
-            "TYPE_TEXT_TOO_LONG",
-            `computer: type text is ${(a as any).text.length} chars — exceeds the ${MAX_TYPE_TEXT_CHARS}-char cap (X4)`,
-          )
-        }
-      } else if (kind === "key") {
-        // WP2: named-key whitelist chords only — arbitrary VK / printable text
-        // via key is rejected (text entry is the type primitive, A3 corpus).
-        const keys = (a as any).keys
-        if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_KEY_CHORD) {
-          return new ComputerError("INVALID_ACTION", `computer: key requires 1..${MAX_KEY_CHORD} key names`)
-        }
-        for (const k of keys) {
-          if (typeof k !== "string" || !ALLOWED_KEY_SET.has(k.toLowerCase())) {
-            return new ComputerError("INVALID_ACTION", `computer: key name "${String(k)}" is not in the whitelist (plan §D.3)`)
-          }
-        }
-      } else if (kind === "scroll") {
-        if (!Number.isInteger((a as any).x) || !Number.isInteger((a as any).y)) {
-          return new ComputerError("INVALID_ACTION", "computer: scroll requires integer x/y")
-        }
-        const d = (a as any).delta
-        if (!Number.isInteger(d) || d === 0 || Math.abs(d) > MAX_SCROLL_DELTA) {
-          return new ComputerError("INVALID_ACTION", `computer: scroll delta must be a non-zero integer within ±${MAX_SCROLL_DELTA}`)
-        }
-      } else if (kind === "drag") {
-        for (const f of ["x", "y", "x2", "y2"]) {
-          if (!Number.isInteger((a as any)[f])) {
-            return new ComputerError("INVALID_ACTION", `computer: drag requires integer ${f}`)
-          }
-        }
-      } else {
-        // click family: explicit x/y or an OCR target anchor
-        const hasCoords = Number.isInteger((a as any).x) && Number.isInteger((a as any).y)
-        const hasTarget = typeof (a as any).target === "string" && (a as any).target.length > 0
-        if (!hasCoords && !hasTarget) {
-          return new ComputerError("INVALID_ACTION", `computer: ${kind} requires explicit x/y or a target text anchor`)
-        }
-      }
-    } else if (kind === "wait") {
-      if (!Number.isInteger((a as any).ms) || (a as any).ms < 0) {
-        return new ComputerError("INVALID_ACTION", "computer: wait requires integer ms >= 0")
-      }
-    } else if (kind !== "screenshot" && kind !== "describe") {
-      return new ComputerError("INVALID_ACTION", `computer: unsupported action "${kind}"`)
-    }
-  }
-  // X4: corpus TOTAL cap — task-splitting must not multiply the injection window.
-  const corpusChars = params.actions.reduce(
-    (n, a) => n + ((a as any)?.action === "type" && typeof (a as any).text === "string" ? (a as any).text.length : 0),
-    0,
-  )
-  if (corpusChars > MAX_TYPE_TEXT_CHARS) {
-    return new ComputerError(
-      "TYPE_TEXT_TOO_LONG",
-      `computer: task type corpus totals ${corpusChars} chars — exceeds the ${MAX_TYPE_TEXT_CHARS}-char cap (X4)`,
-    )
-  }
-  return null
-}
-
 /**
  * Adversary WP2 X1: map an abortCheck channel to its typed error. A
  * user-initiated stop (hotkey flag / panel abort) is TASK_ABORTED; an
@@ -364,6 +286,7 @@ export async function runComputerTask(
   // reaches the task.
   const emit = (ev: ComputerTaskEvent) => {
     try {
+      if (ev.event !== "finished" && deps.maximumDesktop && !deps.maximumDesktop.current()) return
       deps.onEvent?.(ev)
     } catch {
       /* best-effort */
@@ -400,6 +323,7 @@ export async function runComputerTask(
     })
   const pendingRaws = new Set<string>()
   const trackCapture = async (h: number, passive = false): Promise<CaptureMeta> => {
+    assertObservationCurrent()
     // Revalidate even read-only captures after selection/L2 awaits. The final
     // Windows PS boundary checks the fixed refusal marker again before saving.
     if (os.platform() === "win32") {
@@ -409,6 +333,7 @@ export async function runComputerTask(
     }
     const meta = await deps.capturer.captureWindow(h, os.platform() === "win32" ? { passive } : undefined)
     if (meta.path) pendingRaws.add(meta.path)
+    assertObservationCurrent()
     return meta
   }
   /** Sealer consumed the bytes — stop tracking (no removeFile call). */
@@ -424,6 +349,29 @@ export async function runComputerTask(
       pendingRaws.delete(p)
       await removeRaw(p)
     }
+  }
+
+  const assertObservationCurrent = () => {
+    deps.readScope?.assertCurrent()
+    if (deps.maximumDesktop && !deps.maximumDesktop.current()) {
+      throw new ComputerError("TASK_ABORTED", "computer: desktop authorization ended")
+    }
+  }
+
+  // Native hotkeys use a consumable stop flag. Once observed, keep the task stopped.
+  let stoppedBy: ReturnType<NonNullable<typeof deps.abortCheck>> = null
+  const pollStop = () => stoppedBy ??= deps.abortCheck?.() ?? null
+  const assertTaskCurrent = (operation: string) => {
+    assertObservationCurrent()
+    const channel = pollStop()
+    if (channel) throw abortChannelError(channel, `computer: ${operation} stopped by emergency stop (${channel})`)
+  }
+  const assertReadCurrent = () => assertTaskCurrent("observation")
+  const assertTypeRecoveryCurrent = (error?: unknown) => {
+    if (error instanceof ComputerError && error.code === "TASK_ABORTED") throw error
+    assertTaskCurrent("input recovery")
+    if (error instanceof ComputerError &&
+        (error.detail?.typeInputPosted === true || error.detail?.typeDeliveryUnknown === true)) throw error
   }
 
   const fail = async (err: ComputerError): Promise<ComputerTaskResult> => {
@@ -458,23 +406,21 @@ export async function runComputerTask(
       evidenceDir: evidence?.dir ?? "",
       completedActions: steps.filter((s) => s.ok).length,
       totalActions: params.actions?.length ?? 0,
-      steps,
+      steps: deps.maximumDesktop && !deps.maximumDesktop.current() ? [] : steps,
       error: err.message,
       errorCode: err.code,
     }
   }
 
-  const draftErr = validateDraft(params)
-  if (draftErr) return fail(draftErr.code === "INVALID_ACTION"
-    ? new ComputerError("COMPUTER_INPUT_INVALID", draftErr.message, draftErr.detail)
-    : draftErr)
+  const draftErr = validateComputerDraft(params, os.platform())
+  if (draftErr) return fail(draftErr)
 
   const readDraft = readonlyComputerDraft({ task: params.task, app: params.app, actions: params.actions,
     ...(params.budget !== undefined ? { budget: params.budget } : {}) })
   if (readDraft) params = { ...params, actions: readDraft.actions }
   if (deps.readScope && !readDraft) return fail(new ComputerError("COMPUTER_INPUT_INVALID", "computer: readonly draft changed"))
 
-  try { deps.readScope?.assertCurrent() } catch (error) { return fail(error as ComputerError) }
+  try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
 
   // A10 + §E.2 gate (executor-side belt; the server gate already checked).
   let entry: ReturnType<typeof assertCoordinateAllowed>
@@ -484,9 +430,7 @@ export async function runComputerTask(
     vaultBrowserOneShot = isVaultBrowserEntry(entry)
     // WP2: exe sha256 drift vs the add-time record (§E.2.1) — computed once,
     // fail-closed; the per-action path + vault/LOLBIN rechecks stay fresh.
-    const hashFile =
-      deps.hashFile ?? ((p: string) => createHash("sha256").update(fs.readFileSync(p)).digest("hex"))
-    assertExeNotDrifted(entry, hashFile)
+    assertExeNotDrifted(entry, deps.hashFile)
   } catch (err) {
     return fail(err as ComputerError)
   }
@@ -509,25 +453,14 @@ export async function runComputerTask(
       throw new ComputerError("APP_NOT_WHITELISTED",
         `computer: no bundleId or exe path for "${entry.display_name}"`)
     }
-    const wins = (await deps.windows.enumerateByExe(exeId)).filter(w => !isCompanionCockpitWindow(w))
-    deps.readScope?.assertCurrent()
-    if (wins.length === 0) {
+    const win = selectComputerWindow(await deps.windows.enumerateByExe(exeId))
+    assertObservationCurrent()
+    if (!win) {
       throw new ComputerError("COMPUTER_WINDOW_ABSENT", `computer: no visible window for "${entry.display_name}" — is it running?`)
     }
-    // Prefer real UI windows: titled, on-screen, non-menu-strip. WeChat/Electron
-    // expose many empty-name aux layers (500×500 panels, 1728×33 bars); pure
-    // area sort picked those and screenshot failed (pgvexn windowId 3866).
-    const score = (w: { title: string; rect: { x: number; y: number; width: number; height: number } }) => {
-      const area = Math.max(0, w.rect.width) * Math.max(0, w.rect.height)
-      const named = (w.title || "").trim().length > 0 ? 1_000_000_000 : 0
-      const notStrip = w.rect.height >= 80 && w.rect.width >= 80 ? 100_000_000 : 0
-      const onscreen = w.rect.y >= -20 && w.rect.x > -5000 ? 10_000_000 : 0
-      return named + notStrip + onscreen + area
-    }
-    wins.sort((a, b) => score(b) - score(a))
-    hwnd = wins[0].hwnd
-    targetPid = wins[0].pid
-    assertHwndOwnedByEntry(wins[0], entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
+    hwnd = win.hwnd
+    targetPid = win.pid
+    assertHwndOwnedByEntry(win, entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
   } catch (err) {
     return fail(err instanceof ComputerError ? err : new ComputerError("APP_WINDOW_NOT_FOUND", String((err as Error)?.message ?? err)))
   }
@@ -542,11 +475,12 @@ export async function runComputerTask(
   // applyUiaProbedVerdict) and previously probed entries skip this entirely.
   let uiaCapable = entry.uiaCapable === true
   let uiaFreshProbe = false
+  let cacheVisualProbeAfterTask: (() => void) | undefined
   if (entry.uiaCapable === undefined && deps.uiaProber) {
     try {
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       const verdict = await deps.uiaProber.probe(hwnd)
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       uiaCapable = verdict.uiaCapable
       uiaFreshProbe = true
       const probedAt = new Date(now()).toISOString()
@@ -569,7 +503,11 @@ export async function runComputerTask(
         // Scoped reads keep the live probe result, without replacing their own
         // config/App consent subject via this best-effort persistent cache.
         // Mixed/injection tasks retain their original write-back behavior.
-        if (!deps.readScope) deps.onUiaVerdict?.(entry.token, verdict, probedAt)
+        if (!deps.readScope) {
+          const cache = () => deps.onUiaVerdict?.(entry.token, verdict, probedAt)
+          if (deps.inspectDesktop || deps.maximumDesktop) cacheVisualProbeAfterTask = cache
+          else cache()
+        }
       } catch {
         /* best-effort — a write-back failure never fails the task */
       }
@@ -600,11 +538,11 @@ export async function runComputerTask(
   // on a foreign window is refused OCCLUDED) and the foreground channel.
   if (uiaCapable && deps.uiaWatcherFactory) {
     try {
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       const budgetGuess = Math.min(Math.max(1, params.budget ?? deps.config.computer?.budget ?? DEFAULT_TASK_BUDGET), MAX_TASK_BUDGET)
       const watcherMaxSeconds = Math.min(3600, Math.max(600, budgetGuess * 130 + 900))
       uiaWatcher = await deps.uiaWatcherFactory({ hwnd, pid: targetPid }, { maxSeconds: watcherMaxSeconds })
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       uiaWatchStarted = true
       log("computer.uia.watch_started", { taskId, pid: targetPid, maxSeconds: watcherMaxSeconds })
     } catch (err) {
@@ -613,7 +551,7 @@ export async function runComputerTask(
     }
   }
 
-  try { deps.readScope?.assertCurrent() } catch (error) { return fail(error as ComputerError) }
+  try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
 
   // Y6 (WP3): L1 availability probe for the locate chain — the former
   // "dead" Locator.ensureLanguage interface now has its caller. Cached per
@@ -659,6 +597,7 @@ export async function runComputerTask(
   log("computer.task.started", { taskId, app: entry.token, hwnd, budget })
   // WP4: started 附 budget(任务条「已用/总量」分母)。
   emit({ event: "started", taskId, app: entry.display_name, task: params.task, total: params.actions.length, budget,
+    ...(deps.maximumDesktop ? { desktop_maximum: true } : {}),
     ...(readDraft ? { read_only_observation: true } : {}) })
 
   /** Grill Q5: same-text TYPE_NO_EFFECT attempt counts this task (max 1 recovery). */
@@ -688,12 +627,18 @@ export async function runComputerTask(
 
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
+    assertObservationCurrent()
+    if (!vaultBrowserOneShot && deps.maximumDesktop?.current() &&
+        (!dangerous.includes("computer.main_model_suggestion") || deps.inspectDesktop?.automatic === true && deps.inspectDesktop.current())) {
+      log("computer.task.reconfirm.auto_approved", { taskId, tags: dangerous, app: params.app, reason_skip: "desktop_maximum" })
+      return true
+    }
     // Owner 2026-08: 无人值守 armed = 用户已短语+双勾选风险自担。
     // Mid-task re-L2 (含 danger/experimental/foreground) 全部静默通过；
     // 否则「值守中仍逐步弹窗」与 JTBD 矛盾。硬拒绝仍走 throw，不经 reL2。
     try {
       const { isUnattendedArmed } = require("./unattended-grant") as typeof import("./unattended-grant")
-      if (isUnattendedArmed() && !vaultBrowserOneShot) {
+      if (isUnattendedArmed() && !vaultBrowserOneShot && !dangerous.includes("computer.main_model_suggestion")) {
         log("computer.task.reconfirm.auto_approved", {
           taskId,
           reason,
@@ -707,7 +652,7 @@ export async function runComputerTask(
       /* fall through */
     }
     // P0-C / experimental G4 carve-out (also applies under full-autonomy cruise):
-    // computer.danger_detected / computer.experimental_suggestion always need
+    // computer.danger_detected / computer.main_model_suggestion always need
     // fresh human eyes — content-sensitive / uncalibrated gates. Cruise may
     // silence routine re-asks (budget / uncross / dialog) only.
     // (Unattended path already returned above — this carve-out is for non-unattended.)
@@ -772,9 +717,51 @@ export async function runComputerTask(
       // WP5 I3：实验层建议门可附建议点标注预览（§F.1 同字段，凭证区已黑化；
       // 只流向 originWs 面板确认对话框，绝不进工具结果/LLM 上下文）。
       ...(previewImage ? { previewImage } : {}),
+      ...(dangerous.includes("computer.main_model_suggestion") ? { requireImageReview: true } : {}),
     })
     return decision.approved === true
   }
+
+  // A frame belongs to this task, window and application. Never offer an
+  // uncertain capture or a credential/payment window to a model endpoint.
+  let assertModelPointCurrent: (() => void) | undefined
+  const inspectFrame = async (shot: CaptureMeta, ocr: OcrResult, image: string | null | undefined, target?: string) => {
+    if (!deps.inspectDesktop || !image || vaultBrowserOneShot || shot.hwnd !== hwnd ||
+        shot.black || shot.fallbackUsed || shot.osrBlackSuspected ||
+        (os.platform() === "win32" && captureObservation(shot)?.observation_quality !== "ok")) return
+    const area = { x: 0, y: 0, width: shot.imageWidth ?? shot.rect.width, height: shot.imageHeight ?? shot.rect.height }
+    const danger = scanDanger(ocr.words, area, REGION_CROP_SIZE)
+    if (danger.windowLevel === "hard" || danger.credentialRects.length) return
+    const currentConfig = deps.currentConfig ?? (() => deps.config)
+    const owner = assertCoordinateAllowed(currentConfig(), params.app)
+    if (entry !== owner) throw new ComputerError("APP_NOT_WHITELISTED", "computer: application grant changed since task start")
+    await deps.securityEnv.assertInjectable(hwnd)
+    const liveWindow = await deps.windows.infoForHwnd(hwnd)
+    assertHwndOwnedByEntry(liveWindow, owner)
+    if (liveWindow.pid !== targetPid) throw new ComputerError("HWND_NOT_OWNED", "computer: window process changed")
+    const assertCurrent = () => {
+      const aborted = pollStop()
+      if (aborted) throw abortChannelError(aborted, "computer: stopped during model observation")
+      assertObservationCurrent()
+      if (!deps.inspectDesktop?.current() || assertCoordinateAllowed(currentConfig(), params.app) !== owner) {
+        throw new ComputerError("APP_NOT_WHITELISTED", "computer: application authorization changed during observation")
+      }
+    }
+    assertCurrent()
+    const description = await deps.inspectDesktop.inspect({ app: owner.display_name, image, target, assertCurrent, signal: deps.desktopVisionSignal })
+    assertCurrent()
+    if (target && description) assertModelPointCurrent = assertCurrent
+    return description
+  }
+  const mainLocator: ExperimentalLocator | undefined = deps.inspectDesktop ? {
+    locate: async ({ command, shot }) => {
+      const ocr = await deps.locator.ocr(shot.path)
+      const image = await deps.previewBuilder?.build(shot.path, undefined,
+        scanDanger(ocr.words, shot.rect, REGION_CROP_SIZE).credentialRects)
+      const point = desktopImagePoint(await inspectFrame(shot, ocr, image, command), shot)
+      return point ? { kind: "hit", point } : { kind: "skipped", reason: "main-model-no-suggestion" }
+    },
+  } : undefined
 
   let seq = 0
   for (const action of params.actions) {
@@ -782,8 +769,8 @@ export async function runComputerTask(
     const startedAt = now()
 
     // WP2 (§E.6): emergency stop — polled before EVERY action of any kind.
-    try { deps.readScope?.assertCurrent() } catch (error) { return fail(error as ComputerError) }
-    const abortedAtTop = deps.abortCheck?.() ?? null
+    try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
+    const abortedAtTop = pollStop() ?? null
     if (abortedAtTop) {
       log("computer.task.aborted", { taskId, seq, channel: abortedAtTop })
       return fail(abortChannelError(abortedAtTop, `computer: task aborted by emergency stop (${abortedAtTop})`))
@@ -797,7 +784,7 @@ export async function runComputerTask(
         const chunk = Math.min(remaining, 50)
         await sleep(chunk)
         remaining -= chunk
-        const abortedMidWait = deps.abortCheck?.() ?? null
+        const abortedMidWait = pollStop() ?? null
         if (abortedMidWait) {
           log("computer.task.aborted", { taskId, seq, channel: abortedMidWait, during: "wait" })
           return fail(abortChannelError(abortedMidWait, `computer: task aborted by emergency stop (${abortedMidWait}) during wait`))
@@ -810,10 +797,10 @@ export async function runComputerTask(
     }
     if (action.action === "screenshot" || action.action === "describe") {
       try {
-        deps.readScope?.assertCurrent()
+        assertReadCurrent()
         deps.beforeReadCapture?.()
         const shot = await trackCapture(hwnd, true)
-        deps.readScope?.assertCurrent()
+        assertReadCurrent()
         const observation = observationFields(shot)
         // R2: read-only frames go through the same credential-neighborhood
         // scan as injection frames — the evidence chain must never persist an
@@ -821,7 +808,7 @@ export async function runComputerTask(
         // for BOTH actions (screenshot too); a missing language pack fails
         // closed, same as the injection paths.
         const ocrRes = await deps.locator.ocr(shot.path)
-        deps.readScope?.assertCurrent()
+        assertReadCurrent()
         const wholeImg: RectPx = { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
         const blur = scanDanger(ocrRes.words, wholeImg, REGION_CROP_SIZE).credentialRects
         deps.readScope?.credential(blur.length > 0)
@@ -847,12 +834,20 @@ export async function runComputerTask(
             /* degrade to no image */
           }
         }
-        deps.readScope?.assertCurrent()
+        assertReadCurrent()
+        if (action.action === "screenshot" && deps.inspectDesktop) {
+          const description = await inspectFrame(shot, ocrRes, previewImage)
+          const observationText = description
+            ? "[untrusted main-model window observation]\n" + description
+            : "[No model observation. Use describe for local window text.]"
+          untrustedText = [untrustedText, observationText].filter(Boolean).join("\n")
+        }
         await evidence.sealScreenshot(shot.path, seq, "before", blur)
-        deps.readScope?.assertCurrent()
+        assertReadCurrent()
         sealConsumed(shot.path)
-        steps.push({ seq, action: action.action, ok: true, ...observation, ...(untrustedText !== undefined ? { untrustedText } : {}) })
         await evidence.appendAction({ seq, action: action.action, ...observation, crossverified: true, uncrossverified: false, durationMs: now() - startedAt })
+        assertReadCurrent()
+        steps.push({ seq, action: action.action, ok: true, ...observation, ...(untrustedText !== undefined ? { untrustedText } : {}) })
         emit({
           event: "step",
           taskId,
@@ -956,13 +951,12 @@ export async function runComputerTask(
             locator: deps.locator,
             capturer: deps.capturer,
             ocrAvailable,
-            experimental: deps.experimentalLocator ?? null,
+            experimental: mainLocator ?? deps.experimentalLocator ?? null,
             ...(deps.experimentalLocator
               ? {}
               : { experimentalSkipReason: deps.experimentalSkipReason || "model-not-admitted" }),
             // #360 (CU-B): 浏览器 one-shot 永不调用实验层（链内记
-            // vault-browser-no-vlm skipped，证据链可见）；OSR 白名单应用
-            // （coordinateAllowed 非浏览器）不受影响仍走 Qwen。
+            // vault-browser-no-vlm skipped，证据链可见）；已授权普通应用可申请主模型辅助。
             vaultBrowserNoVlm: vaultBrowserOneShot,
             log: (event, data) => log(event, { taskId, seq, ...data }),
           },
@@ -1034,6 +1028,7 @@ export async function runComputerTask(
       // (Grok non-blocker ack: post-resize locate points may be residual-stale).
       const infoLive = await deps.windows.infoForHwnd(hwnd)
       if (rectDriftPx(infoLive.rect, shot.rect) > DRIFT_THRESHOLD_PX) {
+        if (hit?.layer === "main-model") throw new ComputerError("STALE_SCREENSHOT", "computer: model observation window moved")
         log("computer.coords.drift_recapture", {
           taskId, seq, hwnd,
           locateRect: shot.rect,
@@ -1064,9 +1059,7 @@ export async function runComputerTask(
         if (!(cw > 0 && ch > 0)) {
           throw new ComputerError(
             "CAPTURE_FAILED",
-            `computer: client rect is ${cw}x${ch} (unusable) — screenshot geometry missing. ` +
-              `Usually Screen Recording TCC denied or window capture failed; ` +
-              `enable CMspark under System Settings → Privacy & Security → Screen Recording, then relaunch.`,
+            `computer: client rect is ${cw}x${ch} (unusable) — screenshot geometry missing.`,
           )
         }
         if (pointClient.x < 0 || pointClient.y < 0 || pointClient.x >= cw || pointClient.y >= ch) {
@@ -1130,10 +1123,11 @@ export async function runComputerTask(
         }
         throw err
       }
-      const regionImg: RectPx = pointClient
+      const imagePoint = pointClient && clientToImage(pointClient, shot)
+      const regionImg: RectPx = imagePoint
         ? {
-            x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
-            y: Math.max(0, pointClient.y + shot.client.y - REGION_CROP_SIZE / 2),
+            x: Math.max(0, imagePoint.x - REGION_CROP_SIZE / 2),
+            y: Math.max(0, imagePoint.y - REGION_CROP_SIZE / 2),
             width: REGION_CROP_SIZE,
             height: REGION_CROP_SIZE,
           }
@@ -1200,7 +1194,7 @@ export async function runComputerTask(
         let suggestionPreview: string | undefined
         if (deps.previewBuilder) {
           try {
-            const imgPoint = { x: shot.client.x + pointClient.x, y: shot.client.y + pointClient.y }
+            const imgPoint = hit ? { x: hit.x, y: hit.y } : undefined
             suggestionPreview = (await deps.previewBuilder.build(shot.path, imgPoint, scan.credentialRects)) ?? undefined
           } catch {
             /* best-effort preview — the gate itself never degrades */
@@ -1215,6 +1209,9 @@ export async function runComputerTask(
         })
         // Path C: optional Thought snippet from experimental VLM raw (sanitized).
         const experimentalThought = extractGuiThought(experimentalRaw)
+        if (hit?.layer === "main-model" && !suggestionPreview) {
+          throw new ComputerError("ELEMENT_NOT_FOUND", "computer: model point preview unavailable")
+        }
         const ok = await reL2(
           formatExperimentalSuggestionCaption({
             target: experimentalTarget ?? "",
@@ -1222,14 +1219,14 @@ export async function runComputerTask(
             clientY: pointClient.y,
             thought: experimentalThought,
           }),
-          ["computer.experimental_suggestion"],
+          ["computer.main_model_suggestion"],
           seq,
           suggestionPreview,
         )
         if (!ok) {
           locateAttempts = [
             ...(locateAttempts ?? []),
-            { layer: "qwen-vl", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
+            { layer: hit?.layer ?? "main-model", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
           ]
           throw new ComputerError(
             "ELEMENT_NOT_FOUND",
@@ -1270,7 +1267,7 @@ export async function runComputerTask(
       // danger scan re-runs on the new OCR — but only UPGRADES are
       // actionable: the user JUST approved this same level (re-asking would
       // be a prompt loop), while a NEW hard verdict fails closed.
-      if (reL2ApprovedMidAction && now() - shotAt > PIXEL_STALE_MS) {
+      if (reL2ApprovedMidAction && (hit?.layer === "main-model" || now() - shotAt > PIXEL_STALE_MS)) {
         const staleFrame = shot
         if (experimentalSuggestion && pointClient) {
           // G4/A1: the approval endorsed THIS point — freshness is a pixel-region
@@ -1278,6 +1275,13 @@ export async function runComputerTask(
           // would emit a fresh suggestion requiring a fresh human gate — a
           // prompt loop). Unstable region → STALE, never inject stale coords.
           const fresh = await trackCapture(hwnd)
+          if (hit?.layer === "main-model" && (fresh.hwnd !== shot.hwnd ||
+              rectDriftPx(fresh.rect, shot.rect) !== 0 || rectDriftPx(fresh.client, shot.client) !== 0 ||
+              fresh.imageWidth !== shot.imageWidth || fresh.imageHeight !== shot.imageHeight ||
+              fresh.black || fresh.fallbackUsed || fresh.osrBlackSuspected ||
+              (os.platform() === "win32" && captureObservation(fresh)?.observation_quality !== "ok"))) {
+            throw new ComputerError("STALE_SCREENSHOT", "computer: model observation geometry or capture quality changed")
+          }
           const { diffRatio } = await deps.capturer.diffRegion(fresh.path, shot.path, regionImg)
           if (diffRatio > PIXEL_DIFF_THRESHOLD) {
             throw new ComputerError(
@@ -1358,15 +1362,19 @@ export async function runComputerTask(
             )
           }
         }
-        const refreshRegion: RectPx = pointClient
+        const refreshPoint = pointClient && clientToImage(pointClient, shot)
+        const refreshRegion: RectPx = refreshPoint
           ? {
-              x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
-              y: Math.max(0, pointClient.y + shot.client.y - REGION_CROP_SIZE / 2),
+              x: Math.max(0, refreshPoint.x - REGION_CROP_SIZE / 2),
+              y: Math.max(0, refreshPoint.y - REGION_CROP_SIZE / 2),
               width: REGION_CROP_SIZE,
               height: REGION_CROP_SIZE,
             }
           : { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
         scan = scanDanger(ocrRes!.words, refreshRegion, REGION_CROP_SIZE)
+        if (hit?.layer === "main-model" && (scan.credentialRects.length || scan.windowLevel === "hard")) {
+          throw new ComputerError("DANGER_HARD_DENY", "computer: sensitive surface appeared after model observation")
+        }
         if ((action.action === "type" || action.action === "key") && scan.credentialRects.length > 0) {
           throw new ComputerError(
             "DANGER_HARD_DENY",
@@ -1396,7 +1404,19 @@ export async function runComputerTask(
       // SendInput — a stop requested during locate/danger/re-L2 phases must
       // still prevent injection. The ps1 side additionally polls the stop
       // flag mid-type (-StopFile).
-      const abortedPreInject = deps.abortCheck?.() ?? null
+      if (hit?.layer === "main-model") {
+        await deps.securityEnv.assertInjectable(hwnd)
+        const live = await deps.windows.infoForHwnd(hwnd)
+        assertHwndOwnedByEntry(live, entry)
+        if (!live.alive || live.pid !== targetPid) {
+          throw new ComputerError("HWND_NOT_OWNED", "computer: model target window process changed")
+        }
+        if (rectDriftPx(live.rect, shot.rect) !== 0) {
+          throw new ComputerError("STALE_SCREENSHOT", "computer: model target window moved before click")
+        }
+        assertModelPointCurrent?.()
+      }
+      const abortedPreInject = pollStop() ?? null
       if (abortedPreInject) {
         log("computer.task.aborted", { taskId, seq, channel: abortedPreInject, during: "pre-inject" })
         throw abortChannelError(abortedPreInject, `computer: task aborted by emergency stop (${abortedPreInject}) before injection`)
@@ -1418,16 +1438,20 @@ export async function runComputerTask(
           await deps.injector.typeText(hwnd, action.text)
         } catch (typeErr) {
           if (deps.injector.retryTypeAfterFailure === false) throw typeErr
+          assertTypeRecoveryCurrent(typeErr)
           typeNoEffectCounts.set(typeKey, priorFails + 1)
           if (priorFails === 0) {
             // First failure: try one preferForeground-style re-raise then retype.
+            let focusError: unknown
             try {
               await deps.injector.forceForeground(hwnd)
-            } catch { /* best-effort */ }
+            } catch (err) { focusError = err }
+            assertTypeRecoveryCurrent(focusError)
             try {
               await deps.injector.typeText(hwnd, action.text)
               typeNoEffectCounts.set(typeKey, 0) // recovered
-            } catch {
+            } catch (retryErr) {
+              assertTypeRecoveryCurrent(retryErr)
               typeNoEffectCounts.set(typeKey, 2)
               throw new ComputerError(
                 "TYPE_NO_EFFECT",
@@ -1503,7 +1527,7 @@ export async function runComputerTask(
             // Observation unavailable: retain the existing conservative check.
           }
           // This observation adds an await after the common pre-inject fence.
-          const abortedBeforeUia = deps.abortCheck?.() ?? null
+          const abortedBeforeUia = pollStop() ?? null
           if (abortedBeforeUia !== null) {
             throw abortChannelError(abortedBeforeUia, `computer: task aborted by emergency stop (${abortedBeforeUia}) before uia delivery`)
           }
@@ -1530,7 +1554,7 @@ export async function runComputerTask(
             // task. The coordinate path only survives this today because computer-input.ps1
             // separately re-checks the same flag — i.e. by luck, not by design. Abort here so
             // it is design.
-            const channel = deps.abortCheck?.() ?? "hotkey"
+            const channel = pollStop() ?? "hotkey"
             log("computer.task.aborted", { taskId, seq, channel, via: "uia_invoke" })
             throw abortChannelError(channel, "computer: task aborted by emergency stop (uia delivery)")
           } else if (!r.ok && r.terminal === true) {
@@ -1554,7 +1578,7 @@ export async function runComputerTask(
           deliveryRoute = deliveryRoute ?? "sendinput"
           // UIA delivery awaited above: a stop may have arrived after the common fence.
           if (deliveryRoute === "uia_fallback") {
-            const abortedBeforeFallback = deps.abortCheck?.() ?? null
+            const abortedBeforeFallback = pollStop() ?? null
             if (abortedBeforeFallback !== null) {
               log("computer.task.aborted", { taskId, seq, channel: abortedBeforeFallback, via: "coordinate_fallback" })
               throw abortChannelError(abortedBeforeFallback, `computer: task aborted by emergency stop (${abortedBeforeFallback}) before coordinate fallback`)
@@ -1670,7 +1694,7 @@ export async function runComputerTask(
         if (deps.previewBuilder) {
           try {
             const imgPoint = pointClient
-              ? { x: afterShot.client.x + pointClient.x, y: afterShot.client.y + pointClient.y }
+              ? clientToImage(pointClient, afterShot)
               : undefined
             previewImage = (await deps.previewBuilder.build(afterShot.path, imgPoint, afterBlur)) ?? undefined
           } catch {
@@ -1862,6 +1886,10 @@ export async function runComputerTask(
     /* best-effort — the ps1 self-destructs at -MaxSeconds regardless */
   }
   await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions, uiaWatcher: uiaWatcherLiveness() })
+  try { assertReadCurrent() } catch (error) { return fail(error as ComputerError) }
+  if (cacheVisualProbeAfterTask && deps.currentConfig?.().apps?.entries?.[entry.token] === entry) {
+    try { cacheVisualProbeAfterTask() } catch { /* optional UIA cache */ }
+  }
   log("computer.task.completed", { taskId, completed: result.completedActions, total: result.totalActions })
   emit({ event: "finished", taskId, ok: true, completed: result.completedActions, total: result.totalActions, evidenceDir: evidence.dir })
   return result

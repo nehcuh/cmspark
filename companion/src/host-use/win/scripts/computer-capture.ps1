@@ -59,7 +59,8 @@ public class CapW32 {
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetThreadDpiAwarenessContext();
   [DllImport("user32.dll")] public static extern bool AreDpiAwarenessContextsEqual(IntPtr first, IntPtr second);
-  [DllImport("user32.dll")] static extern IntPtr GetWindowDpiAwarenessContext(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindowDpiAwarenessContext(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
   [DllImport("user32.dll")] static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
   public static uint PerMonitorDpi(IntPtr h) {
     try { return PhysicalContext() && GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(h)) == 2 ? GetDpiForWindow(h) : 0; }
@@ -126,7 +127,7 @@ public class CapW32 {
     return true;
   }
   public static bool ForceForeground(IntPtr hwnd){
-    ShowWindow(hwnd, 9); // SW_RESTORE
+    if (IsIconic(hwnd)) ShowWindow(hwnd, 9); // SW_RESTORE
     IntPtr fg = GetForegroundWindow(); uint dummy;
     uint fgTid = GetWindowThreadProcessId(fg, out dummy);
     uint myTid = GetCurrentThreadId(); bool ok = false;
@@ -199,16 +200,21 @@ $hwndPtr = [IntPtr]::new($Hwnd)
 if (-not [CapW32]::IsWindow($hwndPtr)) { Fail "HWNDDEAD" "hwnd $Hwnd is not a live window" 4 }
 
 Refuse-CockpitWindow $hwndPtr
-$r = New-Object CapW32+RECT
-if (-not [CapW32]::GetWindowRect($hwndPtr, [ref]$r)) { Fail "HWNDDEAD" "window rect query failed" 4 }
-$width = $r.Right - $r.Left; $height = $r.Bottom - $r.Top
-if ($width -le 0 -or $height -le 0) { Fail "HWNDDEAD" "hwnd $Hwnd has an empty rect" 4 }
 
 $activityDpi = if ($Passive) { [CapW32]::PerMonitorDpi($hwndPtr) } else { 0 }
 $wasIconic = [CapW32]::IsIconic($hwndPtr)
 if ($Passive -and $wasIconic) { Fail "CAPTUREFAILED" "passive target is minimized" 6 }
-if ($wasIconic) { [CapW32]::ShowWindow($hwndPtr, 9) | Out-Null; Start-Sleep -Milliseconds 250 }
+if ($wasIconic) {
+  [CapW32]::ShowWindow($hwndPtr, 9) | Out-Null
+  Start-Sleep -Milliseconds 250
+  if ([CapW32]::IsIconic($hwndPtr)) { Fail "CAPTUREFAILED" "target is still minimized after restore" 6 }
+}
 
+# The frame and its final identity check must use the same post-restore rectangle.
+$r = New-Object CapW32+RECT
+if (-not [CapW32]::GetWindowRect($hwndPtr, [ref]$r)) { Fail "HWNDDEAD" "window rect query failed" 4 }
+$width = $r.Right - $r.Left; $height = $r.Bottom - $r.Top
+if ($width -le 0 -or $height -le 0) { Fail "HWNDDEAD" "hwnd $Hwnd has an empty rect" 4 }
 [uint32]$targetPid = 0
 $targetTid = [CapW32]::GetWindowThreadProcessId($hwndPtr, [ref]$targetPid)
 if ($targetPid -eq 0 -or $targetTid -eq 0 -or -not [CapW32]::ValidRect($r)) { Fail "CAPTUREFAILED" "capture identity unavailable" 6 }
@@ -219,14 +225,38 @@ try { $dpi = [int][CapW32]::GetDpiForWindow($hwndPtr); if ($dpi -le 0) { $dpi = 
 $outDir = Split-Path $OutPath -Parent
 if ($outDir -and -not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 
-# Strategy 1: PrintWindow(PW_RENDERFULLCONTENT = 2)
-$bmp = New-Object System.Drawing.Bitmap($width, $height)
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$hdc = $g.GetHdc()
-$printed = [CapW32]::PrintWindow($hwndPtr, $hdc, 2)
-$g.ReleaseHdc($hdc); $g.Dispose()
+# PrintWindow asks the target to paint. A DPI-virtualized target paints in its
+# own units, while OCR, UIA and input share the physical outer-window frame.
+if (-not [CapW32]::PhysicalContext()) { Fail "CAPTUREFAILED" "physical capture coordinates unavailable" 6 }
+$renderContext = [CapW32]::GetWindowDpiAwarenessContext($hwndPtr)
+$priorContext = [CapW32]::SetThreadDpiAwarenessContext($renderContext)
+if ($priorContext -eq [IntPtr]::Zero) { Fail "CAPTUREFAILED" "window rendering coordinates unavailable" 6 }
+try {
+  $renderRect = New-Object CapW32+RECT
+  if (-not [CapW32]::GetWindowRect($hwndPtr, [ref]$renderRect) -or -not [CapW32]::ValidRect($renderRect)) {
+    Fail "CAPTUREFAILED" "window rendering bounds unavailable" 6
+  }
+  $renderWidth = $renderRect.Right - $renderRect.Left
+  $renderHeight = $renderRect.Bottom - $renderRect.Top
+  $bmp = New-Object System.Drawing.Bitmap($renderWidth, $renderHeight)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $hdc = $g.GetHdc()
+  try {
+    $printed = [CapW32]::PrintWindow($hwndPtr, $hdc, 2)
+  } finally { $g.ReleaseHdc($hdc); $g.Dispose() }
+} finally { [void][CapW32]::SetThreadDpiAwarenessContext($priorContext) }
+if (-not [CapW32]::PhysicalContext()) { $bmp.Dispose(); Fail "CAPTUREFAILED" "physical capture coordinates could not be restored" 6 }
 $black = $true
 if ($printed) { $black = Test-BlackImage $bmp }
+if ($printed -and -not $black -and ($renderWidth -ne $width -or $renderHeight -ne $height)) {
+  $physical = New-Object System.Drawing.Bitmap($width, $height)
+  $g = [System.Drawing.Graphics]::FromImage($physical)
+  try {
+    $destination = New-Object System.Drawing.Rectangle(0, 0, $width, $height)
+    $g.DrawImage($bmp, $destination, 0, 0, $renderWidth, $renderHeight, [System.Drawing.GraphicsUnit]::Pixel)
+  } finally { $g.Dispose(); $bmp.Dispose() }
+  $bmp = $physical
+}
 
 $occluders = @()
 $captureMethod = "printwindow"

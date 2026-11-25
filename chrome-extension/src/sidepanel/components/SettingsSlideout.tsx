@@ -1,3 +1,4 @@
+import { DesktopMaximumDialog } from "./DesktopMaximumDialog"
 // Settings slideout panel for LLM configuration + NetSec (migrated from 场景 panel)
 
 import { useState, useEffect, useCallback, useRef } from "react"
@@ -22,7 +23,6 @@ import { NetSecSettingsSection } from "./NetSecSettingsSection"
 import { CapabilityProfileSection } from "./CapabilityProfileSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
 import { CodingHandoffSettingsSection } from "./CodingHandoffSettingsSection"
-import { LcuSettingsSection } from "./LcuSettingsSection"
 import { SettingsNavRow, SettingsPage } from "./SettingsPage"
 import { SettingsModelUses } from "./SettingsModelUses"
 import { ModelCenterControls } from "./ModelCenterControls"
@@ -50,13 +50,9 @@ import {
 // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
 // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
 import {
-  MODEL_SWITCH_COPY,
   QWEN_VL_VARIANT_TIPS,
   licenseDoorShouldOpen,
   modelStatusLine,
-  modelSwitchDisabledReason,
-  modelSwitchHint,
-  modelSwitchRunningNote,
   variantResourceTip,
 } from "./model-switch-logic"
 import {
@@ -195,6 +191,7 @@ export function SettingsSlideout() {
   const [autopilotBusy, setAutopilotBusy] = useState(false)
   const [advancedGatesOpen, setAdvancedGatesOpen] = useState(false)
   // Vision reuse UX (multi-adversarial P0): banner session + advanced collapse when reused
+  const [desktopMaximumDialog, setDesktopMaximumDialog] = useState(false)
   const [unattendedAckDesktop, setUnattendedAckDesktop] = useState(false)
   const [unattendedAckSession, setUnattendedAckSession] = useState(false)
   const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
@@ -232,8 +229,6 @@ export function SettingsSlideout() {
   const [visualFooter, reportVisualFooter] = useState<FooterControl | null>(null)
   const [minutesFooter, setMinutesFooter] = useState<FooterControl | null>(null)
   const reportMinutesFooter = useCallback((control: FooterControl | null) => setMinutesFooter(control), [])
-  const [lcuFooter, setLcuFooter] = useState<FooterControl | null>(null)
-  const reportLcuFooter = useCallback((control: FooterControl | null) => setLcuFooter(control), [])
   const [microphoneFooter, setMicrophoneFooter] = useState<FooterControl | null>(null)
   const reportMicrophoneFooter = useCallback((control: FooterControl | null) => setMicrophoneFooter(control), [])
   const [envFooter, setEnvFooter] = useState<FooterControl | null>(null)
@@ -255,8 +250,8 @@ export function SettingsSlideout() {
   const activeCategory = settingsRoute.view === "home" ? undefined : settingsRoute.category
   const activeDestination = settingsRoute.view === "destination" ? settingsRoute.destination : undefined
   const settingsInteractive = state.settingsOpen && !licenseDoorShouldOpen(state.computerModelLicenseDoor)
-  const knowledgeRoute = useRef<SettingsRoute | null>(null)
-  knowledgeRoute.current = settingsInteractive && activeDestination === "data-knowledge" ? settingsRoute : null
+  const panelRoute = useRef<SettingsRoute | null>(null)
+  panelRoute.current = settingsInteractive ? settingsRoute : null
   const settingsBody = useRef<HTMLDivElement>(null)
   const focusTarget = useRef<string | null>(null)
   const lastSettingsFocus = useRef<HTMLElement | null>(null)
@@ -908,13 +903,12 @@ export function SettingsSlideout() {
   const canSaveProfile = !!profileFooter?.dirty && !profileFooter.busy
   const canSaveVisual = !!visualFooter?.dirty && !visualFooter.busy
   const canSaveMinutes = !!minutesFooter?.dirty && !minutesFooter.busy
-  const canSaveLcu = !!lcuFooter?.dirty && !lcuFooter.busy
   const canSaveMicrophone = !!microphoneFooter?.dirty && !microphoneFooter.busy
   const canSaveEnv = !!envFooter?.dirty && !envFooter.busy
   const canSaveVoicePrefs = voicePrefsHasEdits && state.connectionState === "connected" && !voicePrefsPending
   const canSaveEngine = !!modelState && engineHasEdits && engineReady && state.connectionState === "connected" && !enginePending &&
     (engineSelection !== "local" && engineSelection !== "system" || enginePrivacyAck)
-  const footerDisabled = footerWaiting || footerRunning || localSaving || externalPending || voicePrefsPending || enginePending || !(canSaveConfig || canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveVisual || canSaveLcu || canSaveEnv || canSaveMicrophone || canSaveVoicePrefs || canSaveEngine)
+  const footerDisabled = footerWaiting || footerRunning || localSaving || externalPending || voicePrefsPending || enginePending || !(canSaveConfig || canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveVisual || canSaveEnv || canSaveMicrophone || canSaveVoicePrefs || canSaveEngine)
   const saveRemaining = async () => {
     if (footerRunningRef.current) return
     footerRunningRef.current = true
@@ -935,7 +929,6 @@ export function SettingsSlideout() {
         if ((await meetingFooter?.save()) === false) return
         setFooterNotice("会议转写设置已保存并核对。")
       }
-      if (canSaveLcu) lcuFooter?.save()
       if (canSaveEnv) envFooter?.save()
       if (canSaveMicrophone && (await microphoneFooter?.save()) === false) return
       if (canSaveVoicePrefs) handleSaveVoicePrefs()
@@ -949,7 +942,7 @@ export function SettingsSlideout() {
   const handleFooterSave = () => {
     setFooterNotice(null)
     if (canSaveConfig) {
-      const other = canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveVisual || canSaveLcu || canSaveEnv || canSaveMicrophone || canSaveVoicePrefs || canSaveEngine
+      const other = canSaveComputer || canSaveExternal || canSaveLocal || canSaveMeeting || canSaveProfile || canSaveMinutes || canSaveVisual || canSaveEnv || canSaveMicrophone || canSaveVoicePrefs || canSaveEngine
       handleSave(other)
       return
     }
@@ -1312,15 +1305,17 @@ export function SettingsSlideout() {
     })
   }
 
-  const openKnowledgeSettings = async () => {
-    if (!host || knowledgeRoute.current !== settingsRoute) return
+  const openSettingsPanel = async (panel: "apps" | "knowledge") => {
+    const destination = panel === "apps" ? "tools-desktop" : "data-knowledge"
+    if (!host || activeDestination !== destination || panelRoute.current !== settingsRoute) return
+    const label = panel === "apps" ? "应用" : "知识"
     try {
-      const opened = await host.openPanelForce("knowledge")
-      if (knowledgeRoute.current !== settingsRoute) return
+      const opened = await host.openPanelForce(panel)
+      if (panelRoute.current !== settingsRoute) return
       if (opened) dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-      else setImmediateNotice("知识面板尚未打开，请完成当前操作后重试。")
+      else setImmediateNotice(`${label}面板尚未打开，请完成当前操作后重试。`)
     } catch {
-      if (knowledgeRoute.current === settingsRoute) setImmediateNotice("无法打开知识面板，请重试。")
+      if (panelRoute.current === settingsRoute) setImmediateNotice(`无法打开${label}面板，请重试。`)
     }
   }
 
@@ -3136,6 +3131,8 @@ export function SettingsSlideout() {
                   background: tokens.dangerSoft,
                 }}>有开关已开</span>
               ) : null}>
+          <button type="button" onClick={() => setDesktopMaximumDialog(true)}>桌面最大权限{state.desktopMaximumExpiresAt ? "（已开启）" : ""}</button>
+          {desktopMaximumDialog && <DesktopMaximumDialog onClose={() => setDesktopMaximumDialog(false)} />}
           {/* --- 运行自主度 (Trust packaging / Autopilot + ADR-021 unattended) --- */}
           {(() => {
             const armFlags = {
@@ -3780,8 +3777,13 @@ export function SettingsSlideout() {
           <OutboundMcpSettingsSection />
           </SettingsPage>
 
-          <SettingsPage id="tools-lcu" active={activeDestination === "tools-lcu"}>
-          <LcuSettingsSection active={activeDestination === "tools-lcu" && settingsInteractive} onFooterSave={reportLcuFooter} />
+          <SettingsPage id="tools-desktop" active={activeDestination === "tools-desktop"}>
+          <section style={styles.field} aria-label="原生桌面操作">
+            <strong>原生桌面操作 · macOS / Windows</strong>
+            <p style={styles.helpText}>标准控件与文字在本机定位。启用截图视觉分析并复用支持图片的主模型后，默认逐张确认。也可在桌面最大权限中一次授权当前模型接收目标窗口图并建议点击。</p>
+            <p style={styles.helpText}>打开应用面板，开启「坐标操作」，再从目标应用的「···」菜单查看可用的授权方式。</p>
+            <button type="button" className="cm-settings-text-link" disabled={!host} onClick={() => void openSettingsPanel("apps")}>打开应用面板</button>
+          </section>
           </SettingsPage>
 
           <SettingsPage id="tools-coding" active={activeDestination === "tools-coding"}>
@@ -3832,7 +3834,7 @@ export function SettingsSlideout() {
 
           <SettingsPage id="data-knowledge" active={activeDestination === "data-knowledge"}>
             <p className="cm-settings-note">使用知识面板核对当前对话的知识选择方式、勾选项和匹配规则。</p>
-            <button type="button" className="cm-settings-text-link" disabled={!host} onClick={() => void openKnowledgeSettings()}>打开知识面板</button>
+            <button type="button" className="cm-settings-text-link" disabled={!host} onClick={() => void openSettingsPanel("knowledge")}>打开知识面板</button>
           </SettingsPage>
 
           <SettingsPage id="data-files" active={activeDestination === "data-files"}>
@@ -4055,24 +4057,13 @@ export function SettingsSlideout() {
           </SettingsPage>
 
           <SettingsPage id="model-local" active={activeDestination === "model-local"}>
-          {/* --- WP5-I4 实验功能(Qwen3-VL 本地模型定位层) --- */}
+          {/* --- 工作中心本机模型 --- */}
           {(() => {
             // 纯渲染:一切文案/判定来自 logic 纯函数;发送固定 source:"settings";
             // 无乐观更新——UI 态由 companion state 广播/应答驱动。
             const model = state.computerModel
             const statusLine = modelStatusLine(model, state.computerModelProgress)
-            const disabledReason = modelSwitchDisabledReason(model)
-            const depHint = modelSwitchHint({
-              masterEnabled: state.computerCoordinateEnabled,
-              appCoordinateAllowed: null, // 全局设置页无单应用上下文(每层提示在 AppsPanel)
-            })
-            const runningNote = modelSwitchRunningNote(state.computerTask)
-            const modelEnabled = model?.modelEnabled === true
             const send = (msg: object) => chrome.runtime.sendMessage(msg)
-            const toggle = () => {
-              dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
-              send({ type: "computer.model.set_enabled", enabled: !modelEnabled, source: "settings" })
-            }
             // 词表动作 → 发送映射(组件不组文案,只做按钮接线)
             const runAction = (action: string) => {
               if (action === "重置熔断") send({ type: "computer.model.reset_circuit_breaker", source: "settings" })
@@ -4084,28 +4075,9 @@ export function SettingsSlideout() {
             }
             return (
               <div style={styles.field}>
-                <label style={styles.label}>{MODEL_SWITCH_COPY.switchLabel}</label>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <button
-                    style={{
-                      ...styles.toggleBtn,
-                      ...(modelEnabled ? { background: tokens.accent, color: tokens.userBubbleText, borderColor: tokens.accent } : {}),
-                    }}
-                    disabled={disabledReason !== null || computerHasEdits}
-                    onClick={toggle}
-                  >
-                    {modelEnabled ? "已开启" : "已关闭"}
-                  </button>
-                  <span style={styles.helpText}>{MODEL_SWITCH_COPY.switchHint}</span>
-                </div>
-                {/* P2:任务运行中旁注(per-task 生效 + estop 引导) */}
-                {runningNote && (
-                  <div style={{ ...styles.helpText, color: tokens.warning }}>{runningNote}</div>
-                )}
-                {/* 三层依赖提示(主开关关)优先;否则本体语义 */}
-                <div style={styles.helpText}>{depHint ?? MODEL_SWITCH_COPY.layerSemantics}</div>
-                {disabledReason && (
-                  <div style={{ ...styles.helpText, color: tokens.warning }}>{disabledReason}</div>
+                <label style={styles.label}>工作中心本机图像模型</label>
+                {model && !model.licenseAccepted && !model.modelLicenseDeclined && (
+                  <button style={styles.secondaryBtn} type="button" onClick={() => send({ type: "computer.model.get_license", source: "settings" })}>查看本机模型许可</button>
                 )}
                 {model?.modelLicenseDeclined === true && (
                   <div style={{ marginTop: 6 }}>
@@ -4129,8 +4101,8 @@ export function SettingsSlideout() {
                 <div style={{ ...styles.helpText, marginTop: 8, fontWeight: 600 }}>使用步骤（经本机 Companion）</div>
                 <div style={{ ...styles.helpText, marginTop: 4, lineHeight: 1.5 }}>
                   ① Companion 检测本机环境与硬件 → ② 选择下载源（大陆推荐自动/魔搭）→
-                  ③ 选择模型规模 → ④ 下载权重 → ⑤ 开启实验层。
-                  插件本身不跑模型，只通过 Companion 发现/下载/启用。
+                  ③ 选择模型规模 → ④ 下载权重 → ⑤ 在工作中心选择本机 Qwen。
+                  模型与 Python 环境由 Companion 管理。
                 </div>
                 {/* 环境检查：显著清单（软件 / 硬件 / 模型）——用户无需知道包名 */}
                 <div
@@ -4153,7 +4125,7 @@ export function SettingsSlideout() {
                   }}
                 >
                   <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4, color: tokens.text }}>
-                    环境检查（下载 / 启用前必看）
+                    本地模型环境检查
                   </div>
                   <div style={{ fontSize: 12, lineHeight: 1.45, color: tokens.text, marginBottom: 6 }}>
                     <strong>状态：</strong>
@@ -4673,7 +4645,7 @@ export function SettingsSlideout() {
                     {state.computerModelError}
                   </div>
                 )}
-                <div style={styles.helpText}>{MODEL_SWITCH_COPY.licenseDoorHint}</div>
+                <div style={styles.helpText}>下载工作中心模型前需阅读并接受许可。</div>
               </div>
             )
           })()}
@@ -4684,15 +4656,15 @@ export function SettingsSlideout() {
         <div className="cm-settings-footer" style={styles.footer}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
             <span className="cm-settings-save-scope">保存当前设置草稿。授权与独立表单需要各自确认。</span>
-            {(hasEdits || computerHasEdits || localHasEdits || externalHasEdits || voicePrefsHasEdits || engineHasEdits || meetingFooter?.dirty || profileFooter?.dirty || minutesFooter?.dirty || visualFooter?.dirty || lcuFooter?.dirty || envFooter?.dirty || microphoneFooter?.dirty) && <span role="status">有未保存的修改</span>}
-            {[meetingFooter, profileFooter, minutesFooter, visualFooter, lcuFooter, envFooter, microphoneFooter].some(control => control?.dirty && control.busy) && <span role="status">部分设置仍在等待连接或回执，草稿已保留。</span>}
+            {(hasEdits || computerHasEdits || localHasEdits || externalHasEdits || voicePrefsHasEdits || engineHasEdits || meetingFooter?.dirty || profileFooter?.dirty || minutesFooter?.dirty || visualFooter?.dirty || envFooter?.dirty || microphoneFooter?.dirty) && <span role="status">有未保存的修改</span>}
+            {[meetingFooter, profileFooter, minutesFooter, visualFooter, envFooter, microphoneFooter].some(control => control?.dirty && control.busy) && <span role="status">部分设置仍在等待连接或回执，草稿已保留。</span>}
             {engineHasEdits && (engineSelection === "local" || engineSelection === "system") && !enginePrivacyAck && <span role="status">启用听写引擎前，请先勾选音频处理说明。</span>}
             {engineHasEdits && engineSelection === "external" && externalHasEdits && <span role="status">先保存外部转写配置，再保存引擎选择。</span>}
             {engineHasEdits && engineSelection === "external" && !externalPrivacyAck && <span role="status">启用外部转写前，请先勾选音频发送说明。</span>}
             {engineHasEdits && engineSelection === "external" && !externalHasEdits && externalPrivacyAck && modelState?.external?.keyConfigured && <span role="status">外部转写配置已保存，点击保存启用该引擎。</span>}
             {(savingExternal || externalHasEdits || voicePrefsHasEdits) && state.voiceModelError && <span role="alert">{modelProbeErrorLabel(state.voiceModelError) || state.voiceModelError}</span>}
             {localSaveError && <span role="alert">{localSaveError}</span>}
-            {[meetingFooter, profileFooter, minutesFooter, visualFooter, lcuFooter, envFooter, microphoneFooter].map((control, index) => control?.error ? <span role="alert" key={index}>{control.error}</span> : null)}
+            {[meetingFooter, profileFooter, minutesFooter, visualFooter, envFooter, microphoneFooter].map((control, index) => control?.error ? <span role="alert" key={index}>{control.error}</span> : null)}
             {localSaving && <span role="status">正在保存本机设置…</span>}
             {footerWaiting && <span role="status">正在按顺序保存设置，请等待配置回执…</span>}
             {footerRunning && <span role="status">正在提交其余设置…</span>}
@@ -4758,10 +4730,10 @@ export function SettingsSlideout() {
               onClose={() => dispatch({ type: "SET_COMPUTER_MODEL_LICENSE_DOOR", door: null })}
               overlayStyle={styles.backdrop}
               panelStyle={{ ...styles.panel, maxWidth: 520 }}
-              ariaLabel="实验层许可证与免责声明"
+              ariaLabel="本机工作中心模型许可"
             >
               <div style={styles.header}>
-                <h3 style={{ margin: 0, fontSize: 15 }}>实验层许可证与免责声明</h3>
+                <h3 style={{ margin: 0, fontSize: 15 }}>本机工作中心模型许可</h3>
               </div>
               <div style={{ ...styles.body, maxHeight: 320, overflowY: "auto", whiteSpace: "pre-wrap" }}>
                 {state.computerModelLicenseDoor!.licenseText}
@@ -4777,7 +4749,7 @@ export function SettingsSlideout() {
                     chrome.runtime.sendMessage({ type: "computer.model.license_response", accepted: false, source: "settings" })
                   }}
                 >
-                  拒绝(跳过本层)
+                  拒绝
                 </button>
                 <button
                   style={styles.saveBtn}

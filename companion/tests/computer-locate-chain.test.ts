@@ -265,8 +265,8 @@ test("chain: L0 skipped + L1 language-missing -> honest stubs -> ELEMENT_NOT_FOU
   assert.match(captured.message, /ocr:skipped\(ocr-language-missing\)/)
   // WP5 I3：admission 关闭（deps.experimental 缺省）→ model-not-admitted
   // （勿再误标为 model-disabled，开关可能是开着的但 worker/admission 失败）
-  assert.match(captured.message, /qwen-vl:skipped\(model-not-admitted\)/)
-  assert.match(captured.message, /cloud:skipped\(wp6-not-implemented\)/)
+  assert.match(captured.message, /main-model:skipped\(model-not-admitted\)/)
+  assert.doesNotMatch(captured.message, /cloud:/)
 })
 
 test("chain: L1 not-found -> stubs -> ELEMENT_NOT_FOUND", async () => {
@@ -536,8 +536,7 @@ test("L2: admission 关闭（experimental 缺省）→ skipped model-not-admitte
     (err: any) =>
       err instanceof ComputerError &&
       err.code === "ELEMENT_NOT_FOUND" &&
-      /qwen-vl:skipped\(model-not-admitted\)/.test(err.message) &&
-      /cloud:skipped\(wp6-not-implemented\)/.test(err.message),
+      /main-model:skipped\(model-not-admitted\)/.test(err.message) && !err.message.includes("cloud:"),
   )
 })
 
@@ -570,11 +569,11 @@ test("L2 skipped 原因矩阵：包线/坍缩/busy/not-ready/disabled 全直通 
     }
     assert.equal(captured.code, "ELEMENT_NOT_FOUND", `reason=${reason} 后链应继续降级`)
     assert.ok(
-      captured.message.includes(`qwen-vl:skipped(${reason})`),
+      captured.message.includes(`main-model:skipped(${reason})`),
       `reason=${reason} 应出现在错误叙事: ${captured.message}`,
     )
     assert.equal(tc.calls.length, 1)
-    const skipLog = logs.find((d) => d.layer === "qwen-vl" && d.hit === false)
+    const skipLog = logs.find((d) => d.layer === "main-model" && d.hit === false)
     assert.ok(skipLog, `reason=${reason} 应有降级日志`)
     assert.equal(skipLog!.reason, reason)
   }
@@ -587,8 +586,7 @@ test("L2 error：qwen-vl-error → outcome error + 链继续降级（错误类�
     (err: any) =>
       err instanceof ComputerError &&
       err.code === "ELEMENT_NOT_FOUND" &&
-      /qwen-vl:error\(qwen-vl-error\)/.test(err.message) &&
-      /cloud:skipped\(wp6-not-implemented\)/.test(err.message),
+      /main-model:error\(qwen-vl-error\)/.test(err.message) && !err.message.includes("cloud:"),
   )
 })
 
@@ -601,9 +599,9 @@ test("L2 命中 → experimental:true 透传 + uncrossverified（吃 A1.3 子预
   // 链排序：L0 skipped（缺省 uia:null）→ L1 not-found → L2 hit，L3 stub 不出现
   assert.deepEqual(
     result.attempts.map((a) => [a.layer, a.outcome]),
-    [["uia", "skipped"], ["ocr", "not-found"], ["qwen-vl", "hit"]],
+    [["uia", "skipped"], ["ocr", "not-found"], ["main-model", "hit"]],
   )
-  assert.equal(result.hit.layer, "qwen-vl")
+  assert.equal(result.hit.layer, "main-model")
   assert.equal(result.experimental, true)
   assert.equal(result.crossverified, false)
   assert.equal(result.uncrossverified, true)
@@ -626,7 +624,7 @@ test("L2 日志格式回归：命中日志无 confidence 键，字段与既有�
   const tc = new FakeExperimentalLocator(tcHit())
   const logs: Array<Record<string, unknown>> = []
   await runChain(chainDeps({ locator: new FakeLocator([]), experimental: tc, log: (_e, d) => logs.push(d) }))
-  const hitLog = logs.find((d) => d.layer === "qwen-vl" && d.hit === true)
+  const hitLog = logs.find((d) => d.layer === "main-model" && d.hit === true)
   assert.ok(hitLog, "命中应有 computeruse.locate 日志")
   assert.equal("confidence" in hitLog!, false, "G3：命中日志无上屏置信度")
   assert.deepEqual(Object.keys(hitLog!).sort(), ["hit", "layer", "ms"])
@@ -827,7 +825,7 @@ test("P4 L2 experimental on retina: image-pixel point → logical pointClient", 
     releaseRaw: async () => {},
   })
   assert.ok(r.hit, "experimental layer hits")
-  assert.equal(r.hit.layer, "qwen-vl")
+  assert.equal(r.hit.layer, "main-model")
   // image (800, 600) / scale 2 = (400, 300) logical; client (10, 40).
   // pointClient = (400 - 10, 300 - 40) = (390, 260). Pre-P4 would yield (790, 560).
   assert.equal(r.pointClient.x, 390)
@@ -879,15 +877,14 @@ test("#360: vaultBrowserNoVlm → L2 admitted 也零调用，L2/L3 skipped vault
     (err: any) =>
       err instanceof ComputerError &&
       err.code === "ELEMENT_NOT_FOUND" &&
-      /qwen-vl:skipped\(vault-browser-no-vlm\)/.test(err.message) &&
-      /cloud:skipped\(vault-browser-no-vlm\)/.test(err.message),
+      /main-model:skipped\(vault-browser-no-vlm\)/.test(err.message) && !err.message.includes("cloud:"),
   )
   assert.equal(tc.calls.length, 0, "浏览器 one-shot：实验层 admitted 也绝不调用（网页像素不进 VLM）")
-  const qwenLog = logs.find((d) => d.layer === "qwen-vl")
+  const qwenLog = logs.find((d) => d.layer === "main-model")
   const cloudLog = logs.find((d) => d.layer === "cloud")
   assert.equal(qwenLog?.hit, false)
   assert.equal(qwenLog?.reason, "vault-browser-no-vlm")
-  assert.equal(cloudLog?.reason, "vault-browser-no-vlm")
+  assert.equal(cloudLog, undefined)
 })
 
 test("#360: vaultBrowserNoVlm 时 L0/L1 照常工作（UIA/OCR 定位能力不收窄）", async () => {
@@ -901,7 +898,7 @@ test("#360: vaultBrowserNoVlm 时 L0/L1 照常工作（UIA/OCR 定位能力不�
 test("#360: flag 缺省（OSR 白名单类非浏览器应用）→ 实验层照常命中（能力不收窄）", async () => {
   const tc = new FakeExperimentalLocator(tcHit())
   const { result } = await runChain(chainDeps({ locator: new FakeLocator([]), experimental: tc }))
-  assert.equal(result.hit.layer, "qwen-vl")
+  assert.equal(result.hit.layer, "main-model")
   assert.equal(result.experimental, true)
   assert.equal(tc.calls.length, 1)
 })

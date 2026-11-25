@@ -859,6 +859,16 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
       }
 
+      case "computer.maximum.arm":
+      case "computer.maximum.get":
+      case "computer.maximum.review":
+      case "computer.maximum.revoke": {
+        const url = sender?.url?.split(/[?#]/)[0]
+        const panel = sender?.id === chrome.runtime.id && (url === chrome.runtime.getURL("sidepanel.html") ||
+          url === chrome.runtime.getURL("tabs/workspace.html"))
+        sendResponse({ ok: panel && wsClient?.getState() === "connected" && wsClient.send(message) })
+        return false
+      }
       case "file.upload.part": {
         const extensionPage = sender?.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(""))
         if (!extensionPage || wsClient?.getState() !== "connected") sendResponse({ ok: false })
@@ -1758,15 +1768,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
       case "computer.get_state":
       case "computer.set_enabled":
       case "computer.evidence.open":
-      case "computer.lcu.get_state":
-      case "computer.lcu.probe":
-      case "computer.lcu.configure":
-      case "computer.lcu.set_enabled":
       // WP5-I4 实验层开关族:设置页六路由透传。开启由 companion 生物识别门
       // 承担(D2,同 :727-728 坐标开关先例);license/download/delete/reset 由
       // companion validateWsMessage + handler belt 双层围栏(source:"settings"
       // 在面板侧固定注入,扩展不做信任判定)。
       case "computer.model.get_state":
+      case "computer.model.get_license":
       case "computer.model.set_enabled":
       case "computer.model.license_response":
       case "computer.model.download":

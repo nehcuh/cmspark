@@ -18,11 +18,11 @@ function snapshot() {
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(DATA_DIR, "config.json"), "utf8")).apps.entries, actual)
   return actual
 }
-function start(outlet: "policy" | "coordinate") {
+function start(outlet: "policy" | "coordinate", appToken = token, ownerCurrent?: () => boolean) {
   let release!: (r: BiometricGateOutcome) => void, entered!: () => void
   const ready = new Promise<void>(r => { entered = r }), hold = new Promise<BiometricGateOutcome>(r => { release = r }); let gates = 0
-  const pending = handleAppsMessage(outlet === "policy" ? { type: "apps.set_policy", token, policy: "auto" } :
-    { type: "apps.set_coordinate_allowed", token, allowed: true }, { requestConfirmation: channel }, {
+  const pending = handleAppsMessage(outlet === "policy" ? { type: "apps.set_policy", token: appToken, policy: "auto" } :
+    { type: "apps.set_coordinate_allowed", token: appToken, allowed: true }, { requestConfirmation: channel, ownerCurrent }, {
       gate: async () => { gates++; entered(); return hold }, clearAppTrust: () => 0,
     })
   return { pending, ready, release, gates: () => gates }
@@ -74,6 +74,13 @@ for (const outlet of ["policy", "coordinate"] as const) {
     await assert.rejects(handleAppsMessage(outlet === "policy" ? { type: "apps.set_policy", token, policy: "auto" } : { type: "apps.set_coordinate_allowed", token, allowed: true },
       { requestConfirmation: channel }, { gate: async () => { throw new Error("owned gate failure") }, clearAppTrust: () => 0 }), /owned gate failure/)
     assert.deepEqual(snapshot(), before); assert.equal(listeners(), baseline)
+    if (outlet === "coordinate") {
+      let prompts = 0
+      const retry = await handleAppsMessage({ type: "apps.set_coordinate_allowed", token, allowed: true },
+        { requestConfirmation: channel }, { gate: async () => { prompts++; return approval } })
+      assert.equal(prompts, 1); assert.equal(retry.type, "apps.updated")
+      assert.equal(snapshot()[token].coordinateAllowed, true); assert.equal(listeners(), baseline)
+    }
   })
 }
 test("coordinate: removal in actual import microtask window denies before gate", async () => {
@@ -85,6 +92,54 @@ test("parallel grants do not overwrite first committed state", async () => {
   replaceAppsEntries({ [token]: entry() }); const baseline = listeners(), first = start("policy"), second = start("coordinate")
   await Promise.all([first.ready, second.ready]); first.release(approval); assert.equal((await first.pending).type, "apps.updated")
   const committed = snapshot(); second.release(approval); assert.equal((await second.pending).code, "APP_GRANT_STALE"); assert.deepEqual(snapshot(), committed); assert.equal(listeners(), baseline)
+})
+
+test("one coordinate approval per app, with independent approvals for sibling apps", async () => {
+  const sibling = "win.app.sibling649"
+  replaceAppsEntries({ [token]: entry(), [sibling]: { ...entry(), token: sibling } })
+  const baseline = listeners()
+  const first = start("coordinate"), other = start("coordinate", sibling)
+  try {
+    await Promise.all([first.ready, other.ready])
+    let additionalPrompts = 0
+    const duplicate = await handleAppsMessage({ type: "apps.set_coordinate_allowed", token, allowed: true },
+      { requestConfirmation: channel }, { gate: async () => { additionalPrompts++; return approval } })
+    assert.equal(additionalPrompts, 0)
+    assert.equal(duplicate.code, "APP_COORDINATE_ENABLE_PENDING")
+    assert.equal(snapshot()[token].coordinateAllowed, undefined)
+  } finally {
+    first.release({ approved: false, reason: "denied" }); other.release(approval)
+    await Promise.all([first.pending, other.pending])
+  }
+  assert.equal((await first.pending).code, "BIOMETRIC_DENIED")
+  assert.equal(snapshot()[sibling].coordinateAllowed, true)
+  assert.equal(listeners(), baseline)
+  const retry = start("coordinate"); await retry.ready; retry.release(approval)
+  assert.equal((await retry.pending).coordinateAllowed, true)
+})
+
+for (const beforePrompt of [true, false]) test(`already-off revokes the pending coordinate approval (before prompt=${beforePrompt})`, async () => {
+  replaceAppsEntries({ [token]: { ...entry(), coordinateAllowed: false } })
+  const baseline = listeners(), flow = start("coordinate")
+  if (!beforePrompt) await flow.ready
+  await handleAppsMessage({ type: "apps.set_coordinate_allowed", token, allowed: false })
+  flow.release(approval)
+  assert.equal((await flow.pending).code, "APP_GRANT_STALE")
+  assert.equal(flow.gates(), beforePrompt ? 0 : 1)
+  assert.equal(snapshot()[token].coordinateAllowed, false)
+  assert.equal(listeners(), baseline)
+})
+
+for (const beforePrompt of [true, false]) test(`owner loss cancels coordinate grant (before prompt=${beforePrompt})`, async () => {
+  replaceAppsEntries({ [token]: entry() })
+  let current = true
+  const baseline = listeners(), flow = start("coordinate", token, () => current)
+  if (!beforePrompt) await flow.ready
+  current = false; flow.release(approval)
+  assert.equal((await flow.pending).code, "APP_GRANT_STALE")
+  assert.equal(flow.gates(), beforePrompt ? 0 : 1)
+  assert.equal(snapshot()[token].coordinateAllowed, undefined)
+  assert.equal(listeners(), baseline)
 })
 test("unchanged subject on config notification is not falsely revoked", async () => {
   replaceAppsEntries({ [token]: entry() }); const baseline = listeners(), flow = start("policy"); await flow.ready

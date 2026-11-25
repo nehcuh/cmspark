@@ -27,8 +27,8 @@ public class WinEnum {
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
-  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
-  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextLength(IntPtr h);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -91,7 +91,7 @@ if ($ExePath -ne "") {
       $matches += $info
     }
   }
-  Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{ ok = $true; windows = $matches }))
+  Write-Output (ConvertTo-Json -Depth 4 -Compress -InputObject ([ordered]@{ ok = $true; windows = $matches }))
   exit 0
 }
 

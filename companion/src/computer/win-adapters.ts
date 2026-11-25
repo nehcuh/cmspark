@@ -64,16 +64,46 @@ const PS_ERROR_CODES: Record<string, import("./types").ComputerErrorCode> = {
  */
 const PS_ERR_LINE = /^[A-Z][A-Z0-9_]{3,}:/
 
+/** A type failure may prove zero delivery, a posted prefix, or neither. */
+function typeInputPosted(prefix: string, detail: string, length: number): boolean | undefined {
+  if (["HWNDDEAD", "ILDENIED", "DESKTOPDENIED", "BADARGS"].includes(prefix)) return false
+  if (prefix === "FOCUSLOST") {
+    if (detail.startsWith("SetForegroundWindow failed after 3 attempts")) return false
+    const counts = /^foreground hwnd changed after (\d+)\/(\d+) chars$/.exec(detail)
+    if (counts && Number(counts[2]) === length && Number(counts[1]) < length) return Number(counts[1]) > 0
+  } else if (prefix === "SENDFAILED") {
+    if (/^type text is \d+ chars — exceeds the 2000-char cap \(X4\)$/.test(detail) ||
+        /^estimated inject time \d+ms exceeds the 120s hard cap \(X4\)$/.test(detail)) return false
+    const counts = /^SendInput delivered ([01])\/2 events at char (\d+)$/.exec(detail)
+    if (counts && Number(counts[2]) < length) return Number(counts[2]) > 0 || counts[1] === "1"
+  }
+}
+
+/** runPs uses promisified execFile with UTF-8 output. A spawn failure such as
+ * ENOENT never started a producer; an interrupted running child may have typed. */
+function typeProcessExited(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const child = err as import("node:child_process").ExecFileException & { stdout?: unknown; stderr?: unknown }
+  return typeof child.cmd === "string" && typeof child.stdout === "string" && typeof child.stderr === "string" &&
+    (child.killed === true || !!child.signal || (typeof child.code === "number" && child.code !== 0) ||
+      child.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+}
+
 /** Map a rejected PsRunner call to a typed ComputerError. */
-export function rethrowComputerPsError(err: any, label: string): never {
+export function rethrowComputerPsError(err: any, label: string, typeLength?: number): never {
   const stderr = err && typeof err === "object" && "stderr" in err && err.stderr ? String(err.stderr) : ""
   const line = stderr.split(/\r?\n/).find((l) => PS_ERR_LINE.test(l))
-  if (line) {
-    const sep = line.indexOf(":")
-    const prefix = line.slice(0, sep)
-    const detail = line.slice(sep + 1).trim()
-    const code = PS_ERROR_CODES[prefix]
-    if (code) throw new ComputerError(code, `computer.${label}: ${detail}`, { psPrefix: prefix })
+  const sep = line?.indexOf(":") ?? -1
+  const prefix = line?.slice(0, sep) ?? ""
+  const detail = line?.slice(sep + 1).trim() ?? ""
+  const code = PS_ERROR_CODES[prefix]
+  const posted = typeLength === undefined ? undefined : typeInputPosted(prefix, detail, typeLength)
+  if (typeLength !== undefined && posted === undefined && code !== "TASK_ABORTED" && typeProcessExited(err)) {
+    // execFile's message/cmd includes argv (and the text). Do not echo it.
+    throw new ComputerError(code ?? "INJECT_FAILED", "Windows text input ended without a delivery receipt", { typeDeliveryUnknown: true })
+  }
+  if (code) {
+    throw new ComputerError(code, `computer.${label}: ${detail}`, { psPrefix: prefix, ...(posted && { typeInputPosted: true }) })
   }
   if (stderr.trim()) throw new ComputerError("INJECT_FAILED", `computer.${label}: ${stderr.trim()}`)
   throw err
@@ -314,6 +344,33 @@ export class PsScreenCapturer implements ScreenCapturer {
 
 // ---------------------------------------------------------------------------
 
+/** Match a substring starting in this OCR word. A word boundary can carry a
+ * space ("Review sample") or split one label ("确", "认"). */
+function matchOcrWords(line: OcrWord[], start: number, text: string): { end: number; label: string } | undefined {
+  const first = line[start].text
+  if (first.includes(text)) return { end: start, label: first }
+  for (let offset = Math.max(0, first.length - text.length + 1); offset < first.length; offset++) {
+    const prefix = first.slice(offset)
+    if (!text.startsWith(prefix)) continue
+    let used = prefix.length
+    let label = first
+    for (let end = start + 1; end < line.length; end++) {
+      const previous = line[end - 1], word = line[end]
+      // Separate controls can occupy the same OCR line. A gap larger than
+      // either word is tall breaks the label.
+      if (word.x - previous.x - previous.w > Math.max(previous.h, word.h)) break
+      const separator = text[used] === " " && !word.text.startsWith(" ") ? " " : ""
+      used += separator.length
+      const remaining = text.slice(used)
+      label += separator + word.text
+      if (remaining && word.text.startsWith(remaining)) return { end, label }
+      if (!remaining.startsWith(word.text)) break
+      used += word.text.length
+    }
+  }
+  return undefined
+}
+
 export class PsLocator implements Locator {
   constructor(private runner: PsRunner = runPs, private language = "zh-Hans") {}
 
@@ -386,27 +443,20 @@ export class PsLocator implements Locator {
     for (const line of lines) {
       line.sort((a, b) => a.x - b.x)
       for (let i = 0; i < line.length; i++) {
-        let acc = ""
-        for (let j = i; j < line.length; j++) {
-          acc += line[j].text
-          if (acc.includes(text)) {
-            const first = line[i]
-            const last = line[j]
-            const x = first.x
-            const y = Math.min(first.y, last.y)
-            const x2 = last.x + last.w
-            const y2 = Math.max(first.y + first.h, last.y + last.h)
-            return {
-              x: Math.round(x + (x2 - x) / 2),
-              y: Math.round(y + (y2 - y) / 2),
-              bbox: { x, y, width: x2 - x, height: y2 - y },
-              layer: "ocr",
-              confidence: 0.9,
-              matchedText: acc,
-            }
-          }
-          // Stop growing the window once it clearly overshoots the anchor.
-          if (acc.length > text.length * 3 + 8) break
+        const match = matchOcrWords(line, i, text)
+        if (!match) continue
+        const words = line.slice(i, match.end + 1)
+        const x = words[0].x
+        const y = Math.min(...words.map(w => w.y))
+        const x2 = Math.max(...words.map(w => w.x + w.w))
+        const y2 = Math.max(...words.map(w => w.y + w.h))
+        return {
+          x: Math.round((x + x2) / 2),
+          y: Math.round((y + y2) / 2),
+          bbox: { x, y, width: x2 - x, height: y2 - y },
+          layer: "ocr",
+          confidence: 0.9,
+          matchedText: match.label,
         }
       }
     }
@@ -459,7 +509,19 @@ export class PsInputInjector implements InputInjector {
   constructor(
     private runner: PsRunner = runPs,
     private stopFile?: string,
+    private inputAborted: () => boolean = () => false,
   ) {}
+
+  private inputDrain?: Promise<void>
+  pendingInput() { return this.inputDrain }
+
+  private async runInput(...args: Parameters<PsRunner>): Promise<string> {
+    if (this.inputAborted()) throw new ComputerError("TASK_ABORTED", "STOPPED: desktop input was revoked")
+    const pending = this.runner(...args)
+    this.inputDrain = pending.then(() => {}, () => {})
+    try { return await pending }
+    finally { this.inputDrain = undefined }
+  }
 
   private withStop(args: string[]): string[] {
     return this.stopFile ? [...args, "-StopFile", this.stopFile] : args
@@ -467,7 +529,7 @@ export class PsInputInjector implements InputInjector {
 
   async click(hwnd: number, x: number, y: number, kind: "click" | "double_click" | "right_click"): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", kind,
         "-X", String(Math.round(x)),
@@ -523,7 +585,7 @@ export class PsInputInjector implements InputInjector {
       const selectedText = await this.runner(resolveWinScript("computer-uia-select.ps1"), this.withStop(args), { timeoutMs: remaining() })
       const selected = parseUiaSelection572(selectedText, hwnd, mode, opts.value, opts.expectControlType, opts.expectAutomationId)
       // Sequential direct children; neither script spawns another PowerShell.
-      stdout = await this.runner(resolveWinScript("computer-uia-act.ps1"), this.withStop([
+      stdout = await this.runInput(resolveWinScript("computer-uia-act.ps1"), this.withStop([
         ...args, "-SelectionJson", JSON.stringify(selected),
         "-NoFocusLibrary", resolveComputerUiaNoFocusDll(),
       ]), { timeoutMs: remaining() })
@@ -562,19 +624,19 @@ export class PsInputInjector implements InputInjector {
   async typeText(hwnd: number, text: string): Promise<void> {
     try {
       // argv-only: the text travels as an argv element, never interpolated.
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "type",
         "-Text", text,
       ]), { timeoutMs: 15000 + text.length * 120 }) // throttle headroom, still bounded
     } catch (err) {
-      rethrowComputerPsError(err, "inject.type")
+      rethrowComputerPsError(err, "inject.type", text.length)
     }
   }
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "key",
         "-Keys", keys.join(","),
@@ -586,7 +648,7 @@ export class PsInputInjector implements InputInjector {
 
   async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "scroll",
         "-X", String(Math.round(x)),
@@ -600,7 +662,7 @@ export class PsInputInjector implements InputInjector {
 
   async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "drag",
         "-X", String(Math.round(x)),
@@ -623,11 +685,11 @@ export class PsInputInjector implements InputInjector {
     // input injection. Best-effort: any failure (dead hwnd, foreground lock)
     // resolves false so the executor falls back to the re-L2 pause.
     try {
-      const stdout = await this.runner(resolveWinScript("computer-input.ps1"), [
+      const stdout = await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "click", // required by param() but unused in force-fg mode
         "-Mode", "force-fg",
-      ])
+      ]))
       const parsed = parsePsJson<{ foreground?: boolean }>(stdout, "inject.force-fg")
       return parsed.foreground === true
     } catch {

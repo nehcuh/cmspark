@@ -18,7 +18,7 @@ import {
 
 test("reL2ShouldPrompt: PROMPT_ALWAYS tags return true", () => {
   assert.equal(reL2ShouldPrompt(["computer.danger_detected"]), true)
-  assert.equal(reL2ShouldPrompt(["computer.experimental_suggestion"]), true)
+  assert.equal(reL2ShouldPrompt(["computer.main_model_suggestion"]), true)
   assert.equal(reL2ShouldPrompt(["computer.foreground_yielded"]), true)
 })
 
@@ -56,7 +56,7 @@ test("reL2ShouldPrompt: exhaustive — all executor.ts emit-site tags registered
     "computer.budget_exhausted",                       // line 749
     "computer.uncrossverified_exceeded",               // line 851, 1031
     "computer.danger_detected",                        // line 971
-    "computer.experimental_suggestion",                // line 1005
+    "computer.main_model_suggestion",                // line 1005
     "computer.foreground_yielded",                     // line 1435 (fgYielded)
     "computer.task_induced_dialog",                    // line 1435 (!fgYielded)
   ]
@@ -324,18 +324,35 @@ test("recordBudget: budget survives grant() re-touch (same as corpus)", () => {
   assert.equal(t.maxBudgetSeen("sid", "mac.app.X"), 20, "budget preserved across grant()")
 })
 
-test("isTrusted is a PURE READ — does NOT refresh lastTouchedAt (Pi caveat 2)", () => {
-  // Critical safety property: a hot session firing skip-path consults every
-  // <30min must STILL expire 30 min after the last INTERACTIVE approval.
-  // Without this property, an attacker who lands one approval gets unlimited
-  // silent-trust runs forever.
-  const t = new ComputerSessionTrust()
-  t.grant("sid", "mac.app.X")
-  const before = t["trusted"].get("sid")?.get("mac.app.X")?.lastTouchedAt
-  // Spin isTrusted a few times
-  t.isTrusted("sid", "mac.app.X")
-  t.isTrusted("sid", "mac.app.X")
-  t.isTrusted("sid", "mac.app.X")
-  const after = t["trusted"].get("sid")?.get("mac.app.X")?.lastTouchedAt
-  assert.equal(before, after, "lastTouchedAt must NOT be refreshed by isTrusted")
+test("continuous clean OCR and skip checks expire from the last human approval", ctx => {
+  const trust = new ComputerSessionTrust()
+  let now = 0
+  ctx.mock.method(Date, "now", () => now)
+  trust.grant("sid", "app", { explicitOptIn: true })
+  for (const elapsed of [1, IDLE_EXPIRY_MS / 2, IDLE_EXPIRY_MS - 1, IDLE_EXPIRY_MS + 1]) {
+    now = elapsed
+    trust.markCredentialSurfaceSeen("sid", "app", false)
+    assert.equal(trust.isTrusted("sid", "app"), elapsed < IDLE_EXPIRY_MS)
+    assert.equal(trust.hasExplicitOptIn("sid", "app"), elapsed < IDLE_EXPIRY_MS)
+  }
+  assert.equal(trust.isTrustedRaw("sid", "app"), true)
+  trust.grant("sid", "app")
+  assert.equal(trust.isTrusted("sid", "app"), true)
+})
+
+test("OCR alone cannot create a grant and missing OCR keeps its credential latch", () => {
+  const trust = new ComputerSessionTrust()
+  trust.markCredentialSurfaceSeen("sid", "app", false)
+  assert.equal(trust.size(), 0)
+  trust.markCredentialSurfaceSeen("sid", "app", null)
+  trust.markCredentialSurfaceSeen("sid", "app", false)
+  assert.equal(trust.hasCredentialLatch("sid", "app"), true)
+  assert.equal(trust.isTrustedRaw("sid", "app"), false)
+  trust.clearCredentialLatch("sid", "app")
+  assert.equal(trust.hasCredentialLatch("sid", "app"), true)
+  assert.equal(trust.isTrusted("sid", "app"), false)
+  trust.grant("sid", "app")
+  assert.equal(trust.isTrusted("sid", "app"), false)
+  trust.clearCredentialLatch("sid", "app")
+  assert.equal(trust.isTrusted("sid", "app"), true)
 })

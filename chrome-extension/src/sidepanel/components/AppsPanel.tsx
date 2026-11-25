@@ -15,8 +15,10 @@ import {
   autoEligible,
   appWarnReasons,
   candidateKey,
+  coordinateRestriction,
   ellipsizePath,
   isSameCandidate,
+  manualAppIdentity,
   policyBadge,
 } from "../utils/apps-utils"
 import { uiaCapableBadge } from "../utils/computer-utils"
@@ -37,20 +39,22 @@ export function AppsPanel() {
   const [addPolicy, setAddPolicy] = useState<AppPolicy>("ai")
 
   const appsEnabled = state.appsEnabled
-  // WP4 (WI-6): 全局坐标开关只读镜像(null = 尚未查询)。WP4 不做面板内
-  // 全局开关切换——开启需 companion 生物识别门,本行只展示状态。
   const computerCoordinateEnabled = state.computerCoordinateEnabled
+  const previousConnection = useRef(state.connectionState)
   useEffect(() => {
-    if (computerCoordinateEnabled === null) {
+    if (state.connectionState === "connected") {
       chrome.runtime.sendMessage({ type: "computer.get_state" })
+      // Opening the panel already requests apps.list. A reconnect while it
+      // stays mounted needs a fresh list for this Companion too.
+      if (previousConnection.current !== "connected") chrome.runtime.sendMessage({ type: "apps.list" })
+    } else {
+      setAddOpen(false)
+      setPicked(null)
+      setMenuOpen(null)
     }
-    // 仅在尚未查询时拉一次;后续由 computer.state 广播驱动。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  // WP6a (Finding 2): the companion reports its platform via apps.list.
-  // Off win32, enumerate/add can never succeed — render an honest state
-  // instead of a dead add button. Unknown platform (older companion) keeps
-  // the UI enabled (backward compatible).
+    previousConnection.current = state.connectionState
+  }, [state.connectionState])
+  // Use the Companion's platform, which can differ from the browser's.
   const platformSupported = appsPlatformSupported(state.appsPlatform)
 
   const clearFeedback = () => {
@@ -60,6 +64,7 @@ export function AppsPanel() {
 
   const handleRefresh = () => {
     chrome.runtime.sendMessage({ type: "apps.list" })
+    chrome.runtime.sendMessage({ type: "computer.get_state" })
   }
 
   const handleToggleEntry = (entry: AppEntry) => {
@@ -141,7 +146,7 @@ export function AppsPanel() {
       chrome.runtime.sendMessage({
         type: "apps.add",
         kind: "gui",
-        path: p,
+        ...manualAppIdentity(p, state.appsPlatform),
         ...(manualName.trim() ? { display_name: manualName.trim() } : {}),
         origin: "manual-paste",
         policy: addPolicy,
@@ -200,7 +205,7 @@ export function AppsPanel() {
           <input
             type="checkbox"
             checked={computerCoordinateEnabled === true}
-            disabled={computerCoordinateEnabled === null}
+            disabled={computerCoordinateEnabled === null || state.connectionState !== "connected" || (!platformSupported && !computerCoordinateEnabled)}
             style={{ marginRight: 6 }}
             onChange={() => {
               if (computerCoordinateEnabled === null) return
@@ -213,12 +218,12 @@ export function AppsPanel() {
           />
           <span style={{ fontWeight: 500 }}>坐标操作</span>
         </label>
-        {computerCoordinateEnabled === null && <span style={styles.globalOffHint}>状态查询中…</span>}
+        {computerCoordinateEnabled === null && <span style={styles.globalOffHint}>{state.connectionState === "connected" ? "状态查询中…" : "请先连接 Companion"}</span>}
         {computerCoordinateEnabled === false && (
           <span style={styles.globalOffHint}>已关闭 · 点击开启（需确认）</span>
         )}
         {computerCoordinateEnabled === true && (
-          <span style={styles.globalOffHint}>已开启 · 仍需逐应用授权</span>
+          <span style={styles.globalOffHint}>已开启 · 在目标应用的「···」菜单查看授权方式</span>
         )}
       </div>
 
@@ -321,16 +326,13 @@ export function AppsPanel() {
         )}
       </div>
 
-      {/* Add flow — WP6a (Finding 2): off win32 the enumerate/add round-trip
-          can never succeed, so the button is replaced by the honest platform
-          state instead of failing dead-ended at the server. */}
       {!platformSupported ? (
         <div style={styles.platformNotice}>
-          ⛔ 应用启动仅 Windows 可用{state.appsPlatform ? `（当前平台：${state.appsPlatform}）` : ""}。
+          ⛔ 应用启动支持 macOS 和 Windows{state.appsPlatform ? `（当前平台：${state.appsPlatform}）` : ""}。
           已添加的应用不会被启动。
         </div>
       ) : (
-        <button style={styles.addBtn} onClick={handleOpenAdd}>
+        <button style={styles.addBtn} disabled={state.connectionState !== "connected"} onClick={handleOpenAdd}>
           {addOpen ? "− 收起添加" : "+ 添加应用"}
         </button>
       )}
@@ -348,7 +350,7 @@ export function AppsPanel() {
               style={{ ...styles.addTabBtn, borderBottom: addTab === "manual" ? `2px solid ${tokens.accent}` : "2px solid transparent" }}
               onClick={() => { setAddTab("manual"); setPicked(null) }}
             >
-              手动粘贴路径
+              {state.appsPlatform === "darwin" ? "手动填写 Bundle ID" : "手动粘贴路径"}
             </button>
             <button style={{ ...styles.expandBtn, marginLeft: "auto" }} onClick={handleReEnumerate} title="重新枚举">
               ↻
@@ -429,7 +431,7 @@ export function AppsPanel() {
               <input
                 style={styles.searchInput}
                 type="text"
-                placeholder={navigator.platform?.includes("Mac") ? "com.apple.Notes（macOS Bundle ID）" : "C:\\Path\\To\\app.exe（服务端将校验并解析真实路径）"}
+                placeholder={state.appsPlatform === "darwin" ? "例如 com.apple.Notes" : "C:\\Path\\To\\app.exe"}
                 value={manualPath}
                 onChange={(e) => setManualPath(e.target.value)}
               />
@@ -500,6 +502,7 @@ function AppCard(props: AppCardProps) {
   const badge = policyBadge(entry.policy)
   const warns = appWarnReasons(entry)
   const autoOk = autoEligible(entry)
+  const coordinateHint = coordinateRestriction(entry)
   const isPreset = entry.source === "preset"
   // WP4 (WI-6): uiaCapable 三态徽标——中性能力措辞,绝不渲染成安全背书。
   const uiaBadge = uiaCapableBadge(entry)
@@ -601,7 +604,7 @@ function AppCard(props: AppCardProps) {
                   onClick={() => props.onSetPolicy(p)}
                 >
                   {current ? "✓ " : ""}{b.label}
-                  {p === "auto" && !disabled && "（需 Hello 验证）"}
+                  {p === "auto" && !disabled && "（需身份验证）"}
                 </button>
               )
             })}
@@ -611,15 +614,15 @@ function AppCard(props: AppCardProps) {
                 ...styles.menuItem,
                 color: entry.coordinateAllowed === true ? tokens.success : tokens.text,
               }}
-              title={
+              disabled={!!coordinateHint}
+              title={coordinateHint ?? (
                 entry.coordinateAllowed === true
                   ? "已允许坐标操作——点击关闭（立即生效，无需验证）"
-                  : "允许 agent 在此应用窗口内执行坐标点击/输入（开启需 Windows Hello 验证）"
-              }
+                  : "授权在此应用窗口内点击或输入"
+              )}
               onClick={props.onToggleCoordinate}
             >
-              {entry.coordinateAllowed === true ? "✓ 允许坐标操作" : "允许坐标操作"}
-              {entry.coordinateAllowed !== true && "（需 Hello 验证）"}
+              {coordinateHint ?? (entry.coordinateAllowed === true ? "✓ 允许坐标操作" : "允许坐标操作（需身份验证）")}
             </button>
             <button
               style={{
@@ -753,7 +756,7 @@ function PolicyPicker({
         )
       })}
       {addPolicy === "auto" && (
-        <div style={styles.autoBioHint}>「全自动(仅启动免确认)」需要 Windows Hello（或确认码）验证一次。</div>
+        <div style={styles.autoBioHint}>首次授权自动启动时需完成身份验证。</div>
       )}
       <button type="button" style={styles.submitBtn} onClick={onSubmit}>
         添加

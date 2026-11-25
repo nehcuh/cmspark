@@ -6,18 +6,47 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
+  appEntriesForPanel,
   appsPlatformSupported,
   autoEligible,
   appWarnReasons,
   canOfferThreadTrust,
   candidateKey,
+  coordinateRestriction,
   ellipsizePath,
   isAppsErrorMessage,
   isSameCandidate,
+  manualAppIdentity,
   policyBadge,
   threadTrustHint,
 } from "../src/sidepanel/utils/apps-utils"
 import { uiaCapableBadge } from "../src/sidepanel/utils/computer-utils"
+import type { AppEntry } from "../src/sidepanel/types"
+
+test("manual app identity follows Companion platform and accepts existing absolute paths", () => {
+  assert.deepEqual(manualAppIdentity(" com.apple.TextEdit ", "darwin"), { bundleId: "com.apple.TextEdit" })
+  assert.deepEqual(manualAppIdentity("/Applications/Owned.app", "darwin"), { path: "/Applications/Owned.app" })
+  for (const platform of ["win32", null]) {
+    assert.deepEqual(manualAppIdentity("C:\\Apps\\Owned.exe", platform), { path: "C:\\Apps\\Owned.exe" })
+  }
+})
+
+test("coordinate menu offers the applicable authorization and always permits revocation", () => {
+  const editor: AppEntry = { token: "mac.app.editor", display_name: "Editor", enabled: true, source: "user",
+    kind: "gui", policy: "manual", added_at: "2026-11-25" }
+  assert.equal(coordinateRestriction(editor), undefined) // older Companion
+  const entries = [editor]
+  assert.equal(appEntriesForPanel(entries), entries)
+  const projected = appEntriesForPanel(entries, { [editor.token]: "browser_task", "mac.app.other": "protected" })
+  assert.match(coordinateRestriction(projected[0])!, /任务开始时确认/)
+  assert.equal(editor.coordinate_mode, undefined)
+  assert.equal(appEntriesForPanel(entries, { [editor.token]: "unknown" })[0], editor)
+  assert.equal(coordinateRestriction({ ...editor, coordinate_mode: "per_app" }), undefined)
+  assert.match(coordinateRestriction({ ...editor, coordinate_mode: "browser_task" })!, /任务开始时确认/)
+  assert.match(coordinateRestriction({ ...editor, coordinate_mode: "protected" })!, /受保护/)
+  assert.match(coordinateRestriction({ ...editor, coordinate_mode: "missing_identity" })!, /Bundle ID/)
+  assert.equal(coordinateRestriction({ ...editor, coordinate_mode: "protected", coordinateAllowed: true }), undefined)
+})
 
 // --- W1: canOfferThreadTrust matrix ---
 

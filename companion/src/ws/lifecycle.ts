@@ -1,3 +1,4 @@
+import { revokeDesktopMaximum, desktopMaximumStatus } from "../computer/desktop-maximum"
 // WebSocket server lifecycle: origin gate, healthz, clients/auth maps, broadcast,
 // connection handlers, startServer. Extracted from server.ts (C10 Phase H2) —
 // zero intentional behavior change.
@@ -1121,9 +1122,6 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                     msg.id.length <= 100 ? { id: msg.id } : {}),
                 ...(msg?.type === "board.add_hint" ? { family: "board", request_type: "board.add_hint",
                   id: msg.id, thread_id: msg.thread_id } : {}),
-                ...(typeof msg?.type === "string" && msg.type.startsWith("computer.lcu.") &&
-                    typeof msg.request_id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(msg.request_id)
-                  ? { family: "computer.lcu", code: "LCU_SETTINGS_REQUEST_INVALID", request_id: msg.request_id } : {}),
               }))
             }
           }
@@ -1302,6 +1300,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         // connection may send this (no origin binding). F1: the semantics live
         // in handleComputerTaskAbort (exported, tested at the socket seam).
         if (msg.type === "computer.task.abort") {
+          if (revokeDesktopMaximum(ws)) ws.send(JSON.stringify(desktopMaximumStatus(ws)))
           requireRt().handleComputerTaskAbort(ws, msg)
           return
         }
@@ -1544,6 +1543,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                 }
               },
               executeTool,
+              desktopPanelPeer: appsOwnerAuth?.surface === "panel" && isChromeExtensionWsOrigin(appsOwnerAuth.origin) ? ws : undefined,
               appsOwnerCurrent: () => ws.readyState === WebSocket.OPEN && wsAuth.get(ws) === appsOwnerAuth && appsOwnerAuth?.authenticated === true,
               // App tab D2 biometric gates (apps.add/set_policy →auto): same
               // origin-bound confirmation channel as executeTool's
@@ -1612,6 +1612,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     })
 
     ws.on("close", (code) => {
+      revokeDesktopMaximum(ws)
       disconnectMeetingAsr(panelId)
       fileUploadParts.close(ws)
       cockpitNativeBridge.close(ws)

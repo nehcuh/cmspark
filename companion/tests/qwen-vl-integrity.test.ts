@@ -248,7 +248,7 @@ test("integrity failure clears modelEnabled (must not stay true)", () => {
   clearConfigCache()
   saveConfig({ computer: { coordinateEnabled: false, modelEnabled: true } } as any)
   clearConfigCache()
-  assert.equal(getConfig().computer?.modelEnabled, true)
+  assert.equal(getConfig().computer?.modelEnabled, false)
   clearQwenModelEnabledOnIntegrityFailure("2b", { status: "error", error: "sha256-mismatch" })
   clearConfigCache()
   assert.equal(getConfig().computer?.modelEnabled, false)

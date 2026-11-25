@@ -1,4 +1,5 @@
 import { readonlyComputerDraft, type ComputerReadOperation } from "../computer/readonly-session"
+import { validateComputerDraft } from "../computer/draft"
 // L2 security admission gate for createToolExecutor.
 // Extracted from server.ts (C10 Phase B mechanical split) — zero behavior change.
 //
@@ -9,7 +10,8 @@ import { readonlyComputerDraft, type ComputerReadOperation } from "../computer/r
 import { randomUUID } from "crypto"
 import { admitGuiTemplate, type GuiTemplateReceipt } from "../apps/gui-template-runtime"
 import type { PreviewUnavailableReason } from "../computer/preview-availability"
-import { ComputerError } from "../computer/types"
+import type { L2PreviewImageDeps } from "../computer/l2-preview-image"
+import { ComputerError, type ComputerAction } from "../computer/types"
 import os from "os"
 import { WebSocket } from "ws"
 import { getConfig } from "../config"
@@ -64,6 +66,34 @@ import {
   type ConfirmPeerAuth,
 } from "../mcp/confirm-fanout"
 import { ensureExtensionPeerForOverlayConfirm } from "../ws/extension-peer"
+
+/** Build the optional screenshot only for an interactive confirmation. */
+async function computerConfirmationImage(entry: AppEntry, actions: ComputerAction[], toolCallId: string) {
+  const isMac = os.platform() === "darwin"
+  const exePath = (isMac ? entry.bundleId : undefined) || entry.exe?.path
+  if (!exePath) return {}
+  const log = (event: string, data: Record<string, unknown>) => logger.info(event, { tool_call_id: toolCallId, ...data })
+  try {
+    let deps: L2PreviewImageDeps
+    if (isMac) {
+      const { MacScreenCapturer, MacLocator, MacWindowEnumerator, MacPreviewBuilder } = await import("../computer/darwin-adapters")
+      deps = { windows: new MacWindowEnumerator(), capturer: new MacScreenCapturer(), locator: new MacLocator(), previewBuilder: new MacPreviewBuilder() }
+    } else {
+      const { PsScreenCapturer, PsLocator, PsWindowEnumerator, PsPreviewBuilder } = await import("../computer/win-adapters")
+      deps = { windows: new PsWindowEnumerator(), capturer: new PsScreenCapturer(), locator: new PsLocator(), previewBuilder: new PsPreviewBuilder() }
+    }
+    const { buildComputerL2PreviewImage } = await import("../computer/l2-preview-image")
+    let reason: PreviewUnavailableReason | undefined
+    const snapshot = await buildComputerL2PreviewImage({ ...deps, log }, {
+      exePath, appDisplayName: entry.display_name, actions, timeoutMs: 5000,
+      onUnavailable: unavailable => { reason = unavailable },
+    })
+    return snapshot ? { previewImage: snapshot.image, previewCaption: snapshot.caption } : { previewUnavailableReason: reason }
+  } catch (error) {
+    log("computer.l2preview.failed", { error: error instanceof Error ? error.message : String(error) })
+    return { previewUnavailableReason: "preview_failed" as const }
+  }
+}
 
 /** Tools that require L2 security_token issuance (or evaluate token revalidate). */
 export const L2_GATE_TOOLS: readonly string[] = [
@@ -180,6 +210,7 @@ function resolveHostUseApp(toolName: string, params: any): string {
 export type L2AdmissionContext = {
   /** Trusted native lifecycle only: no supported native tool-confirmation UI yet. */
   nativeConfirmationUnavailable?: () => Promise<void>
+  desktopMaximum?: import("../computer/desktop-maximum").DesktopMaximumPermit
   computerRead?: ComputerReadOperation
   enterprisePermit?: import("../outbound-mcp/enterprise-permit").EnterprisePermit
   signal?: AbortSignal
@@ -277,6 +308,15 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       return { ok: true, finalParams: admitted.finalParams, hostAppTier: "l2", guiTemplateReceipt: admitted.receipt }
     } catch {
       return { ok: false, result: { success: false, error: "App file template unavailable or denied; review its configuration and approve again." } }
+    }
+  }
+  if (ctx.toolName === "host_computer" && !ctx.enterprisePermit && !ctx.finalParams.security_token && isHostComputerPlatformGated(os.platform())) {
+    const invalid = validateComputerDraft(ctx.computerRead?.draft ?? ctx.finalParams, os.platform())
+    if (invalid) {
+      ctx.computerRead?.finish(false)
+      const result = { success: false as const, error: invalid.message, error_code: invalid.code }
+      ctx.logToolFinish(ctx.toolCallId, ctx.toolName, ctx.startedAt, result)
+      return { ok: false, result }
     }
   }
   if (ctx.toolName === "host_computer" && ctx.computerRead) {
@@ -669,17 +709,13 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
     // three-flag userFullAutonomy clears it. hostComputerTrustSkip may still
     // mint a token without dialog when session trust / unattended grant applies.
     let computerPreview = ""
-    // WP4: L2 标注截图 + 三段式 caption(best-effort;undefined = 无图降级)。
-    let computerL2PreviewImage: string | undefined
-    let computerL2PreviewCaption: string | undefined
-    let computerL2PreviewUnavailableReason: PreviewUnavailableReason | undefined
+    let computerPreviewEntry: AppEntry | undefined
     // P5 / Grok v4.1 §3.2 (Pi re-confirm PROCEED 2026-07-24): when the session
     // already has a live trust grant for this app AND every type.text literal
     // in the new task was in the previously-approved corpus AND no credential
     // latch is set AND the grant is not idle-expired, skip the initial L2
-    // dialog and mint the security_token directly. The grant's lastTouchedAt
-    // is refreshed by isTrusted(); corpus does not need re-accumulation (the
-    // skip-eligible task's corpus is by definition a subset of the stored one).
+    // dialog and mint the security_token directly. Reuse never extends the
+    // time or corpus the user approved.
     let hostComputerTrustSkip = false
     /** ADR-021 audit: "session_trust_corpus_subset" | "unattended_session_grant" */
     let hostComputerTrustSkipReason: "session_trust_corpus_subset" | "unattended_session_grant" | null =
@@ -932,70 +968,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             : undefined,
           extraLines: [limiter.statusLine()],
         })
-        // WP4 (护栏 a,对抗裁决定案):L2 标注截图 helper 的调用点固定在这
-        // 里——全部廉价前门(assertCoordinateAllowed / COMPUTER_TASK_BUSY /
-        // rate-limit)通过之后、L2 对话框发出之前;后续重构不得挪前(每次
-        // 确认 ≤5s 的代价只对真实候选任务支付)。best-effort:helper 失败/
-        // 超时/非 win32|darwin/无 exe(AUMID 条目)一律降级无图,绝不影响确认门。
-        if (os.platform() === "darwin" && (entryC.bundleId || entryC.exe?.path)) {
-          try {
-            const { buildComputerL2PreviewImage } = await import("../computer/l2-preview-image")
-            const { MacScreenCapturer, MacLocator, MacWindowEnumerator, MacPreviewBuilder } = await import("../computer/darwin-adapters")
-            const l2img = await buildComputerL2PreviewImage(
-              {
-                windows: new MacWindowEnumerator(),
-                capturer: new MacScreenCapturer(),
-                locator: new MacLocator(),
-                previewBuilder: new MacPreviewBuilder(),
-                log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
-              },
-              {
-                exePath: entryC.bundleId ?? entryC.exe?.path ?? "",
-                appDisplayName: entryC.display_name,
-                actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
-                timeoutMs: 5000,
-                onUnavailable: reason => { computerL2PreviewUnavailableReason = reason },
-              },
-            )
-            if (l2img) {
-              computerL2PreviewImage = l2img.image
-              computerL2PreviewCaption = l2img.caption
-            }
-          } catch (helperErr: any) {
-            // best-effort:helper 异常绝不拒飞任务(降级无图)。
-            computerL2PreviewUnavailableReason = "preview_failed"
-            logger.info("computer.l2preview.failed", { tool_call_id: toolCallId, error: helperErr?.message || String(helperErr) })
-          }
-        } else if (os.platform() === "win32" && entryC.exe?.path) {
-          try {
-            const { buildComputerL2PreviewImage } = await import("../computer/l2-preview-image")
-            const { PsScreenCapturer, PsLocator, PsWindowEnumerator, PsPreviewBuilder } = await import("../computer/win-adapters")
-            const l2img = await buildComputerL2PreviewImage(
-              {
-                windows: new PsWindowEnumerator(),
-                capturer: new PsScreenCapturer(),
-                locator: new PsLocator(),
-                previewBuilder: new PsPreviewBuilder(),
-                log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
-              },
-              {
-                exePath: entryC.exe.path,
-                appDisplayName: entryC.display_name,
-                actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
-                timeoutMs: 5000,
-                onUnavailable: reason => { computerL2PreviewUnavailableReason = reason },
-              },
-            )
-            if (l2img) {
-              computerL2PreviewImage = l2img.image
-              computerL2PreviewCaption = l2img.caption
-            }
-          } catch (helperErr: any) {
-            // best-effort:helper 异常绝不拒飞任务(降级无图)。
-            computerL2PreviewUnavailableReason = "preview_failed"
-            logger.info("computer.l2preview.failed", { tool_call_id: toolCallId, error: helperErr?.message || String(helperErr) })
-          }
-        }
+        computerPreviewEntry = entryC
       } catch (err: any) {
         // Preserve these existing hard-denial codes before the L2 dialog too.
         // App metadata must not turn a typed policy denial into text recovery.
@@ -1244,7 +1217,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         return { success: false, error: msg }
       }
     }
-    if ((!skipConfirmation || forceConfirm) && !hostComputerTrustSkip && !enterpriseSkip) {
+    const maximumSkip = ctx.desktopMaximum?.current() === true &&
+      ((hostComputerGated && !vaultBrowserOneShot && Array.isArray(finalParams.actions) && finalParams.actions.length <= 30) ||
+       (hostApp?.entry.kind === "gui" && finalParams.action === "launch"))
+    if ((!skipConfirmation || forceConfirm) && !maximumSkip && !hostComputerTrustSkip && !enterpriseSkip) {
       if (ctx.nativeConfirmationUnavailable) { await ctx.nativeConfirmationUnavailable(); return { success: false, error: "DESKTOP_CONFIRMATION_UNAVAILABLE", error_code: "DESKTOP_CONFIRMATION_UNAVAILABLE" } }
       // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
       // interactive confirmation unless whitelisted above. The regex match
@@ -1261,6 +1237,11 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
+      // Only an interactive confirmation has a consumer for these pixels.
+      // Keep capture/OCR outside the shared confirmation slot and its timeout.
+      const imageDetails = computerPreviewEntry && !ctx.signal?.aborted
+        ? await computerConfirmationImage(computerPreviewEntry, finalParams.actions, toolCallId)
+        : {}
       logger.warn("security.confirmation.requested", {
         tool_call_id: toolCallId,
         tool_name: toolName,
@@ -1710,9 +1691,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             ...(expertTeamForConfirm ? { expertTeam: expertTeamForConfirm } : {}),
             // WP4 (§F.1): L2 标注截图 + 三段式非绑定 caption(best-effort,
             // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
-            ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
-            ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
-            ...(computerL2PreviewUnavailableReason ? { previewUnavailableReason: computerL2PreviewUnavailableReason } : {}),
+            ...imageDetails,
             ...multiAgentFields,
             // ADR-016 G6: attach board_complete digest when available
             ...(toolName === "board_complete" && boardCompleteDigestForConfirm
@@ -2036,7 +2015,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // P5 (Pi final-review caveat 3 2026-07-24): hostComputerTrustSkip has
       // its own audit reason so silent-skip is distinguishable from god-mode
       // / whitelist in the audit log.
-      const autoReason = hostComputerTrustSkip
+      const autoReason = maximumSkip ? "desktop_maximum" : hostComputerTrustSkip
         ? (hostComputerTrustSkipReason || "session_trust_corpus_subset")
         : securityConfig.allow_all_schemes ? "god_mode"
         : securityConfig.auto_approve_dangerous ? "global_toggle"

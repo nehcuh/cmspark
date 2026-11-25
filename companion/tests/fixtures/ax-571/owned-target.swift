@@ -308,6 +308,9 @@ final class AX571Target: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
     func window(_ title: String) -> NSWindow {
         let value = NSWindow(contentRect: NSRect(x: 180, y: 180, width: 600, height: 400), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        // Readiness compares the exact AppKit and WindowServer rectangles.
+        // During the opening animation a 600-point window can appear as 588.
+        value.animationBehavior = .none
         value.title = title; value.delegate = self; value.isReleasedWhenClosed = false
         return value
     }

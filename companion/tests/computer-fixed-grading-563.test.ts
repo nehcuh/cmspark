@@ -161,7 +161,22 @@ test("#563 actual A3 corpus guard rejects a controlled action change after the c
   gradeActual(await actualFailure(f, action, "TYPE_TEXT_NOT_CONFIRMED"), "non_recoverable")
 })
 
-for (const [prefix, level] of [["ILDENIED", "non_recoverable"], ["STOPPED", "non_recoverable"], ["OUTOFBOUNDS", "recoverable"]] as const) {
+test("#563 a native Windows type stop keeps TASK_ABORTED and never re-focuses or replays", async () => {
+  let calls = 0
+  const injector = new PsInputInjector(async () => {
+    calls++
+    throw { stderr: "STOPPED:emergency-stop flag present — injection aborted" }
+  })
+  const f = fixture()
+  f.deps.injector.typeText = injector.typeText.bind(injector)
+  let raises = 0
+  f.deps.injector.forceForeground = async () => { raises++; return true }
+  gradeActual(await actualFailure(f, { action: "type", text: "OWNED_INERT_TEXT" }, "TASK_ABORTED"), "non_recoverable")
+  assert.equal(calls, 1)
+  assert.equal(raises, 0)
+})
+
+for (const [prefix, level] of [["ILDENIED", "non_recoverable"], ["OUTOFBOUNDS", "recoverable"]] as const) {
   test(`#563 existing type wrapper remains TYPE_NO_EFFECT for ${prefix}`, async () => {
     let calls = 0
     const detail = prefix === "OUTOFBOUNDS" ? "outside client rect 620x430" : "owned fixed refusal"

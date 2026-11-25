@@ -62,8 +62,8 @@ class FakeWindows implements WindowEnumerator {
   async enumerateByExe(): Promise<WindowInfo[]> {
     return this.wins
   }
-  async infoForHwnd(): Promise<WindowInfo> {
-    return this.wins[0]
+  async infoForHwnd(hwnd: number): Promise<WindowInfo> {
+    return this.wins.find(w => w.hwnd === hwnd)!
   }
 }
 
@@ -456,4 +456,17 @@ test("#532 capture error and OCR error stay distinct; successful callback remain
     assert.deepEqual(reasons, stage === "success" ? [] : [stage + "_failed"])
     assert.equal(r !== null, stage === "success")
   }
+})
+
+
+test("#908 confirmation captures the same named form as the executor when the app owns a larger untitled panel", async () => {
+  const auxiliary = winInfo({ hwnd: 888, title: "", rect: { x: 0, y: 0, width: 700, height: 600 } })
+  const windows = new FakeWindows([auxiliary, winInfo()])
+  let selected: number | undefined
+  const capturer = new FakeCapturer()
+  capturer.captureWindow = async (hwnd?: number) => { selected = hwnd; return shot(RAW) }
+  const result = await buildComputerL2PreviewImage({ windows, capturer, locator: new FakeLocator(OK_WORDS),
+    previewBuilder: new FakePreviewBuilder(), removeFile: async () => {} }, makeOpts())
+  assert.ok(result)
+  assert.equal(selected, HWND)
 })

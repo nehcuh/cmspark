@@ -75,3 +75,7 @@ test("GUI file template requires full confirmation preview and never offers laun
   assert.equal(guiTemplateNeedsFullPreview(req({ tool_name: "host_app" })), false)
   assert.equal(guiTemplateNeedsFullPreview(req({ tool_name: "host_read", full_preview: "old" })), false)
 })
+
+test("#908 compact desktop image consent directs the user to the full preview", () => {
+  assert.match(minimalConfirmHint(req({ tool_name: "computer.share_window_image", require_image_review: true })), /查看完整窗口图/)
+})

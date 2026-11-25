@@ -25,104 +25,104 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "model-file-missing": {
     title: "模型文件缺失",
     detail:
-      "Qwen3-VL 模型未下载或已被删除。UIA / OCR / 用户框选定位不受影响；" +
-      "在设置页下载模型后可启用本实验层。",
+      "Qwen3-VL 模型未下载或已被删除。桌面操作不受影响；" +
+      "可在设置页下载模型，再到工作中心选择本机模型。",
     action: "下载模型",
   },
   "model-hash-mismatch": {
     title: "模型文件校验失败",
     detail:
       "模型文件与登记 sha256 不一致（可能被篡改或损坏），已拒绝加载。" +
-      "UIA / OCR / 用户框选定位不受影响；请删除后重新下载。",
+      "桌面操作不受影响；请删除后重新下载。",
     action: "删除并重新下载",
   },
   "sha256-mismatch": {
     title: "模型文件校验失败",
     detail:
       "模型文件与发版钉死的 sha256 不一致（可能被篡改或损坏），已拒绝加载。" +
-      "UIA / OCR / 用户框选定位不受影响；请删除后重新下载。",
+      "桌面操作不受影响；请删除后重新下载。",
     action: "删除并重新下载",
   },
   "network-error": {
     title: "模型下载失败",
     detail:
       "网络错误导致下载中断（断点已保留，重试可续传）。已自动降级，" +
-      "UIA / OCR / 云端定位不受影响。",
+      "桌面操作不受影响。",
     action: "重试下载",
   },
   // --- 下载管理器其余原因（与 ModelUnavailableReason 词表对齐） ------------------
   "model-unknown": {
     title: "模型未登记",
-    detail: "manifest 中不存在该模型条目（发版内容异常）。其余定位层不受影响。",
+    detail: "manifest 中不存在该模型条目（发版内容异常）。桌面操作不受影响。",
     action: null,
   },
   "variant-unknown": {
     title: "模型变体未登记",
-    detail: "manifest 中不存在该交付变体（发版内容异常）。其余定位层不受影响。",
+    detail: "manifest 中不存在该交付变体（发版内容异常）。桌面操作不受影响。",
     action: null,
   },
   "mirror-scheme-denied": {
     title: "镜像地址被拒绝",
     detail:
       "computer.modelMirror 仅允许 https 主机（file:// / UNC 本地替换面已关闭）。" +
-      "请检查设置后重试；其余定位层不受影响。",
+      "请检查设置后重试；桌面操作不受影响。",
     action: "检查镜像设置",
   },
   "disk-budget-exceeded": {
     title: "磁盘预算超限",
     detail:
       "可用磁盘不足以容纳所选模型变体（需约「下载体积 + 2GB」余量）。" +
-      "请释放磁盘空间或删除其他变体后重试；其余定位层不受影响。",
+      "请释放磁盘空间或删除其他变体后重试；桌面操作不受影响。",
     action: "释放磁盘空间",
   },
   "disk-full": {
     title: "磁盘空间不足",
-    detail: "目标卷剩余空间不足以下载模型文件。请释放磁盘空间后重试；其余定位层不受影响。",
+    detail: "目标卷剩余空间不足以下载模型文件。请释放磁盘空间后重试；桌面操作不受影响。",
     action: null,
   },
   "http-error": {
     title: "模型下载失败",
     detail:
-      "模型服务器返回异常状态。若使用镜像，请检查镜像可用性；其余定位层不受影响，可稍后重试。",
+      "模型服务器返回异常状态。若使用镜像，请检查镜像可用性；桌面操作不受影响，可稍后重试。",
     action: "重试下载",
   },
   "size-mismatch": {
     title: "模型文件大小异常",
     detail:
       "下载完成的文件大小与登记不符（分发链异常），已删除并拒绝使用。" +
-      "其余定位层不受影响；请重试下载，复现请向项目反馈。",
+      "桌面操作不受影响；请重试下载，复现请向项目反馈。",
     action: "重试下载",
   },
   "hash-mismatch": {
     title: "模型文件校验失败",
     detail:
       "下载完成的文件 sha256 与登记不符（分片级篡改或分发链异常），已删除分片并拒绝使用。" +
-      "其余定位层不受影响；请重试下载，复现请向项目反馈。",
+      "桌面操作不受影响；请重试下载，复现请向项目反馈。",
     action: "重试下载",
   },
   "oversize-stream": {
     title: "模型下载数据异常",
     detail:
       "下载源吐出的字节超过登记大小（分发链异常或镜像不可信），已在传输中途截断并清理。" +
-      "其余定位层不受影响；请检查镜像设置后重试，复现请向项目反馈。",
+      "桌面操作不受影响；请检查镜像设置后重试，复现请向项目反馈。",
     action: "重试下载",
   },
   // --- manifest 层其余原因（与 ModelGateError.code 词表对齐） ----------------------
   "model-size-mismatch": {
     title: "模型文件大小异常",
-    detail: "磁盘上的模型文件大小与登记不符，已拒绝加载。请删除后重新下载；其余定位层不受影响。",
+    detail: "磁盘上的模型文件大小与登记不符，已拒绝加载。请删除后重新下载；桌面操作不受影响。",
     action: "删除并重新下载",
   },
   "manifest-invalid": {
     title: "模型登记信息损坏",
-    detail: "models.manifest.json 未通过 schema 校验（发版内容异常）。其余定位层不受影响。",
+    detail: "models.manifest.json 未通过 schema 校验（发版内容异常）。桌面操作不受影响。",
     action: null,
   },
   "manifest-source-remote": {
     title: "模型登记来源被拒绝",
     detail:
       "模型 manifest 只接受随发版的本地文件（运行时网络更新 manifest 的通道已关闭）。" +
-      "其余定位层不受影响。",
+      "桌面操作不受影响。",
     action: null,
   },
   // --- WP5-I4 WI-4.2 开关族文案 -----------------------------------------------------
@@ -130,7 +130,7 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
     title: "模型发布地址未配置",
     detail:
       "模型发布地址尚未配置——当前构建不可下载模型。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: null,
   },
   "python-missing": {
@@ -140,35 +140,35 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "Windows：winget install -e --id Python.Python.3.12，或从 python.org 安装并勾选 PATH；" +
       "Mac：brew install python3；Linux：用发行版包管理器安装 python3。" +
       "完成后重启 CMspark。也可在设置 → 实验功能按环境检查中的安装命令操作。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: null,
   },
   "hf-hub-missing": {
     title: "本机尚未准备好「模型下载组件」",
     detail:
       "还不能从当前下载源拉取模型。请打开设置 → 实验功能，按「环境检查」清单复制安装命令到终端执行（约 1～3 分钟），或改选下载源「魔搭 ModelScope」。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: "查看环境检查",
   },
   "modelscope-missing": {
     title: "本机尚未准备好「模型下载组件」",
     detail:
       "当前为大陆推荐源，仍需在本机安装下载组件。请打开设置 → 实验功能，按红色/橙色「环境检查」清单中的一键命令在终端执行后再点下载。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: "查看环境检查",
   },
   "download-failed": {
     title: "模型下载失败",
     detail:
       "网络或下载源暂时不可用。可改选「魔搭 ModelScope」或「HF 镜像」后重试；并确认磁盘空间充足。" +
-      "其余定位层不受影响。",
+      "桌面操作不受影响。",
     action: "重试下载",
   },
   "model-variant-missing": {
     title: "当前规模尚未下载",
     detail:
       "所选模型规模的文件未下载或不完整。请先完成环境检查中的软件项，再点「下载模型」。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: "下载当前规模",
   },
   // --- WP5-I4 WI-4.4 熔断状态文案（runtime 熔断广播 reason=circuit-breaker） ---------
@@ -186,78 +186,8 @@ export function modelStateMessage(reason: string): ModelStateMessage {
   return (
     MODEL_STATE_MESSAGES[reason] ?? {
       title: "模型层不可用",
-      detail: `未登记的原因（${reason}）。其余定位层不受影响。`,
+      detail: `未登记的原因（${reason}）。桌面操作不受影响。`,
       action: null,
     }
   )
-}
-
-// --- WI-3.4 三层开关交互文案（设置页单一真源） -------------------------------------
-//
-// 三层开关语义（依赖方向 ①→②→③，任一层关闭即下层整体不参与）：
-//   ① 主开关 computer.use：关闭 → 实验层不参与任何定位（连编排器都不进）。
-//   ② 应用层 coordinateAllowed：当前 app 未在允许列表 → 对该 app 不参与。
-//   ③ 实验层开关本体：语义 = 定位链 L2 建议层——输出仅作坐标候选，
-//      命中仍需人工确认（G4 reL2 门），未校准，可能完全错误。
-// 共同纪律：默认关闭；首次开启经许可证门（LICENSE_DOOR_TEXT）；任何态下
-// UIA / OCR / 用户框选兜底不受影响（§C.2.4）；文案只许从本表取，禁止 UI 侧私编。
-
-export interface ModelSwitchCopy {
-  /** 实验层开关行标签与旁注（含默认关闭语义） */
-  switchLabel: string
-  switchHint: string
-  /** ①主开关关闭时实验层开关的禁用态提示 */
-  masterOffHint: string
-  /** ②当前 app 未在 coordinateAllowed 时的提示 */
-  appNotAllowedHint: string
-  /** ③实验层开关本体语义（L2 建议层 + 人工确认 + 未校准披露 + P2 per-task 生效语义） */
-  layerSemantics: string
-  /** 首次开启的许可证门引导提示 */
-  licenseDoorHint: string
-  /** 时间线文案（WI-3.5④：首触加载上界声明；loadTimeoutMs 默认 30s + 余量） */
-  firstLoadTimeline: string
-  /** P2：任务运行中拨动开关的旁注（per-task 生效 + estop 引导） */
-  switchRunningNote: string
-  /** 状态行：模型就绪且实验层已开启 */
-  statusReadyEnabled: string
-  /** 状态行：模型就绪但实验层未开启 */
-  statusReadyDisabled: string
-  /** 状态行：下载中文本前缀（百分比/文件名由逻辑层拼接） */
-  downloadInProgress: string
-  /** 许可证已拒绝的恒态提示（跳过；设置页可复位（D9）） */
-  licenseDeclinedNotice: string
-}
-
-export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
-  switchLabel: "实验层：Qwen3-VL 本地视觉定位",
-  switchHint:
-    "默认关闭。开启后仅作为定位链第 2 层（L2）的坐标候选建议；" +
-    "命中在执行前仍会弹出人工确认。",
-  masterOffHint: "主开关（computer.use）已关闭——实验层不参与任何定位。",
-  appNotAllowedHint:
-    "当前应用未加入允许列表（coordinateAllowed）——实验层对该应用不参与定位。",
-  // P2（WP5-I4 对抗修订）：补 per-task 生效语义 + estop 引导——被坏建议惊动而
-  // 关开关的用户恰是最需要 estop 引导的人；「任务运行中关闭即生效」是虚假保证。
-  layerSemantics:
-    "本层是定位链的实验性建议层（L2）：模型输出仅作为坐标候选，" +
-    "任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
-    "关闭开关按任务粒度生效——任务运行中关闭将于当前任务结束后生效；" +
-    "若需立即停止（含当前任务），请按急停：Windows Ctrl+Alt+End · macOS ⌃⌥⌘⇧E · 或侧栏中止当前任务。" +
-    "拒绝建议或关闭本层后，UIA / OCR / 用户框选兜底不受影响。",
-  licenseDoorHint:
-    "首次开启需阅读并接受模型许可证与研究品免责声明；" +
-    "拒绝则本实验层跳过，其余定位层不受影响；之后可在设置页「复位许可拒绝」重新打开流程。",
-  firstLoadTimeline:
-    "模型首次加载最长约 35 秒（超时自动降级，且不计入故障熔断）；" +
-    "加载期间 UIA / OCR / 用户框选定位不受影响。",
-  switchRunningNote:
-    "当前有任务正在运行——开关变更将于当前任务结束后生效；" +
-    "立即停止请按急停：Windows Ctrl+Alt+End · macOS ⌃⌥⌘⇧E · 或侧栏中止任务。",
-  statusReadyEnabled:
-    "实验层已开启，模型就绪。任务执行中每个模型建议在点击前仍需人工确认。",
-  statusReadyDisabled: "模型已下载就绪——实验层未开启。",
-  downloadInProgress: "模型下载中",
-  licenseDeclinedNotice:
-    "你已拒绝实验层许可证——本层已跳过，其余定位层不受影响。" +
-    "可在设置页「实验层」重新打开许可流程以复位拒绝（无需手改 config.json）。",
 }

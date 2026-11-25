@@ -1,8 +1,5 @@
-// WP3 — four-layer locate orchestrator (plan §B.1/§B.2).
-//
-//   L0 UIA (admission via the task-start probe verdict) → L1 OCR (WP1)
-//   → L2 Qwen3-VL (WP5 experimental — experimental layer: hits are re-L2 gated,
-//   never auto-injected) → L3 cloud (WP6 — honest stub).
+// Native accessibility and OCR locate anchors first. The optional main model
+// can suggest a point for the origin to approve.
 //
 // Degradation is ONE-WAY down the chain; every attempt is recorded with a
 // structured reason and surfaces per action in the evidence chain
@@ -26,7 +23,7 @@
 // success paths only. On any throw the executor's exit sweep owns every
 // tracked frame — the chain must never release-then-throw.
 //
-// NOT in scope (documented): L3 stays an honest stub (WP6); the post-injection
+// The post-injection
 // danger scan (executor, Y1) always re-OCRs the current frame, so a missing
 // language pack fails any injection honestly even when L0 located (UIA
 // provides no danger-scan bypass in WP3). The WP5 experimental layer adds
@@ -46,7 +43,7 @@ import {
   type ScreenCapturer,
   type UiaLocator,
 } from "./types"
-/** L2 experimental locator surface (Qwen3-VL; Qwen3-VL experimental locator). */
+/** The configured main model may suggest a point for human review. */
 export type ExperimentalLocateOutcome =
   | { kind: "hit"; point: { x: number; y: number }; ms?: number; raw?: string }
   | { kind: "skipped"; reason: string }
@@ -72,24 +69,14 @@ export interface LocateChainDeps {
    * caller). Absent = assume available (unit fakes).
    */
   ocrAvailable?: () => Promise<boolean>
-  /**
-   * WP5 I3：L2 实验层。EXECUTOR 决定 admission——开关开 + 模型 ready + 无熔断
-   * 才传非 null（ready 语义：modelStatus:"ready" = 文件在盘且校验过，session
-   * 懒建，P3-c/M7）。null/缺省 = 层未启用 → skipped（reason 见 experimentalSkipReason）。
-   * Pick 结构型以便测试注入 fake。
-   */
-  /** Experimental L2 locator (Qwen3-VL). Name kept for historical deps wiring. */
+  /** Optional model locator admitted by the executor for this task. */
   experimental?: ExperimentalLocator | null
-  /**
-   * When experimental is null, surface the real admission/skip reason in the
-   * attempt log (e.g. model-switch-off, model-build-failed, worker-missing).
-   * Default "model-not-admitted" — do not mislabel as model-disabled.
-   */
+  /** Reason recorded when a model suggestion is unavailable. */
   experimentalSkipReason?: string
   /**
    * #360 (CU-B): vault-browser one-shot tasks never feed browser pixels to
    * VLM layers. When true, L2 is skipped WITHOUT calling deps.experimental
-   * (even when admitted) and L3 stays skipped — both recorded with the
+   * (even when admitted). The skipped attempt records the
    * honest reason "vault-browser-no-vlm" in the evidence chain. The chain
    * runs L0 UIA → L1 OCR → honest ELEMENT_NOT_FOUND only.
    */
@@ -630,24 +617,24 @@ export async function locateTargetWithChain(args: {
     log("computeruse.locate", { layer: "ocr", hit: false, reason: "ocr-not-found", ms: now() - t0 })
   }
 
-  // ---- L2: Qwen3-VL 实验层（deps.experimental 槽位名历史保留） -----------------
-  // admission 由 executor 决定（deps.experimental 非 null = 开关开 + 模型 ready）。
+  // The final layer can only propose a point. The executor owns click approval.
   if (deps.vaultBrowserNoVlm === true) {
     // #360 (CU-B) — 浏览器 vault 面 one-shot：网页像素永不喂 VLM。即使实验层
     // 已 admitted 也不调用（不可信 HTML 渲染帧不进模型），证据链记诚实 skipped。
-    attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: VAULT_BROWSER_NO_VLM_REASON, ms: 0 })
-    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: VAULT_BROWSER_NO_VLM_REASON })
+    attempts.push({ layer: "main-model", outcome: "skipped", reason: VAULT_BROWSER_NO_VLM_REASON, ms: 0 })
+    log("computeruse.locate", { layer: "main-model", hit: false, reason: VAULT_BROWSER_NO_VLM_REASON })
   } else if (deps.experimental) {
+    const layer = "main-model"
     const t0 = now()
     const outcome = await deps.experimental.locate({ command: target, shot })
     if (outcome.kind === "hit") {
-      attempts.push({ layer: "qwen-vl", outcome: "hit", ms: now() - t0 })
-      log("computeruse.locate", { layer: "qwen-vl", hit: true, ms: now() - t0 })
+      attempts.push({ layer, outcome: "hit", ms: now() - t0 })
+      log("computeruse.locate", { layer, hit: true, ms: now() - t0 })
       const hit: LocateHit = {
         x: outcome.point.x,
         y: outcome.point.y,
         bbox: { x: outcome.point.x, y: outcome.point.y, width: 0, height: 0 },
-        layer: "qwen-vl",
+        layer,
         matchedText: "",
       }
       return {
@@ -665,19 +652,13 @@ export async function locateTargetWithChain(args: {
           : {}),
       }
     }
-    attempts.push({ layer: "qwen-vl", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
-    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: outcome.reason, ms: now() - t0 })
+    attempts.push({ layer, outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
+    log("computeruse.locate", { layer, hit: false, reason: outcome.reason, ms: now() - t0 })
   } else {
     const skipReason = deps.experimentalSkipReason || "model-not-admitted"
-    attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: skipReason, ms: 0 })
-    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: skipReason })
+    attempts.push({ layer: "main-model", outcome: "skipped", reason: skipReason, ms: 0 })
+    log("computeruse.locate", { layer: "main-model", hit: false, reason: skipReason })
   }
 
-  // ---- L3: cloud（WP6 honest stub，不动） ---------------------------------------
-  // #360: 浏览器 one-shot 路径连 stub 也标成 vault-browser-no-vlm —— 将来 WP6
-  // 落地时本分支绝不静默变成真云端调用（NEVER: vault-browser one-shot 不上云）。
-  const cloudSkipReason = deps.vaultBrowserNoVlm === true ? VAULT_BROWSER_NO_VLM_REASON : "wp6-not-implemented"
-  attempts.push({ layer: "cloud", outcome: "skipped", reason: cloudSkipReason, ms: 0 })
-  log("computeruse.locate", { layer: "cloud", hit: false, reason: cloudSkipReason })
   throw notFoundError()
 }

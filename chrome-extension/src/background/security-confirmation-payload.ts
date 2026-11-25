@@ -16,6 +16,7 @@
 export function buildSecurityConfirmationWsPayload(message: {
   confirmation_id?: unknown
   approved?: unknown
+  image_reviewed?: unknown
   add_to_whitelist?: unknown
   nonce_response?: unknown
   add_to_thread_whitelist?: unknown
@@ -30,6 +31,7 @@ export function buildSecurityConfirmationWsPayload(message: {
     approved: message.approved === true,
     add_to_whitelist: Array.isArray(message.add_to_whitelist) ? message.add_to_whitelist : [],
   }
+  if (message.approved === true && message.image_reviewed === true) payload.image_reviewed = true
   if (typeof message.nonce_response === "string") {
     payload.nonce_response = message.nonce_response
   }

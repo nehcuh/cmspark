@@ -592,8 +592,8 @@ fi
 
 # --- Static: package gates Qwen, not TinyClick/ORT ---------------------------
 echo "[static] package.sh gates Qwen3-VL worker (not TinyClick/ORT)"
-assert_file_has "${PACKAGE_SH}" 'Qwen3-VL locate hard-gate' \
-  "package hard-gates qwen-vl-worker"
+assert_file_has "${PACKAGE_SH}" 'qwen-vl-worker.py missing .*required by Work Center local extraction' \
+  "package requires the Work Center extraction worker"
 assert_file_lacks "${PACKAGE_SH}" 'onnxruntime-node not installed' \
   "package no longer errors on missing ORT"
 assert_file_lacks "${PACKAGE_SH}" 'tinyclick-worker missing' \

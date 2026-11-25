@@ -148,6 +148,7 @@ export class AnthropicProvider implements LlmProvider {
 
     Object.assign(body, reasoningParams(support, params.reasoning_effort ?? this.config.reasoning_effort, "anthropic"))
 
+    params.beforeSend?.()
     const response = await fetch(url, {
       method: "POST",
       headers,

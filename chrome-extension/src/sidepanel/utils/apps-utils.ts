@@ -40,6 +40,8 @@ const APPS_ERROR_CODES: ReadonlySet<string> = new Set([
   "CLI_PHASE2",
   "PRESET_NOT_REMOVABLE",
   "PLATFORM_UNSUPPORTED",
+  "COMPUTER_ENABLE_PENDING",
+  "COMPUTER_ENABLE_STALE",
 ])
 
 export function isAppsErrorMessage(msg: { family?: unknown; code?: unknown; error?: unknown }): boolean {
@@ -49,14 +51,42 @@ export function isAppsErrorMessage(msg: { family?: unknown; code?: unknown; erro
 }
 
 /**
- * Platform gating (WP6a, Finding 2). The panel learns the companion's
- * platform from the apps.list response. Unknown (pre-WP6a companion) → treat
- * as supported so the UI is never needlessly disabled; anything non-win32 →
- * the add/enumerate flow is hidden behind an honest「仅 Windows 可用」state.
+ * Older Companions omit their platform. Preserve the original add flow for them.
  */
 export function appsPlatformSupported(platform: string | null | undefined): boolean {
   if (platform === null || platform === undefined) return true
   return platform === "win32" || platform === "darwin"
+}
+
+/** A Mac user may paste either the advertised bundle ID or an existing absolute app path. */
+export function manualAppIdentity(input: string, platform: string | null | undefined): { path: string } | { bundleId: string } {
+  const value = input.trim()
+  return platform === "darwin" && !value.startsWith("/") ? { bundleId: value } : { path: value }
+}
+
+/** Join Companion's token-keyed UI hints to the read-only local view. */
+export function appEntriesForPanel(entries: AppEntry[], modes?: Record<string, unknown>): AppEntry[] {
+  if (!modes || typeof modes !== "object" || Array.isArray(modes)) return entries
+  return entries.map(entry => {
+    const mode = Object.hasOwn(modes, entry.token) ? modes[entry.token] : undefined
+    switch (mode) {
+      case "per_app": case "browser_task": case "protected": case "missing_identity": case "unsupported":
+        return { ...entry, coordinate_mode: mode }
+      default:
+        return entry
+    }
+  })
+}
+
+export function coordinateRestriction(entry: AppEntry): string | undefined {
+  if (entry.coordinateAllowed === true) return // Always allow revocation.
+  if (entry.binary_drift) return "应用文件已变更，请先重新核对文件指纹"
+  switch (entry.coordinate_mode) {
+    case "browser_task": return "网页可直接使用浏览器工具；桌面输入在任务开始时确认"
+    case "protected": return "受保护应用，无法授权桌面操作"
+    case "missing_identity": return "请重新添加应用，Windows 使用可执行文件路径，macOS 使用 Bundle ID"
+    case "unsupported": return "当前平台或应用类型不支持桌面操作"
+  }
 }
 
 /**
@@ -87,7 +117,7 @@ export function canOfferComputerSessionTrust(
 /** Checkbox sub-copy for computer session auto-approve (≤40 字 main label in App.tsx). */
 export function computerSessionTrustHint(): string {
   // Default ON in App.tsx — hint explains what Allow will cover.
-  return "默认勾选：本对话内同类操作少问；不新增输入文字、不扩大已批预算/次数；危险/实验仍确认；约 30 分钟无操作或重启后失效"
+  return "默认勾选。限本对话已批准的输入文字、动作预算和次数，危险或实验操作仍需确认。距上次人工批准约 30 分钟或重启后失效。"
 }
 
 /**
@@ -122,7 +152,7 @@ export function policyBadge(policy: AppPolicy): PolicyBadge {
         label: "全自动(仅启动免确认)",
         color: "#b91c1c",
         bg: "#fee2e2",
-        title: "仅「无参数启动」免确认；带参数操作仍需确认，危险操作仍需 Hello 验证",
+        title: "仅「无参数启动」免确认；带参数操作仍需确认，危险操作仍需身份验证",
       }
     case "ai":
       return {

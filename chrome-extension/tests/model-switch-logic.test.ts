@@ -8,17 +8,13 @@ import assert from "node:assert/strict"
 
 import {
   MODEL_STATE_MESSAGES,
-  MODEL_SWITCH_COPY,
   downloadPercent,
   isComputerModelErrorMessage,
   licenseDoorShouldOpen,
   modelStateMessage,
   modelStatusLine,
-  modelSwitchDisabledReason,
-  modelSwitchHint,
-  modelSwitchRunningNote,
 } from "../src/sidepanel/components/model-switch-logic"
-import type { ComputerModelState, ComputerTaskState } from "../src/sidepanel/types"
+import type { ComputerModelState } from "../src/sidepanel/types"
 
 function modelState(over: Partial<ComputerModelState> = {}): ComputerModelState {
   return {
@@ -31,21 +27,6 @@ function modelState(over: Partial<ComputerModelState> = {}): ComputerModelState 
     ...over,
   }
 }
-
-function task(status: ComputerTaskState["status"]): ComputerTaskState {
-  return { taskId: "t1", status, resyncing: false, steps: [], abortAcked: false }
-}
-
-// --- 三层依赖提示优先级:masterOffHint > appNotAllowedHint > null(本体) ---
-
-test("依赖提示优先级:主开关关 > app 未许可 > 本体(未知层不判)", () => {
-  assert.equal(modelSwitchHint({ masterEnabled: false, appCoordinateAllowed: false }), MODEL_SWITCH_COPY.masterOffHint)
-  assert.equal(modelSwitchHint({ masterEnabled: false, appCoordinateAllowed: true }), MODEL_SWITCH_COPY.masterOffHint)
-  assert.equal(modelSwitchHint({ masterEnabled: true, appCoordinateAllowed: false }), MODEL_SWITCH_COPY.appNotAllowedHint)
-  assert.equal(modelSwitchHint({ masterEnabled: null, appCoordinateAllowed: false }), MODEL_SWITCH_COPY.appNotAllowedHint)
-  assert.equal(modelSwitchHint({ masterEnabled: true, appCoordinateAllowed: true }), null)
-  assert.equal(modelSwitchHint({ masterEnabled: null, appCoordinateAllowed: null }), null)
-})
 
 // --- 许可证门触发 ---
 
@@ -62,18 +43,6 @@ test("下载百分比:取整 + clamp + 零总量/空进度 → null", () => {
   assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 200, totalBytes: 100 }), 100)
   assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 0, totalBytes: 0 }), null)
   assert.equal(downloadPercent(null), null)
-})
-
-// --- P2 任务运行中旁注判定 ---
-
-test("P2 运行中旁注:running/paused → 旁注(per-task + estop);finished/无任务 → null", () => {
-  const note = modelSwitchRunningNote(task("running"))
-  assert.ok(note !== null)
-  assert.ok(note!.includes("当前任务结束后生效"), "per-task 生效语义(P2)")
-  assert.ok(note!.includes("Ctrl+Alt+End"), "estop 引导(P2)")
-  assert.ok(modelSwitchRunningNote(task("paused"))!.includes("当前任务结束后生效"))
-  assert.equal(modelSwitchRunningNote(task("finished")), null)
-  assert.equal(modelSwitchRunningNote(null), null)
 })
 
 // --- 状态行选择 ---
@@ -115,25 +84,14 @@ test("状态行:disabled → circuit-breaker 词表;ready → 就绪双态", () 
   assert.equal(v1.action, "重置熔断")
   const v2 = modelStatusLine(modelState({ modelStatus: "ready", modelEnabled: true }), null)
   assert.equal(v2.kind, "ok")
-  assert.ok(v2.text.includes("人工确认"), "开启态仍须 G4 叙事")
+  assert.ok(v2.text.includes("工作中心"))
   const v3 = modelStatusLine(modelState({ modelStatus: "ready", modelEnabled: false }), null)
-  assert.ok(v3.text.includes("未开启"))
+  assert.equal(v3.text, v2.text, "历史定位开关不影响工作中心就绪状态")
 })
 
 test("状态行:error 字段优先于 modelStatus 分支", () => {
   const v = modelStatusLine(modelState({ modelStatus: "ready", error: "model-size-mismatch" }), null)
   assert.equal(v.kind, "error", "有 reason 即走词表(诚实边界:probe 异常不被 ready 掩盖)")
-})
-
-// --- 开关禁用原因(许可证已拒绝) ---
-
-test("禁用原因:declined → 可复位跳过提示;其余 → null", () => {
-  const r = modelSwitchDisabledReason(modelState({ modelLicenseDeclined: true }))
-  assert.ok(r !== null)
-  assert.ok(r!.includes("跳过"))
-  assert.ok(r!.includes("复位") || r!.includes("设置页"))
-  assert.equal(modelSwitchDisabledReason(modelState()), null)
-  assert.equal(modelSwitchDisabledReason(null), null)
 })
 
 // --- 错误路由守卫 ---
@@ -149,13 +107,6 @@ test("错误路由守卫:仅 family=computer.model 命中(不用共享 code)", (
 // --- 镜像文案互锁(companion computer-model-states.test.ts 姊妹面) ---
 
 test("镜像互锁:P2 layerSemantics / runningNote / 熔断词表关键短语", () => {
-  // Qwen3-VL 文案：任务粒度切换说明在 switchRunningNote；layerSemantics 描述模型与急停。
-  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("Qwen3-VL"))
-  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("Ctrl+Alt+End"))
-  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("⌃⌥⌘⇧E") || MODEL_SWITCH_COPY.layerSemantics.includes("macOS"))
-  assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("当前任务结束后生效"))
-  assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("Ctrl+Alt+End"))
-  assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("⌃⌥⌘⇧E") || MODEL_SWITCH_COPY.switchRunningNote.includes("macOS"))
   const cb = MODEL_STATE_MESSAGES["circuit-breaker"]
   assert.ok(cb, "circuit-breaker 词表条目必须镜像在案")
   assert.ok(cb!.detail.includes("无自动恢复"))

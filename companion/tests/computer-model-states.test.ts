@@ -4,8 +4,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { MODEL_STATE_MESSAGES, modelStateMessage, MODEL_SWITCH_COPY } from "../src/computer/model-state-messages"
-import { LICENSE_DOOR_TEXT } from "../src/computer/model-license"
+import { MODEL_STATE_MESSAGES, modelStateMessage } from "../src/computer/model-state-messages"
 
 test("三态 code 与文案 title 两两不同（UI 可分别呈现）", () => {
   const codes = ["model-file-missing", "model-hash-mismatch", "network-error"]
@@ -48,31 +47,4 @@ test("未知 reason → 兜底文案不崩溃", () => {
   const msg = modelStateMessage("some-future-reason")
   assert.strictEqual(msg.title, "模型层不可用")
   assert.ok(msg.detail.includes("some-future-reason"))
-})
-
-test("MODEL_SWITCH_COPY：全字段齐备非空", () => {
-  for (const key of [
-    "switchLabel",
-    "switchHint",
-    "masterOffHint",
-    "appNotAllowedHint",
-    "layerSemantics",
-    "licenseDoorHint",
-    "firstLoadTimeline",
-    "switchRunningNote",
-    "statusReadyEnabled",
-    "statusReadyDisabled",
-    "downloadInProgress",
-    "licenseDeclinedNotice",
-  ] as const) {
-    assert.ok(typeof MODEL_SWITCH_COPY[key] === "string" && MODEL_SWITCH_COPY[key].length > 0, `${key} 为空`)
-  }
-})
-
-test("LICENSE_DOOR_TEXT 与开关文案默认关闭叙事一致", () => {
-  assert.ok(LICENSE_DOOR_TEXT.includes("默认关闭"), "LICENSE_DOOR_TEXT 须同为默认关闭叙事")
-})
-
-test("开关文案不与 LICENSE_DOOR_TEXT 矛盾：人工确认条款双源一致", () => {
-  assert.ok(LICENSE_DOOR_TEXT.includes("人工确认"))
 })

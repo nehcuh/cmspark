@@ -13,7 +13,6 @@ import type {
   ComputerModelLicenseDoor,
   ComputerModelProgress,
   ComputerModelState,
-  ComputerTaskState,
 } from "../types"
 
 // --- 逐字镜像：companion model-state-messages.ts（改动须先改 companion 并同步） ------
@@ -31,102 +30,102 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "model-file-missing": {
     title: "模型文件缺失",
     detail:
-      "Qwen3-VL 模型未下载或已被删除。UIA / OCR / 用户框选定位不受影响；" +
-      "在设置页下载模型后可启用本实验层。",
+      "Qwen3-VL 模型未下载或已被删除。桌面操作不受影响；" +
+      "可在设置页下载模型，再到工作中心选择本机模型。",
     action: "下载模型",
   },
   "model-hash-mismatch": {
     title: "模型文件校验失败",
     detail:
       "模型文件与登记 sha256 不一致（可能被篡改或损坏），已拒绝加载。" +
-      "UIA / OCR / 用户框选定位不受影响；请删除后重新下载。",
+      "桌面操作不受影响；请删除后重新下载。",
     action: "删除并重新下载",
   },
   "network-error": {
     title: "模型下载失败",
     detail:
       "网络错误导致下载中断（断点已保留，重试可续传）。已自动降级，" +
-      "UIA / OCR / 云端定位不受影响。",
+      "桌面操作不受影响。",
     action: "重试下载",
   },
   "model-unknown": {
     title: "模型未登记",
-    detail: "manifest 中不存在该模型条目（发版内容异常）。其余定位层不受影响。",
+    detail: "manifest 中不存在该模型条目（发版内容异常）。桌面操作不受影响。",
     action: null,
   },
   "variant-unknown": {
     title: "模型变体未登记",
-    detail: "manifest 中不存在该交付变体（发版内容异常）。其余定位层不受影响。",
+    detail: "manifest 中不存在该交付变体（发版内容异常）。桌面操作不受影响。",
     action: null,
   },
   "mirror-scheme-denied": {
     title: "镜像地址被拒绝",
     detail:
       "computer.modelMirror 仅允许 https 主机（file:// / UNC 本地替换面已关闭）。" +
-      "请检查设置后重试；其余定位层不受影响。",
+      "请检查设置后重试；桌面操作不受影响。",
     action: "检查镜像设置",
   },
   "disk-budget-exceeded": {
     title: "磁盘预算超限",
     detail:
       "可用磁盘不足以容纳所选模型变体（需约「下载体积 + 2GB」余量）。" +
-      "请释放磁盘空间或删除其他变体后重试；其余定位层不受影响。",
+      "请释放磁盘空间或删除其他变体后重试；桌面操作不受影响。",
     action: "释放磁盘空间",
   },
   "disk-full": {
     title: "磁盘空间不足",
-    detail: "目标卷剩余空间不足以下载模型文件。请释放磁盘空间后重试；其余定位层不受影响。",
+    detail: "目标卷剩余空间不足以下载模型文件。请释放磁盘空间后重试；桌面操作不受影响。",
     action: null,
   },
   "http-error": {
     title: "模型下载失败",
     detail:
-      "模型服务器返回异常状态。若使用镜像，请检查镜像可用性；其余定位层不受影响，可稍后重试。",
+      "模型服务器返回异常状态。若使用镜像，请检查镜像可用性；桌面操作不受影响，可稍后重试。",
     action: "重试下载",
   },
   "size-mismatch": {
     title: "模型文件大小异常",
     detail:
       "下载完成的文件大小与登记不符（分发链异常），已删除并拒绝使用。" +
-      "其余定位层不受影响；请重试下载，复现请向项目反馈。",
+      "桌面操作不受影响；请重试下载，复现请向项目反馈。",
     action: "重试下载",
   },
   "hash-mismatch": {
     title: "模型文件校验失败",
     detail:
       "下载完成的文件 sha256 与登记不符（分片级篡改或分发链异常），已删除分片并拒绝使用。" +
-      "其余定位层不受影响；请重试下载，复现请向项目反馈。",
+      "桌面操作不受影响；请重试下载，复现请向项目反馈。",
     action: "重试下载",
   },
   "oversize-stream": {
     title: "模型下载数据异常",
     detail:
       "下载源吐出的字节超过登记大小（分发链异常或镜像不可信），已在传输中途截断并清理。" +
-      "其余定位层不受影响；请检查镜像设置后重试，复现请向项目反馈。",
+      "桌面操作不受影响；请检查镜像设置后重试，复现请向项目反馈。",
     action: "重试下载",
   },
   "model-size-mismatch": {
     title: "模型文件大小异常",
-    detail: "磁盘上的模型文件大小与登记不符，已拒绝加载。请删除后重新下载；其余定位层不受影响。",
+    detail: "磁盘上的模型文件大小与登记不符，已拒绝加载。请删除后重新下载；桌面操作不受影响。",
     action: "删除并重新下载",
   },
   "manifest-invalid": {
     title: "模型登记信息损坏",
-    detail: "models.manifest.json 未通过 schema 校验（发版内容异常）。其余定位层不受影响。",
+    detail: "models.manifest.json 未通过 schema 校验（发版内容异常）。桌面操作不受影响。",
     action: null,
   },
   "manifest-source-remote": {
     title: "模型登记来源被拒绝",
     detail:
       "模型 manifest 只接受随发版的本地文件（运行时网络更新 manifest 的通道已关闭）。" +
-      "其余定位层不受影响。",
+      "桌面操作不受影响。",
     action: null,
   },
   "download-host-unset": {
     title: "模型发布地址未配置",
     detail:
       "模型发布地址尚未配置——当前构建不可下载模型。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: null,
   },
   "python-missing": {
@@ -136,35 +135,35 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "Windows：winget install -e --id Python.Python.3.12，或从 python.org 安装并勾选 PATH；" +
       "Mac：brew install python3；Linux：用发行版包管理器安装 python3。" +
       "完成后重启 CMspark。也可在设置 → 实验功能按环境检查中的安装命令操作。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: null,
   },
   "hf-hub-missing": {
     title: "本机尚未准备好「模型下载组件」",
     detail:
       "还不能从当前下载源拉取模型。请打开设置 → 实验功能，按「环境检查」清单复制安装命令到终端执行（约 1～3 分钟），或改选下载源「魔搭 ModelScope」。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: "查看环境检查",
   },
   "modelscope-missing": {
     title: "本机尚未准备好「模型下载组件」",
     detail:
       "当前为大陆推荐源，仍需在本机安装下载组件。请打开设置 → 实验功能，按「环境检查」清单中的一键命令在终端执行后再点下载。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: "查看环境检查",
   },
   "download-failed": {
     title: "模型下载失败",
     detail:
       "网络或下载源暂时不可用。可改选「魔搭 ModelScope」或「HF 镜像」后重试；并确认磁盘空间充足。" +
-      "其余定位层不受影响。",
+      "桌面操作不受影响。",
     action: "重试下载",
   },
   "model-variant-missing": {
     title: "当前规模尚未下载",
     detail:
       "所选模型规模的文件未下载或不完整。请先完成环境检查中的软件项，再点「下载模型」。" +
-      "UIA / OCR / 用户框选定位不受影响。",
+      "桌面操作不受影响。",
     action: "下载当前规模",
   },
   "circuit-breaker": {
@@ -181,57 +180,10 @@ export function modelStateMessage(reason: string): ModelStateMessage {
   return (
     MODEL_STATE_MESSAGES[reason] ?? {
       title: "模型层不可用",
-      detail: `未登记的原因（${reason}）。其余定位层不受影响。`,
+      detail: `未登记的原因（${reason}）。桌面操作不受影响。`,
       action: null,
     }
   )
-}
-
-export interface ModelSwitchCopy {
-  switchLabel: string
-  switchHint: string
-  masterOffHint: string
-  appNotAllowedHint: string
-  layerSemantics: string
-  licenseDoorHint: string
-  firstLoadTimeline: string
-  switchRunningNote: string
-  statusReadyEnabled: string
-  statusReadyDisabled: string
-  downloadInProgress: string
-  licenseDeclinedNotice: string
-}
-
-export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
-  switchLabel: "实验层：Qwen3-VL 本地视觉定位",
-  switchHint:
-    "默认关闭。开启后仅作为定位链第 2 层（L2）的坐标候选建议；" +
-    "支持中文指令；命中在执行前仍会弹出人工确认。",
-  masterOffHint: "主开关（computer.use）已关闭——实验层不参与任何定位。",
-  appNotAllowedHint:
-    "当前应用未加入允许列表（coordinateAllowed）——实验层对该应用不参与定位。",
-  layerSemantics:
-    "本层使用 Qwen3-VL（默认 2B，可选 4B/8B）在本机对截屏做 GUI 定位建议：" +
-    "模型输出仅作为坐标候选，任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
-    "需要 Python3 + transformers/torch；下载源为 Hugging Face。" +
-    "关闭开关按任务粒度生效；急停：Windows Ctrl+Alt+End · macOS ⌃⌥⌘⇧E · 或侧栏中止。" +
-    "UIA / OCR / 用户框选兜底不受影响。",
-  licenseDoorHint:
-    "首次开启需阅读并接受模型许可证与免责声明；" +
-    "拒绝则本实验层跳过，其余定位层不受影响；之后可在设置页「复位许可拒绝」重新打开流程。",
-  firstLoadTimeline:
-    "模型首次加载可能需数十秒至数分钟（取决于硬件与是否 GPU）；" +
-    "加载期间 UIA / OCR / 用户框选定位不受影响。",
-  switchRunningNote:
-    "当前有任务正在运行——开关变更将于当前任务结束后生效；" +
-    "立即停止请按急停：Windows Ctrl+Alt+End · macOS ⌃⌥⌘⇧E · 或侧栏中止任务。",
-  statusReadyEnabled:
-    "实验层已开启，模型就绪。任务执行中每个模型建议在点击前仍需人工确认。",
-  statusReadyDisabled: "模型已下载就绪——实验层未开启。",
-  downloadInProgress: "模型下载中",
-  licenseDeclinedNotice:
-    "你已拒绝实验层许可证——本层已跳过，其余定位层不受影响。" +
-    "可在设置页「实验层」重新打开许可流程以复位拒绝（无需手改 config.json）。",
 }
 
 /** Static resource tips (mirrored from companion qwen-vl-catalog; UI fallback). */
@@ -308,8 +260,8 @@ export function modelStatusLine(
         kind: "info",
         text:
           pct === null
-            ? `${MODEL_SWITCH_COPY.downloadInProgress}…`
-            : `${MODEL_SWITCH_COPY.downloadInProgress}…${pct}%（${progress!.file}）`,
+            ? `模型下载中…`
+            : `模型下载中…${pct}%（${progress!.file}）`,
       }
     }
     case "disabled": {
@@ -319,26 +271,11 @@ export function modelStatusLine(
     case "ready":
       return {
         kind: "ok",
-        text: modelState.modelEnabled
-          ? MODEL_SWITCH_COPY.statusReadyEnabled
-          : MODEL_SWITCH_COPY.statusReadyDisabled,
+        text: "工作中心本机模型已下载就绪。",
       }
     default:
       return { kind: "info", text: modelStateMessage(modelState.modelStatus).title }
   }
-}
-
-/**
- * 三层依赖提示优先级：masterOffHint > appNotAllowedHint > null（显示本体
- * layerSemantics）。输入为 null = 该层状态未知（不判该层）。
- */
-export function modelSwitchHint(args: {
-  masterEnabled: boolean | null
-  appCoordinateAllowed: boolean | null
-}): string | null {
-  if (args.masterEnabled === false) return MODEL_SWITCH_COPY.masterOffHint
-  if (args.appCoordinateAllowed === false) return MODEL_SWITCH_COPY.appNotAllowedHint
-  return null
 }
 
 /** 许可证门触发条件：license_required 载荷到达（非 null）即弹门。 */
@@ -346,32 +283,11 @@ export function licenseDoorShouldOpen(door: ComputerModelLicenseDoor | null): bo
   return door !== null
 }
 
-/**
- * 开关禁用原因（组件据此禁用开关行）：
- *   许可证已拒绝 → 跳过提示（可复位）（裁决 2，设置页「复位许可拒绝」可复位）；其余 → null（可拨动）。
- */
-export function modelSwitchDisabledReason(modelState: ComputerModelState | null): string | null {
-  if (modelState?.modelLicenseDeclined === true) return MODEL_SWITCH_COPY.licenseDeclinedNotice
-  return null
-}
-
 /** 下载百分比（0-100；totalBytes<=0 或 progress=null → null 不显示数字）。 */
 export function downloadPercent(progress: ComputerModelProgress | null): number | null {
   if (!progress || !(progress.totalBytes > 0)) return null
   const pct = Math.floor((progress.receivedBytes / progress.totalBytes) * 100)
   return Math.max(0, Math.min(100, pct))
-}
-
-/**
- * P2 任务运行中旁注判定：有活动 computer 任务（running/paused）拨动开关时
- * 显示「当前任务结束后生效」+ estop 引导；无任务/已完结 → null。
- */
-export function modelSwitchRunningNote(task: ComputerTaskState | null): string | null {
-  if (!task) return null
-  if (task.status === "running" || task.status === "paused") {
-    return MODEL_SWITCH_COPY.switchRunningNote
-  }
-  return null
 }
 
 /**

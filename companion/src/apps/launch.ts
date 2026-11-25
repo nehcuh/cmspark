@@ -33,7 +33,8 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import { spawn as cpSpawn } from "child_process"
+import { execFile, spawn as cpSpawn } from "child_process"
+import { promisify } from "node:util"
 import {
   runPs,
   resolveWinScript,
@@ -66,6 +67,7 @@ export interface ProbeResult {
 export type ProcessProbe = (imageName: string) => Promise<ProbeResult>
 
 export interface LaunchDeps {
+  beforeLaunch?: () => void
   /** Default: child_process.spawn. Injectable for tests. */
   spawn?: (file: string, args: string[], opts: Record<string, unknown>) => { unref?: () => void; on?: (ev: string, cb: (e: any) => void) => void }
   /** Default: apps-probe.ps1 via the argv-only runPs infra. Injectable. */
@@ -123,6 +125,7 @@ export async function launchApp(entry: AppEntry, deps: LaunchDeps = {}): Promise
   const waitMs = deps.waitMs ?? LAUNCH_SETTLE_WAIT_MS
 
   const spawnDetached = (file: string, args: string[]) => {
+    deps.beforeLaunch?.()
     const child = spawnFn(file, args, {
       detached: true,
       stdio: "ignore",
@@ -160,13 +163,10 @@ export async function launchApp(entry: AppEntry, deps: LaunchDeps = {}): Promise
 
   // ---- macOS bundleId branch ------------------------------------------------
   if (entry.bundleId) {
-    // Use `open -b <bundleId>` to launch on macOS
-    const child = spawnFn("/usr/bin/open", ["-b", entry.bundleId], {
-      detached: true,
-      stdio: "ignore",
-    })
-    child.on?.("error", () => { /* surfaced via probe */ })
-    child.unref?.()
+    // open exits once LaunchServices accepts or rejects the request. Its
+    // process starting successfully is insufficient when the app was removed.
+    deps.beforeLaunch?.()
+    await promisify(execFile)("/usr/bin/open", ["-b", entry.bundleId], { timeout: 10000 })
     await sleep(waitMs)
     return {
       launched: true,

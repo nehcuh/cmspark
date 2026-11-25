@@ -139,6 +139,7 @@ export async function handleSecurityConfirmationResponse(
         .filter((s: { pack_id: string }) => s.pack_id)
     : undefined
   const respondResult = securityConfirmations.respondFrom(confirmationId, effectiveApproved, ws, nonceResponse, {
+    imageReviewed: msg.image_reviewed === true,
     addToSessionTrust: stopThread ? false : addToSessionTrust,
     addToEnterpriseSessionTrust: stopThread ? false : addToEnterpriseSessionTrust,
     expertTeamSlices,

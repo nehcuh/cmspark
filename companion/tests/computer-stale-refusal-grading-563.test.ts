@@ -50,7 +50,7 @@ function body(args: string[], statement: string) {
 }
 const executor = source("computer/executor.ts")
 const failure = unique(executor, n => ts.isVariableDeclaration(n) && n.name.getText(executor) === "fail") as ts.VariableDeclaration
-const failureClosure = body(["log", "emit", "taskId", "steps", "params", "sweepRaws", "evidence", "uiaWatcherLiveness"],
+const failureClosure = body(["log", "emit", "taskId", "steps", "params", "sweepRaws", "evidence", "uiaWatcherLiveness", "deps"],
   `let uiaWatcher = null; return ${failure.initializer!.getText(executor)};`)
 const dispatcher = source("tool/companion-dispatch.ts")
 const envelope = computerFailureEnvelope( unique(dispatcher, n => ts.isReturnStatement(n)
@@ -117,7 +117,7 @@ async function outward(error: ComputerError) {
   const events: any[] = [], logs: any[] = []
   let sweeps = 0
   const fail = failureClosure((...args: any[]) => logs.push(args), (event: any) => events.push(event),
-    "owned-task", [], { actions: [{ action: "click", target: "owned" }] }, async () => { sweeps++ }, null, () => null)
+    "owned-task", [], { actions: [{ action: "click", target: "owned" }] }, async () => { sweeps++ }, null, () => null, {})
   const result = await fail(error)
   assert.equal(sweeps, 1); assert.equal(logs.length, 1)
   assert.equal(events.length, 1); assert.equal(events[0].event, "finished")
@@ -143,7 +143,8 @@ for (const scenario of ["uia-moved", "ocr-moved", "twice-drift", "post-approval-
   }
 test("#563 experimental post-approval region refusal uses the same existing typed code", async () => {
   const created = unique(executor, n => ts.isNewExpression(n) && n.expression.getText(executor) === "ComputerError"
-    && n.arguments?.[0]?.getText(executor) === '"STALE_SCREENSHOT"') as ts.NewExpression
+    && n.arguments?.[0]?.getText(executor) === '"STALE_SCREENSHOT"'
+    && n.arguments[1]?.getText(executor).includes("experimental suggestion region went unstable")) as ts.NewExpression
   // Actual fixed constructor expression only; not a full authorized executor.
   const error = body(["ComputerError"], "return " + created.getText(executor))(ComputerError)
   assert.match(error.message, /experimental suggestion region went unstable/)

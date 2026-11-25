@@ -27,7 +27,7 @@ function unique(root:ts.Node,predicate:(n:ts.Node)=>boolean){const found:ts.Node
 function body(args:string[],statement:string){return new Function(...args,ts.transpileModule(statement,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText)}
 const executor=source("computer/executor.ts"),fail=unique(executor,n=>ts.isVariableDeclaration(n)&&n.name.getText(executor)==="fail")
 const returned=unique(fail,n=>ts.isReturnStatement(n)&&n.getText(executor).includes("errorCode: err.code"))
-const taskResult=body(["err","taskId","evidence","steps","params"],returned.getText(executor))
+const taskResult=body(["err","taskId","evidence","steps","params","deps"],returned.getText(executor))
 const dispatcher=source("tool/companion-dispatch.ts")
 const envelope=computerFailureEnvelope(unique(dispatcher,n=>ts.isReturnStatement(n)&&n.getText(dispatcher).includes("error_code: result.errorCode")).getText(dispatcher))
 const adapter=source("llm/adapter.ts")
@@ -47,7 +47,7 @@ async function actualRefusal(prefix:"OCCLUDED"|"FOCUSLOST",basename:string){
  const code=prefix==="OCCLUDED"?"CLICK_OCCLUDED":"FOCUS_LOST";assert.equal(error.code,code)
  // Genuine return bodies, not invented task/tool dictionaries. Full executor
  // admission, capture/cleanup and dispatcher authorization are not run here.
- const result=taskResult(error,"owned-task",null,[],{actions:[{action:"click",x:110,y:150}]})
+ const result=taskResult(error,"owned-task",null,[],{actions:[{action:"click",x:110,y:150}]},{})
  const wire=JSON.parse(JSON.stringify(envelope(result)))
  assert.equal(wire.success,false);assert.equal(wire.error,error.message);assert.equal(wire.data.error_code,code)
  return {wire,classified:classify(wire,"host_computer",security.classifyError)}

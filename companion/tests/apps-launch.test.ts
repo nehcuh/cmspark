@@ -143,3 +143,9 @@ test("AUMID re-validation at exec time (D11): tampered aumid → typed error, no
   }
   assert.equal(spawnCalls.length, 0)
 })
+
+
+test("macOS rejects an unregistered bundle instead of returning a launch receipt", { skip: process.platform !== "darwin" }, async () => {
+  const missing = "org.cmspark.tests.unregistered908." + process.pid
+  await assert.rejects(launchApp(exeEntry({ exe: undefined, bundleId: missing })), /open -b/)
+})

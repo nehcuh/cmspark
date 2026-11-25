@@ -165,6 +165,7 @@ export type ImmediateSave = {
 
 export interface AgentState {
   workspaceHints: WorkspaceHintView | null
+  desktopMaximumExpiresAt: number | null
   connectionState: ConnectionState
   /** UI history observation only; survives batched disconnect/reconnect, never wire authority. */
   codingHistoryConnectionRevision: number
@@ -507,6 +508,7 @@ export interface AgentState {
 
 export type AgentAction =
   | { type: "SET_WORKSPACE_HINTS"; view: WorkspaceHintView | null }
+  | { type: "SET_DESKTOP_MAXIMUM"; expiresAt: number | null }
   | { type: "SET_CONNECTION"; state: ConnectionState }
   | { type: "OBSERVE_CODING_HISTORY_CONNECTION"; state: ConnectionState }
   | { type: "SET_THREADS"; threads: Thread[]; listScope?: "active" | "trash" | "all" }
@@ -756,6 +758,7 @@ export type AgentAction =
 
 export const initialState: AgentState = {
   workspaceHints: null,
+  desktopMaximumExpiresAt: null,
   connectionState: "disconnected",
   codingHistoryConnectionRevision: 0,
   threads: [],
@@ -1247,6 +1250,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           ...state,
           workspaceHints: null,
           connectionState: action.state,
+          desktopMaximumExpiresAt: null,
+          computerCoordinateEnabled: null,
+          appsPlatform: null,
+          appEntries: [],
+          appPresets: [],
+          appCandidates: null,
+          appRegistrySummary: null,
           configRevision: null,
           configEpochInvalid: false,
           ...savesAfterConnectionDrop(state),
@@ -1266,6 +1276,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         codingHistory: action.state === "connected" ? state.codingHistory : null,
         workspaceHints: action.state === "connected" ? state.workspaceHints : null }
     }
+    case "SET_DESKTOP_MAXIMUM": return { ...state, desktopMaximumExpiresAt: action.expiresAt }
     case "SET_THREADS": {
       const threads = Array.isArray(action.threads) ? action.threads : []
       if (action.listScope === "all" || action.listScope === "trash") {

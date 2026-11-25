@@ -6,7 +6,7 @@
 //   MacSecurityEnvironment — TCC permission + Secure Input check
 //
 // "Compute" adapters (side effects — Screen Recording / Accessibility):
-//   MacScreenCapturer     — CGWindowListCreateImage via cmspark-host
+//   MacScreenCapturer     — ScreenCaptureKit via cmspark-host
 //   MacLocator            — Apple Vision OCR via cmspark-host
 //   MacInputInjector      — CGEventPostToPid via cmspark-host
 //   MacAxLocator          — NSAccessibility tree locate via cmspark-host
@@ -123,6 +123,10 @@ export function interpretScreenshotFailure(
   // `parsed.error_code` is any (host.swift output); preserve any-ness so the
   // ComputerErrorCode union accepts it, mirroring checkOk's pre-existing pattern.
   const code = parsed.error_code ?? "INVALID_ACTION"
+  if (code === "CAPTURE_FAILED" && parsed.capture_stage === "screen_capture_kit") {
+    const reason = Number.isSafeInteger(parsed.native_error_code) ? ` (native error ${parsed.native_error_code})` : ""
+    return new ComputerError(code, `screenshot: ScreenCaptureKit could not capture the target window${reason}`)
+  }
   if (code === "CAPTURE_FAILED") {
     const dg = parsed.capture_degraded && typeof parsed.capture_degraded === "object"
       ? (parsed.capture_degraded as Record<string, unknown>)
@@ -360,6 +364,7 @@ export class MacSecurityEnvironment implements SecurityEnvironment {
       rethrowDarwinExecError(err as ExecFileException | Error, "security-check")
     }
     const parsed = parseComputerJson(stdout, "security-check")
+    if (parsed.desktopAvailable === false) throw new ComputerError("DESKTOP_DENIED", "computer: unlock the active Mac desktop to continue")
     if (parsed.axTrusted !== true) {
       throw new ComputerError(
         "INTEGRITY_LEVEL_DENIED",
@@ -376,7 +381,7 @@ export class MacSecurityEnvironment implements SecurityEnvironment {
 }
 
 // ---------------------------------------------------------------------------
-// B3 — MacScreenCapturer: CGWindowListCreateImage
+// B3 — MacScreenCapturer: ScreenCaptureKit
 // ---------------------------------------------------------------------------
 
 export class MacScreenCapturer implements ScreenCapturer {
@@ -457,8 +462,7 @@ export class MacScreenCapturer implements ScreenCapturer {
     if (!(client.width > 0 && client.height > 0) && !(rectW > 0 && rectH > 0)) {
       throw new ComputerError(
         "CAPTURE_FAILED",
-        "screenshot: empty client/window rect (0×0) — capture did not produce usable geometry. " +
-          "Check System Settings → Privacy & Security → Screen Recording for CMspark, then quit and relaunch.",
+        "screenshot: capture returned an empty client/window rectangle",
       )
     }
 
@@ -683,7 +687,7 @@ export class MacInputInjector implements InputInjector {
     ]
     let stdout: string
     try {
-      stdout = await spawnHostBin(resolveHostBinary(), args, { timeoutMs: 8000 })
+      stdout = await this.runInput(args, 8000)
     } catch (err) {
       return { ok: false, reason: "method_failed", detail: String((err as Error)?.message ?? err).slice(0, 300) }
     }
@@ -808,18 +812,22 @@ export class MacInputInjector implements InputInjector {
     }
   }
 
-  private async inject(args: string[], timeoutMs: number): Promise<void> {
+  private async runInput(args: string[], timeoutMs: number): Promise<string> {
     this.assertInputActive()
-    if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
-    const pending = spawnHostBin(resolveHostBinary(), ["inject", ...args], { timeoutMs })
+    const pending = spawnHostBin(resolveHostBinary(), args, { timeoutMs })
     this.inputDrain = pending.then(() => {}, () => {})
+    try { return await pending }
+    finally { this.inputDrain = undefined }
+  }
+
+  private async inject(args: string[], timeoutMs: number): Promise<void> {
+    if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
     let stdout: string
     try {
-      stdout = await pending
+      stdout = await this.runInput(["inject", ...args], timeoutMs)
     } catch (err) {
+      if (err instanceof ComputerError) throw err
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
-    } finally {
-      this.inputDrain = undefined
     }
     checkOk(parseComputerJson(stdout, "inject"), "inject")
   }

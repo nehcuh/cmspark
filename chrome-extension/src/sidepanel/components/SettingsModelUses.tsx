@@ -76,7 +76,7 @@ export function SettingsModelUses({ active, onOpen }: { active: boolean; onOpen:
     { id: "model-meeting-visual", title: "会议画面理解", current: !currentBindings ? "等待配置状态" : visual?.model_name ?? (visualId ? "所选服务未就绪" : "已关闭"), description: "确认后，向所选模型发送截图和相邻转写。" },
     { id: "model-meeting-minutes", title: "会议纪要", current: minutes, description: "长会议适合能稳定处理长文本并按模板输出的模型。确认后发送逐字稿、模板和所选参考笔记。" },
     { id: "model-activity", title: "活动提取", current: activityTarget ?? "打开活动记录核对目标", description: "取决于活动设置，可使用本机 OCR、文本模型或视觉模型。" },
-    { id: "model-local", title: "本机模型", current: local ? `Qwen3-VL ${local.variant} · ${local.modelEnabled ? "已启用" : "未启用"}` : "等待本机状态", description: "本机处理视觉定位。下载、许可和启用分别操作。" },
+    { id: "model-local", title: "本机模型", current: local ? `Qwen3-VL ${local.variant}` : "等待本机状态", description: "管理工作中心本机图像处理所用的模型和运行环境。" },
     { id: "model-background", title: "后台任务", current: `继承对话模型 · ${main}`, description: "摘要与标签适合低延迟、结构化输出稳定的模型，处理相应会话文本。" },
     { id: "model-profiles", title: "文本模型配置", description: "保存文本模型连接为命名配置，供会议等用途引用。" },
   ]

@@ -6,9 +6,11 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import * as os from "os"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 
 import { runComputerTask, type ComputerExecutorDeps } from "../src/computer/executor"
-import { PsLocator } from "../src/computer/win-adapters"
+import { PsInputInjector, PsLocator } from "../src/computer/win-adapters"
 import {
   ComputerError,
   type CaptureMeta,
@@ -76,7 +78,7 @@ function winInfo(overrides: Partial<WindowInfo> = {}): WindowInfo {
   }
 }
 
-function shot(path: string): CaptureMeta {
+function shot(path: string, source: "printwindow" | "unknown" = "printwindow"): CaptureMeta {
   return {
     hwnd: HWND,
     rect: { x: 100, y: 100, width: 640, height: 480 },
@@ -86,6 +88,7 @@ function shot(path: string): CaptureMeta {
     sha256: "deadbeef",
     black: false,
     fallbackUsed: false,
+    ...(source === "printwindow" ? { capture_method: source, observation_quality: "ok" as const, occludedBy: [] } : {}),
     osrBlackSuspected: false,
   }
 }
@@ -97,12 +100,12 @@ class FakeCapturer implements ScreenCapturer {
   captures = 0
   paths: string[] = []
   diffs: number[] = []
-  constructor(private diffScript: DiffScriptEntry[] = []) {}
+  constructor(private diffScript: DiffScriptEntry[] = [], private source: "printwindow" | "unknown" = "printwindow") {}
   async captureWindow(): Promise<CaptureMeta> {
     this.captures += 1
     const p = `cap-${this.captures}.png`
     this.paths.push(p)
-    return shot(p)
+    return shot(p, this.source)
   }
   async crop(_s: string, _r: any, out: string): Promise<string> { return out }
   async diff(): Promise<DiffMetrics> {
@@ -225,6 +228,7 @@ function makeDeps(overrides: Partial<ComputerExecutorDeps> = {}): ComputerExecut
     securityEnv: { assertInjectable: async () => {} },
     evidenceFactory: () => new FakeEvidence(),
     confirm: scriptedConfirm([true]).fn,
+    previewBuilder: fakePreviewBuilder([]),
     config: testConfig(),
     now: () => 1000000,
     sleep: async () => {},
@@ -877,7 +881,7 @@ test("executor R2: clean window -> read-only frames seal with empty blur (no ove
 
 test("executor: screenshot/describe/wait do not consume the action budget", async () => {
   const injector = new RecordingInjector()
-  const deps = makeDeps({ injector })
+  const deps = makeDeps({ injector, capturer: new FakeCapturer([], "unknown") })
   const actions: ComputerAction[] = [
     { action: "screenshot" },
     { action: "describe" },
@@ -1536,7 +1540,7 @@ test("executor P0-C: session trust does NOT auto-approve computer.experimental_s
   })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(confirm.captured.length, 1, "G4 re-L2 must still surface under session trust")
-  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.main_model_suggestion"])
   assert.equal(r.errorCode, "ELEMENT_NOT_FOUND", "deny → honest degrade")
   assert.equal(injector.clicks.length, 0, "deny → zero inject")
 })
@@ -1605,6 +1609,128 @@ test("executor does not replay a type whose producer may have sent a prefix", as
   }, makeDeps({ injector }))
   assert.equal(result.errorCode, "INJECT_FAILED")
   assert.equal(injector.types.length, 1)
+})
+
+for (const scenario of ["recover", "stop before focus", "stop during focus", "stop during retry"] as const) {
+  test(`type recovery: ${scenario}`, async () => {
+    const injector = new RecordingInjector()
+    let stopped = false
+    let calls = 0
+    let raises = 0
+    injector.typeText = async () => {
+      calls++
+      if (calls === 1) {
+        stopped = scenario === "stop before focus"
+        throw new ComputerError("TYPE_NO_EFFECT", "fixture received no input")
+      }
+      if (scenario === "stop during retry") throw new ComputerError("TASK_ABORTED", "native input stopped")
+    }
+    injector.forceForeground = async () => {
+      raises++
+      stopped = scenario === "stop during focus"
+      return true
+    }
+    const result = await runComputerTask({
+      task: "fill the fixture", app: "win.app.test", actions: [{ action: "type", text: "pad" }],
+    }, makeDeps({ injector, abortCheck: () => stopped ? "panel" : null }))
+    assert.equal(result.success, scenario === "recover")
+    if (scenario !== "recover") assert.equal(result.errorCode, "TASK_ABORTED")
+    assert.equal(raises, scenario === "stop before focus" ? 0 : 1)
+    assert.equal(calls, scenario === "recover" || scenario === "stop during retry" ? 2 : 1)
+  })
+}
+
+test("Windows type recovery honors the native posted prefix before sending the whole text again", async () => {
+  const text = "abcdefghijklmnopqrst"
+  for (const [stderr, prefix, error] of [
+    ["FOCUSLOST:foreground hwnd changed after 16/20 chars", 16, "FOCUS_LOST"],
+    ["SENDFAILED:SendInput delivered 0/2 events at char 3", 3, "INJECT_FAILED"],
+    ["SENDFAILED:SendInput delivered 1/2 events at char 0", 1, "INJECT_FAILED"],
+    ["FOCUSLOST:foreground hwnd changed after 0/20 chars", 0, undefined],
+    ["SENDFAILED:SendInput delivered 0/2 events at char 0", 0, undefined],
+    ["FOCUSLOST:foreground hwnd changed after 16/99 chars", 0, undefined],
+    ["SENDFAILED:no native delivery counts", 0, undefined],
+  ] as const) {
+    let field = "", calls = 0, raises = 0
+    const native = new PsInputInjector(async (_script, args) => {
+      if (args.includes("force-fg")) { raises++; return '{"foreground":true}' }
+      assert.equal(args[args.indexOf("-Text") + 1], text)
+      if (++calls === 1) {
+        field += text.slice(0, prefix)
+        throw { stderr }
+      }
+      field += text
+      return '{"ok":true}'
+    })
+    const injector = new RecordingInjector()
+    injector.typeText = native.typeText.bind(native)
+    injector.forceForeground = native.forceForeground.bind(native)
+    const result = await runComputerTask({
+      task: "fill the fixture", app: "win.app.test", actions: [{ action: "type", text }],
+    }, makeDeps({ injector }))
+    assert.equal(field, error ? text.slice(0, prefix) : text, stderr)
+    assert.equal(result.errorCode, error, stderr)
+    assert.equal(calls, error ? 1 : 2, stderr)
+    assert.equal(raises, error ? 0 : 1, stderr)
+  }
+})
+
+test("Windows type does not replay after an unreceipted native exit or termination", async () => {
+  for (const termination of ["exit", "signal", "timeout"] as const) {
+    const injector = new RecordingInjector()
+    let field = "", calls = 0, raises = 0
+    const windows = new PsInputInjector(async () => {
+      if (++calls !== 1) { field += "pad"; return '{"ok":true}' }
+      // A private child publishes its first character, then exits without the
+      // PS delivery receipt. Use the same promisified execFile error as runPs.
+      const ending = termination === "exit" ? "process.exitCode = 7" : "setInterval(() => {}, 1000)"
+      const pending = promisify(execFile)(process.execPath, ["-e", 'process.stdout.write("p");' + ending],
+        { encoding: "utf8", windowsHide: true, timeout: termination === "timeout" ? 100 : 15000 })
+      pending.child.stdout!.on("data", chunk => {
+        field += chunk
+        if (termination === "signal") pending.child.kill()
+      })
+      await pending
+      throw new Error("private child unexpectedly succeeded")
+    })
+    injector.typeText = windows.typeText.bind(windows)
+    injector.forceForeground = async () => { raises++; return true }
+    const result = await runComputerTask({
+      task: "fill the fixture", app: "win.app.test", actions: [{ action: "type", text: "pad" }],
+    }, makeDeps({ injector }))
+    // A heavily loaded host may hit the timeout before the test child runs.
+    // Both partial and zero delivery are consistent with an absent receipt.
+    if (termination === "timeout") assert.ok(field === "" || field === "p")
+    else assert.equal(field, "p", termination)
+    assert.equal(result.errorCode, "INJECT_FAILED", termination)
+    assert.equal(calls, 1); assert.equal(raises, 0)
+  }
+})
+
+test("Windows type recovery still retries a native zero-delivery receipt or a failed spawn", async () => {
+  for (const reason of ["zero", "no-child"] as const) {
+    const injector = new RecordingInjector()
+    let calls = 0, raises = 0
+    const windows = new PsInputInjector(async () => {
+      if (++calls === 1) {
+        if (reason === "no-child") {
+          await promisify(execFile)(__filename + ".missing-exe", [], { encoding: "utf8", windowsHide: true })
+        } else {
+          await promisify(execFile)(process.execPath, ["-e", 'process.stderr.write("SENDFAILED:SendInput delivered 0/2 events at char 0");process.exitCode=9'],
+            { encoding: "utf8", windowsHide: true })
+        }
+        throw new Error("expected a failed command")
+      }
+      return '{"ok":true}'
+    })
+    injector.typeText = windows.typeText.bind(windows)
+    injector.forceForeground = async () => { raises++; return true }
+    const result = await runComputerTask({
+      task: "fill the fixture", app: "win.app.test", actions: [{ action: "type", text: "pad" }],
+    }, makeDeps({ injector }))
+    assert.equal(result.success, true, reason)
+    assert.equal(calls, 2); assert.equal(raises, 1)
+  }
 })
 
 test("executor WP2: abort fires DURING a wait -> TASK_ABORTED, wait step not completed", async () => {
@@ -2097,9 +2223,9 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
   // 恰好一次 re-L2：实验层建议门（无其他 re-L2 触发）
   assert.equal(confirm.captured.length, 1)
   const details = confirm.captured[0].details
-  assert.deepEqual(details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(details.dangerousApis, ["computer.main_model_suggestion"])
   assert.ok(details.criticalApis?.includes("computer.coordinate_injection"))
-  assert.ok(details.code.includes("实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）"), "caption 必须明示实验层+未校准+可能完全错误")
+  assert.ok(details.code.includes("主模型建议点击"), "caption 必须明示实验层+未校准+可能完全错误")
   assert.ok(details.code.includes("(150, 168)"), "caption 标注建议点客户端坐标")
   assert.equal(details.previewImage, "PREVIEW_B64", "建议点标注预览走 §F.1 通道")
   assert.equal(details.autoConfirmEligible, false, "实验层建议永不自动批准")
@@ -2107,12 +2233,12 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
   assert.deepEqual(previewCalls[0].point, { x: 160, y: 208 })
   // 证据链：layer qwen-vl（L2 实验层；deps.experimental 槽位名历史保留）、confidence 缺省（G3）、uncrossverified（A1.3）
   const rec = evidence.records.find((x) => x.action === "click")!
-  assert.equal(rec.layer, "qwen-vl")
+  assert.equal(rec.layer, "main-model")
   assert.equal(rec.confidence, undefined, "G3：未校准置信度不上证据链")
   assert.equal(rec.uncrossverified, true)
   assert.equal(rec.crossverified, false)
-  assert.ok(rec.locateAttempts!.some((a) => a.layer === "qwen-vl" && a.outcome === "hit"))
-  assert.equal(r.steps[0].layer, "qwen-vl")
+  assert.ok(rec.locateAttempts!.some((a) => a.layer === "main-model" && a.outcome === "hit"))
+  assert.equal(r.steps[0].layer, "main-model")
   assert.equal(r.steps[0].confidence, undefined)
 })
 
@@ -2134,7 +2260,7 @@ test("executor G4 Path C: experimental raw Thought → re-L2 caption 模型思�
   assert.equal(confirm.captured.length, 1)
   const code = confirm.captured[0].details.code
   assert.ok(code.includes("模型思考：工具栏右侧的保存按钮"), "Path C Thought must surface in re-L2 caption")
-  assert.ok(code.includes("实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）"))
+  assert.ok(code.includes("主模型建议点击"))
   assert.deepEqual(injector.clicks.map((c) => [c.x, c.y]), [[150, 168]])
 })
 
@@ -2228,7 +2354,7 @@ test("executor M1: 预算耗尽快照下实验层建议被拒 → 零消耗（�
   assert.equal(r.errorCode, "ELEMENT_NOT_FOUND", "G4 拒绝 → 诚实降级（预算扣减不得先于拒绝发生）")
   assert.equal(injector.clicks.length, 3, "仅前 3 个显式坐标注入")
   assert.equal(confirm.captured.length, 1, "被拒建议不得触发续期弹窗（三连上界消解：只剩 G4 一窗）")
-  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.main_model_suggestion"])
 })
 
 test("executor M1: 实验层建议批准后才计预算（G4 窗在前，续期窗在后）", async () => {
@@ -2249,7 +2375,7 @@ test("executor M1: 实验层建议批准后才计预算（G4 窗在前，续期�
   assert.equal(r.success, true, r.error)
   assert.equal(injector.clicks.length, 4, "G4 批准 + 续期批准后建议点真注入")
   assert.equal(confirm.captured.length, 2)
-  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"], "第一窗 = G4 门")
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.main_model_suggestion"], "第一窗 = G4 门")
   assert.ok(confirm.captured[1].details.code.includes("交叉验证"), "第二窗 = A1.3 续期（批准后才计数）")
 })
 
@@ -2271,7 +2397,7 @@ test("executor M1: G4 批准但续期被拒 → UNCROSS_DENIED，该建议零注
   assert.equal(r.errorCode, "UNCROSS_DENIED")
   assert.equal(injector.clicks.length, 3, "续期被拒 → 建议点不得注入")
   assert.equal(confirm.captured.length, 2)
-  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.main_model_suggestion"])
 })
 
 
@@ -2316,9 +2442,9 @@ test("P7 回归：admission 开启态下批准后刷新链 deps.experimental 恒
   assert.equal(injector.clicks.length, 0, "刷新路径零注入")
   assert.equal(tc.calls.length, 0, "刷新链 deps.experimental 恒 null——实验层全任务零调用（P7 锁）")
   // 结构证据（executor log 通道）：刷新链以 experimental:null 跳过，可观测形态 =
-  // computeruse.locate{layer:"qwen-vl", hit:false, reason:"refresh-no-experimental",
+  // computeruse.locate{layer:"main-model", hit:false, reason:"refresh-no-experimental",
   // refresh:true}（初次链 L1 hit 不触及实验层；G4 命中链不走刷新分支）。
-  const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "qwen-vl")
+  const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "main-model")
   assert.ok(tcLogs.length >= 1, "刷新链须留下 qwen-vl 层跳过日志")
   for (const l of tcLogs) {
     assert.equal(l.data.hit, false, "刷新通道绝不产生实验层命中（未经 G4 人审的建议不得借道）")
@@ -2457,10 +2583,10 @@ test("#360: Windows tokens 浏览器 one-shot（win.chrome）→ admitted 实验
   assert.equal(tc.calls.length, 0, "admitted 实验层在浏览器 one-shot 上零调用")
   assert.equal(injector.clicks.length, 0)
   assert.equal(confirm.captured.length, 0, "无实验层建议 → G4 门不触发")
-  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "qwen-vl")
+  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "main-model")
   const cloudLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "cloud")
   assert.equal(qwenLog?.reason, "vault-browser-no-vlm", "证据链可见 skip 原因")
-  assert.equal(cloudLog?.reason, "vault-browser-no-vlm")
+  assert.equal(cloudLog, undefined)
 })
 
 test("#360: macOS bundleId 浏览器 one-shot（com.google.Chrome）→ admitted 实验层零调用（macOS 不裸奔）", { skip: os.platform() !== "darwin" }, async () => {
@@ -2484,7 +2610,7 @@ test("#360: macOS bundleId 浏览器 one-shot（com.google.Chrome）→ admitted
   assert.equal(tc.calls.length, 0, "macOS bundleId seam：实验层零调用")
   assert.equal(injector.clicks.length, 0)
   assert.equal(confirm.captured.length, 0)
-  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "qwen-vl")
+  const qwenLog = logs.find((d) => d.event === "computeruse.locate" && d.layer === "main-model")
   assert.equal(qwenLog?.reason, "vault-browser-no-vlm")
 })
 
@@ -2499,4 +2625,96 @@ test("#360: macOS Safari bundleId（com.apple.Safari）同样 skip（seam 不止
   const r = await runComputerTask({ task: "t", app: "mac.app.safari", actions: [clickOk] }, deps)
   assert.equal(r.errorCode, "ELEMENT_NOT_FOUND")
   assert.equal(tc.calls.length, 0)
+})
+
+test("#908 native screenshot sends only an eligible frame and keeps its pixels out of the tool result", async () => {
+  for (const sensitive of [false, true]) {
+    let observations = 0
+    const deps = makeDeps({
+      capturer: new FakeCapturer(),
+      locator: new FakeLocator(sensitive ? [{ ...OK_WORDS[0], text: "Password" }] : OK_WORDS),
+      previewBuilder: fakePreviewBuilder([]),
+      inspectDesktop: { current: () => true, inspect: async frame => {
+        frame.assertCurrent()
+        assert.equal(frame.image, "PREVIEW_B64")
+        observations++
+        return "A red circle"
+      } },
+    })
+    const result = await runComputerTask({ app: "win.app.test", task: "observe", actions: [{ action: "screenshot" }] }, deps)
+    assert.equal(result.success, true, result.error)
+    assert.equal(observations, sensitive ? 0 : 1)
+    assert.equal(JSON.stringify(result).includes("A red circle"), !sensitive)
+    assert.ok(!JSON.stringify(result).includes("PREVIEW_B64"))
+  }
+})
+
+test("#908 an origin refusing a main-model suggested click leaves the target untouched", async () => {
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ capturer: new FakeCapturer(), locator: new FakeLocator([]), injector,
+    previewBuilder: fakePreviewBuilder([]), confirm: confirm.fn,
+    inspectDesktop: { current: () => true, inspect: async frame => {
+      assert.equal(frame.target, "circle")
+      return '{"x":0.25,"y":0.5}'
+    } },
+  })
+  const result = await runComputerTask({ app: "win.app.test", task: "select circle", actions: [{ action: "click", target: "circle" }] }, deps)
+  assert.equal(result.success, false)
+  assert.ok(confirm.captured.some(c => c.details.dangerousApis.includes("computer.main_model_suggestion")), result.error)
+  assert.equal(injector.clicks.length, 0)
+})
+
+
+test("#908 approved Retina point uses client coordinates and rejects changed pixels or window ownership", async () => {
+  class RetinaCapturer extends FakeCapturer {
+    override async captureWindow(): Promise<CaptureMeta> {
+      return { ...await super.captureWindow(), scaleX: 2, scaleY: 2, imageWidth: 1280, imageHeight: 960 }
+    }
+  }
+  for (const scenario of ["stable", "pixel-change", "process-change", "revoked"]) {
+    const capturer = new RetinaCapturer([scenario === "pixel-change" ? 1 : 0])
+    const injector = new RecordingInjector()
+    let approved = false
+    const windows = new FakeWindows()
+    windows.infoForHwnd = async () => winInfo({ pid: approved && scenario === "process-change" ? 4321 : 1234 })
+    const deps = makeDeps({
+      windows, capturer, injector, locator: new FakeLocator([]),
+      inspectDesktop: {
+        current: () => !(approved && scenario === "revoked"),
+        inspect: async () => '{"x":0.25,"y":0.5}',
+      },
+      confirm: async details => {
+        assert.equal(details.requireImageReview, true)
+        assert.match(details.code, /主模型建议点击「circle」/)
+        approved = true
+        return { confirmationId: "point", approved, reason: "approved" }
+      },
+    })
+    const result = await runComputerTask({ app: "win.app.test", task: "select circle", actions: [{ action: "click", target: "circle" }] }, deps)
+    assert.equal(approved, true)
+    assert.equal(result.success, scenario === "stable", result.error)
+    const expected = { "pixel-change": "STALE_SCREENSHOT", "process-change": "HWND_NOT_OWNED", revoked: "APP_NOT_WHITELISTED" }
+    if (scenario !== "stable") assert.equal(result.errorCode, expected[scenario as keyof typeof expected])
+    assert.deepEqual(injector.clicks.map(({ x, y }) => [x, y]), scenario === "stable" ? [[150, 200]] : [])
+  }
+})
+
+
+for (const channel of ["revoke", "hotkey"] as const) test(`${channel} during local OCR discards the window text and preview`, async () => {
+  let active = true
+  const events: import("../src/computer/preview").ComputerTaskEvent[] = []
+  let hotkey = false
+  const deps = makeDeps({ abortCheck: () => { if (!hotkey) return null; hotkey = false; return "hotkey" },
+    maximumDesktop: { current: () => active, allowsModel: () => false, signal: new AbortController().signal },
+    onEvent: event => events.push(event) })
+  deps.locator.ocr = async () => {
+    if (channel === "hotkey") hotkey = true
+    else active = false
+    return { language: "en", words: [{ text: "Private910", x: 5, y: 5, w: 50, h: 12 }] }
+  }
+  const result = await runComputerTask({ app: "win.app.test", task: "read", actions: [{ action: "describe" }] }, deps)
+  assert.equal(result.errorCode, "TASK_ABORTED")
+  assert.deepEqual(result.steps, [])
+  assert.equal(events.some(event => event.event === "step"), false)
 })

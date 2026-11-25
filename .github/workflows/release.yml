@@ -338,14 +338,17 @@ jobs:
             Packaging is **fail-closed** on platform-critical assets (aborts rather
             than shipping a zip that ENONTs at runtime):
             - **macos-arm64**: missing `cmspark-host`, `cmspark-tray`, or `host-scripts/*.scpt`
-            - **all platforms**: missing `qwen-vl-worker.py` (Qwen3-VL experimental locate)
+            - **all platforms**: missing `qwen-vl-worker.py`, used by Work Center for local screenshot extraction
             - **windows-x64**: missing `host-scripts-win/*.ps1` **or** NSIS Setup.exe
             - **Windows Setup.exe**: wraps the same `package.sh` staging as the zip
               (`node.exe` + `cmspark-agent.js`). Missing `makensis` **fails** the
               Windows job (`CMSPARK_REQUIRE_NSIS=1`) rather than shipping zip-only.
-            - **Qwen3-VL weights / Python env**: **not** packaged — download/preflight
-              on demand under `~/.cmspark-agent/` (see `docs/qwen-vl-experimental-layer.md`).
-              TinyClick/ORT are **not** ship requirements.
+            - **Work Center local image extraction**: install the optional Qwen3-VL weights
+              and Python environment on demand under `~/.cmspark-agent/`.
+              [Local image setup](https://github.com/nehcuh/cmspark/blob/${{ github.ref_name }}/docs/qwen-vl-experimental-layer.md)
+            - **Desktop control** uses the native host, accessibility and OCR. Users can
+              authorize the current multimodal chat model to inspect a target window.
+              [Desktop control guide](https://github.com/nehcuh/cmspark/blob/${{ github.ref_name }}/docs/computer-use-user-guide.md)
 
             ### Security notes (accurate as of this release)
             - **WS auth (audit C1)**: **FIXED** — origin allowlist + shared-secret

@@ -1,3 +1,4 @@
+import { armDesktopMaximum, desktopMaximumStatus, hasDesktopMaximum, reviewDesktopMaximum, revokeDesktopMaximum } from "./computer/desktop-maximum"
 import { retireComputerReadonlyThread } from "./computer/readonly-session"
 // Message router — dispatches incoming WebSocket messages to handlers
 // FREEZE (C10 multi-adv 2026-08-10 / phase-A 2026-08-11):
@@ -110,7 +111,6 @@ import { getMcpManager } from "./mcp"
 import { logger } from "./logger"
 import { handleAppsMessage } from "./apps/handlers"
 import { handleComputerMessage } from "./computer/handlers"
-import { handleLcuSettingsMessage } from "./computer/lcu/settings"
 import { handleComputerModelMessage } from "./computer/model-handlers"
 import { handleVoiceModelMessage } from "./voice/whisper-handlers"
 import { handleVoiceSttMessage } from "./voice/stt-handlers"
@@ -347,6 +347,7 @@ interface SessionCallbacks {
   nativeDialog?: { current(): boolean; messageId: string; browserTarget?(): number | undefined; started(run: Readonly<{ id?: string; current(): boolean; stop(): boolean }>): void }
 
   /** #689 current originating socket/auth identity, not caller-controlled. */
+  desktopPanelPeer?: object
   appsOwnerCurrent?: () => boolean
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal, options?: { siteContextTabId?: number; siteContextRequireActive?: boolean }) => Promise<{ success: boolean; data?: any; error?: string }>
@@ -1113,20 +1114,6 @@ export async function handleMessage(
   } finally { releaseAdmission() }
 }
 
-/** Stop an owned desktop turn as soon as this thread loses its execution scope. */
-async function retireRevokedLcuThread(threadId: string, threadManager: ThreadManager): Promise<void> {
-  try {
-    const { lcuThreadAdmitted } = await import("./computer/lcu/runtime")
-    if (!lcuThreadAdmitted(threadId, id => threadManager.get(id), name => threadManager.isToolAllowed(threadId, name))) {
-      const { notifyComputerTaskAbort } = await import("./computer/task-abort-registry")
-      notifyComputerTaskAbort(threadId)
-    }
-  } catch {
-    // A broken optional backend cannot retain an old live authorization.
-    abortControllers.get(threadId)?.abort()
-  }
-}
-
 async function dispatchMessage(
   msg: any,
   services: Services,
@@ -1527,10 +1514,7 @@ async function dispatchMessage(
         assertNativeCurrent()
         await chatCreate({
           ...(session?.appsOwnerCurrent && session?.isCurrentSession && session?.requestConfirmation && !session?.nativeDialog ? {
-            lcuChannel: {
-              current: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
-              request: (details, signal) => session!.requestConfirmation!(details, signal),
-            },
+            desktopVisionOwner: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
           } : {}),
           ...(nativeOwner ? { assertCurrentRun: assertNativeCurrent } : {}),
           ...(nativeOwner?.browserTarget ? { nativeBrowserTarget: nativeOwner.browserTarget } : {}),
@@ -2167,10 +2151,7 @@ async function dispatchMessage(
 
         await chatCreate({
           ...(session?.appsOwnerCurrent && session?.isCurrentSession && session?.requestConfirmation && !session?.nativeDialog ? {
-            lcuChannel: {
-              current: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
-              request: (details, signal) => session!.requestConfirmation!(details, signal),
-            },
+            desktopVisionOwner: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
           } : {}),
           threadId: thread_id,
           surface: stampedSurface === "summoner" ? "summoner" : "tray",
@@ -2583,10 +2564,7 @@ async function dispatchMessage(
 
         await chatCreate({
           ...(session?.appsOwnerCurrent && session?.isCurrentSession && session?.requestConfirmation && !session?.nativeDialog ? {
-            lcuChannel: {
-              current: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
-              request: (details, signal) => session!.requestConfirmation!(details, signal),
-            },
+            desktopVisionOwner: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
           } : {}),
           threadId: thread_id,
           surface: stampedSurface === "summoner" ? "summoner" : "tray",
@@ -3356,15 +3334,12 @@ async function dispatchMessage(
           return { type: "error", error: "只有子线程可以继承主线程工具" }
         }
       }
-      const lcuWasSelected = threadManager.get(rest.thread_id)?.active_mcp_server_ids?.includes("cmspark_lcu") === true
       try {
         const thread = threadManager.update(rest.thread_id, allowedUpdates)
         if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
         return { type: "thread.updated", thread }
       } catch (e: any) {
         return { type: "error", error: e.message || String(e) }
-      } finally {
-        if (lcuWasSelected) await retireRevokedLcuThread(rest.thread_id, threadManager)
       }
     }
 
@@ -3449,10 +3424,6 @@ async function dispatchMessage(
         return { type: "thread.execution_policy.updated", thread }
       } catch (e: any) {
         return { type: "error", error: e.message || String(e) }
-      } finally {
-        if (rest.policy === "plan_readonly" && targetThread.active_mcp_server_ids?.includes("cmspark_lcu")) {
-          await retireRevokedLcuThread(rest.thread_id, threadManager)
-        }
       }
     }
 
@@ -3671,18 +3642,11 @@ async function dispatchMessage(
       })
     // --- Coordinate computer-use (A10 global switch; per-app bit lives under
     // apps.set_coordinate_allowed above) ---
-    case "computer.lcu.get_state":
-    case "computer.lcu.probe":
-    case "computer.lcu.configure":
-    case "computer.lcu.set_enabled":
-      return handleLcuSettingsMessage(msg, {
-        ownerCurrent: () => session?.appsOwnerCurrent?.() === true && session?.isCurrentSession?.() === true,
-        requestConfirmation: session?.requestConfirmation,
-      })
     case "computer.get_state":
     case "computer.set_enabled":
     case "computer.evidence.open":
       return handleComputerMessage(msg, {
+        ownerCurrent: session?.appsOwnerCurrent,
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
         // WP4: P6 频率上限按每面板(每 WS 连接)计数。
@@ -3693,6 +3657,7 @@ async function dispatchMessage(
     // 生物识别门（P5：requestConfirmation 通道注入，apps 系 :961-966 先例） ---
     case "computer.model.get_state":
     case "computer.model.reset_circuit_breaker":
+    case "computer.model.get_license":
     case "computer.model.set_enabled":
     case "computer.model.license_response":
     case "computer.model.download":
@@ -3706,7 +3671,6 @@ async function dispatchMessage(
     case "computer.model.ensure_python_env":
     case "computer.model.install_deps":
       return handleComputerModelMessage(msg, {
-        requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
       })
     // Path B M0 — voice.model.* / voice.binary.* (settings dual fence; ADR-023 L7)
@@ -5697,7 +5661,21 @@ async function dispatchMessage(
     }
 
     // ADR-021: process-memory unattended desktop grant (not config SoT)
+    case "computer.maximum.get":
+    case "computer.maximum.review":
+    case "computer.maximum.arm":
+    case "computer.maximum.revoke": {
+      const peer = session?.desktopPanelPeer
+      if (!peer || !session?.appsOwnerCurrent?.()) return { type: "computer.maximum.error", error: "请从已配对的扩展侧栏操作。" }
+      if (type === "computer.maximum.review") return reviewDesktopMaximum(peer)
+      if (type === "computer.maximum.arm") return armDesktopMaximum(peer, rest, getConfig(), () => {
+        if (session.appsOwnerCurrent?.()) session.sendToExtension(desktopMaximumStatus(peer))
+      })
+      if (type === "computer.maximum.revoke") revokeDesktopMaximum(peer)
+      return desktopMaximumStatus(peer)
+    }
     case "security.unattended.arm": {
+      if (hasDesktopMaximum()) return { type: "error", error: "请先解除桌面最大权限。" }
       const {
         armUnattended,
         captureCruiseSnapshot,
@@ -5772,6 +5750,9 @@ async function dispatchMessage(
       return { type: "security.unattended.status", ...result.status }
     }
     case "security.unattended.disarm": {
+      if (session?.desktopPanelPeer && revokeDesktopMaximum(session.desktopPanelPeer)) {
+        session.sendToExtension(desktopMaximumStatus(session.desktopPanelPeer))
+      }
       const {
         disarmUnattended,
         restoreCruiseFromSnapshot,

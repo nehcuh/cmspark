@@ -12,8 +12,8 @@ const REASON_COPY = {
 }
 
 /** Actual confirmation image/notice view; no approval or trust logic. */
-export function ConfirmationPreview({ image, reason, imageFailed, onImageError }: {
-  image?: string; reason?: unknown; imageFailed: boolean; onImageError: () => void
+export function ConfirmationPreview({ image, reason, imageFailed, onImageError, required, onImageLoad }: {
+  image?: string; reason?: unknown; required?: boolean; onImageLoad?: () => void; imageFailed: boolean; onImageError: () => void
 }) {
   const unavailable = normalizePreviewUnavailableReason(reason)
   const message = unavailable ? REASON_COPY[unavailable]
@@ -21,11 +21,11 @@ export function ConfirmationPreview({ image, reason, imageFailed, onImageError }
       : image && !previewImageSafe(image) ? "预览图片无法显示" : undefined
   if (message) return (
     <div role="status" style={{ fontSize: 11, color: tokens.darkText, maxWidth: 180 }}>
-      <strong>预览不可用（降级确认）</strong>
-      <div>{message}。请核对任务与动作说明后再决定是否允许。</div>
+      <strong>{required ? "请重新获取预览" : "预览不可用（降级确认）"}</strong>
+      <div>{message}。{required ? "此动作需要完整窗口预览。" : "请核对任务与动作说明后再决定是否允许。"}</div>
     </div>
   )
   if (!previewImageSafe(image)) return null
   return <img src={`data:image/jpeg;base64,${image}`} alt="标注截图"
-    style={{ width: 160, maxHeight: 100, objectFit: "cover", borderRadius: tokens.radiusSm }} onError={onImageError} />
+    style={{ width: required ? "min(50%, 800px)" : 160, maxHeight: required ? "65vh" : 100, objectFit: required ? "contain" : "cover", borderRadius: tokens.radiusSm }} onLoad={onImageLoad} onError={onImageError} />
 }

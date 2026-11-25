@@ -717,36 +717,11 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
     assert.equal(cfg.computer?.modelLicenseAcceptedTextHash, undefined)
   })
 
-  test("P9：手改 modelEnabled=true → 启动期醒目 loud log（不阻断不撤销）；false 不告警", async () => {
+  test("升级后旧定位开关不参与桌面任务", async () => {
     await resetConfigFile()
-    clearConfigCache()
     saveConfig({ computer: { coordinateEnabled: false, modelEnabled: true } })
     clearConfigCache()
-    const logs: string[] = []
-    const orig = console.error
-    console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
-    try {
-      const cfg = getConfig()
-      assert.equal(cfg.computer?.modelEnabled, true, "合法布尔不撤销（手改 = 显式 owner opt-in，裁决 3）")
-    } finally {
-      console.error = orig
-    }
-    assert.ok(
-      logs.some((l) => l.includes("WARNING") && l.includes("modelEnabled") && l.includes("ADR-010")),
-      "P9 启动期醒目 loud log 必须含 WARNING + ADR-010 opt-in 语义",
-    )
-    // false → 无 P9 告警
-    clearConfigCache()
-    saveConfig({ computer: { coordinateEnabled: false, modelEnabled: false } })
-    clearConfigCache()
-    const logs2: string[] = []
-    console.error = (...args: unknown[]) => logs2.push(args.map(String).join(" "))
-    try {
-      getConfig()
-    } finally {
-      console.error = orig
-    }
-    assert.equal(logs2.filter((l) => l.includes("modelEnabled")).length, 0, "modelEnabled=false 不得触发 P9 告警")
+    assert.equal(getConfig().computer?.modelEnabled, false)
   })
 
   test("合法五字段全量保留（含文本哈希与时间戳成对）", async () => {
@@ -763,7 +738,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
     })
     clearConfigCache()
     const c = getConfig().computer
-    assert.equal(c?.modelEnabled, true)
+    assert.equal(c?.modelEnabled, false)
     assert.equal(c?.modelLicenseAcceptedAt, "2026-07-21T10:00:00.000Z")
     assert.equal(c?.modelLicenseAcceptedTextHash, "abcdef012345")
     assert.equal(c?.modelLicenseDeclined, false)

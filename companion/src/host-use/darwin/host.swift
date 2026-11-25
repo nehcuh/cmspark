@@ -865,7 +865,7 @@ do {
         out = cuPreview(imagePath: img, x: px, y: py, blurRectsJSON: argValue("--blur-rects"))
     case "evidence-seal":
         guard let inp = argValue("--input"), let outp = argValue("--output") else { fputs("evidence-seal: --input and --output required\n", stderr); exit(2) }
-        out = cuEvidenceSeal(inputPath: inp, outputPath: outp)
+        out = cuEvidenceSeal(inputPath: inp, outputPath: outp, blurRectsJSON: argValue("--blur-rects"))
     case "estop":
         // Long-running emergency-stop helper (WP3 darwin-estop.ts expects this
         // subcommand): CGEventTap hotkey + UNIX socket proof-of-life. Never
@@ -1514,6 +1514,7 @@ func cuAXInvoke(windowId: UInt32, target: String, action: String, value: String?
         return FileManager.default.fileExists(atPath: p)
     }
     if stopRaised() { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
+    guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
 
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
@@ -1575,6 +1576,7 @@ func cuAXInvoke(windowId: UInt32, target: String, action: String, value: String?
                     return cuError("name mismatch: expected '\(en)' got '\(name)'", code: "AX_ELEMENT_MISMATCH")
                 }
                 // Last check immediately before the act.
+                guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
                 if stopRaised() { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
 
                 var posRef: CFTypeRef?
@@ -1709,10 +1711,7 @@ private final class ActivityWindowPicker: NSObject, SCContentSharingPickerObserv
     }
     // CG lists front-to-back in Quartz coordinates on the current Space.
     private func observe(_ window: SCWindow, _ owner: SCRunningApplication) throws -> Observation {
-        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
-              session[kCGSessionOnConsoleKey as String] as? Bool == true,
-              session[kCGSessionLoginDoneKey as String] as? Bool == true,
-              session["CGSSessionScreenIsLocked"] as? Bool != true else { throw Skip.locked }
+        guard cuDesktopAvailable() else { throw Skip.locked }
         guard AXIsProcessTrusted() else { throw Skip.permission }
         guard !IsSecureEventInputEnabled() else { throw Skip.secureInput }
         guard selectedApp?.isTerminated == false,
@@ -1769,13 +1768,21 @@ private final class ActivityWindowPicker: NSObject, SCContentSharingPickerObserv
 
 // MARK: - screenshot (ScreenCaptureKit)
 
+private func cuScreenCapturePermissionDenied(_ error: NSError) -> Bool {
+    let screenCaptureDomain = error.domain == SCStreamError.errorDomain
+        || error.domain == "com.apple.ScreenCaptureKit"
+    // Retain the alternate denial code previously observed by this host.
+    return screenCaptureDomain && (error.code == SCStreamError.Code.userDeclined.rawValue || error.code == -38001)
+}
+
 func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+    guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
     // Prefer IncludingWindow, but ALWAYS fall back to optionAll filtered by
     // kCGWindowNumber. WeChat/Electron often return [] for IncludingWindow
     // while the id is still present in optionAll (pgvexn 2026-07-25).
     // Never use unfiltered optionAll (ea3y6n: wrong window → 64x64 rect).
     guard let first = cuWindowInfoDict(windowId: windowId) else {
-        return cuError("cannot get window info for windowId \(windowId)")
+        return cuError("target window is unavailable", code: "APP_WINDOW_NOT_FOUND")
     }
     guard let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
         return cuError("cannot read window bounds for windowId \(windowId)")
@@ -1872,18 +1879,15 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     // CGImage that later SIGSEGVs at offset 0x10 inside cuScreenshot (after PNG
     // write succeeds). Observed 2026-07-25 on all windows (WeChat/Chrome/Settings).
     let semaphore = DispatchSemaphore(value: 0)
-    let captureBox = CUBox<(image: CGImage?, error: String?)>((nil, nil))
-    let hostPid = ProcessInfo.processInfo.processIdentifier
-    let hostParentPid = getppid()
-
+    let captureBox = CUBox<(image: CGImage?, errorResponse: String?)>((nil, nil))
     let task = Task<Void, Never> {
+        defer { semaphore.signal() }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let targetWindow = content.windows.first(where: { UInt32($0.windowID) == windowId }) else {
                 captureBox.with {
-                    $0 = (nil, "window \(windowId) not found among \(content.windows.count) SCShareableContent windows (pid=\(hostPid) ppid=\(hostParentPid))")
+                    $0 = (nil, cuError("target window is unavailable for capture", code: "APP_WINDOW_NOT_FOUND"))
                 }
-                semaphore.signal()
                 return
             }
             let filter = SCContentFilter(desktopIndependentWindow: targetWindow)
@@ -1905,45 +1909,29 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
             config.height = outH
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
             captureBox.with { $0 = (image, nil) }
-        } catch let err as NSError {
-            // TCC denial codes observed in the wild:
-            //   -3801  (user message: 用户拒绝了…捕捉的TCC) — macOS 15/26 common
-            //   -38001 — older docs / alternate SCStreamError enum path
-            // Match both; also treat localized "TCC" / "denied" in this domain as denial.
-            let isSckTcc =
-                err.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
-                || err.domain == "com.apple.ScreenCaptureKit"
-            let isDenialCode = (err.code == -3801 || err.code == -38001)
-            let desc = err.localizedDescription
-            let looksLikeDenial = desc.localizedCaseInsensitiveContains("TCC")
-                || desc.localizedCaseInsensitiveContains("denied")
-                || desc.contains("拒绝")
-            let errMsg: String
-            if isSckTcc && (isDenialCode || looksLikeDenial) {
-                errMsg =
-                    "Screen Recording permission denied (ScreenCaptureKit code=\(err.code)). " +
-                    "Open System Settings → Privacy & Security → Screen Recording, enable «CMspark», " +
-                    "then fully quit CMspark and reopen. If you just reinstalled/updated, turn the switch off and on again."
-            } else {
-                errMsg = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(desc) (pid=\(hostPid) ppid=\(hostParentPid))"
-            }
-            captureBox.with { $0 = (nil, errMsg) }
         } catch {
-            captureBox.with {
-                $0 = (nil, "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))")
+            let nativeError = error as NSError
+            let response: String
+            if cuScreenCapturePermissionDenied(nativeError) {
+                response = cuError(
+                    "Screen Recording permission denied. Enable CMspark in System Settings → Privacy & Security → Screen Recording, then quit and reopen CMspark.",
+                    code: "PERMISSION_DENIED")
+            } else {
+                response = cuError("ScreenCaptureKit could not capture the target window", code: "CAPTURE_FAILED",
+                                   extra: ["capture_stage": "screen_capture_kit", "native_error_code": nativeError.code])
             }
+            captureBox.with { $0 = (nil, response) }
         }
-        semaphore.signal()
     }
     _ = task
     semaphore.wait()
 
     let (capturedImage, captureError) = captureBox.with { $0 }
     if let err = captureError {
-        return cuError(err, code: "PERMISSION_DENIED")
+        return err
     }
     guard let image = capturedImage else {
-        return cuError("no image captured (no error reported)", code: "PERMISSION_DENIED")
+        return cuError("ScreenCaptureKit returned no image", code: "CAPTURE_FAILED", extra: ["capture_stage": "screen_capture_kit"])
     }
 
     let outURL = URL(fileURLWithPath: outputPath) as CFURL
@@ -2308,6 +2296,33 @@ func cuSelfTestClassifier() -> String {
         failures.append("empty_and_clause: must be false — sizeGuard is the safety net for empty bitmaps")
     }
 
+    // Sample opposite rows to catch either a missing mask or an inverted Y axis.
+    if let ctx = CGContext(data: nil, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 0,
+                           space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        if let source = ctx.makeImage(),
+           let masked = cuMaskedImage(source, #"[{"x":4,"y":2,"width":10,"height":6}]"#) {
+            let luma = cuDownsampleToBitmap(masked, side: 32)
+            if luma.count != 1024 || luma[4 * 32 + 8] > 5 || luma[28 * 32 + 8] < 245 ||
+               cuMaskedImage(source, "invalid") != nil { failures.append("window_preview_mask") }
+        } else { failures.append("window_preview_mask_render") }
+    } else { failures.append("window_preview_mask_fixture") }
+
+    // Exercise the same NSError classifier as the real SCK capture path.
+    let declinedCode = SCStreamError.Code.userDeclined.rawValue
+    for (domain, code, denied) in [
+        (SCStreamError.errorDomain, declinedCode, true),
+        ("com.apple.ScreenCaptureKit", -38001, true),
+        (SCStreamError.errorDomain, SCStreamError.Code.failedToStart.rawValue, false),
+        (NSCocoaErrorDomain, declinedCode, false),
+    ] {
+        let error = NSError(domain: domain, code: code, userInfo: [NSLocalizedDescriptionKey: "denied"])
+        if cuScreenCapturePermissionDenied(error) != denied {
+            failures.append("screen_capture_permission: unexpected classification for \(domain) \(code)")
+        }
+    }
+
     if !failures.isEmpty {
         let msg = failures.joined(separator: "; ")
         fputs("[host] cuSelfTestClassifier FAIL: \(msg)\n", stderr)
@@ -2329,6 +2344,7 @@ func cuSelfTestClassifier() -> String {
             "and_truth_high_high_not_stale",
             "and_truth_high_low_not_stale",
             "empty_bitmap_contract",
+            "screen_capture_permission",
         ],
     ])
 }
@@ -2410,24 +2426,39 @@ func cuOCR(imagePath: String, languages: [String]) -> String {
     return cuJson(["ok": true, "language": languages.first ?? "en-US", "words": words])
 }
 
-/// Dual-post an event: SkyLight per-PID (Chrome renderer path) + HID tap
-/// (AppKit / Electron / WeChat / NetEase path). User test #i4x6pm: SkyLight
-/// alone returned ok:true with verified pixel noise but UI never changed.
-/// HID requires Accessibility for CMspark; activate first so frontmost
-/// under the cursor is the target.
+/// Keyboard pairs and the background click route are sent only to the target PID.
 @inline(__always)
-func postEventDual(_ event: CGEvent, pid: pid_t, useHid: Bool) -> Bool {
-    // SkyLight path: pin to target PID (may be ignored by WeChat/NetEase).
+func postEventToOwnedPid(_ event: CGEvent, pid: pid_t) -> Bool {
     event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-    let skyOk = slPostToPid(pid, event)
-    if useHid {
-        // HID path: clear process pin so the event routes like a real device
-        // event to the frontmost window under the cursor (after activate).
-        event.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
-        event.post(tap: .cghidEventTap)
+    return slPostToPid(pid, event)
+}
+
+private func cuIsSystemCursor(_ row: [String: Any]) -> Bool {
+    // A caller can choose its window level or display name. Check the owning
+    // process against the system executable before ignoring this Quartz row.
+    guard row[kCGWindowLayer as String] as? CGWindowLevel == CGWindowLevelForKey(.cursorWindow),
+          let owner = row[kCGWindowOwnerPID as String] as? pid_t else { return false }
+    var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+    guard proc_pidpath(owner, &path, UInt32(path.count)) > 0 else { return false }
+    let server = URL(fileURLWithPath: "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer")
+    return String(cString: path) == server.resolvingSymlinksInPath().path
+}
+
+// Quartz returns windows front to back. A global mouse event is safe only
+// while its exact landing point belongs to the approved window and process.
+func cuClickPointOwned(_ point: CGPoint, windowId: UInt32, pid: pid_t) -> Bool {
+    guard cuDesktopAvailable(), !IsSecureEventInputEnabled(),
+          let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+    for row in rows {
+        if let alpha = row[kCGWindowAlpha as String] as? Double, alpha == 0 { continue }
+        guard let raw = row[kCGWindowBounds as String] as? [String: Any],
+              let rect = CGRect(dictionaryRepresentation: raw as CFDictionary) else { return false }
+        if rect.contains(point) {
+            if cuIsSystemCursor(row) { continue }
+            return cuWindowNumber(row) == windowId && row[kCGWindowOwnerPID as String] as? pid_t == pid
+        }
     }
-    // Success if either path is available. SkyLight false + HID still ok.
-    return skyOk || useHid
+    return false
 }
 
 func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?, chord: String?, delta: Int?, checkOcclusion: Bool, checkSecureInput: Bool, checkOnscreen: Bool, estopFlag: String?) -> String {
@@ -2436,6 +2467,7 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         return FileManager.default.fileExists(atPath: path)
     }
     func stopError() -> String { cuError("E-Stop flag present", code: "TASK_ABORTED") }
+    guard cuDesktopAvailable() else { return cuError("Unlock the active desktop to continue", code: "DESKTOP_DENIED") }
     if checkSecureInput && IsSecureEventInputEnabled() { return cuError("Secure Input active", code: "DESKTOP_DENIED") }
     if stopped() { return stopError() }
     let pid = cuPidForWindow(windowId)
@@ -2481,37 +2513,42 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         guard let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseMoved construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
-        if stopped() { return stopError() }
-        if !postEventDual(me, pid: pid, useHid: useHid) {
-            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        func canLand() -> Bool {
+            return !(useHid || checkOcclusion || checkOnscreen) || cuClickPointOwned(screenPt, windowId: windowId, pid: pid)
         }
-        usleep(50000)
-        guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn),
-              let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
-            return cuError("CGEvent mouse button construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
-        }
-        if stopped() { return stopError() }
-        if !postEventDual(de, pid: pid, useHid: useHid) {
-            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
-        }
-        for _ in 1..<cc {
-            usleep(100000)
-            if stopped() { break }
-            if !postEventDual(de, pid: pid, useHid: useHid) {
-                return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        func postClickEvent(_ event: CGEvent) -> Bool {
+            if useHid {
+                guard AXIsProcessTrusted() else { return false }
+                event.post(tap: .cghidEventTap)
+                return true
             }
+            return postEventToOwnedPid(event, pid: pid)
         }
+        if stopped() { return stopError() }
+        guard canLand() else { return cuError("Target does not own click point", code: "CLICK_OCCLUDED") }
+        guard postClickEvent(me) else { return cuError("Mouse move failed", code: "SKYLIGHT_POST_FAILED") }
         usleep(50000)
-        // Finish a button release even when a stop arrived after the down.
-        if !postEventDual(ue, pid: pid, useHid: useHid) {
-            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        for clickCount in 1...cc {
+            if stopped() { return stopError() }
+            guard canLand() else { return cuError("Target does not own click point", code: "CLICK_OCCLUDED") }
+            guard let down = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn),
+                  let up = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
+                return cuError("CGEvent mouse button construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+            }
+            down.setIntegerValueField(.mouseEventClickState, value: clickCount)
+            up.setIntegerValueField(.mouseEventClickState, value: clickCount)
+            guard postClickEvent(down) else { return cuError("Mouse down failed", code: "SKYLIGHT_POST_FAILED") }
+            usleep(50000)
+            // Always release a button that was pressed, including after stop.
+            guard postClickEvent(up) else { return cuError("Mouse up failed", code: "SKYLIGHT_POST_FAILED") }
+            if clickCount < cc { usleep(50000) }
         }
         if stopped() { return stopError() }
         // x/y remain client coords (Windows computer-input.ps1 parity); screenX/Y report landing.
         return cuJson([
             "ok": true, "action": action, "x": px, "y": py,
             "screenX": screenX, "screenY": screenY,
-            "delivery": useHid ? "skylight+hid" : "skylight",
+            "delivery": useHid ? "hid" : "skylight",
             "axTrusted": AXIsProcessTrusted(),
         ])
 
@@ -2528,10 +2565,10 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
             up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
             if stopped() { return stopError() }
             // Both routes can reach the same focused control. Send each key pair once, to its PID.
-            if !postEventDual(down, pid: pid, useHid: false) {
+            if !postEventToOwnedPid(down, pid: pid) {
                 return cuError("keyboard event post failed (SkyLight)", code: "SKYLIGHT_POST_FAILED")
             }
-            _ = postEventDual(up, pid: pid, useHid: false)
+            _ = postEventToOwnedPid(up, pid: pid)
             usleep(30000)
         }
         if stopped() { return stopError() }
@@ -2564,44 +2601,90 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
             down.flags = flags
             up.flags = flags
             if stopped() { return stopError() }
-            if !postEventDual(down, pid: pid, useHid: false) {
+            if !postEventToOwnedPid(down, pid: pid) {
                 return cuError("keyboard event post failed (SkyLight)", code: "SKYLIGHT_POST_FAILED")
             }
-            _ = postEventDual(up, pid: pid, useHid: false)
+            _ = postEventToOwnedPid(up, pid: pid)
             usleep(30000)
         }
         if stopped() { return stopError() }
         return cuJson(["ok": true, "action": "key", "chord": ch, "delivery": "skylight"])
 
     case "scroll":
-        guard let d = delta else { return cuError("scroll requires --delta") }
+        guard let d = delta, let px = x, let py = y,
+              let origin = cuClientOriginScreen(windowId: windowId) else { return cuError("scroll requires a live window, --x, --y and --delta") }
+        let point = CGPoint(x: origin.x + CGFloat(px), y: origin.y + CGFloat(py))
         guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) else {
             return cuError("CGEvent scroll construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
         if stopped() { return stopError() }
-        if !postEventDual(ev, pid: pid, useHid: useHid) {
-            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        guard cuClickPointOwned(point, windowId: windowId, pid: pid) else {
+            return cuError("scroll point is outside the visible target window", code: "CLICK_OCCLUDED")
         }
-        return cuJson(["ok": true, "action": "scroll", "delta": d, "delivery": useHid ? "skylight+hid" : "skylight"])
+        ev.location = point
+        // AppKit routes scrolling to the physical pointer even when the event carries a location.
+        if useHid && CGWarpMouseCursorPosition(point) != .success {
+            return cuError("could not position the scroll pointer", code: "CLICK_OCCLUDED")
+        }
+        guard let cursor = CGEvent(source: nil)?.location,
+              hypot(cursor.x - point.x, cursor.y - point.y) <= 1,
+              cuClickPointOwned(cursor, windowId: windowId, pid: pid) else {
+            return cuError("scroll pointer did not land in the target window", code: "CLICK_OCCLUDED")
+        }
+        if stopped() { return stopError() }
+        if useHid { ev.post(tap: .cghidEventTap) } else { ev.postToPid(pid) }
+        return cuJson(["ok": true, "action": "scroll", "delta": d, "delivery": useHid ? "hid" : "pid"])
 
     default:
         return cuError("unknown inject action: \(action)")
     }
 }
 
+private func cuDesktopAvailable() -> Bool {
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return session[kCGSessionOnConsoleKey as String] as? Bool == true &&
+           session[kCGSessionLoginDoneKey as String] as? Bool == true &&
+           session["CGSSessionScreenIsLocked"] as? Bool != true
+}
+
 func cuSecurityCheck() -> String {
-    return cuJson(["ok": true, "axTrusted": AXIsProcessTrusted(), "secureInput": IsSecureEventInputEnabled()])
+    return cuJson(["ok": true, "axTrusted": AXIsProcessTrusted(), "secureInput": IsSecureEventInputEnabled(), "desktopAvailable": cuDesktopAvailable()])
+}
+
+private struct CUMaskRect: Decodable {
+    let x, y, width, height: CGFloat
+}
+
+// OCR coordinates have their origin at the top left. Apply the opaque mask
+// at capture resolution before any annotations, resizing or encoding.
+private func cuMaskedImage(_ image: CGImage, _ json: String?) -> CGImage? {
+    guard let json else { return image }
+    guard let rects = try? JSONDecoder().decode([CUMaskRect].self, from: Data(json.utf8)),
+          let ctx = CGContext(data: nil, width: image.width, height: image.height,
+              bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    ctx.draw(image, in: bounds)
+    ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+    for r in rects {
+        guard r.width > 0, r.height > 0 else { return nil }
+        let box = CGRect(x: r.x, y: bounds.height - r.y - r.height, width: r.width, height: r.height).integral.intersection(bounds)
+        guard !box.isEmpty else { return nil }
+        ctx.fill(box)
+    }
+    return ctx.makeImage()
 }
 
 func cuPreview(imagePath: String, x: Int?, y: Int?, blurRectsJSON: String?) -> String {
     guard let srcImage = CGImageSourceCreateWithURL(URL(fileURLWithPath: imagePath) as CFURL, nil),
-          let cgImage = CGImageSourceCreateImageAtIndex(srcImage, 0, nil) else { return cuJson(["ok": true]) }
+          let original = CGImageSourceCreateImageAtIndex(srcImage, 0, nil),
+          let cgImage = cuMaskedImage(original, blurRectsJSON) else { return cuJson(["ok": false]) }
     let w = cgImage.width; let h = cgImage.height
-    var pixels = [UInt8](repeating: 0, count: w * h * 4)
-    guard let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cuJson(["ok": true]) }
+    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cuJson(["ok": false]) }
     ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
 
-    if let px = x, let py = y {
+    if let px = x, let imageY = y {
+        let py = h - imageY
         ctx.setStrokeColor(CGColor(red: 1, green: 0, blue: 0, alpha: 0.8)); ctx.setLineWidth(2)
         let s = 20
         ctx.move(to: CGPoint(x: px - s, y: py)); ctx.addLine(to: CGPoint(x: px + s, y: py))
@@ -2640,12 +2723,30 @@ func cuLoadEvidenceKey() -> SymmetricKey {
     evidenceKey = k; return k
 }
 
-func cuEvidenceSeal(inputPath: String, outputPath: String) -> String {
-    guard let inputData = try? Data(contentsOf: URL(fileURLWithPath: inputPath)) else { return cuJson(["ok": false, "error": "cannot read input", "error_code": "EVIDENCE_ERROR"]) }
+func cuEvidenceSeal(inputPath: String, outputPath: String, blurRectsJSON: String?) -> String {
+    let inputURL = URL(fileURLWithPath: inputPath)
+    let inputData: Data
+    if let mask = blurRectsJSON {
+        let encoded = NSMutableData()
+        guard let source = CGImageSourceCreateWithURL(inputURL as CFURL, nil),
+              let original = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let masked = cuMaskedImage(original, mask),
+              let dest = CGImageDestinationCreateWithData(encoded, "public.png" as CFString, 1, nil) else {
+            return cuError("cannot mask evidence", code: "EVIDENCE_ERROR")
+        }
+        CGImageDestinationAddImage(dest, masked, nil)
+        guard CGImageDestinationFinalize(dest) else { return cuError("cannot encode evidence", code: "EVIDENCE_ERROR") }
+        inputData = encoded as Data
+    } else {
+        guard let data = try? Data(contentsOf: inputURL) else { return cuError("cannot read input", code: "EVIDENCE_ERROR") }
+        inputData = data
+    }
     let key = cuLoadEvidenceKey()
     guard let sealed = try? AES.GCM.seal(inputData, using: key).combined else { return cuJson(["ok": false, "error": "encryption failed", "error_code": "EVIDENCE_ERROR"]) }
-    try? sealed.write(to: URL(fileURLWithPath: outputPath))
-    try? FileManager.default.removeItem(atPath: inputPath)
+    do {
+        try sealed.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+        try FileManager.default.removeItem(at: inputURL)
+    } catch { return cuError("cannot finish sealing evidence", code: "EVIDENCE_ERROR") }
     let sha256 = SHA256.hash(data: sealed).compactMap { String(format: "%02x", $0) }.joined()
     return cuJson(["ok": true, "sha256": sha256])
 }
@@ -2814,27 +2915,26 @@ func runEstop(socketPath: String, flagPath: String, nonceFile: String) throws ->
     }
 
     // 2. CGEventTap hotkey: Ctrl+Shift+Alt+Cmd+E (best-effort)
-    // tapCreate fails SILENTLY (returns nil) when TCC denies the tap.
-    // Request trust explicitly so the user may get the system dialog and a
-    // landing spot in Accessibility / Input Monitoring.
+    // This helper also starts at ordinary tray launch. Check existing grants
+    // without requesting Accessibility or Input Monitoring in the background.
     let axTrustedBefore = AXIsProcessTrusted()
-    if !axTrustedBefore {
-        let promptOpts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(promptOpts)
-    }
+    let canListen = CGPreflightListenEventAccess()
     let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
     // Prefer listenOnly: we never modify events (callback always passes through).
     // Some LaunchServices/TCC contexts reject defaultTap while listenOnly works.
-    var tap = CGEvent.tapCreate(
-        tap: .cgSessionEventTap,
-        place: .headInsertEventTap,
-        options: .listenOnly,
-        eventsOfInterest: mask,
-        callback: estopEventTapCallback,
-        userInfo: nil
-    )
+    var tap: CFMachPort?
+    if canListen || axTrustedBefore {
+        tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: estopEventTapCallback,
+            userInfo: nil
+        )
+    }
     var tapMode = "listenOnly"
-    if tap == nil {
+    if tap == nil && axTrustedBefore {
         tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,

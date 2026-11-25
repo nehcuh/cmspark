@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.4.9 | 日期: 2026-09-20 | 状态: 已确认（能力记录基线 **0.6.8**；当前源码版本 **1.9.1** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · 知识库波次（AI 草稿 / 检索 / 分布 / 文件夹）· context_window 512000 · listen-first · 当轮活计划 · ADR-023/024 语音（含 2026-08-31 L13 非静默回退）· Capture HTML 卡默认 1040×760（紧凑 360×420）流式 · 用户附图 · Windows NSIS · 知识诚实（TF-IDF top-k）· 知识图谱 #427 · 内嵌终端 #432/#584（macOS/Windows，默认关）· `search_threads`/`search_knowledge` #439 · ChatShell · 0.6.0 自主性三件套（巡航档位 / plan_readonly / loop L-1–L-5）· 专家团队 v1 · CU 完整性链（后三项索引级，详见 [CHANGELOG](../CHANGELOG.md) `[0.6.0]`，loop/专家独立 ADR 待补；CU 定位仍实验，#363 未过）；T1 **已记分、禁扩 profile**）
+> 版本: 2.4.9 | 日期: 2026-09-20 | 状态: 已确认（能力记录基线 **0.6.8**；当前源码版本 **1.10.0** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · 知识库波次（AI 草稿 / 检索 / 分布 / 文件夹）· context_window 512000 · listen-first · 当轮活计划 · ADR-023/024 语音（含 2026-08-31 L13 非静默回退）· Capture HTML 卡默认 1040×760（紧凑 360×420）流式 · 用户附图 · Windows NSIS · 知识诚实（TF-IDF top-k）· 知识图谱 #427 · 内嵌终端 #432/#584（macOS/Windows，默认关）· `search_threads`/`search_knowledge` #439 · ChatShell · 0.6.0 自主性三件套（巡航档位 / plan_readonly / loop L-1–L-5）· 专家团队 v1 · CU 完整性链（后三项索引级，详见 [CHANGELOG](../CHANGELOG.md) `[0.6.0]`，loop/专家独立 ADR 待补；CU 定位仍实验，#363 未过）；T1 **已记分、禁扩 profile**）
 
 ---
 
@@ -693,7 +693,7 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 |----|-------------|-----|
 | Apps 白名单 | `host_app` · `apps.enabled` · AppEntry | 每应用 policy；Apps 面板可切换全局坐标开关 |
 | Host 语义 API | `host_read` · `host_write` | L2；写操作生物识别/nonce；opaque TargetId |
-| Computer 坐标 | `host_computer` · `computer.coordinateEnabled` · `coordinateAllowed` | 双开关 + 任务级 L2：**god-mode / auto_approve 永不跳过**；**浏览器**走一次性 L2（值守/三旗/G1 永不 skip）；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions/thread key）可跳过同线程同 **非浏览器** App 后续任务的 **initial L2**；danger / experimental / foreground_yielded **始终 prompt** |
+| Computer 坐标 | `host_computer` · `computer.coordinateEnabled` · `coordinateAllowed` | 双开关 + 任务级 L2：**god-mode / auto_approve 永不跳过**；**浏览器**走一次性 L2（值守/三旗/G1 永不 skip）；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions/thread key）可跳过同线程同 **非浏览器** App 后续任务的 **initial L2**；普通模式下 danger / experimental / foreground_yielded 均提示。独立的桌面最大权限可替当前连接内已列出的应用确认操作。主模型建议还需勾选接收方。硬拒绝与窗口复核始终生效 |
 
 桌面面由 Companion 调 OS 适配器（darwin Swift/AppleScript、win PowerShell/UIA 等），**不是** Extension CDP。
 
@@ -701,7 +701,7 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 
 | 路径 | 职责 |
 |------|------|
-| `companion/src/computer/` | policy · executor · session-trust · estop · evidence · adapters · **Qwen3-VL 实验定位**（TinyClick/Florence 已移除） |
+| `companion/src/computer/` | policy · executor · session-trust · estop · evidence · adapters · 可选的主模型窗口观察与候选位置 |
 | `companion/src/voice/` · `chrome-extension/.../voice/` | 本机 Whisper Path B（含 M2 渐进假设）· 听写+ / 会议工作台 |
 | `companion/src/host-use/` | HostAdapter · 平台 adapter · blacklist · nonce |
 | `companion/src/apps/` | 枚举 · 启动 · guards · biometric-gate |

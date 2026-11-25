@@ -15,6 +15,7 @@ import { requireAppsBiometric } from "../apps/biometric-gate"
 import { assertNotReparsePath, evidenceBaseDir, type ReparseFsLike } from "./evidence"
 
 export interface ComputerHandlerContext {
+  ownerCurrent?: () => boolean
   requestConfirmation?: (
     details: SecurityConfirmationDetails,
   ) => Promise<SecurityConfirmationDecision>
@@ -108,6 +109,10 @@ function statePayload() {
   }
 }
 
+// One global switch can have one native prompt in flight across all panels.
+// A disable takes effect immediately, even if the OS returns approval later.
+let pendingEnable: { revoked: boolean } | undefined
+
 export async function handleComputerMessage(
   msg: any,
   ctx: ComputerHandlerContext = {},
@@ -125,23 +130,38 @@ export async function handleComputerMessage(
       }
       // Disabling is always free — fail-closed direction.
       if (rest.enabled === false) {
+        if (pendingEnable) pendingEnable.revoked = true
         setComputerCoordinateEnabled(false)
         logger.info("computer.coordinate_disabled", {})
         ctx.broadcast?.(statePayload())
         return statePayload()
       }
+      if (getConfig().computer?.coordinateEnabled === true) return statePayload()
       // Enabling = persistent capability grant -> biometric gate (A10.1).
-      if (!ctx.requestConfirmation) {
+      if (!ctx.requestConfirmation || ctx.ownerCurrent?.() === false) {
         return computerError("computer.set_enabled(true) requires an interactive confirmation channel", {
           code: "NO_CONFIRMATION_CHANNEL",
         })
       }
+      if (pendingEnable) {
+        return computerError("已有桌面操作授权正在等待确认。", { code: "COMPUTER_ENABLE_PENDING" })
+      }
       const gate = deps.gate ?? requireAppsBiometric
-      const outcome = await gate({
-        action: "computer.set_enabled",
-        reason: "Enable coordinate computer-use (input injection into whitelisted app windows)",
-        requestConfirmation: ctx.requestConfirmation,
-      })
+      const pending = { revoked: false }
+      pendingEnable = pending
+      let outcome: Awaited<ReturnType<typeof gate>>
+      try {
+        outcome = await gate({
+          action: "computer.set_enabled",
+          reason: "Enable coordinate computer-use (input injection into whitelisted app windows)",
+          requestConfirmation: ctx.requestConfirmation,
+        })
+      } finally {
+        pendingEnable = undefined
+      }
+      if (pending.revoked || ctx.ownerCurrent?.() === false) {
+        return computerError("桌面操作授权已撤销或连接已断开。", { code: "COMPUTER_ENABLE_STALE" })
+      }
       if (!outcome.approved) {
         logger.warn("computer.coordinate_enable_denied", { reason: outcome.reason })
         return computerError(

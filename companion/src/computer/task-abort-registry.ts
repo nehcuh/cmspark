@@ -25,6 +25,15 @@ export function registerComputerInputStop(taskId: string, stop: () => Promise<vo
   return () => { inputStops.delete(taskId) }
 }
 
+/** Both native producers must receive the stop signal before their pending input can be acknowledged. */
+export function registerNativeInputStop(taskId: string, input: { pendingInput(): Promise<void> | undefined }, signalStop: () => void) {
+  return registerComputerInputStop(taskId, () => {
+    const drain = input.pendingInput()
+    if (drain) signalStop()
+    return drain
+  })
+}
+
 /** Full registry — tests seed fake in-flight tasks via this map. */
 export function getComputerTaskAbortRegistry(): Map<string, boolean> {
   return computerTaskAbort

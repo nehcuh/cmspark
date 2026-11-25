@@ -397,3 +397,9 @@ test("foldConfigUpdated：无 security 块时保留巡航旧值与值守镜像",
   const next = foldConfigUpdated(prev, { llm: { model_name: "x" } })
   assert.deepEqual(next, prev)
 })
+
+test("authorized desktop input starts without opening the confirmation window", () => {
+  const event = cockpitFocusEventFromMessage({ type: "computer.task.event", event: "started", desktop_maximum: true })
+  if (!event) throw new Error("missing desktop start event")
+  assert.equal(decideCockpitFocus(event, UNARMED), "stay_background")
+})

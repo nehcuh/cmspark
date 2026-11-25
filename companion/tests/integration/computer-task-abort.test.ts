@@ -21,7 +21,7 @@ import {
   getComputerTaskRegistryForTests,
   handleComputerTaskAbort,
 } from "../../src/server.js"
-import { registerComputerInputStop } from "../../src/computer/task-abort-registry.js"
+import { registerComputerInputStop, registerNativeInputStop } from "../../src/computer/task-abort-registry.js"
 
 let wss: WebSocketServer
 let serverWs: WebSocket
@@ -174,4 +174,39 @@ test("P0-B: chat.abort silent flip on empty registry is a no-op (matched 0)", ()
   const registry = getComputerTaskRegistryForTests()
   assert.equal(registry.size, 0)
   assert.equal(flipAllComputerTaskAborts(), 0)
+})
+
+test("Windows input receives the panel stop file before its completion is acknowledged", { timeout: 3000 }, async t => {
+  const { mkdtempSync, rmSync, existsSync } = await import("node:fs")
+  const { join } = await import("node:path")
+  const { tmpdir } = await import("node:os")
+  const { PsInputInjector } = await import("../../src/computer/win-adapters")
+  const { estopFlagPath, requestEstopFlag } = await import("../../src/computer/estop")
+  const directory = mkdtempSync(join(tmpdir(), "cmspark-stop-test-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const registry = getComputerTaskRegistryForTests()
+  registry.set("long-type", false)
+  const flag = estopFlagPath(directory)
+  let release!: () => void
+  const waiting = new Promise<void>(resolve => { release = resolve })
+  let calls = 0
+  const injector = new PsInputInjector(async (_script, args) => {
+    calls++
+    assert.deepEqual(args.slice(-2), ["-StopFile", flag])
+    await waiting
+    assert.ok(existsSync(flag))
+    throw Object.assign(new Error("stopped"), { stderr: "STOPPED: test producer observed stop" })
+  }, flag, () => registry.get("long-type") === true)
+  t.after(registerNativeInputStop("long-type", injector, () => requestEstopFlag(directory)))
+  const input = assert.rejects(injector.typeText(1, "Form910"), { code: "TASK_ABORTED" })
+  handleComputerTaskAbort(serverWs, { task_id: "long-type" })
+  assert.ok(existsSync(flag))
+  await settle()
+  assert.deepEqual(recv, [])
+  const ack = new Promise<string>(resolve => clientWs.once("message", raw => resolve(raw.toString())))
+  release()
+  await input
+  assert.equal(JSON.parse(await ack).matched, 1)
+  await assert.rejects(injector.typeText(1, "late"), { code: "TASK_ABORTED" })
+  assert.equal(calls, 1)
 })

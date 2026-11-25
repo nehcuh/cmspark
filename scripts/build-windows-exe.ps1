@@ -330,7 +330,7 @@ Copy-Item "$CompanionDir\dist\cmspark-agent.exe" $StagingDir
 if ($LASTEXITCODE -ne 0) { Fail "Native desktop staging failed" }
 Ok "cmspark-agent.exe"
 
-# Qwen3-VL Python worker (experimental locate). Weights download on demand to
+# Work Center uses the Qwen3-VL Python worker for local screenshot extraction. Weights download on demand to
 # ~/.cmspark-agent/models/qwen3-vl-* — not packaged in the zip/SEA.
 $QwenWorkerCandidates = @(
     "$CompanionDir\dist\computer\qwen-vl-worker.py",
@@ -341,10 +341,10 @@ foreach ($c in $QwenWorkerCandidates) {
     if (Test-Path $c) { $QwenWorkerSrc = $c; break }
 }
 if (-not $QwenWorkerSrc) {
-    Fail "qwen-vl-worker.py missing — Qwen3-VL experimental locate hard-gate"
+    Fail "qwen-vl-worker.py missing — required by Work Center local image extraction"
 }
 Copy-Item $QwenWorkerSrc "$StagingDir\qwen-vl-worker.py"
-Ok "qwen-vl-worker.py (Qwen3-VL experimental locate)"
+Ok "qwen-vl-worker.py (Work Center local image extraction)"
 
 # Optional legacy models.manifest.json (not required for Qwen3-VL weights)
 $ManifestSrc = "$CompanionDir\models.manifest.json"
@@ -471,8 +471,6 @@ if (Test-Path $OrtSrc) {
 } else {
     Warn "onnxruntime-node not installed — speaker diarize will degrade (diarize_runtime_unavailable)"
 }
-# Legacy TinyClick ONNX worker is still intentionally NOT staged (product-replaced;
-# experimental locate is Qwen3-VL with on-demand weights).
 
 # Path B local STT: cmspark-whisper is a *sidecar* next to the SEA exe
 # (NOT injected into the Node SEA blob). Runtime resolve looks under:

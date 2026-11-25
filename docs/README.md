@@ -1,6 +1,6 @@
 # CMspark 文档导航
 
-> 源码版本 **1.9.1（已于 2026-11-24 正式发布）** · 入口 README：[仓库根 README.md](../README.md)
+> 源码开发版本 **1.10.0（尚未正式发布）** · 入口 README：[仓库根 README.md](../README.md)
 > 本页只做**导航**，不搬运正文。过程件已于 **Phase 4** 迁入 [`archive/2026-07/`](archive/2026-07/)；`user/` 物理搬家仍可选（见 [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md)）。
 
 ---
@@ -23,7 +23,7 @@
 | [user-env.md](user-env.md) | **Composition**（密钥） | skill / shell / MCP 子进程 Secrets（如 Datayes） |
 | [mission-pack-usage.md](mission-pack-usage.md) | **Composition**（+ 企业 Channel） | 任务包、模块、workspace/shell/netsec |
 | [computer-use-user-guide.md](computer-use-user-guide.md) | **Surface L2** | 坐标桌面、急停、session-trust、平台限制 |
-| [qwen-vl-experimental-layer.md](qwen-vl-experimental-layer.md) | **Surface L2 · 实验** | Qwen3-VL 本机视觉定位：预检、下载源（含魔搭）、启用 |
+| [qwen-vl-experimental-layer.md](qwen-vl-experimental-layer.md) | 历史设计 | 旧 Qwen3-VL 定位层与工作中心本机权重说明 |
 | [host-and-apps.md](host-and-apps.md) | **Surface L2**（语义 Host） | Host 读写、Apps 白名单、生物识别边界 |
 | [coding-handoff-user-guide.md](coding-handoff-user-guide.md) | **Composition** | 编程接力：任务包 / 本机 ACP 审查·起草·gated apply；≠ Outbound MCP |
 | [code-review-workflow.md](code-review-workflow.md) | **Composition · 开发切片** | 网页 diff 独立审阅、可选终端报告回传、需求任务测试与材料核对；真实试点待验收 |
@@ -161,8 +161,8 @@
 | [decisions/](decisions/) | 锁文件与 synthesis；**被代码注释引用的路径勿盲删** |
 | [superpowers/](superpowers/) | 进行中 specs/plans |
 | [Qwen3-VL 实验层 · 产品设计](superpowers/specs/2026-08-01-qwen3-vl-experimental-layer-product-design.md) | SoT（经多路对抗 + Pi/Claude/Kimi） |
-| [Qwen3-VL 实验层 · 实施 plan](superpowers/plans/2026-08-01-qwen3-vl-experimental-layer-impl.md) | **后续开工入口** |
-| [Qwen3-VL 实验层 · 交接](superpowers/plans/2026-08-01-qwen3-vl-HANDOFF.md) | 下一任 15 分钟上手 |
+| [Qwen3-VL 实验层 · 实施 plan](superpowers/plans/2026-08-01-qwen3-vl-experimental-layer-impl.md) | 历史实施记录 |
+| [Qwen3-VL 实验层 · 交接](superpowers/plans/2026-08-01-qwen3-vl-HANDOFF.md) | 历史交接记录 |
 | [macOS TCC 产品身份 · 设计](superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md) | SoT（对抗验证）：隐私设置只认 CMspark |
 | [macOS TCC 产品身份 · 实施 plan](superpowers/plans/2026-08-01-macos-tcc-product-identity-impl.md) | 方案 D：MacOS/CMspark=host Mach-O；Tasks 0–8 |
 | [macOS TCC 对抗合成](audit/reviews/macos-tcc-product-identity-adversary-synthesis-20260801.md) | 方案裁决 + Blocker 清单 |

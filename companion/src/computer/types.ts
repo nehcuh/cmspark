@@ -304,19 +304,15 @@ export interface LocateHit {
   bbox: RectPx
   layer: LocateLayer
   /**
-   * UIA/OCR 层照常赋值；实验 VLM 层（qwen-vl）在校准曲线落地前结构性
+   * UIA/OCR 层照常赋值；主模型视觉层在校准曲线落地前结构性
    * 缺省（G3——未校准置信度永不上屏）。
    */
   confidence?: number
   matchedText: string
 }
 
-/**
- * WP3 (plan §B.1): the four locator layers. "uia" = L0, "ocr" = L1,
- * "qwen-vl" = L2 experimental local VLM (re-L2 gated),
- * "cloud" = L3 stub. Degradation is one-way down the chain.
- */
-export type LocateLayer = "uia" | "ocr" | "qwen-vl" | "cloud"
+/** qwen-vl and cloud occur only in historical evidence. */
+export type LocateLayer = "uia" | "ocr" | "main-model" | "qwen-vl" | "cloud"
 
 /**
  * WP3: one layer attempt in the locate chain (structured degradation log —

@@ -7,7 +7,6 @@ import ts from "typescript"
 import * as rules from "../src/security/redact-rules"
 import { redactToolPayloadForPersistence, redactAssistantToolCallsForPersistence } from "../src/security/tool-persistence-redact"
 import { snapshotHistory } from "../src/tool/snapshot-locator"
-import { projectLcuResult } from "../src/computer/lcu/result"
 
 function historyBoundary() {
   const root = process.env.CMSPARK_SOURCE_ROOT ?? path.resolve(__dirname, "../../src")
@@ -34,7 +33,9 @@ test("LCU folds title and unknown operands in both durable thread and full-histo
     const params = rules.redactCodeishParams(privateArgs, name)
     assert.deepEqual(Object.keys(params).sort(), ["len", "redacted", "sha256"])
     const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII="
-    const result = projectLcuResult({ content: [{ type: "text", text: "PRIVATE_SCREEN_TEXT_SENTINEL" }, { type: "image", mimeType: "image/png", data: pixel }] }).result
+    const result = { success: true, data: { lcu: true, isError: false, content: [
+      { type: "text", text: "PRIVATE_SCREEN_TEXT_SENTINEL" }, { type: "image", mimeType: "image/png", observation: 1 },
+    ] } }
     const thread = redactToolPayloadForPersistence(name, privateArgs, result)
     const assistant = redactAssistantToolCallsForPersistence([{ id: "owned", type: "function", function: { name, arguments: JSON.stringify(privateArgs) } }], { persistFull: true })
     assert.doesNotMatch(JSON.stringify([params, thread, assistant]), /PRIVATE_[A-Z_]+_SENTINEL/)

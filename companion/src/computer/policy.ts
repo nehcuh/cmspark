@@ -10,6 +10,8 @@
 
 import * as path from "path"
 import * as os from "os"
+import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
 import type { CompanionConfig } from "../config"
 import type { AppEntry } from "../apps/types"
 import { aumidToVault, basenameToVault, isLolbinPath } from "../apps/guards"
@@ -21,6 +23,19 @@ export const COMPUTER_COCKPIT_TITLE = "CMspark Confirmation Cockpit [723]"
 export function isCompanionCockpitWindow(info: Pick<WindowInfo, "title">, platform = os.platform()): boolean {
   if (platform !== "win32" || typeof info.title !== "string") return false
   return info.title === COMPUTER_COCKPIT_TITLE || info.title.startsWith(COMPUTER_COCKPIT_TITLE + " - ")
+}
+
+/** Choose the same document window for the confirmation preview and input.
+ * AppKit can also list larger, untitled system panels owned by the same app. */
+export function selectComputerWindow(windows: WindowInfo[]): WindowInfo | undefined {
+  const score = (w: WindowInfo) => {
+    const area = Math.max(0, w.rect.width) * Math.max(0, w.rect.height)
+    const named = (w.title || "").trim().length > 0 ? 1_000_000_000 : 0
+    const notStrip = w.rect.height >= 80 && w.rect.width >= 80 ? 100_000_000 : 0
+    const onscreen = w.rect.y >= -20 && w.rect.x > -5000 ? 10_000_000 : 0
+    return named + notStrip + onscreen + area
+  }
+  return windows.filter(w => !isCompanionCockpitWindow(w)).sort((a, b) => score(b) - score(a))[0]
 }
 
 /**
@@ -148,6 +163,15 @@ export function isBrowserVaultExePath(p: string): boolean {
   } catch {
     return false
   }
+}
+
+/** How the panel should present this app. The executor rechecks the live target. */
+export function appCoordinateMode(entry: AppEntry, platform: NodeJS.Platform) {
+  if ((platform !== "win32" && platform !== "darwin") || entry.kind !== "gui") return "unsupported"
+  const identity = platform === "win32" ? entry.exe?.path : entry.bundleId
+  if (typeof identity !== "string" || !identity) return "missing_identity"
+  if (canEverCoordinate(entry, platform)) return "per_app"
+  return isVaultBrowserEntry(entry, platform) ? "browser_task" : "protected"
 }
 
 export type CoordinateAssertOpts = {
@@ -336,7 +360,7 @@ export function assertHwndOwnedByEntry(
  *
  * macOS: no-op — code signing is the trust anchor (adversarial review M5).
  */
-export function assertExeNotDrifted(entry: AppEntry, hashFile: (p: string) => string): void {
+export function assertExeNotDrifted(entry: AppEntry, hashFile = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex")): void {
   // macOS entries use code signing as the integrity anchor — no binary hash drift check
   const isMacEntry = os.platform() === "darwin" && entry.bundleId != null
   if (isMacEntry) return
