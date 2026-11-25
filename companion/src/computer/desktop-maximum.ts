@@ -65,7 +65,7 @@ export function desktopMaximumStatus(peer: object) {
 export function reviewDesktopMaximum(peer: object, cfg = getConfig()) {
   const offer = { ...snapshot(cfg), id: randomUUID(), until: Date.now() + 300000 }
   offers.set(peer, offer)
-  return { type: "computer.maximum.reviewed", id: offer.id, apps: offer.apps.map(({ token, name }) => ({ token, name })),
+  return { type: "computer.maximum.reviewed", review_id: offer.id, apps: offer.apps.map(({ token, name }) => ({ token, name })),
     receiver: offer.receiver }
 }
 
@@ -73,7 +73,7 @@ export function armDesktopMaximum(peer: object, input: Record<string, unknown>, 
   const offer = offers.get(peer)
   offers.delete(peer)
   const now = Date.now()
-  if (!offer || input.id !== offer.id || offer.until <= now || !isValidSecurityArmPhrase(input.confirmation_phrase) ||
+  if (!offer || input.review_id !== offer.id || offer.until <= now || !isValidSecurityArmPhrase(input.confirmation_phrase) ||
       typeof input.images !== "boolean" || !offer.apps.length || (input.images && !offer.receiver) ||
       isUnattendedArmed() || live()) return { type: "computer.maximum.error", error: "授权未生效，请先解除已有桌面值守，再重新查看并确认范围。" }
   const current = snapshot(cfg)

@@ -4,7 +4,7 @@ import { tokens } from "../ui/tokens"
 import { AUTOPILOT_ARM_PHRASE } from "./autopilot-tier"
 import { Modal } from "./ui/Modal"
 
-type Offer = { id: string; apps: { token: string; name: string }[]; receiver: { model: string; endpoint: string } | null }
+type Offer = { review_id: string; apps: { token: string; name: string }[]; receiver: { model: string; endpoint: string } | null }
 
 export function DesktopMaximumDialog({ onClose }: { onClose(): void }) {
   const { state } = useAgentStore()
@@ -26,14 +26,14 @@ export function DesktopMaximumDialog({ onClose }: { onClose(): void }) {
     }
     chrome.runtime.onMessage.addListener(receive)
     if (!active) chrome.runtime.sendMessage({ type: "computer.maximum.review" }).then(r => {
-      if (mounted && !r?.ok) setError("无法取得授权范围，请连接支持桌面最大权限的 Companion。")
+      if (mounted && !r?.ok) { clearTimeout(timeout); setError("请重新加载扩展，并连接支持桌面最大权限的 Companion。") }
     }).catch(() => { if (mounted) setError("无法连接 Companion。") })
     return () => { mounted = false; clearTimeout(timeout); chrome.runtime.onMessage.removeListener(receive) }
   }, [active])
   const submit = async () => {
     setPending(true)
     const request = active ? { type: "computer.maximum.revoke" } :
-      { type: "computer.maximum.arm", id: offer?.id, images, confirmation_phrase: phrase }
+      { type: "computer.maximum.arm", review_id: offer?.review_id, images, confirmation_phrase: phrase }
     try {
       const reply = await chrome.runtime.sendMessage(request)
       if (!reply?.ok) throw new Error()

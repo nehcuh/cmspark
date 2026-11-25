@@ -13,20 +13,20 @@ test("one reviewed desktop grant binds the connection, existing apps, image reci
     apps: { enabled: true, entries: { [token]: pad } }, computer: { ...initial.computer!, coordinateEnabled: true },
     vision: { ...initial.vision!, enabled: true, reuse_main_model: true } }
   const review = () => reviewDesktopMaximum(peer, cfg)
-  const fields = (id: string, images: boolean) => ({ id, confirmation_phrase: "我了解风险", images })
+  const fields = (id: string, images: boolean) => ({ id: "websocket-request", review_id: id, confirmation_phrase: "我了解风险", images })
   const permit = () => desktopMaximumPermit(peer, token, () => true, () => cfg)
   try {
     const offer = review()
     assert.deepEqual(offer.apps, [{ token, name: "Pad" }])
     assert.equal(JSON.stringify(offer).includes("fake-key"), false)
-    assert.equal(armDesktopMaximum(other, fields(offer.id, true), cfg).type, "computer.maximum.error")
-    assert.equal(armDesktopMaximum(peer, { ...fields(offer.id, true), confirmation_phrase: "" }, cfg).type, "computer.maximum.error")
-    assert.equal(armDesktopMaximum(peer, fields(offer.id, true), cfg).type, "computer.maximum.error")
+    assert.equal(armDesktopMaximum(other, fields(offer.review_id, true), cfg).type, "computer.maximum.error")
+    assert.equal(armDesktopMaximum(peer, { ...fields(offer.review_id, true), confirmation_phrase: "" }, cfg).type, "computer.maximum.error")
+    assert.equal(armDesktopMaximum(peer, fields(offer.review_id, true), cfg).type, "computer.maximum.error")
     const changed = review()
     pad.display_name = "Replacement"
-    assert.equal(armDesktopMaximum(peer, fields(changed.id, false), cfg).type, "computer.maximum.error")
+    assert.equal(armDesktopMaximum(peer, fields(changed.review_id, false), cfg).type, "computer.maximum.error")
     pad.display_name = "Pad"
-    assert.equal(armDesktopMaximum(peer, fields(review().id, false), cfg).type, "computer.maximum.status")
+    assert.equal(armDesktopMaximum(peer, fields(review().review_id, false), cfg).type, "computer.maximum.status")
     assert.equal(permit()?.allowsModel(cfg.llm), false)
     assert.ok(permit()?.current())
     assert.equal(desktopMaximumStatus(other).expiresAt, null)
@@ -34,7 +34,7 @@ test("one reviewed desktop grant binds the connection, existing apps, image reci
     const old = permit()!
     revokeDesktopMaximum(peer)
     assert.ok(old.signal.aborted)
-    armDesktopMaximum(peer, fields(review().id, true), cfg)
+    armDesktopMaximum(peer, fields(review().review_id, true), cfg)
     assert.equal(old.current(), false)
     const granted = permit()!
     assert.ok(granted.allowsModel(cfg.llm))
