@@ -428,3 +428,22 @@ test("P1: 30 动作 + 2000 语料的 full_preview 逐字完整;code_preview 仍�
   manager.rejectAll("disconnect")
   await pending
 })
+
+test("#908 only the origin's reviewed image enables a desktop visual action", async () => {
+  const manager = new SecurityConfirmationManager(1000)
+  const originWs = mockWs("panel")
+  const details = { toolName: "host_computer", dangerousApis: ["computer.main_model_suggestion"],
+    code: "Synthetic target", previewImage: "cGl4ZWxz", requireImageReview: true }
+  for (const reviewed of [false, true]) {
+    const frames: any[] = []
+    const pending = manager.request(msg => frames.push(msg), details, { originWs })
+    const id = frames[0].confirmation_id
+    assert.equal(frames[0].require_image_review, true)
+    assert.equal(manager.respond(id, true), false)
+    assert.equal(manager.respondFrom(id, true, mockWs("another"), undefined, { imageReviewed: true }).outcome, "origin_mismatch")
+    manager.respondFrom(id, true, originWs, undefined, { imageReviewed: reviewed })
+    const decision = await pending
+    assert.equal(decision.approved, reviewed)
+    assert.equal(manager.isOriginApproval(decision, originWs), reviewed)
+  }
+})

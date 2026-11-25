@@ -494,6 +494,10 @@ export function ConfirmElevated({
   const [nonceInput, setNonceInput] = useState("")
   const [pasteBlocked, setPasteBlocked] = useState(false)
   const [failedImageId, setFailedImageId] = useState<string | null>(null)
+  const [loadedImageId, setLoadedImageId] = useState<string | null>(null)
+  const imageReviewed = request.require_image_review === true && loadedImageId === request.confirmation_id &&
+    failedImageId !== request.confirmation_id && !request.preview_unavailable_reason && previewImageSafe(request.preview_image)
+  const imagePending = request.require_image_review === true && !imageReviewed
   const domain = request.relevant_domains?.[0]
   const relevantApp = request.relevant_apps?.[0]
   const canThreadTrust = canOfferThreadTrust(request.tool_name, relevantApp)
@@ -552,7 +556,7 @@ export function ConfirmElevated({
     (request.worker_id ? `worker ${request.worker_id.slice(0, 8)}` : null)
 
   const respond = (approved: boolean, stopThread = false) => {
-    if (approved && nonceChallenge && !nonceMatches) return
+    if (approved && (imagePending || (nonceChallenge && !nonceMatches))) return
     const addToWhitelist: string[] = []
     if (approved && domain && whitelistMode !== "none") {
       addToWhitelist.push(whitelistMode === "wildcard" ? `*.${domain}` : domain)
@@ -562,6 +566,7 @@ export function ConfirmElevated({
       type: "security.confirmation.response",
       confirmation_id: request.confirmation_id,
       approved,
+      ...(approved && imageReviewed ? { image_reviewed: true } : {}),
       stop_thread: canStop,
       stop_thread_id: canStop ? stopTargetId! : undefined,
       add_to_whitelist: addToWhitelist,
@@ -597,7 +602,8 @@ export function ConfirmElevated({
         </span>
       </div>
       <div style={{ display: "flex", gap: 12 }}>
-        <ConfirmationPreview image={request.preview_image} reason={request.preview_unavailable_reason}
+        <ConfirmationPreview key={request.confirmation_id} image={request.preview_image} required={request.require_image_review}
+          onImageLoad={() => setLoadedImageId(request.confirmation_id)} reason={request.preview_unavailable_reason}
           imageFailed={failedImageId === request.confirmation_id}
           onImageError={() => setFailedImageId(request.confirmation_id)} />
         <div style={{ flex: 1, fontSize: 11, color: tokens.darkText }}>
@@ -738,7 +744,7 @@ export function ConfirmElevated({
                 border: "none",
                 cursor: nonceChallenge && !nonceMatches ? "not-allowed" : "pointer",
               }}
-              disabled={!!nonceChallenge && !nonceMatches}
+              disabled={imagePending || (!!nonceChallenge && !nonceMatches)}
               onClick={() => respond(true)}
             >
               允许

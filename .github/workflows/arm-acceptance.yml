@@ -122,9 +122,9 @@ jobs:
           grep -Fx '# pass 7' "$RUNNER_TEMP/tray-consumer-arm.tap"
           grep -Fx '# fail 0' "$RUNNER_TEMP/tray-consumer-arm.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/tray-consumer-arm.tap"
-      - name: Qwen locator CPU controls
+      - name: Native desktop main-model vision CPU controls
         working-directory: companion
-        run: node --import tsx --test tests/computer-qwen-vl-locator.test.ts
+        run: node scripts/run-tests.mjs .test-dist/tests/computer-main-model-vision.test.js .test-dist/tests/security-confirmation-origin.test.js
       - name: Windows workflow contract CPU controls
         working-directory: companion
         run: node --test ../scripts/tests/windows-ci-feedback-750.test.mjs

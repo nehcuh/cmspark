@@ -462,6 +462,7 @@ export async function runComputerTask(
   // applyUiaProbedVerdict) and previously probed entries skip this entirely.
   let uiaCapable = entry.uiaCapable === true
   let uiaFreshProbe = false
+  let cacheVisualProbeAfterTask: (() => void) | undefined
   if (entry.uiaCapable === undefined && deps.uiaProber) {
     try {
       deps.readScope?.assertCurrent()
@@ -489,7 +490,11 @@ export async function runComputerTask(
         // Scoped reads keep the live probe result, without replacing their own
         // config/App consent subject via this best-effort persistent cache.
         // Mixed/injection tasks retain their original write-back behavior.
-        if (!deps.readScope) deps.onUiaVerdict?.(entry.token, verdict, probedAt)
+        if (!deps.readScope) {
+          const cache = () => deps.onUiaVerdict?.(entry.token, verdict, probedAt)
+          if (deps.inspectDesktop) cacheVisualProbeAfterTask = cache
+          else cache()
+        }
       } catch {
         /* best-effort — a write-back failure never fails the task */
       }
@@ -692,6 +697,7 @@ export async function runComputerTask(
       // WP5 I3：实验层建议门可附建议点标注预览（§F.1 同字段，凭证区已黑化；
       // 只流向 originWs 面板确认对话框，绝不进工具结果/LLM 上下文）。
       ...(previewImage ? { previewImage } : {}),
+      ...(dangerous.includes("computer.main_model_suggestion") ? { requireImageReview: true } : {}),
     })
     return decision.approved === true
   }
@@ -1846,6 +1852,9 @@ export async function runComputerTask(
     /* best-effort — the ps1 self-destructs at -MaxSeconds regardless */
   }
   await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions, uiaWatcher: uiaWatcherLiveness() })
+  if (cacheVisualProbeAfterTask && deps.currentConfig?.().apps?.entries?.[entry.token] === entry) {
+    try { cacheVisualProbeAfterTask() } catch { /* optional UIA cache */ }
+  }
   log("computer.task.completed", { taskId, completed: result.completedActions, total: result.totalActions })
   emit({ event: "finished", taskId, ok: true, completed: result.completedActions, total: result.totalActions, evidenceDir: evidence.dir })
   return result

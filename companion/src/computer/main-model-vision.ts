@@ -48,7 +48,7 @@ export function desktopFrameInspector(route: DesktopVisionRoute,
       frame.target ? "查找控件 " + JSON.stringify(frame.target) : "读取窗口内容",
     ].join("\n")
     const ok = await approve({ toolName: "computer.share_window_image", code, fullPreview: code,
-      previewImage: frame.image, previewCaption: "本次发送的窗口图", dangerousApis: ["computer.share_window_image"],
+      requireImageReview: true, previewImage: frame.image, previewCaption: "本次发送的窗口图", dangerousApis: ["computer.share_window_image"],
       criticalApis: ["computer.share_window_image"], riskLevel: "high", autoConfirmEligible: false }, requestSignal)
     frame.assertCurrent()
     if (!ok || requestSignal.aborted || !current()) return

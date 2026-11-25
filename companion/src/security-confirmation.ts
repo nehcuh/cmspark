@@ -80,6 +80,8 @@ export interface SecurityConfirmationDetails {
    * 工具结果/LLM 上下文(P2 不变量——本字段只流向 originWs 面板的确认对话框)。
    */
   previewImage?: string
+  /** Approval must come from the originating client after this image has loaded. */
+  requireImageReview?: boolean
   /** 截图说明行(三段式非绑定声明;companion 侧已过 P3 字符类清洗)。 */
   previewCaption?: string
   /** Operator-only fixed failure reason; never affects confirmation authority. */
@@ -170,6 +172,7 @@ interface PendingConfirmation {
   send: (data: any) => void
   originWs?: WebSocket
   toolName: string
+  requireImageReview: boolean
   /**
    * Domains presented to the user as candidates for "add to whitelist" in this
    * confirmation's dialog. Tracked server-side so the response handler can
@@ -299,6 +302,7 @@ export class SecurityConfirmationManager {
         send,
         originWs: options?.originWs,
         toolName: details.toolName,
+        requireImageReview: details.requireImageReview === true,
         relevantDomains: Array.isArray(details.relevantDomains)
           ? details.relevantDomains.filter((d): d is string => typeof d === "string" && d.length > 0)
           : [],
@@ -324,6 +328,7 @@ export class SecurityConfirmationManager {
         tool_name: details.toolName,
         dangerous_apis: details.dangerousApis,
         critical_apis: details.criticalApis,
+        ...(details.requireImageReview ? { require_image_review: true } : {}),
         code_preview: codePreview(details.code),
         timeout_ms: this.timeoutMs,
         requested_at: new Date().toISOString(),
@@ -464,6 +469,7 @@ export class SecurityConfirmationManager {
     sourceWs?: WebSocket,
     nonceResponse?: string,
     extras?: {
+      imageReviewed?: boolean
       addToSessionTrust?: boolean
       addToEnterpriseSessionTrust?: boolean
       expertTeamSlices?: Array<{ pack_id: string; brief: string }>
@@ -478,6 +484,8 @@ export class SecurityConfirmationManager {
       // origin can still respond (or it times out).
       return { outcome: "origin_mismatch" }
     }
+
+    if (pending.requireImageReview && (!sourceWs || extras?.imageReviewed !== true)) approved = false
 
     // Manual-nonce gate: only approvals carry a nonce worth validating;
     // denials resolve immediately regardless of the typed code.
@@ -567,7 +575,7 @@ export class SecurityConfirmationManager {
    */
   respond(confirmationId: string, approved: boolean): boolean {
     const pending = this.pending.get(confirmationId)
-    if (!pending) return false
+    if (!pending || (pending.requireImageReview && approved)) return false
 
     clearTimeout(pending.timer)
     this.pending.delete(confirmationId)

@@ -11,6 +11,7 @@ export function normalizePreviewUnavailableReason(value: unknown): PreviewUnavai
 /** Production WS whitelist shared with the replay test. */
 export function confirmationPreviewFromMessage(msg: Record<string, unknown>) {
   return {
+    ...(msg.require_image_review === true ? { require_image_review: true } : {}),
     preview_image: typeof msg.preview_image === "string" ? msg.preview_image : undefined,
     preview_caption: typeof msg.preview_caption === "string" ? msg.preview_caption : undefined,
     full_preview: typeof msg.full_preview === "string" ? msg.full_preview : undefined,

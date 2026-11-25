@@ -405,6 +405,7 @@ export interface SecurityConfirmationRequest {
    * 黑化)。可选字段,旧 companion 不下发;存在且过 previewImageSafe 守卫时渲染。
    */
   preview_image?: string
+  require_image_review?: boolean
   /** 截图说明行(三段式非绑定声明文案,companion 侧已做字符类清洗)。 */
   preview_caption?: string
   /** Fixed operator diagnostic; absent for success, unattempted, and old peers. */

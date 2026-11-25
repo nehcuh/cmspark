@@ -25,6 +25,7 @@ export function guiTemplateNeedsFullPreview(request: SecurityConfirmationRequest
 }
 
 export function minimalConfirmHint(request: SecurityConfirmationRequest): string {
+  if (request.require_image_review) return "请在确认台查看完整窗口图与接收方或点击位置，再决定是否允许。"
   if (guiTemplateNeedsFullPreview(request)) return "文件模板的完整目标与参数在确认台展示；请查看后逐次批准。"
   if (request.nonce_challenge) return "此确认需要输入确认码 — 请在确认台完成。"
   if (request.expert_team) return "组队任务切片在确认台完整可见可编辑 — 请在确认台查看后批准。"
@@ -74,7 +75,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
       if (!request) return
       if (respondingIds.has(request.confirmation_id)) return
       const needsNonce = !!request.nonce_challenge
-      if (approved && (needsNonce || request.expert_team || guiTemplateNeedsFullPreview(request))) return
+      if (approved && (needsNonce || request.require_image_review || request.expert_team || guiTemplateNeedsFullPreview(request))) return
       // F-S1: stamp-first; multi-agent without worker_id → deny-safe (no wrong abort)
       const multiAgentContext = !!(
         request.worker_id ||
@@ -150,7 +151,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
   const color = riskColorDark(request.risk_level)
   const label = riskLabel(request.risk_level)
   const needsNonce = !!request.nonce_challenge
-  const needsCockpit = needsNonce || !!request.expert_team || guiTemplateNeedsFullPreview(request)
+  const needsCockpit = needsNonce || !!request.require_image_review || !!request.expert_team || guiTemplateNeedsFullPreview(request)
   const workerLabel =
     request.worker_role_label ||
     (request.worker_id ? `worker ${request.worker_id.slice(0, 8)}` : null)
@@ -247,6 +248,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
               ? "请在确认台输入确认码后允许"
               : request.expert_team
                 ? "组队切片请在确认台查看并编辑后批准"
+                : request.require_image_review ? "请在确认台核对窗口预览后批准"
                 : guiTemplateNeedsFullPreview(request)
                   ? "请在确认台查看完整文件参数后批准"
                   : "允许"
@@ -391,6 +393,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
               ? "请在确认台输入确认码后允许"
               : request.expert_team
                 ? "组队切片请在确认台查看并编辑后批准"
+                : request.require_image_review ? "请在确认台核对窗口预览后批准"
                 : guiTemplateNeedsFullPreview(request)
                   ? "请在确认台查看完整文件参数后批准"
                   : "允许"

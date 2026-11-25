@@ -1129,7 +1129,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     if (systemIndex >= 0) messages[systemIndex] = { role: "system", content: systemPrompt }
     else messages.unshift({ role: "system", content: systemPrompt })
   }
-  const modelAtStart = getConfig().llm
+  const configAtStart = getConfig()
   const overrideAtStart = threadManager.get(threadId)?.config_override
   const desktopVisionCurrent = () => {
     const cfg = getConfig(), active = threadManager.get(threadId)
@@ -1137,7 +1137,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       active.agent_role !== "worker" && active.agent_role !== "orchestrator" &&
       (params.surface === "panel" || params.surface === "tray") && params.desktopVisionOwner?.() === true &&
       !signal?.aborted && runTerminalEpochIsCurrent(threadId, runEpoch) &&
-      cfg.llm === modelAtStart && active.config_override === overrideAtStart &&
+      cfg.llm === configAtStart.llm && cfg.computer === configAtStart.computer && cfg.vision === configAtStart.vision &&
+      active.config_override === overrideAtStart &&
       cfg.vision?.enabled === true && cfg.vision.reuse_main_model !== false &&
       active.config_override?.vision_enabled !== false && useNative && cfg.computer?.coordinateEnabled === true &&
       resolveEffectiveExecutionPolicy(threadId, id => threadManager.get(id)) === "default" &&
