@@ -242,6 +242,7 @@ if (-not [InpW32]::IsWindow($hwndPtr)) { Fail "HWNDDEAD" "hwnd $Hwnd is not a li
 # only re-asserts foreground after the sidepanel stole it. Emits a single-line
 # JSON and exits — the inject path below never runs in this mode.
 if ($Mode -eq 'force-fg') {
+  Test-StopFlag
   $ok = $false
   for ($fgTry = 1; $fgTry -le 3; $fgTry++) {
     if ([InpW32]::ForceForeground($hwndPtr)) { $ok = $true; break }

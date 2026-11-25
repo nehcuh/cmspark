@@ -61,6 +61,8 @@ function fixture(count = 30, busy = false, policyOff = false) {
   const appTypes = source("apps/types.ts")
   const tokenPattern = compile(node(appTypes, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText(appTypes) === "APP_TOKEN_PATTERN")))
   const policy = compile(source("computer/policy.ts").text, { require(name: string) {
+    if (name === "node:fs") return { readFileSync: denied }
+    if (name === "node:crypto") return { createHash: denied }
     if (name === "path") return path.posix
     if (name === "os") return { platform: () => "darwin" }
     if (name === "../apps/guards") return guards

@@ -2577,3 +2577,19 @@ test("#908 approved Retina point uses client coordinates and rejects changed pix
     assert.deepEqual(injector.clicks.map(({ x, y }) => [x, y]), scenario === "stable" ? [[150, 200]] : [])
   }
 })
+
+
+test("revocation during local OCR discards the window text and preview", async () => {
+  let active = true
+  const events: import("../src/computer/preview").ComputerTaskEvent[] = []
+  const deps = makeDeps({ maximumDesktop: { current: () => active, allowsModel: () => false, signal: new AbortController().signal },
+    onEvent: event => events.push(event) })
+  deps.locator.ocr = async () => {
+    active = false
+    return { language: "en", words: [{ text: "Private910", x: 5, y: 5, w: 50, h: 12 }] }
+  }
+  const result = await runComputerTask({ app: "win.app.test", task: "read", actions: [{ action: "describe" }] }, deps)
+  assert.equal(result.errorCode, "TASK_ABORTED")
+  assert.deepEqual(result.steps, [])
+  assert.equal(events.some(event => event.event === "step"), false)
+})

@@ -286,6 +286,7 @@ export async function runComputerTask(
   // reaches the task.
   const emit = (ev: ComputerTaskEvent) => {
     try {
+      if (ev.event !== "finished" && deps.maximumDesktop && !deps.maximumDesktop.current()) return
       deps.onEvent?.(ev)
     } catch {
       /* best-effort */
@@ -322,6 +323,7 @@ export async function runComputerTask(
     })
   const pendingRaws = new Set<string>()
   const trackCapture = async (h: number, passive = false): Promise<CaptureMeta> => {
+    assertObservationCurrent()
     // Revalidate even read-only captures after selection/L2 awaits. The final
     // Windows PS boundary checks the fixed refusal marker again before saving.
     if (os.platform() === "win32") {
@@ -331,6 +333,7 @@ export async function runComputerTask(
     }
     const meta = await deps.capturer.captureWindow(h, os.platform() === "win32" ? { passive } : undefined)
     if (meta.path) pendingRaws.add(meta.path)
+    assertObservationCurrent()
     return meta
   }
   /** Sealer consumed the bytes — stop tracking (no removeFile call). */
@@ -345,6 +348,13 @@ export async function runComputerTask(
     for (const p of [...pendingRaws]) {
       pendingRaws.delete(p)
       await removeRaw(p)
+    }
+  }
+
+  const assertObservationCurrent = () => {
+    deps.readScope?.assertCurrent()
+    if (deps.maximumDesktop && !deps.maximumDesktop.current()) {
+      throw new ComputerError("TASK_ABORTED", "computer: desktop authorization ended")
     }
   }
 
@@ -380,7 +390,7 @@ export async function runComputerTask(
       evidenceDir: evidence?.dir ?? "",
       completedActions: steps.filter((s) => s.ok).length,
       totalActions: params.actions?.length ?? 0,
-      steps,
+      steps: deps.maximumDesktop && !deps.maximumDesktop.current() ? [] : steps,
       error: err.message,
       errorCode: err.code,
     }
@@ -394,7 +404,7 @@ export async function runComputerTask(
   if (readDraft) params = { ...params, actions: readDraft.actions }
   if (deps.readScope && !readDraft) return fail(new ComputerError("COMPUTER_INPUT_INVALID", "computer: readonly draft changed"))
 
-  try { deps.readScope?.assertCurrent() } catch (error) { return fail(error as ComputerError) }
+  try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
 
   // A10 + §E.2 gate (executor-side belt; the server gate already checked).
   let entry: ReturnType<typeof assertCoordinateAllowed>
@@ -428,7 +438,7 @@ export async function runComputerTask(
         `computer: no bundleId or exe path for "${entry.display_name}"`)
     }
     const win = selectComputerWindow(await deps.windows.enumerateByExe(exeId))
-    deps.readScope?.assertCurrent()
+    assertObservationCurrent()
     if (!win) {
       throw new ComputerError("COMPUTER_WINDOW_ABSENT", `computer: no visible window for "${entry.display_name}" — is it running?`)
     }
@@ -452,9 +462,9 @@ export async function runComputerTask(
   let cacheVisualProbeAfterTask: (() => void) | undefined
   if (entry.uiaCapable === undefined && deps.uiaProber) {
     try {
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       const verdict = await deps.uiaProber.probe(hwnd)
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       uiaCapable = verdict.uiaCapable
       uiaFreshProbe = true
       const probedAt = new Date(now()).toISOString()
@@ -512,11 +522,11 @@ export async function runComputerTask(
   // on a foreign window is refused OCCLUDED) and the foreground channel.
   if (uiaCapable && deps.uiaWatcherFactory) {
     try {
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       const budgetGuess = Math.min(Math.max(1, params.budget ?? deps.config.computer?.budget ?? DEFAULT_TASK_BUDGET), MAX_TASK_BUDGET)
       const watcherMaxSeconds = Math.min(3600, Math.max(600, budgetGuess * 130 + 900))
       uiaWatcher = await deps.uiaWatcherFactory({ hwnd, pid: targetPid }, { maxSeconds: watcherMaxSeconds })
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       uiaWatchStarted = true
       log("computer.uia.watch_started", { taskId, pid: targetPid, maxSeconds: watcherMaxSeconds })
     } catch (err) {
@@ -525,7 +535,7 @@ export async function runComputerTask(
     }
   }
 
-  try { deps.readScope?.assertCurrent() } catch (error) { return fail(error as ComputerError) }
+  try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
 
   // Y6 (WP3): L1 availability probe for the locate chain — the former
   // "dead" Locator.ensureLanguage interface now has its caller. Cached per
@@ -601,6 +611,7 @@ export async function runComputerTask(
 
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
+    assertObservationCurrent()
     if (!vaultBrowserOneShot && deps.maximumDesktop?.current() &&
         (!dangerous.includes("computer.main_model_suggestion") || deps.inspectDesktop?.automatic === true && deps.inspectDesktop.current())) {
       log("computer.task.reconfirm.auto_approved", { taskId, tags: dangerous, app: params.app, reason_skip: "desktop_maximum" })
@@ -715,7 +726,7 @@ export async function runComputerTask(
     const assertCurrent = () => {
       const aborted = deps.abortCheck?.()
       if (aborted) throw abortChannelError(aborted, "computer: stopped during model observation")
-      deps.readScope?.assertCurrent()
+      assertObservationCurrent()
       if (!deps.inspectDesktop?.current() || assertCoordinateAllowed(currentConfig(), params.app) !== owner) {
         throw new ComputerError("APP_NOT_WHITELISTED", "computer: application authorization changed during observation")
       }
@@ -742,7 +753,7 @@ export async function runComputerTask(
     const startedAt = now()
 
     // WP2 (§E.6): emergency stop — polled before EVERY action of any kind.
-    try { deps.readScope?.assertCurrent() } catch (error) { return fail(error as ComputerError) }
+    try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
     const abortedAtTop = deps.abortCheck?.() ?? null
     if (abortedAtTop) {
       log("computer.task.aborted", { taskId, seq, channel: abortedAtTop })
@@ -770,10 +781,10 @@ export async function runComputerTask(
     }
     if (action.action === "screenshot" || action.action === "describe") {
       try {
-        deps.readScope?.assertCurrent()
+        assertObservationCurrent()
         deps.beforeReadCapture?.()
         const shot = await trackCapture(hwnd, true)
-        deps.readScope?.assertCurrent()
+        assertObservationCurrent()
         const observation = observationFields(shot)
         // R2: read-only frames go through the same credential-neighborhood
         // scan as injection frames — the evidence chain must never persist an
@@ -781,7 +792,7 @@ export async function runComputerTask(
         // for BOTH actions (screenshot too); a missing language pack fails
         // closed, same as the injection paths.
         const ocrRes = await deps.locator.ocr(shot.path)
-        deps.readScope?.assertCurrent()
+        assertObservationCurrent()
         const wholeImg: RectPx = { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
         const blur = scanDanger(ocrRes.words, wholeImg, REGION_CROP_SIZE).credentialRects
         deps.readScope?.credential(blur.length > 0)
@@ -807,7 +818,7 @@ export async function runComputerTask(
             /* degrade to no image */
           }
         }
-        deps.readScope?.assertCurrent()
+        assertObservationCurrent()
         if (action.action === "screenshot" && deps.inspectDesktop) {
           const description = await inspectFrame(shot, ocrRes, previewImage)
           const observationText = description
@@ -816,10 +827,11 @@ export async function runComputerTask(
           untrustedText = [untrustedText, observationText].filter(Boolean).join("\n")
         }
         await evidence.sealScreenshot(shot.path, seq, "before", blur)
-        deps.readScope?.assertCurrent()
+        assertObservationCurrent()
         sealConsumed(shot.path)
-        steps.push({ seq, action: action.action, ok: true, ...observation, ...(untrustedText !== undefined ? { untrustedText } : {}) })
         await evidence.appendAction({ seq, action: action.action, ...observation, crossverified: true, uncrossverified: false, durationMs: now() - startedAt })
+        assertObservationCurrent()
+        steps.push({ seq, action: action.action, ok: true, ...observation, ...(untrustedText !== undefined ? { untrustedText } : {}) })
         emit({
           event: "step",
           taskId,
@@ -1854,6 +1866,7 @@ export async function runComputerTask(
     /* best-effort — the ps1 self-destructs at -MaxSeconds regardless */
   }
   await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions, uiaWatcher: uiaWatcherLiveness() })
+  try { assertObservationCurrent() } catch (error) { return fail(error as ComputerError) }
   if (cacheVisualProbeAfterTask && deps.currentConfig?.().apps?.entries?.[entry.token] === entry) {
     try { cacheVisualProbeAfterTask() } catch { /* optional UIA cache */ }
   }

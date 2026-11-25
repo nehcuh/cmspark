@@ -687,7 +687,7 @@ export class MacInputInjector implements InputInjector {
     ]
     let stdout: string
     try {
-      stdout = await spawnHostBin(resolveHostBinary(), args, { timeoutMs: 8000 })
+      stdout = await this.runInput(args, 8000)
     } catch (err) {
       return { ok: false, reason: "method_failed", detail: String((err as Error)?.message ?? err).slice(0, 300) }
     }
@@ -812,18 +812,22 @@ export class MacInputInjector implements InputInjector {
     }
   }
 
-  private async inject(args: string[], timeoutMs: number): Promise<void> {
+  private async runInput(args: string[], timeoutMs: number): Promise<string> {
     this.assertInputActive()
-    if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
-    const pending = spawnHostBin(resolveHostBinary(), ["inject", ...args], { timeoutMs })
+    const pending = spawnHostBin(resolveHostBinary(), args, { timeoutMs })
     this.inputDrain = pending.then(() => {}, () => {})
+    try { return await pending }
+    finally { this.inputDrain = undefined }
+  }
+
+  private async inject(args: string[], timeoutMs: number): Promise<void> {
+    if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
     let stdout: string
     try {
-      stdout = await pending
+      stdout = await this.runInput(["inject", ...args], timeoutMs)
     } catch (err) {
+      if (err instanceof ComputerError) throw err
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
-    } finally {
-      this.inputDrain = undefined
     }
     checkOk(parseComputerJson(stdout, "inject"), "inject")
   }

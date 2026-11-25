@@ -44,7 +44,7 @@ export function DesktopMaximumDialog({ onClose }: { onClose(): void }) {
     panelStyle={{ background: tokens.bgElevated, color: tokens.text, padding: 16, borderRadius: 12, lineHeight: 1.55, maxHeight: "85vh", overflow: "auto", overflowWrap: "anywhere" }}>
     <strong>桌面最大权限</strong>
     {active ? <p role="status">已授权至 {new Date(state.desktopMaximumExpiresAt!).toLocaleTimeString()}。解除会停止正在执行的桌面操作。</p> : <>
-      <p>允许当前侧栏的普通对话自动启动、查看、点击和键入这些应用。操作可能修改文件或提交表单，执行前不会逐步预览。</p>
+      <p>允许本次扩展连接下的所有普通对话（包括新建对话）自动启动、查看、点击和键入以下应用。操作可能修改文件或提交表单，执行前不会逐步预览。</p>
       {offer ? (offer.apps.length ? <ul>{offer.apps.map(app => <li key={app.token}>{app.name}（{app.token}）</li>)}</ul>
         : <p>请先在“应用”中开启电脑操控，并授权至少一个应用。</p>) : !error && <p role="status">正在读取已授权应用…</p>}
       {offer?.receiver && <label><input type="checkbox" checked={images} onChange={e => setImages(e.target.checked)} /> 同时允许把目标窗口图发给 {offer.receiver.model}（{offer.receiver.endpoint}），并自动执行模型建议的点击。窗口图可能包含私人内容，模型也可能点错。</label>}

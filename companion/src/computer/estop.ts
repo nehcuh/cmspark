@@ -1,3 +1,4 @@
+import { logger } from "../logger"
 // Emergency-stop preflight + flag paths (WP2, plan §E.6).
 //
 // Three abort channels:
@@ -145,6 +146,16 @@ export function clearEstopFlag(deps: EstopCheckDeps = {}): void {
     fsOf(deps).rmSync(estopFlagPath(deps.dir), { force: true })
   } catch {
     /* best-effort */
+  }
+}
+
+/** The input and UIA scripts poll this same file before posting and during typing. */
+export function requestEstopFlag(dir?: string): void {
+  try { fs.writeFileSync(estopFlagPath(dir), "", { flag: "wx", mode: 0o600 }) }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+      logger.warn("computer.estop.flag_write_failed", { code: (err as NodeJS.ErrnoException).code })
+    }
   }
 }
 

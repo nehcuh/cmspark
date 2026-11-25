@@ -2426,24 +2426,11 @@ func cuOCR(imagePath: String, languages: [String]) -> String {
     return cuJson(["ok": true, "language": languages.first ?? "en-US", "words": words])
 }
 
-/// Dual-post an event: SkyLight per-PID (Chrome renderer path) + HID tap
-/// (AppKit / Electron / WeChat / NetEase path). User test #i4x6pm: SkyLight
-/// alone returned ok:true with verified pixel noise but UI never changed.
-/// HID requires Accessibility for CMspark; activate first so frontmost
-/// under the cursor is the target.
+/// Keyboard pairs and the background click route are sent only to the target PID.
 @inline(__always)
-func postEventDual(_ event: CGEvent, pid: pid_t, useHid: Bool) -> Bool {
-    // SkyLight path: pin to target PID (may be ignored by WeChat/NetEase).
+func postEventToOwnedPid(_ event: CGEvent, pid: pid_t) -> Bool {
     event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-    let skyOk = slPostToPid(pid, event)
-    if useHid {
-        // HID path: clear process pin so the event routes like a real device
-        // event to the frontmost window under the cursor (after activate).
-        event.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
-        event.post(tap: .cghidEventTap)
-    }
-    // Success if either path is available. SkyLight false + HID still ok.
-    return skyOk || useHid
+    return slPostToPid(pid, event)
 }
 
 // Quartz returns windows front to back. A global mouse event is safe only
@@ -2523,7 +2510,7 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
                 event.post(tap: .cghidEventTap)
                 return true
             }
-            return postEventDual(event, pid: pid, useHid: false)
+            return postEventToOwnedPid(event, pid: pid)
         }
         if stopped() { return stopError() }
         guard canLand() else { return cuError("Target does not own click point", code: "CLICK_OCCLUDED") }
@@ -2566,10 +2553,10 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
             up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
             if stopped() { return stopError() }
             // Both routes can reach the same focused control. Send each key pair once, to its PID.
-            if !postEventDual(down, pid: pid, useHid: false) {
+            if !postEventToOwnedPid(down, pid: pid) {
                 return cuError("keyboard event post failed (SkyLight)", code: "SKYLIGHT_POST_FAILED")
             }
-            _ = postEventDual(up, pid: pid, useHid: false)
+            _ = postEventToOwnedPid(up, pid: pid)
             usleep(30000)
         }
         if stopped() { return stopError() }
@@ -2602,25 +2589,39 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
             down.flags = flags
             up.flags = flags
             if stopped() { return stopError() }
-            if !postEventDual(down, pid: pid, useHid: false) {
+            if !postEventToOwnedPid(down, pid: pid) {
                 return cuError("keyboard event post failed (SkyLight)", code: "SKYLIGHT_POST_FAILED")
             }
-            _ = postEventDual(up, pid: pid, useHid: false)
+            _ = postEventToOwnedPid(up, pid: pid)
             usleep(30000)
         }
         if stopped() { return stopError() }
         return cuJson(["ok": true, "action": "key", "chord": ch, "delivery": "skylight"])
 
     case "scroll":
-        guard let d = delta else { return cuError("scroll requires --delta") }
+        guard let d = delta, let px = x, let py = y,
+              let origin = cuClientOriginScreen(windowId: windowId) else { return cuError("scroll requires a live window, --x, --y and --delta") }
+        let point = CGPoint(x: origin.x + CGFloat(px), y: origin.y + CGFloat(py))
         guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) else {
             return cuError("CGEvent scroll construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
         if stopped() { return stopError() }
-        if !postEventDual(ev, pid: pid, useHid: useHid) {
-            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        guard cuClickPointOwned(point, windowId: windowId, pid: pid) else {
+            return cuError("scroll point is outside the visible target window", code: "CLICK_OCCLUDED")
         }
-        return cuJson(["ok": true, "action": "scroll", "delta": d, "delivery": useHid ? "skylight+hid" : "skylight"])
+        ev.location = point
+        // AppKit routes scrolling to the physical pointer even when the event carries a location.
+        if useHid && CGWarpMouseCursorPosition(point) != .success {
+            return cuError("could not position the scroll pointer", code: "CLICK_OCCLUDED")
+        }
+        guard let cursor = CGEvent(source: nil)?.location,
+              hypot(cursor.x - point.x, cursor.y - point.y) <= 1,
+              cuClickPointOwned(cursor, windowId: windowId, pid: pid) else {
+            return cuError("scroll pointer did not land in the target window", code: "CLICK_OCCLUDED")
+        }
+        if stopped() { return stopError() }
+        if useHid { ev.post(tap: .cghidEventTap) } else { ev.postToPid(pid) }
+        return cuJson(["ok": true, "action": "scroll", "delta": d, "delivery": useHid ? "hid" : "pid"])
 
     default:
         return cuError("unknown inject action: \(action)")

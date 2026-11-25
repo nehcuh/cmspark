@@ -51,7 +51,9 @@ async function prompt(mode: "capture" | "success" | "no_window" | "unattempted" 
     await actualRemove(target, options)
     if (target === raw) didRemove()
   })
-  mock.method(MacWindowEnumerator.prototype, "enumerateByExe", async () => mode === "no_window" ? [] : [{ hwnd: 7, pid: 9, title: "private title", rect: { x: 0, y: 0, width: 100, height: 100 } }])
+  const window = { hwnd: 7, pid: 9, alive: true, exePath: "example.preview532", title: "private title", rect: { x: 0, y: 0, width: 100, height: 100 } }
+  mock.method(MacWindowEnumerator.prototype, "enumerateByExe", async () => mode === "no_window" ? [] : [window])
+  mock.method(MacWindowEnumerator.prototype, "infoForHwnd", async () => window)
   let releaseCapture!: () => void
   const delayedCapture = new Promise<void>(resolve => { releaseCapture = resolve })
   if (mode === "timeout") {

@@ -37,7 +37,7 @@ import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { SecurityConfirmationManager } from "../security-confirmation"
 import type { InjectionRateLimiter } from "../computer/rate-limit"
-import { requestComputerTaskAbort, registerComputerInputStop, onComputerTaskAbort } from "../computer/task-abort-registry"
+import { requestComputerTaskAbort, registerNativeInputStop, onComputerTaskAbort } from "../computer/task-abort-registry"
 import { gateHostComputerFocusLease, releaseCuFocusLease } from "../loop/cu-focus-lease"
 import { proposeRunProgress } from "../threads/run-progress"
 import { acpSessionLookupFailure, currentAcpSessions } from "../acp/session-recovery"
@@ -2245,13 +2245,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           const macSealer = new MacEvidenceSealer()
           const macInjector = new MacInputInjector(
             darwinEstop.estopFlagPath(),
-            () => computerTaskAbort.get(computerTaskId) === true,
+            () => computerTaskAbort.get(computerTaskId) === true || !!maximum && !maximum.current(),
           )
-          unregisterInputStop = registerComputerInputStop(computerTaskId, () => {
-            const drain = macInjector.pendingInput()
-            if (drain) darwinEstop.requestEstopFlag()
-            return drain
-          })
+          unregisterInputStop = registerNativeInputStop(computerTaskId, macInjector, darwinEstop.requestEstopFlag)
 
           result = await runComputerTask(
             {
@@ -2311,7 +2307,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
           // come up: an injection loop with no kill switch must never run.
           // WINDOWS-ONLY: macOS runs the darwin-estop preflight in its branch
           // above; the ps1 helper must never be spawned off-win32.
-          const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath, estopHeartbeatLost } = await import("../computer/estop")
+          const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, requestEstopFlag, estopFlagPath, estopHeartbeatLost } = await import("../computer/estop")
           const estop = computerEstopEnsureOverride ? await computerEstopEnsureOverride() : await ensureEstopHelper()
           if (!estop.ok) {
             logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: estop.reason })
@@ -2340,6 +2336,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               logger.info("computer.temp.swept", { removed: swept.removed.length })
             }
           } catch { /* best-effort */ }
+          const winInjector = new PsInputInjector(undefined, estopFlagPath(), () =>
+            computerTaskAbort.get(computerTaskId) === true || !!maximum && !maximum.current())
+          unregisterInputStop = registerNativeInputStop(computerTaskId, winInjector, requestEstopFlag)
           const sealer = new PsEvidenceSealer()
           result = await runComputerTask(
             {
@@ -2352,7 +2351,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
             {
               capturer: new PsScreenCapturer(),
               locator: new PsLocator(),
-              injector: new PsInputInjector(undefined, estopFlagPath()),
+              injector: winInjector,
               windows: new PsWindowEnumerator(),
               securityEnv: new PsSecurityEnvironment(),
               uiaLocator: new PsUiaLocator(),
@@ -2391,6 +2390,9 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
               },
             },
           )
+        }
+        if (maximum && !maximum.current() && result.success) {
+          return { success: false, error: "Desktop authorization ended", data: { error_code: "TASK_ABORTED" } }
         }
         if (!result.success) {
           return {

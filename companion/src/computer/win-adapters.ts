@@ -459,7 +459,19 @@ export class PsInputInjector implements InputInjector {
   constructor(
     private runner: PsRunner = runPs,
     private stopFile?: string,
+    private inputAborted: () => boolean = () => false,
   ) {}
+
+  private inputDrain?: Promise<void>
+  pendingInput() { return this.inputDrain }
+
+  private async runInput(...args: Parameters<PsRunner>): Promise<string> {
+    if (this.inputAborted()) throw new ComputerError("TASK_ABORTED", "STOPPED: desktop input was revoked")
+    const pending = this.runner(...args)
+    this.inputDrain = pending.then(() => {}, () => {})
+    try { return await pending }
+    finally { this.inputDrain = undefined }
+  }
 
   private withStop(args: string[]): string[] {
     return this.stopFile ? [...args, "-StopFile", this.stopFile] : args
@@ -467,7 +479,7 @@ export class PsInputInjector implements InputInjector {
 
   async click(hwnd: number, x: number, y: number, kind: "click" | "double_click" | "right_click"): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", kind,
         "-X", String(Math.round(x)),
@@ -523,7 +535,7 @@ export class PsInputInjector implements InputInjector {
       const selectedText = await this.runner(resolveWinScript("computer-uia-select.ps1"), this.withStop(args), { timeoutMs: remaining() })
       const selected = parseUiaSelection572(selectedText, hwnd, mode, opts.value, opts.expectControlType, opts.expectAutomationId)
       // Sequential direct children; neither script spawns another PowerShell.
-      stdout = await this.runner(resolveWinScript("computer-uia-act.ps1"), this.withStop([
+      stdout = await this.runInput(resolveWinScript("computer-uia-act.ps1"), this.withStop([
         ...args, "-SelectionJson", JSON.stringify(selected),
         "-NoFocusLibrary", resolveComputerUiaNoFocusDll(),
       ]), { timeoutMs: remaining() })
@@ -562,7 +574,7 @@ export class PsInputInjector implements InputInjector {
   async typeText(hwnd: number, text: string): Promise<void> {
     try {
       // argv-only: the text travels as an argv element, never interpolated.
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "type",
         "-Text", text,
@@ -574,7 +586,7 @@ export class PsInputInjector implements InputInjector {
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "key",
         "-Keys", keys.join(","),
@@ -586,7 +598,7 @@ export class PsInputInjector implements InputInjector {
 
   async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "scroll",
         "-X", String(Math.round(x)),
@@ -600,7 +612,7 @@ export class PsInputInjector implements InputInjector {
 
   async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
+      await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "drag",
         "-X", String(Math.round(x)),
@@ -623,11 +635,11 @@ export class PsInputInjector implements InputInjector {
     // input injection. Best-effort: any failure (dead hwnd, foreground lock)
     // resolves false so the executor falls back to the re-L2 pause.
     try {
-      const stdout = await this.runner(resolveWinScript("computer-input.ps1"), [
+      const stdout = await this.runInput(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "click", // required by param() but unused in force-fg mode
         "-Mode", "force-fg",
-      ])
+      ]))
       const parsed = parsePsJson<{ foreground?: boolean }>(stdout, "inject.force-fg")
       return parsed.foreground === true
     } catch {
