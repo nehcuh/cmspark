@@ -1816,7 +1816,7 @@ export function validateWsMessage(msg: any, rawBytes?: number): WsValidationResu
     "computer.maximum.get": () => ({ valid: true }),
     "computer.maximum.review": () => ({ valid: true }),
     "computer.maximum.revoke": () => ({ valid: true }),
-    "computer.maximum.arm": m => ({ valid: typeof m.review_id === "string" && typeof m.images === "boolean" && typeof m.confirmation_phrase === "string" }),
+    "computer.maximum.arm": (m) => ({ valid: typeof m.review_id === "string" && typeof m.images === "boolean" && typeof m.confirmation_phrase === "string" }),
     "security.unattended.status": () => ({ valid: true }),
     "security.unattended.arm": (m) => {
       if (m.confirmation_phrase === undefined) {
