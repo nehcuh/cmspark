@@ -58,7 +58,7 @@ import {
   assertExeNotDrifted,
   assertHwndOwnedByEntry,
   isVaultBrowserEntry,
-  isCompanionCockpitWindow,
+  selectComputerWindow,
   normalizeExePath,
 } from "./policy"
 import { isCompanionUiOwner } from "./self-ui"
@@ -428,25 +428,14 @@ export async function runComputerTask(
       throw new ComputerError("APP_NOT_WHITELISTED",
         `computer: no bundleId or exe path for "${entry.display_name}"`)
     }
-    const wins = (await deps.windows.enumerateByExe(exeId)).filter(w => !isCompanionCockpitWindow(w))
+    const win = selectComputerWindow(await deps.windows.enumerateByExe(exeId))
     deps.readScope?.assertCurrent()
-    if (wins.length === 0) {
+    if (!win) {
       throw new ComputerError("COMPUTER_WINDOW_ABSENT", `computer: no visible window for "${entry.display_name}" — is it running?`)
     }
-    // Prefer real UI windows: titled, on-screen, non-menu-strip. WeChat/Electron
-    // expose many empty-name aux layers (500×500 panels, 1728×33 bars); pure
-    // area sort picked those and screenshot failed (pgvexn windowId 3866).
-    const score = (w: { title: string; rect: { x: number; y: number; width: number; height: number } }) => {
-      const area = Math.max(0, w.rect.width) * Math.max(0, w.rect.height)
-      const named = (w.title || "").trim().length > 0 ? 1_000_000_000 : 0
-      const notStrip = w.rect.height >= 80 && w.rect.width >= 80 ? 100_000_000 : 0
-      const onscreen = w.rect.y >= -20 && w.rect.x > -5000 ? 10_000_000 : 0
-      return named + notStrip + onscreen + area
-    }
-    wins.sort((a, b) => score(b) - score(a))
-    hwnd = wins[0].hwnd
-    targetPid = wins[0].pid
-    assertHwndOwnedByEntry(wins[0], entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
+    hwnd = win.hwnd
+    targetPid = win.pid
+    assertHwndOwnedByEntry(win, entry, { allowVaultBrowserOneShot: vaultBrowserOneShot })
   } catch (err) {
     return fail(err instanceof ComputerError ? err : new ComputerError("APP_WINDOW_NOT_FOUND", String((err as Error)?.message ?? err)))
   }

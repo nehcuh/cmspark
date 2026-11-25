@@ -23,6 +23,19 @@ export function isCompanionCockpitWindow(info: Pick<WindowInfo, "title">, platfo
   return info.title === COMPUTER_COCKPIT_TITLE || info.title.startsWith(COMPUTER_COCKPIT_TITLE + " - ")
 }
 
+/** Choose the same document window for the confirmation preview and input.
+ * AppKit can also list larger, untitled system panels owned by the same app. */
+export function selectComputerWindow(windows: WindowInfo[]): WindowInfo | undefined {
+  const score = (w: WindowInfo) => {
+    const area = Math.max(0, w.rect.width) * Math.max(0, w.rect.height)
+    const named = (w.title || "").trim().length > 0 ? 1_000_000_000 : 0
+    const notStrip = w.rect.height >= 80 && w.rect.width >= 80 ? 100_000_000 : 0
+    const onscreen = w.rect.y >= -20 && w.rect.x > -5000 ? 10_000_000 : 0
+    return named + notStrip + onscreen + area
+  }
+  return windows.filter(w => !isCompanionCockpitWindow(w)).sort((a, b) => score(b) - score(a))[0]
+}
+
 /**
  * macOS vault bundle IDs — structural exclusion set (WP3 + adversarial review H6).
  * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed

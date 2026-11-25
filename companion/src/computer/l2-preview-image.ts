@@ -1,6 +1,5 @@
 import { clientToImage } from "./coords"
-import * as os from "os"
-import { isCompanionCockpitWindow } from "./policy"
+import { isCompanionCockpitWindow, selectComputerWindow } from "./policy"
 import { observationMarker } from "./observation"
 // WP4(WI-2):任务级 L2 标注截图 helper。
 //
@@ -106,15 +105,13 @@ export async function buildComputerL2PreviewImage(
     let rawPath: string | null = null
     let failureReason: PreviewUnavailableReason = "target_unavailable"
     try {
-      // hwnd 解析(与 executor 同一规则:目标 exe 的最大可见窗口)。
       const enumerated = await deps.windows.enumerateByExe(opts.exePath)
-      const wins = Array.isArray(enumerated) ? enumerated.filter(w => !isCompanionCockpitWindow(w)) : []
-      if (!Array.isArray(wins) || wins.length === 0) return { unavailable: "target_unavailable" }
-      const win = [...wins].sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)[0]
-      // Independent preview selection must not reintroduce the same cockpit.
-      if (os.platform() === "win32") {
-        const current = await deps.windows.infoForHwnd(win.hwnd)
-        if (current.hwnd !== win.hwnd || isCompanionCockpitWindow(current)) return { unavailable: "target_unavailable" }
+      const win = Array.isArray(enumerated) && selectComputerWindow(enumerated)
+      if (!win) return { unavailable: "target_unavailable" }
+      const current = await deps.windows.infoForHwnd(win.hwnd)
+      if (!current.alive || current.hwnd !== win.hwnd || current.pid !== win.pid ||
+          current.exePath !== win.exePath || isCompanionCockpitWindow(current)) {
+        return { unavailable: "target_unavailable" }
       }
       // 截图(raw 帧立即纳入追踪)。
       failureReason = "capture_failed"
