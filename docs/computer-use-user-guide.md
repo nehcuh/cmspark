@@ -1,7 +1,7 @@
 # Computer Use 使用说明
 
 > **面向使用者**：如何开启桌面坐标操控、确认台里怎么批/急停、session-trust 是什么、平台与限制。  
-> **适用版本**：以 1.9.1 为基线的开发分支。新增设置入口及修复见 [#906](https://github.com/nehcuh/cmspark/issues/906)。已发行的 1.9.1 可直接从底栏「应用」进入。
+> **适用版本**　1.10.0。可从底栏「应用」进入，或在设置的「工具与集成」中打开桌面操作。[版本与验收范围](release-status.md)
 > **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md) · **Host / Apps**：[host-and-apps.md](host-and-apps.md)  
 > **过程史（非规范）**：[decisions/coordinate-computer-use-plan.md](decisions/coordinate-computer-use-plan.md)
 

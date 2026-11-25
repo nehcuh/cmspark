@@ -8,9 +8,11 @@
 
 `chrome-extension/tests/vision-reuse-toggle-904.test.ts` 覆盖偏好归一化及能力覆盖、精确端点探测。先编译 Companion 测试，再在 `chrome-extension/` 执行 `uv run --no-project --with playwright python scripts/test-vision-reuse-ui.py`，验证真实 App 和本机 Web 页在 390px／1440px 下的置灰、独立配置保留、模型切换、用途摘要、保存及测试连接请求。该浏览器夹具使用合成传输，不读写用户配置，不代表真实模型识别效果验收。
 
-## 活状态（2026-11-24）
+## 活状态（2026-11-25）
 
-产品版本 **1.9.1**（已于 2026-11-24 正式发布；交付证据见[发行回执](release-status.md#191-正式发布)）。此前 1.0.1 文档核对基线是 `16f3048b9b83b813648830517d0a1bd9994bf564`。Node 要求看 `companion/package.json` 与仓库根 `package.json` 的 `engines.node`（`>=22.23.4 <23`）。CI 固定版本看 `.github/workflows/ci.yml` 的 `node-version`（`22.23.4`）。`chrome-extension/package.json` 没有单独的 `engines` 字段。
+产品版本 **1.10.0** 已于 2026-11-25 正式发布。[发行回执](release-status.md#1100-正式发布)
+
+此前 1.0.1 文档核对基线是 `16f3048b9b83b813648830517d0a1bd9994bf564`。Node 要求看 `companion/package.json` 与仓库根 `package.json` 的 `engines.node`（`>=22.23.4 <23`）。CI 固定版本看 `.github/workflows/ci.yml` 的 `node-version`（`22.23.4`）。`chrome-extension/package.json` 没有单独的 `engines` 字段。
 
 在仓库根执行下面两条命令。现行 `*.test.ts` 数以命令结果为准。口径是对应目录中文件名匹配 `*.test.ts` 的个数。`*.test.mjs`、`*.test.js` 和 `scripts/tests` 另计。该文件数也不同于 `node:test` 跑出来的用例条数。
 
@@ -18,6 +20,8 @@
 find companion/tests -name '*.test.ts' | wc -l
 find chrome-extension/tests -name '*.test.ts' | wc -l
 ```
+
+1.10.0 发行提交 `9befde2b` 中，按同一口径数到 Companion **781**、扩展 **234** 个测试文件。
 
 2026-11-16 在上述基线上按该口径数到 Companion **761**、扩展 **211**。这是当天快照，以后以命令结果为准。
 

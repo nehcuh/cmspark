@@ -1,10 +1,18 @@
 # 版本与交付状态
 
-源码开发版本 **1.10.0（尚未正式发布）**。当前正式安装包见 [v1.9.1](https://github.com/nehcuh/cmspark/releases/tag/v1.9.1)。
+源码版本 **1.10.0（已于 2026-11-25 正式发布）**。当前正式安装包见 [v1.10.0](https://github.com/nehcuh/cmspark/releases/tag/v1.10.0)。
 
-## 1.10.0 发布准备
+## 1.10.0 正式发布
 
 自研电脑操控、可选主模型视觉与桌面最大权限的变更已在 macOS 和 Windows 登录桌面实测。Windows 记录包含表单提交、输入中途急停、后台 UIA、单帧图像授权及安装包核验。本版沿用 v1.9.1 的发布签名方式。干净 macOS 用户首次安装、同一 Developer ID 签名的两个版本原位覆盖升级仍待验。[Windows 记录](audit/reviews/native-computer-windows-20261125.md) · [macOS 记录](audit/reviews/native-computer-macos-paired-20261125.md)
+
+2026-11-25 15:23:13（北京时间）正式发布。标签 `v1.10.0` 指向 `9befde2bc6de2e974542e74f5e01e5365e75e032`，完整 Git 树为 `a1c91c1eccc386969530f3a4257cdb51dbaf558c`。
+
+发行源的[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/45562454456)、[Linux ARM 集成](https://github.com/nehcuh/cmspark/actions/runs/45562454443)、[ARM 验收](https://github.com/nehcuh/cmspark/actions/runs/45562454407)、[Windows 会话恢复](https://github.com/nehcuh/cmspark/actions/runs/45562454483)通过。同提交的[三平台发布预演](https://github.com/nehcuh/cmspark/actions/runs/45562499063)与[安装器预演](https://github.com/nehcuh/cmspark/actions/runs/45562511771)通过。
+
+[正式 Release 构建](https://github.com/nehcuh/cmspark/actions/runs/45565851595)与[同标签安装器构建](https://github.com/nehcuh/cmspark/actions/runs/45565857159)通过。补齐任务重新下载 19 项公开附件，逐件核对字节数与 SHA-256。公开资产与任务回执逐项一致。全量清单的 18 条记录与其余 18 项附件的公开摘要一致，清单自身也通过摘要核对。[补齐与校验记录](https://github.com/nehcuh/cmspark/actions/runs/45567809159)
+
+Windows x64 正式 Setup 与 ZIP 的下载大小、SHA-256 均与 GitHub 一致。ZIP 中 6,617 个有效负载文件与 Setup 中的同名文件逐项相同，包内 CLI 返回 `cmspark-agent v1.10.0`。核验使用隔离解包副本，Windows 原位覆盖安装仍待验。[Windows 验收与正式文件摘要](audit/reviews/native-computer-windows-20261125.md)
 
 ## 1.9.1 正式发布
 
