@@ -6,6 +6,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import * as os from "os"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 
 import { runComputerTask, type ComputerExecutorDeps } from "../src/computer/executor"
 import { PsInputInjector, PsLocator } from "../src/computer/win-adapters"
@@ -1670,6 +1672,64 @@ test("Windows type recovery honors the native posted prefix before sending the w
     assert.equal(result.errorCode, error, stderr)
     assert.equal(calls, error ? 1 : 2, stderr)
     assert.equal(raises, error ? 0 : 1, stderr)
+  }
+})
+
+test("Windows type does not replay after an unreceipted native exit or termination", async () => {
+  for (const termination of ["exit", "signal", "timeout"] as const) {
+    const injector = new RecordingInjector()
+    let field = "", calls = 0, raises = 0
+    const windows = new PsInputInjector(async () => {
+      if (++calls !== 1) { field += "pad"; return '{"ok":true}' }
+      // A private child publishes its first character, then exits without the
+      // PS delivery receipt. Use the same promisified execFile error as runPs.
+      const ending = termination === "exit" ? "process.exitCode = 7" : "setInterval(() => {}, 1000)"
+      const pending = promisify(execFile)(process.execPath, ["-e", 'process.stdout.write("p");' + ending],
+        { encoding: "utf8", windowsHide: true, timeout: termination === "timeout" ? 100 : 15000 })
+      pending.child.stdout!.on("data", chunk => {
+        field += chunk
+        if (termination === "signal") pending.child.kill()
+      })
+      await pending
+      throw new Error("private child unexpectedly succeeded")
+    })
+    injector.typeText = windows.typeText.bind(windows)
+    injector.forceForeground = async () => { raises++; return true }
+    const result = await runComputerTask({
+      task: "fill the fixture", app: "win.app.test", actions: [{ action: "type", text: "pad" }],
+    }, makeDeps({ injector }))
+    // A heavily loaded host may hit the timeout before the test child runs.
+    // Both partial and zero delivery are consistent with an absent receipt.
+    if (termination === "timeout") assert.ok(field === "" || field === "p")
+    else assert.equal(field, "p", termination)
+    assert.equal(result.errorCode, "INJECT_FAILED", termination)
+    assert.equal(calls, 1); assert.equal(raises, 0)
+  }
+})
+
+test("Windows type recovery still retries a native zero-delivery receipt or a failed spawn", async () => {
+  for (const reason of ["zero", "no-child"] as const) {
+    const injector = new RecordingInjector()
+    let calls = 0, raises = 0
+    const windows = new PsInputInjector(async () => {
+      if (++calls === 1) {
+        if (reason === "no-child") {
+          await promisify(execFile)(__filename + ".missing-exe", [], { encoding: "utf8", windowsHide: true })
+        } else {
+          await promisify(execFile)(process.execPath, ["-e", 'process.stderr.write("SENDFAILED:SendInput delivered 0/2 events at char 0");process.exitCode=9'],
+            { encoding: "utf8", windowsHide: true })
+        }
+        throw new Error("expected a failed command")
+      }
+      return '{"ok":true}'
+    })
+    injector.typeText = windows.typeText.bind(windows)
+    injector.forceForeground = async () => { raises++; return true }
+    const result = await runComputerTask({
+      task: "fill the fixture", app: "win.app.test", actions: [{ action: "type", text: "pad" }],
+    }, makeDeps({ injector }))
+    assert.equal(result.success, true, reason)
+    assert.equal(calls, 2); assert.equal(raises, 1)
   }
 })
 

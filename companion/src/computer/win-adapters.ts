@@ -64,30 +64,46 @@ const PS_ERROR_CODES: Record<string, import("./types").ComputerErrorCode> = {
  */
 const PS_ERR_LINE = /^[A-Z][A-Z0-9_]{3,}:/
 
-/** These two computer-input.ps1 type failures report how far SendInput got. */
-function hasPostedTypeInput(prefix: string, detail: string, length: number): boolean {
+/** A type failure may prove zero delivery, a posted prefix, or neither. */
+function typeInputPosted(prefix: string, detail: string, length: number): boolean | undefined {
+  if (["HWNDDEAD", "ILDENIED", "DESKTOPDENIED", "BADARGS"].includes(prefix)) return false
   if (prefix === "FOCUSLOST") {
+    if (detail.startsWith("SetForegroundWindow failed after 3 attempts")) return false
     const counts = /^foreground hwnd changed after (\d+)\/(\d+) chars$/.exec(detail)
-    return !!counts && Number(counts[2]) === length && Number(counts[1]) > 0 && Number(counts[1]) < length
+    if (counts && Number(counts[2]) === length && Number(counts[1]) < length) return Number(counts[1]) > 0
+  } else if (prefix === "SENDFAILED") {
+    if (/^type text is \d+ chars — exceeds the 2000-char cap \(X4\)$/.test(detail) ||
+        /^estimated inject time \d+ms exceeds the 120s hard cap \(X4\)$/.test(detail)) return false
+    const counts = /^SendInput delivered ([01])\/2 events at char (\d+)$/.exec(detail)
+    if (counts && Number(counts[2]) < length) return Number(counts[2]) > 0 || counts[1] === "1"
   }
-  if (prefix !== "SENDFAILED") return false
-  const counts = /^SendInput delivered ([01])\/2 events at char (\d+)$/.exec(detail)
-  return !!counts && Number(counts[2]) < length && (Number(counts[2]) > 0 || counts[1] === "1")
+}
+
+/** runPs uses promisified execFile with UTF-8 output. A spawn failure such as
+ * ENOENT never started a producer; an interrupted running child may have typed. */
+function typeProcessExited(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const child = err as import("node:child_process").ExecFileException & { stdout?: unknown; stderr?: unknown }
+  return typeof child.cmd === "string" && typeof child.stdout === "string" && typeof child.stderr === "string" &&
+    (child.killed === true || !!child.signal || (typeof child.code === "number" && child.code !== 0) ||
+      child.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
 }
 
 /** Map a rejected PsRunner call to a typed ComputerError. */
 export function rethrowComputerPsError(err: any, label: string, typeLength?: number): never {
   const stderr = err && typeof err === "object" && "stderr" in err && err.stderr ? String(err.stderr) : ""
   const line = stderr.split(/\r?\n/).find((l) => PS_ERR_LINE.test(l))
-  if (line) {
-    const sep = line.indexOf(":")
-    const prefix = line.slice(0, sep)
-    const detail = line.slice(sep + 1).trim()
-    const code = PS_ERROR_CODES[prefix]
-    if (code) {
-      const posted = typeLength !== undefined && hasPostedTypeInput(prefix, detail, typeLength)
-      throw new ComputerError(code, `computer.${label}: ${detail}`, { psPrefix: prefix, ...(posted && { typeInputPosted: true }) })
-    }
+  const sep = line?.indexOf(":") ?? -1
+  const prefix = line?.slice(0, sep) ?? ""
+  const detail = line?.slice(sep + 1).trim() ?? ""
+  const code = PS_ERROR_CODES[prefix]
+  const posted = typeLength === undefined ? undefined : typeInputPosted(prefix, detail, typeLength)
+  if (typeLength !== undefined && posted === undefined && code !== "TASK_ABORTED" && typeProcessExited(err)) {
+    // execFile's message/cmd includes argv (and the text). Do not echo it.
+    throw new ComputerError(code ?? "INJECT_FAILED", "Windows text input ended without a delivery receipt", { typeDeliveryUnknown: true })
+  }
+  if (code) {
+    throw new ComputerError(code, `computer.${label}: ${detail}`, { psPrefix: prefix, ...(posted && { typeInputPosted: true }) })
   }
   if (stderr.trim()) throw new ComputerError("INJECT_FAILED", `computer.${label}: ${stderr.trim()}`)
   throw err

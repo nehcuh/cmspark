@@ -26,6 +26,22 @@ test("Windows helpers preserve Unicode window titles and restored/maximized geom
   assert.equal(output.trim(), "PASS")
 })
 
+for (const mode of ["unaware", "system", "per-monitor"] as const) {
+  test(`Windows captures ${mode} target pixels at physical window coordinates`, { skip: process.platform !== "win32" }, t => {
+    const fixture = path.resolve(SCRIPTS_DIR, "../../../../tests/fixtures/win/computer-capture-dpi.ps1")
+    const output = execFileSync(resolvePowerShellExe(), [
+      "-MTA", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture,
+      "-Mode", mode, "-Capture", path.join(SCRIPTS_DIR, "computer-capture.ps1"),
+    ], { encoding: "utf8", windowsHide: true, timeout: 15_000 })
+    const proof = JSON.parse(output)
+    assert.equal(proof.mode, mode)
+    assert.ok(proof.width > 0 && proof.height > 0 && proof.targetDpi > 0)
+    assert.equal(proof.activityDpi, mode === "per-monitor" ? proof.targetDpi : 0)
+    if (mode === "unaware") assert.equal(proof.targetDpi, 96)
+    t.diagnostic(JSON.stringify(proof))
+  })
+}
+
 const COMPUTER_PS1 = [
   "computer-input.ps1",
   "computer-estop.ps1",

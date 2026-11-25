@@ -370,7 +370,8 @@ export async function runComputerTask(
   const assertTypeRecoveryCurrent = (error?: unknown) => {
     if (error instanceof ComputerError && error.code === "TASK_ABORTED") throw error
     assertTaskCurrent("input recovery")
-    if (error instanceof ComputerError && error.detail?.typeInputPosted === true) throw error
+    if (error instanceof ComputerError &&
+        (error.detail?.typeInputPosted === true || error.detail?.typeDeliveryUnknown === true)) throw error
   }
 
   const fail = async (err: ComputerError): Promise<ComputerTaskResult> => {
