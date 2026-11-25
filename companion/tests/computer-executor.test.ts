@@ -8,7 +8,7 @@ import assert from "node:assert/strict"
 import * as os from "os"
 
 import { runComputerTask, type ComputerExecutorDeps } from "../src/computer/executor"
-import { PsLocator } from "../src/computer/win-adapters"
+import { PsInputInjector, PsLocator } from "../src/computer/win-adapters"
 import {
   ComputerError,
   type CaptureMeta,
@@ -1607,6 +1607,70 @@ test("executor does not replay a type whose producer may have sent a prefix", as
   }, makeDeps({ injector }))
   assert.equal(result.errorCode, "INJECT_FAILED")
   assert.equal(injector.types.length, 1)
+})
+
+for (const scenario of ["recover", "stop before focus", "stop during focus", "stop during retry"] as const) {
+  test(`type recovery: ${scenario}`, async () => {
+    const injector = new RecordingInjector()
+    let stopped = false
+    let calls = 0
+    let raises = 0
+    injector.typeText = async () => {
+      calls++
+      if (calls === 1) {
+        stopped = scenario === "stop before focus"
+        throw new ComputerError("TYPE_NO_EFFECT", "fixture received no input")
+      }
+      if (scenario === "stop during retry") throw new ComputerError("TASK_ABORTED", "native input stopped")
+    }
+    injector.forceForeground = async () => {
+      raises++
+      stopped = scenario === "stop during focus"
+      return true
+    }
+    const result = await runComputerTask({
+      task: "fill the fixture", app: "win.app.test", actions: [{ action: "type", text: "pad" }],
+    }, makeDeps({ injector, abortCheck: () => stopped ? "panel" : null }))
+    assert.equal(result.success, scenario === "recover")
+    if (scenario !== "recover") assert.equal(result.errorCode, "TASK_ABORTED")
+    assert.equal(raises, scenario === "stop before focus" ? 0 : 1)
+    assert.equal(calls, scenario === "recover" || scenario === "stop during retry" ? 2 : 1)
+  })
+}
+
+test("Windows type recovery honors the native posted prefix before sending the whole text again", async () => {
+  const text = "abcdefghijklmnopqrst"
+  for (const [stderr, prefix, error] of [
+    ["FOCUSLOST:foreground hwnd changed after 16/20 chars", 16, "FOCUS_LOST"],
+    ["SENDFAILED:SendInput delivered 0/2 events at char 3", 3, "INJECT_FAILED"],
+    ["SENDFAILED:SendInput delivered 1/2 events at char 0", 1, "INJECT_FAILED"],
+    ["FOCUSLOST:foreground hwnd changed after 0/20 chars", 0, undefined],
+    ["SENDFAILED:SendInput delivered 0/2 events at char 0", 0, undefined],
+    ["FOCUSLOST:foreground hwnd changed after 16/99 chars", 0, undefined],
+    ["SENDFAILED:no native delivery counts", 0, undefined],
+  ] as const) {
+    let field = "", calls = 0, raises = 0
+    const native = new PsInputInjector(async (_script, args) => {
+      if (args.includes("force-fg")) { raises++; return '{"foreground":true}' }
+      assert.equal(args[args.indexOf("-Text") + 1], text)
+      if (++calls === 1) {
+        field += text.slice(0, prefix)
+        throw { stderr }
+      }
+      field += text
+      return '{"ok":true}'
+    })
+    const injector = new RecordingInjector()
+    injector.typeText = native.typeText.bind(native)
+    injector.forceForeground = native.forceForeground.bind(native)
+    const result = await runComputerTask({
+      task: "fill the fixture", app: "win.app.test", actions: [{ action: "type", text }],
+    }, makeDeps({ injector }))
+    assert.equal(field, error ? text.slice(0, prefix) : text, stderr)
+    assert.equal(result.errorCode, error, stderr)
+    assert.equal(calls, error ? 1 : 2, stderr)
+    assert.equal(raises, error ? 0 : 1, stderr)
+  }
 })
 
 test("executor WP2: abort fires DURING a wait -> TASK_ABORTED, wait step not completed", async () => {

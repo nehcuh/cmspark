@@ -64,8 +64,19 @@ const PS_ERROR_CODES: Record<string, import("./types").ComputerErrorCode> = {
  */
 const PS_ERR_LINE = /^[A-Z][A-Z0-9_]{3,}:/
 
+/** These two computer-input.ps1 type failures report how far SendInput got. */
+function hasPostedTypeInput(prefix: string, detail: string, length: number): boolean {
+  if (prefix === "FOCUSLOST") {
+    const counts = /^foreground hwnd changed after (\d+)\/(\d+) chars$/.exec(detail)
+    return !!counts && Number(counts[2]) === length && Number(counts[1]) > 0 && Number(counts[1]) < length
+  }
+  if (prefix !== "SENDFAILED") return false
+  const counts = /^SendInput delivered ([01])\/2 events at char (\d+)$/.exec(detail)
+  return !!counts && Number(counts[2]) < length && (Number(counts[2]) > 0 || counts[1] === "1")
+}
+
 /** Map a rejected PsRunner call to a typed ComputerError. */
-export function rethrowComputerPsError(err: any, label: string): never {
+export function rethrowComputerPsError(err: any, label: string, typeLength?: number): never {
   const stderr = err && typeof err === "object" && "stderr" in err && err.stderr ? String(err.stderr) : ""
   const line = stderr.split(/\r?\n/).find((l) => PS_ERR_LINE.test(l))
   if (line) {
@@ -73,7 +84,10 @@ export function rethrowComputerPsError(err: any, label: string): never {
     const prefix = line.slice(0, sep)
     const detail = line.slice(sep + 1).trim()
     const code = PS_ERROR_CODES[prefix]
-    if (code) throw new ComputerError(code, `computer.${label}: ${detail}`, { psPrefix: prefix })
+    if (code) {
+      const posted = typeLength !== undefined && hasPostedTypeInput(prefix, detail, typeLength)
+      throw new ComputerError(code, `computer.${label}: ${detail}`, { psPrefix: prefix, ...(posted && { typeInputPosted: true }) })
+    }
   }
   if (stderr.trim()) throw new ComputerError("INJECT_FAILED", `computer.${label}: ${stderr.trim()}`)
   throw err
@@ -314,6 +328,33 @@ export class PsScreenCapturer implements ScreenCapturer {
 
 // ---------------------------------------------------------------------------
 
+/** Match a substring starting in this OCR word. A word boundary can carry a
+ * space ("Review sample") or split one label ("确", "认"). */
+function matchOcrWords(line: OcrWord[], start: number, text: string): { end: number; label: string } | undefined {
+  const first = line[start].text
+  if (first.includes(text)) return { end: start, label: first }
+  for (let offset = Math.max(0, first.length - text.length + 1); offset < first.length; offset++) {
+    const prefix = first.slice(offset)
+    if (!text.startsWith(prefix)) continue
+    let used = prefix.length
+    let label = first
+    for (let end = start + 1; end < line.length; end++) {
+      const previous = line[end - 1], word = line[end]
+      // Separate controls can occupy the same OCR line. A gap larger than
+      // either word is tall breaks the label.
+      if (word.x - previous.x - previous.w > Math.max(previous.h, word.h)) break
+      const separator = text[used] === " " && !word.text.startsWith(" ") ? " " : ""
+      used += separator.length
+      const remaining = text.slice(used)
+      label += separator + word.text
+      if (remaining && word.text.startsWith(remaining)) return { end, label }
+      if (!remaining.startsWith(word.text)) break
+      used += word.text.length
+    }
+  }
+  return undefined
+}
+
 export class PsLocator implements Locator {
   constructor(private runner: PsRunner = runPs, private language = "zh-Hans") {}
 
@@ -386,27 +427,20 @@ export class PsLocator implements Locator {
     for (const line of lines) {
       line.sort((a, b) => a.x - b.x)
       for (let i = 0; i < line.length; i++) {
-        let acc = ""
-        for (let j = i; j < line.length; j++) {
-          acc += line[j].text
-          if (acc.includes(text)) {
-            const first = line[i]
-            const last = line[j]
-            const x = first.x
-            const y = Math.min(first.y, last.y)
-            const x2 = last.x + last.w
-            const y2 = Math.max(first.y + first.h, last.y + last.h)
-            return {
-              x: Math.round(x + (x2 - x) / 2),
-              y: Math.round(y + (y2 - y) / 2),
-              bbox: { x, y, width: x2 - x, height: y2 - y },
-              layer: "ocr",
-              confidence: 0.9,
-              matchedText: acc,
-            }
-          }
-          // Stop growing the window once it clearly overshoots the anchor.
-          if (acc.length > text.length * 3 + 8) break
+        const match = matchOcrWords(line, i, text)
+        if (!match) continue
+        const words = line.slice(i, match.end + 1)
+        const x = words[0].x
+        const y = Math.min(...words.map(w => w.y))
+        const x2 = Math.max(...words.map(w => w.x + w.w))
+        const y2 = Math.max(...words.map(w => w.y + w.h))
+        return {
+          x: Math.round((x + x2) / 2),
+          y: Math.round((y + y2) / 2),
+          bbox: { x, y, width: x2 - x, height: y2 - y },
+          layer: "ocr",
+          confidence: 0.9,
+          matchedText: match.label,
         }
       }
     }
@@ -580,7 +614,7 @@ export class PsInputInjector implements InputInjector {
         "-Text", text,
       ]), { timeoutMs: 15000 + text.length * 120 }) // throttle headroom, still bounded
     } catch (err) {
-      rethrowComputerPsError(err, "inject.type")
+      rethrowComputerPsError(err, "inject.type", text.length)
     }
   }
 

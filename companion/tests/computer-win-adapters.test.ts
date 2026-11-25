@@ -6,8 +6,40 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { rethrowComputerPsError } from "../src/computer/win-adapters"
+import { PsLocator, rethrowComputerPsError } from "../src/computer/win-adapters"
 import { ComputerError, type ComputerErrorCode } from "../src/computer/types"
+
+test("Windows OCR locates only the matching words of an English button", async () => {
+  const words = [
+    { text: "Open", x: 30, y: 40, w: 42, h: 18 },
+    { text: "sample", x: 79, y: 40, w: 53, h: 18 },
+    { text: "Review", x: 340, y: 40, w: 60, h: 18 },
+    { text: "sample", x: 407, y: 41, w: 53, h: 18 },
+  ]
+  const locator = new PsLocator(async () => JSON.stringify({ language: "zh-Hans-CN", words }))
+  const result = await locator.ocr("fixture.png")
+  const hit = locator.locate(result, "Review sample")
+  assert.deepEqual(hit?.bbox, { x: 340, y: 40, width: 120, height: 19 })
+  assert.deepEqual([hit?.x, hit?.y, hit?.matchedText], [400, 50, "Review sample"])
+  assert.equal(locator.locate(result, "sample Review"), null)
+  assert.equal(locator.locate(result, "Re view"), null)
+})
+
+test("Windows OCR keeps adjacent split characters and individual word substrings", () => {
+  const words = [
+    { text: "取消", x: 10, y: 30, w: 36, h: 18 },
+    { text: "确", x: 52, y: 30, w: 18, h: 18 },
+    { text: "认", x: 71, y: 30, w: 18, h: 18 },
+    { text: "Save", x: 94, y: 30, w: 36, h: 18 },
+    { text: "note", x: 135, y: 30, w: 35, h: 18 },
+    { text: "next", x: 140, y: 80, w: 35, h: 18 },
+  ]
+  const locate = (text: string) => new PsLocator().locate({ words, language: "zh-Hans-CN" }, text)
+  assert.deepEqual(locate("确认")?.bbox, { x: 52, y: 30, width: 37, height: 18 })
+  assert.deepEqual(locate("ave")?.bbox, { x: 94, y: 30, width: 36, height: 18 })
+  assert.deepEqual(locate("确认 Save note")?.bbox, { x: 52, y: 30, width: 118, height: 18 })
+  assert.equal(locate("note next"), null)
+})
 
 function mappingOf(prefix: string, label = "test"): { code: ComputerErrorCode; message: string; psPrefix: unknown } {
   try {

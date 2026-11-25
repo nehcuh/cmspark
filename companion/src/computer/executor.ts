@@ -361,10 +361,16 @@ export async function runComputerTask(
   // Native hotkeys use a consumable stop flag. Once observed, keep the task stopped.
   let stoppedBy: ReturnType<NonNullable<typeof deps.abortCheck>> = null
   const pollStop = () => stoppedBy ??= deps.abortCheck?.() ?? null
-  const assertReadCurrent = () => {
+  const assertTaskCurrent = (operation: string) => {
     assertObservationCurrent()
     const channel = pollStop()
-    if (channel) throw abortChannelError(channel, `computer: observation stopped by emergency stop (${channel})`)
+    if (channel) throw abortChannelError(channel, `computer: ${operation} stopped by emergency stop (${channel})`)
+  }
+  const assertReadCurrent = () => assertTaskCurrent("observation")
+  const assertTypeRecoveryCurrent = (error?: unknown) => {
+    if (error instanceof ComputerError && error.code === "TASK_ABORTED") throw error
+    assertTaskCurrent("input recovery")
+    if (error instanceof ComputerError && error.detail?.typeInputPosted === true) throw error
   }
 
   const fail = async (err: ComputerError): Promise<ComputerTaskResult> => {
@@ -1431,16 +1437,20 @@ export async function runComputerTask(
           await deps.injector.typeText(hwnd, action.text)
         } catch (typeErr) {
           if (deps.injector.retryTypeAfterFailure === false) throw typeErr
+          assertTypeRecoveryCurrent(typeErr)
           typeNoEffectCounts.set(typeKey, priorFails + 1)
           if (priorFails === 0) {
             // First failure: try one preferForeground-style re-raise then retype.
+            let focusError: unknown
             try {
               await deps.injector.forceForeground(hwnd)
-            } catch { /* best-effort */ }
+            } catch (err) { focusError = err }
+            assertTypeRecoveryCurrent(focusError)
             try {
               await deps.injector.typeText(hwnd, action.text)
               typeNoEffectCounts.set(typeKey, 0) // recovered
-            } catch {
+            } catch (retryErr) {
+              assertTypeRecoveryCurrent(retryErr)
               typeNoEffectCounts.set(typeKey, 2)
               throw new ComputerError(
                 "TYPE_NO_EFFECT",

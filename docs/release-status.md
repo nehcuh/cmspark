@@ -4,7 +4,7 @@
 
 ## 1.10.0 发布准备
 
-自研电脑操控、可选主模型视觉与桌面最大权限的变更正在验收。Mac 四类任务与表单光标修复结果见[实测记录](audit/reviews/native-computer-macos-paired-20261125.md)。Windows 登录桌面、干净 macOS 用户首次安装及 Developer ID 覆盖升级尚待验收。
+自研电脑操控、可选主模型视觉与桌面最大权限的变更已在 macOS 和 Windows 登录桌面实测。Windows 记录包含表单提交、输入中途急停、后台 UIA、单帧图像授权及安装包核验。本版沿用 v1.9.1 的发布签名方式。干净 macOS 用户首次安装、同一 Developer ID 签名的两个版本原位覆盖升级仍待验。[Windows 记录](audit/reviews/native-computer-windows-20261125.md) · [macOS 记录](audit/reviews/native-computer-macos-paired-20261125.md)
 
 ## 1.9.1 正式发布
 
