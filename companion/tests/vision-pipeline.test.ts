@@ -4,6 +4,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import dns from "node:dns"
 
 import {
   analyzeImage,
@@ -13,6 +14,24 @@ import {
   normalizeVisionBaseUrl,
   visionImageDataUrl,
 } from "../src/llm/vision-pipeline"
+
+test("DeepSeek Flash screenshot requests reserve the configured output budget for the description", async t => {
+  const image = { base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    width: 1, height: 1, title: "", url: "" }
+  t.mock.method(dns.promises, "lookup", async () => [{ address: "127.0.0.1", family: 4 }])
+  const fetch = t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body))
+    assert.equal(body.model, "deepseek-flash")
+    assert.equal(body.reasoning_effort, "none")
+    assert.equal(body.max_tokens, 1024)
+    assert.equal(body.messages[0].content[0].image_url.url, "data:image/png;base64," + image.base64)
+    return Response.json({ choices: [{ message: { content: "截图正文" }, finish_reason: "stop" }] })
+  })
+  const result = await analyzeImage(image, { enabled: true, model_name: "deepseek-flash", api_key: "owned-key",
+    base_url: "https://api.deepseek.com/v1", timeout_ms: 5000, max_tokens: 1024, cache_ttl_seconds: 0, fallback: "error" })
+  assert.equal(result.description, "截图正文")
+  assert.equal(fetch.mock.callCount(), 1)
+})
 
 test("normalizeVisionBaseUrl: bare host:port gets /v1 (LM Studio root paste)", () => {
   assert.equal(normalizeVisionBaseUrl("http://127.0.0.1:1234"), "http://127.0.0.1:1234/v1")

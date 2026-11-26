@@ -85,6 +85,7 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos', allow
     const exports: any = {}; modules.set(file, exports)
     const source = fs.readFileSync(file === at('components/personal-workspace/PersonalWorkspace.tsx') && process.env.ACTIVITY_752_OLD_PERSONAL ? process.env.ACTIVITY_752_OLD_PERSONAL : file, 'utf8')
     const requireValue = (id: string): any => {
+      if (id === 'react-dom') return { createPortal: () => { throw new Error('unexpected floating window') } }
       if (id === 'react') return react
       if (id === 'react/jsx-runtime') return jsx
       assert.ok(id.startsWith('.'), `unexpected UI dependency ${id}`)

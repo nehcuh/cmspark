@@ -565,7 +565,9 @@ export class CompanionClient {
 
   // --- Accessors for cached data ---
 
-  get quickActions(): QuickActionItem[] { return this.cachedQuickActions }
+  get quickActions(): QuickActionItem[] {
+    return [{ id: "screenshot-todo", title: "截图录待办…" }, ...this.cachedQuickActions]
+  }
   get recentThreads(): RecentThreadItem[] { return this.cachedThreads }
 
   // --- Internals ---

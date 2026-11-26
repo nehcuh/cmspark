@@ -66,7 +66,7 @@ export function handleUiOpenSidepanelResult(
 }
 
 export async function handleUiOpenSidepanel(
-  _rest: Record<string, unknown>,
+  rest: Record<string, unknown>,
   session?: UiOpenSidepanelSession,
   timeoutMs: number = RESULT_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
@@ -100,7 +100,7 @@ export async function handleUiOpenSidepanel(
     // event loop is only unref'd handles (CI: 13 cancelled, 0 fail).
     if (!process.env.NODE_TEST_CONTEXT) timer.unref?.()
     pendingResults.set(id, { settle })
-    session.broadcast!({ type: "ui.open_sidepanel", id })
+    session.broadcast!({ type: "ui.open_sidepanel", id, ...(rest.destination === "screenshot_todo" ? { destination: rest.destination } : {}) })
   })
   if (!result.ok) {
     if (result.timedOut) {

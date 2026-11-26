@@ -127,13 +127,17 @@
     "type": "function",
     "function": {
       "name": "screenshot",
-      "description": "截取标签页截图，返回 base64 图片",
+      "description": "截取标签页画面。启用截图视觉分析后，用所选模型读取截图，可指定要核对的文字或区域。",
       "parameters": {
         "type": "object",
         "properties": {
           "tabId": {
             "type": "number",
             "description": "标签页 ID（可选，默认活跃标签页）"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "希望模型从截图中读取或核对的内容（可选）"
           }
         },
         "required": []

@@ -22,7 +22,7 @@ import { tryParseToolArgs } from "../bridge/tool-schemas"
 import { classifyError } from "../security"
 import { toolChatErrorPayload } from "../ws/l1-actuator"
 import { logger } from "../logger"
-import { analyzeImage, formatVisionFallbackSubject } from "./vision-pipeline"
+import { analyzeImage, formatVisionFallbackSubject, VisionRequestError } from "./vision-pipeline"
 import { isTransientLlmTransportError } from "./transport-error"
 import { decideSameToolFailure } from "./same-tool-guard"
 import { wrapUntrusted, truncateToolResultContent } from "./text-sanitize"
@@ -2275,7 +2275,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                   data: {
                     vision_description: visionResult.description,
                     vision_cached: visionResult.cached,
-                    vision_model: visionResult.model_used,
+                    vision_model: visionResult.attempted_model ?? visionResult.model_used,
+                    ...(visionResult.error ? { vision_error: visionResult.error } : {}),
                     vision_latency_ms: visionResult.latency_ms,
                     url: toolResult.data.url,
                     title: toolResult.data.title,
@@ -2293,8 +2294,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                   tool_call_id: tc.id,
                   cached: visionResult.cached,
                   latency_ms: visionResult.latency_ms,
+                  model: visionResult.attempted_model ?? (visionResult.error ? undefined : visionResult.model_used),
+                  ...(visionResult.error ? { error: visionResult.error } : {}),
                 })
               } catch (visionErr: any) {
+                const failure = visionErr instanceof VisionRequestError ? visionErr : undefined
                 logger.warn("llm.vision_failed", {
                   tool_call_id: tc.id,
                   error: visionErr.message,
@@ -2304,7 +2308,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                   type: "tool.vision_done",
                   thread_id: threadId,
                   tool_call_id: tc.id,
-                  error: visionErr.message,
+                  error: failure?.reason ?? visionErr.message,
+                  model: failure?.attemptedModel,
+                  latency_ms: failure?.latencyMs,
                 })
 
                 if (visionCfg.fallback === "metadata") {
@@ -2333,8 +2339,11 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
                     },
                   }
                 }
-                // "passthrough": keep original toolResult (base64 will be truncated at 8000 chars)
-                // "error": keep original toolResult (LLM sees truncated base64)
+                if (visionCfg.fallback === "error") {
+                  toolResult = { success: false, error: failure?.reason ?? visionErr.message, data: {
+                    image_available: true, vision_model: failure?.attemptedModel, vision_latency_ms: failure?.latencyMs,
+                  } }
+                }
               }
             }
           }

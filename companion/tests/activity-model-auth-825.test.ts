@@ -20,7 +20,7 @@ function main(): LlmConfig {
     auth_style: 'bearer', client_header_profile: 'none', claude_code_compat_version: '2.1.220', extra_headers: { 'x-owned-tenant': 'owned-main-a' }, anthropic_version: '2023-06-01' }
 }
 function vision(): VisionConfig {
-  return { enabled: true, base_url: 'https://owned-gateway.invalid/v1', api_key: 'owned-vision-key-825', model_name: 'owned-vision', protocol: 'anthropic', timeout_ms: 15000, max_tokens: 1000, cache_ttl_seconds: 0, fallback: 'error', use_main_auth: false,
+  return { enabled: true, reuse_main_model: false, base_url: 'https://owned-gateway.invalid/v1', api_key: 'owned-vision-key-825', model_name: 'owned-vision', protocol: 'anthropic', timeout_ms: 15000, max_tokens: 1000, cache_ttl_seconds: 0, fallback: 'error', use_main_auth: false,
     auth_style: 'auto', client_header_profile: 'claude_code_compat', claude_code_compat_version: '2.1.111', extra_headers: { 'x-owned-tenant': 'owned-vision-a' }, anthropic_version: '2023-05-31' }
 }
 function reset(useMain = false): void {

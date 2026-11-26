@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { DATA_DIR } from '../config'
-import { ActivityStore } from './store'
+import { ActivityStore, resolveDedicatedVision } from './store'
 import { extractActivity, submitReminder, type RecorderAdapter, type FixedWindowSession, type CapturedWindow } from './adapters'
 import { ActivityError, COVERAGE, type ActivityApp, type ActivityConfig, type ActivityRecognition, type ActivityRuntime, type ActivitySource, type ActivityWireState, type PersonalTodo, type ActivityPreview, type ActivityRect } from './types'
 import { createRecorder, platformSupport } from './platform'
@@ -114,7 +114,7 @@ export class ActivityService {
     const config = this.store.config()
     if ((config.extraction_mode || 'ocr') === 'ocr' && !hasText)
       return { status: 'saved', reason: '本机 OCR 未读到文字，可调整语言后重试' }
-    if (!this.canExtract()) return { status: 'saved', reason: '等待授权所选模型处理聊天内容' }
+    if (!this.canExtract()) return { status: 'saved', reason: activityModelTarget(config).unavailable ?? '等待授权所选模型处理聊天内容' }
     if (!extract) return { status: 'saved', reason: '文字已保存在本机，可手动抽取待办' }
     return { status: 'queued', target: recognitionTarget(config), automatic }
   }
@@ -459,10 +459,22 @@ export class ActivityService {
     const result = this.recognize(sourceId, target, queueOnly ? () => true : requestCurrent)
     if (!queueOnly) await result
   }
-  async importImage(encoded: string, requestCurrent: () => boolean): Promise<void> {
-    if (this.pending || this.calibrationPending) throw new ActivityError('BUSY', '上一轮采集或 OCR 尚未完成')
+  async importImage(encoded: string, requestCurrent: () => boolean, expectedTarget?: string): Promise<string | void> {
     const imageMode = (this.store.config().extraction_mode || 'ocr') !== 'ocr'
     const image = Buffer.from(encoded, 'base64'); if (image.toString('base64') !== encoded) throw new ActivityError('INVALID_IMAGE', '截图编码无效'); validatePng(image)
+    const metadata = { app_id: 'manual.screenshot', app_name: '用户导入截图（应用未核实）', window_title: '', origin: 'manual_import' as const }
+    if (expectedTarget !== undefined) {
+      const config = this.store.config()
+      if (activityModelTarget(config).id !== expectedTarget || !this.canExtract())
+        throw new ActivityError('MODEL_TARGET_CHANGED', '请核对当前处理目标与授权后重试')
+      this.store.prune(this.now())
+      const source = this.store.addSource({ ...metadata, captured_at: new Date(this.now()).toISOString(), ocr_text: '',
+        recognition: { status: 'queued', automatic: false, target: recognitionTarget(config) } }, image, true)!
+      if (source.recognition?.status !== 'complete') await this.analyze(source.id, requestCurrent, true)
+      this.store.prune(this.now())
+      return source.id
+    }
+    if (this.pending || this.calibrationPending) throw new ActivityError('BUSY', '上一轮采集或 OCR 尚未完成')
     const epoch = this.generation, signal = this.abort.signal
     let recognition: Promise<void> | undefined
     this.pending = (async () => {
@@ -482,7 +494,7 @@ export class ActivityService {
       const receipt: ActivityRecognition = failure
         ? { status: 'failed', code: failure.code, reason: failure.message, completed_at: new Date(this.now()).toISOString() }
         : this.initialRecognition(false, imageMode, !!text.trim())
-      const source = this.store.addSource({ recognition: receipt, app_id: 'manual.screenshot', app_name: '用户导入截图（应用未核实）', window_title: '', origin: 'manual_import', captured_at: new Date(this.now()).toISOString(), ocr_text: text }, image)
+      const source = this.store.addSource({ recognition: receipt, ...metadata, captured_at: new Date(this.now()).toISOString(), ocr_text: text }, image)
       if (source && receipt.status === 'queued') recognition = this.recognize(source.id, receipt.target, requestCurrent)
       this.store.prune(this.now())
       if (failure) throw failure
@@ -521,17 +533,17 @@ export class ActivityService {
         case 'activity.configure': {
           const patch = { ...(message.patch as Partial<import('./types').ActivityConfig>) }
           const previous = this.store.config()
-          const next = { ...previous, ...patch, dedicated_vision: patch.dedicated_vision ? { ...previous.dedicated_vision, ...patch.dedicated_vision, api_key: patch.dedicated_vision.api_key || previous.dedicated_vision?.api_key || '' } : previous.dedicated_vision }
-          const changed = activityModelTarget(next).id !== activityModelTarget(previous).id
+          const next = { ...previous, ...patch, dedicated_vision: resolveDedicatedVision(previous.dedicated_vision, patch.dedicated_vision) }
+          const { id: target, unavailable } = activityModelTarget(next)
+          const changed = target !== activityModelTarget(previous).id
+          if ((patch.image_ai_enabled || patch.title_ai_enabled) && unavailable) throw new ActivityError('MODEL_UNAVAILABLE', unavailable)
           if (patch.image_ai_enabled === true) {
-            const target = activityModelTarget(next).id
             if (next.extraction_mode !== 'dedicated' && message.expected_model_target !== target) throw new ActivityError('MODEL_TARGET_CHANGED', '图像处理目标已变化，请重新打开设置核对并授权')
             patch.image_ai_consent = target
           }
           else if (changed || patch.image_ai_enabled === false) { patch.image_ai_enabled = false; patch.image_ai_consent = '' }
           if (patch.title_ai_enabled === true) {
             if (next.extraction_mode !== 'vision' && next.extraction_mode !== 'dedicated') throw new ActivityError('INVALID_REQUEST', '请先选择复用或专用图像模型')
-            const target = activityModelTarget(next).id
             if (next.extraction_mode === 'vision' && message.expected_model_target !== target) throw new ActivityError('MODEL_TARGET_CHANGED', '标题核验模型已变化，请重新核对并授权')
             if (next.extraction_mode === 'dedicated' && !(patch.dedicated_vision?.base_url && patch.dedicated_vision?.model_name && patch.dedicated_vision?.protocol) && message.expected_model_target !== target) throw new ActivityError('MODEL_TARGET_CHANGED', '请核对专用标题模型后授权')
             patch.title_ai_consent = target
@@ -548,7 +560,11 @@ export class ActivityService {
           this.maintain()
           break
         }
-        case 'activity.import': await this.importImage(String(message.image_base64), current); break
+        case 'activity.import': {
+          const sourceId = await this.importImage(String(message.image_base64), current, message.expected_model_target as string | undefined)
+          if (!current()) throw new ActivityError('SESSION_CLOSED', '原请求连接已关闭')
+          return { type: 'activity.result', id, ok: true, ...(sourceId ? { source_id: sourceId } : {}), state: this.state() }
+        }
         case 'activity.scan': await this.scan(current); break
         case 'activity.analyze': await this.analyze(String(message.source_id), current, message.queue_only === true); break
         case 'activity.source': return { type: 'activity.result', id, ok: true, source: this.store.source(String(message.source_id)) }

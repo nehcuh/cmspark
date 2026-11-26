@@ -1,5 +1,9 @@
+import './helpers/require-isolated-config-825'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
+import { getConfig, saveConfig } from '../src/config'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -104,6 +108,80 @@ function windowsDouble(dir:string, changes: { after?: any; desktop?: string; tar
   }
   return {adapter:new WindowsPassiveRecorder(dir,run,name=>name),calls}
 }
+
+test('Windows captured PNG reaches the consented main, shared independent, and dedicated HTTP model', { timeout: 15000 }, async () => {
+  const dir = fresh(), original = getConfig()
+  const native = windowsDouble(dir)
+  const service = new ActivityService({ dataDir: dir, platform: 'win32', recorder: native.adapter })
+  const requests: Array<{ path: string; model: string; credential?: string; image: string }> = []
+  const server = createServer(async (request, response) => {
+    let payload = ''
+    for await (const chunk of request) payload += chunk
+    const body = JSON.parse(payload), part = body.messages[0].content[0]
+    requests.push({ path: request.url!, model: body.model, credential: request.headers.authorization ?? request.headers['x-api-key'] as string,
+      image: part.image_url?.url ?? part.source?.data })
+    const content = JSON.stringify({ transcript: '请核对报告', candidates: [] })
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify(part.type === 'image' ? { content: [{ type: 'text', text: content }], stop_reason: 'end_turn' }
+      : { choices: [{ finish_reason: 'stop', message: { content } }] }))
+  })
+  try {
+    await once(server.listen(0, '127.0.0.1'), 'listening')
+    const address = server.address()
+    assert.ok(address && typeof address === 'object')
+    const base = 'http://127.0.0.1:' + address.port
+    const vision = { ...original.vision!, enabled: true, reuse_main_model: true, base_url: base + '/shared/v1', model_name: 'shared-vl', api_key: 'shared-key', cache_ttl_seconds: 0 }
+    saveConfig({ llm: { ...original.llm, model_name: 'gpt-4o', base_url: base + '/main/v1', api_key: 'main-key' }, vision }, { llmKey: true, visionKey: true })
+    const configure = (patch: object) => service.handle({ type: 'activity.configure', expected_revision: service.store.revision(),
+      expected_model_target: service.state().runtime.model_target_ids!.vision, patch })
+    assert.equal((await configure({ enabled: true, allowed_apps: [id], extraction_mode: 'vision', image_ai_enabled: true })).ok, true)
+    await service.scan()
+    const source = service.state().sources[0]
+    const image = png.toString('base64'), dataUrl = 'data:image/png;base64,' + image
+    assert.deepEqual(requests, [{ path: '/main/v1/chat/completions', model: 'gpt-4o', credential: 'Bearer main-key', image: dataUrl }])
+    saveConfig({ vision: { ...vision, reuse_main_model: false } }, { visionKey: true })
+    assert.equal(service.state().config.image_ai_enabled, false)
+    await assert.rejects(service.analyze(source.id))
+    assert.equal(requests.length, 1)
+    assert.equal((await configure({ image_ai_enabled: true })).ok, true)
+    await service.analyze(source.id)
+    assert.deepEqual(requests[1], { path: '/shared/v1/chat/completions', model: 'shared-vl', credential: 'Bearer shared-key', image: dataUrl })
+    saveConfig({ vision: { ...vision, enabled: false } })
+    assert.equal(service.state().config.image_ai_enabled, false)
+    assert.equal((await configure({ extraction_mode: 'dedicated', image_ai_enabled: true, dedicated_vision: {
+      base_url: base + '/dedicated/v1', model_name: 'dedicated-vl', api_key: 'dedicated-key', protocol: 'anthropic' } })).ok, true)
+    await service.analyze(source.id)
+    assert.deepEqual(requests[2], { path: '/dedicated/v1/messages', model: 'dedicated-vl', credential: 'dedicated-key', image })
+    assert.equal(requests.length, 3)
+    assert.equal(native.calls.some(call => call.script === 'computer-ocr.ps1'), false)
+    assert.equal(service.store.sourceMetadata(source.id).recognition?.status, 'complete')
+    assert.equal(service.store.sourceMetadata(source.id).ocr_text, '请核对报告')
+  } finally {
+    await service.stop()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    saveConfig({ vision: original.vision, llm: original.llm }, { llmKey: true, visionKey: true })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('saving dedicated settings with the stored key keeps queued screenshots and their authorization', async () => {
+  const dir = fresh(), service = new ActivityService({ dataDir: dir, platform: 'win32' })
+  try {
+    const model = { base_url: 'http://127.0.0.1:1234/v1', model_name: 'owned-vl', protocol: 'openai', api_key: 'owned-key' }
+    const configure = (dedicated_vision: typeof model) => service.handle({ type: 'activity.configure', expected_revision: service.store.revision(),
+      patch: { extraction_mode: 'dedicated', image_ai_enabled: true, dedicated_vision } })
+    assert.equal((await configure(model)).ok, true)
+    const target = service.state().runtime.model_target_id!
+    const receipt = { status: 'queued' as const, target, automatic: true }
+    const source = service.store.addSource({ recognition: receipt, app_id: id, app_name: 'Owned Chat', window_title: 'Owned',
+      origin: 'foreground', ocr_text: '', captured_at: new Date().toISOString() }, png)!
+    assert.equal((await configure({ ...model, api_key: '' })).ok, true)
+    assert.equal(service.state().config.image_ai_enabled, true)
+    assert.deepEqual(service.store.sourceMetadata(source.id).recognition, receipt)
+    assert.equal((await configure({ ...model, model_name: 'new-vl' })).ok, true)
+    assert.equal(service.store.sourceMetadata(source.id).recognition?.status, 'saved')
+  } finally { await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
+})
 test('Windows process enumeration projects identity/name/state, excluding sensitive paths and all titles', async () => {
   const dir=fresh();try{const d=windowsDouble(dir),apps=await d.adapter.listApps(new AbortController().signal);assert.deepEqual(apps,[{app_id:id,app_name:'Owned Chat',window_state:'visible'}]);assert.equal(JSON.stringify(apps).includes('exe'),false);assert.equal(d.calls.length,1)}finally{fs.rmSync(dir,{recursive:true,force:true})}
 })

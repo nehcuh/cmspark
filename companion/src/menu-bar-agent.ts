@@ -1717,6 +1717,16 @@ async function handleQuickAction(id: string): Promise<void> {
     return
   }
 
+  if (id === "screenshot-todo") {
+    try {
+      const result = await companionClient.sendAppRequest("ui.open_sidepanel", { destination: "screenshot_todo" }, 8_000)
+      if (result?.type !== "ui.open_sidepanel.opened") throw new Error("workspace unavailable")
+    } catch {
+      safeNotify({ title: "截图录待办", message: "请打开 Chrome 并连接 CMspark 扩展，再从此处录入。", timeout: 5 })
+    }
+    return
+  }
+
   // Open Chrome side panel first so the user sees the result
   openChromeSidePanel()
 

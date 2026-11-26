@@ -91,7 +91,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   useEffect(() => {
     if (!full) return
     const select = (page: unknown): boolean => {
-      if (!isWorkbenchPage(page)) return false
+      if (!isWorkbenchPage(page) && !(page === "todos" && window.location.hash.startsWith("#todos/capture/"))) return false
       if (destinationOwnerRef.current.blocked) {
         window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: "请先处理待确认操作或结束电脑执行。" }))
         return false

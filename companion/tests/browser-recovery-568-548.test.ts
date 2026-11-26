@@ -71,13 +71,14 @@ after(() => {
 
 const propose = { name: "run_progress_propose", args: { items: [{ text: "Read the synthetic page" }] } }
 const call = (name: string, args: any) => ({ name, args })
-async function run(rows: typeof scripts, execute: (name: string, args: any) => Promise<any>, seed?: (id: string) => void) {
+async function run(rows: typeof scripts, execute: (name: string, args: any) => Promise<any>, seed?: (id: string) => void,
+  modelName = "test-model") {
   scripts = [propose, ...rows]; requests = []
   const tm = new TM(), thread = tm.create("synthetic browser recovery"), frames: any[] = [], dispatched: string[] = []
   cache.applyTabNavigated(7, "https://synthetic.example/page")
   seed?.(thread.id)
   await adapter.chatCreate({ threadId: thread.id, message: "Read this page", skillIds: [],
-    config: { base_url: "http://127.0.0.1:9", api_key: "sk-test", model_name: "test-model", temperature: 0, context_window: 8000 },
+    config: { base_url: "http://127.0.0.1:9", api_key: "sk-test", model_name: modelName, temperature: 0, context_window: 8000 },
     threadManager: tm, skillEngine: new SE(), historyStore: { record: () => 0 } as any,
     sendToExtension: (frame: any) => frames.push(frame), executeTool: async (_id: string, name: string, args: any) => {
       dispatched.push(name)
@@ -87,6 +88,53 @@ async function run(rows: typeof scripts, execute: (name: string, args: any) => P
   return { thread, frames, dispatched, messages: requests.at(-1)!, requests: requests.length }
 }
 const trustedRecovery = (messages: any[]) => messages.filter(m => m.role === "system" && m.content?.includes("[CMspark 系统提示"))
+
+test("browser screenshots deliver the captured JPEG and report an empty model response separately from capture", { timeout: 15000 }, async () => {
+  const { getConfig, saveConfig } = await import("../src/config")
+  const original = getConfig().vision!
+  const chrome = (globalThis as any).chrome
+  const sendCommand = chrome.debugger.sendCommand, originalFetch = globalThis.fetch
+  const jpeg = fs.readFileSync(path.resolve("../scripts/spike/s3-golden/fixture.jpg")).toString("base64")
+  const bridge = new Bridge(), prompt = "读取截图中的待办"
+  const received: any[] = [], destinations: string[] = []
+  chrome.debugger.sendCommand = async (...args: any[]) => {
+    if (args[1] === "Page.captureScreenshot") return { data: jpeg }
+    return sendCommand(...args)
+  }
+  globalThis.fetch = async (url, init) => {
+    destinations.push(String(url))
+    received.push(JSON.parse(String(init?.body)))
+    const message = received.length === 1 ? { content: "", reasoning_content: "private reasoning" } : { content: "提交报告" }
+    return Response.json({ choices: [{ message, finish_reason: "stop" }] })
+  }
+  try {
+    saveConfig({ vision: { ...original, enabled: true, reuse_main_model: false, base_url: "http://127.0.0.1:1234/v1",
+      api_key: "owned-key", model_name: "deepseek-flash", fallback: "metadata", cache_ttl_seconds: 0 } }, { visionKey: true })
+    for (const expected of ["reasoning without a description", "提交报告"]) {
+      const result = await run([call("screenshot", { tabId: 7, prompt })], (name, args) => bridge.execute(name, args))
+      const message = result.messages.find((m: { role: string; content: string }) => m.role === "tool" && m.content.includes("vision_description"))
+      assert.ok(message, "the next chat step must see the actual vision receipt")
+      assert.ok(message.content.includes(expected))
+      assert.ok(message.content.includes("deepseek-flash"))
+      assert.ok(!message.content.includes("private reasoning"))
+      const event = result.frames.find(f => f.type === "tool.vision_done")
+      assert.equal(!!event?.error, received.length === 1)
+    }
+    saveConfig({ vision: { ...getConfig().vision!, reuse_main_model: true } })
+    const reused = await run([call("screenshot", { tabId: 7, prompt })], (name, args) => bridge.execute(name, args), undefined, "gpt-4o")
+    assert.equal(reused.frames.find(f => f.type === "tool.vision_done")?.model, "gpt-4o")
+    assert.deepEqual(received.map(body => body.model), ["deepseek-flash", "deepseek-flash", "gpt-4o"])
+    assert.deepEqual(destinations, ["http://127.0.0.1:1234/v1/chat/completions", "http://127.0.0.1:1234/v1/chat/completions",
+      "http://127.0.0.1:9/v1/chat/completions"])
+    for (const body of received) {
+      assert.equal(body.messages[0].content[0].image_url.url, "data:image/jpeg;base64," + jpeg)
+      assert.deepEqual(body.messages[0].content[1], { type: "text", text: prompt })
+    }
+  } finally {
+    globalThis.fetch = originalFetch; chrome.debugger.sendCommand = sendCommand
+    saveConfig({ vision: original }, { visionKey: true })
+  }
+})
 
 test("real missing-token and missing-tab refusals are typed, recoverable, effect-free and not origin failures", async () => {
   const bridge = new Bridge(), before = chromeCalls

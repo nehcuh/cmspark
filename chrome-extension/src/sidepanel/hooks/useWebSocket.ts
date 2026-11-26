@@ -895,6 +895,8 @@ export function useWebSocket() {
             updates: {
               vision_status: msg.error ? "error" : (msg.cached ? "cached" : "done"),
               vision_latency_ms: msg.latency_ms,
+              vision_model: msg.model,
+              vision_error: msg.error,
             },
           })
           break

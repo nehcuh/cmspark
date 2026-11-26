@@ -64,7 +64,7 @@ export class OpenAIProvider implements LlmProvider {
     await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
-    const spec = providerModelLimits(this.config, model)
+    const spec = providerModelLimits(this.config, model, params.reasoning_effort ?? this.config.reasoning_effort)
     const support = spec?.support ?? "unsupported"
     const effort = params.reasoning_effort ?? this.config.reasoning_effort
     if (spec?.responsesForTools && params.tools?.length) {
@@ -165,7 +165,7 @@ export class OpenAIProvider implements LlmProvider {
     await throwIfLlmEndpointBlocked(this.config.base_url)
     const model = params.model ?? this.config.model_name
     const temperature = params.temperature ?? this.config.temperature
-    const spec = providerModelLimits(this.config, model)
+    const spec = providerModelLimits(this.config, model, params.reasoning_effort ?? this.config.reasoning_effort)
     const support = spec?.support ?? "unsupported"
     const effort = params.reasoning_effort ?? this.config.reasoning_effort
     const messages = toWireMessages(params.messages)

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import * as dns from "node:dns"
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import { effectiveReasoningEffort, isReasoningEffort, reasoningSupport, reasoningWireEffort } from "../src/llm/reasoning-effort"
+import { effectiveReasoningEffort, isReasoningEffort, modelSpec, modelSuggestions, reasoningSupport, reasoningWireEffort } from "../src/llm/reasoning-effort"
 import { OpenAIProvider } from "../src/llm/providers/openai"
 import { AnthropicProvider } from "../src/llm/providers/anthropic"
 import type { LlmConfig } from "../src/config"
@@ -21,6 +21,16 @@ test("#789 model capability and UI mirror stay exact", () => {
   assert.equal(effectiveReasoningEffort(undefined), "medium")
   assert.equal(effectiveReasoningEffort("bogus"), "medium")
   assert.equal(isReasoningEffort("MAX"), false)
+  for (const url of ["https://open.bigmodel.cn/api/paas/v4", "https://api.z.ai/api/paas/v4", "https://relay.example/api/coding/paas/v4"]) {
+    assert.equal(modelSuggestions("openai", url).includes("glm-5.4"), false)
+    assert.equal(reasoningSupport("openai", url, "glm-5.4"), "unsupported")
+  }
+  assert.ok(modelSuggestions("anthropic", "https://open.bigmodel.cn/api/anthropic").includes("glm-5.4"))
+  const qwen = (effort: string) => modelSpec("openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen4-max", effort)
+  assert.equal(qwen("none")?.output, 131072)
+  assert.equal(qwen("xhigh")?.output, 262144)
+  for (const model of ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"])
+    assert.equal(modelSpec("openai", "https://api.openai.com/v1", model)?.responsesForTools, true)
   for (const invalid of ["http://api.deepseek.com/v1", "https://api.deepseek.com.evil/v1", "https://user@api.deepseek.com/v1", "https://api.deepseek.com:444/v1", "https://api.deepseek.com/v1?x=1"]) assert.equal(reasoningSupport("openai", invalid, "deepseek-v4-pro"), "unsupported")
   assert.equal(reasoningSupport("openai", "https://relay.example/v1", "deepseek-v4-pro"), "unsupported")
   assert.equal(reasoningSupport("openai", "https://api.openai.com/v1", "gpt-5.2-evil"), "unsupported")
@@ -98,6 +108,11 @@ test("Kimi K3 and non-reasoning GPT-4o use their documented wire limits on both 
 test("both request paths honor each model's selectable native levels", async (t) => {
   const { effortLevels } = await import("../src/llm/reasoning-effort")
   const cases = [
+    ["openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen4-max", "none low high xhigh"],
+    ["anthropic", "https://dashscope-intl.aliyuncs.com/apps/anthropic", "qwen4-max", "none low high xhigh"],
+    ["openai", "https://api.z.ai/api/coding/paas/v4", "glm-5.4", "low high max"],
+    ["anthropic", "https://open.bigmodel.cn/api/anthropic", "glm-5.4", "low high max"],
+    ["openai", "https://api.openai.com/v1", "gpt-6-luna", "none low medium high xhigh max"],
     ["openai", "https://api.openai.com/v1", "gpt-6.2-sol", "low medium high xhigh max"],
     ["anthropic", "https://api.anthropic.com", "claude-opus-4-7", "low medium high xhigh max"],
     ["openai", "https://api.x.ai/v1", "grok-4.7", "low medium high xhigh"],
@@ -128,7 +143,11 @@ test("both request paths honor each model's selectable native levels", async (t)
       await provider.complete({ messages: message })
       for (const body of bodies.splice(0)) {
         assert.equal(body.model, model)
-        if (model === "MiniMax-M3") {
+        if (model === "qwen4-max" && level === "none") {
+          if (protocol === "openai") assert.equal(body.enable_thinking, false)
+          else assert.deepEqual(body.thinking, { type: "disabled" })
+          assert.equal(body.reasoning_effort, undefined)
+        } else if (model === "MiniMax-M3") {
           assert.deepEqual(body.thinking, { type: level === "none" ? "disabled" : "adaptive" })
           assert.equal(body.output_config, undefined)
         } else if (protocol === "anthropic") assert.deepEqual(body.output_config, { effort: level })

@@ -1,13 +1,20 @@
+import { modelSpec } from "./reasoning-effort"
 import { lookupNativeVisionProbe } from "./native-vision-probe-cache"
 import type { LlmConfig } from "../config"
 
 export type NativeVisionMode = "auto" | "on" | "off"
 
 /** Fail-closed name heuristic. Does NOT read protocol. */
-export function likelyMultimodal(modelName: string | undefined | null): boolean {
+export function likelyMultimodal(modelName: string | undefined | null, baseUrl?: string | null): boolean {
   const m = (modelName || "").trim().toLowerCase()
   if (!m) return false
-  if (/deepseek/.test(m)) return false
+  if (baseUrl && (modelSpec("openai", baseUrl, m)?.imageInput || modelSpec("anthropic", baseUrl, m)?.imageInput)) return true
+  if (/deepseek/.test(m)) {
+    // Flash and its legacy aliases accept images on the official API. A gateway
+    // with the same model name needs its own probe or explicit override.
+    return ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].includes(m) &&
+      /^https:\/\/api\.deepseek\.com(?::443)?(?:\/(?:anthropic(?:\/v1)?|v1))?\/?$/i.test((baseUrl || "").trim())
+  }
   if (/\br1\b/.test(m) && !/vision|vl/.test(m)) return false
   if (/(^|[-_])(coder|reasoner)($|[-_])/.test(m) && !/vl|vision|omni/.test(m)) return false
   if (/kimi-k2/.test(m) && !/vl|vision|omni/.test(m)) return false
@@ -42,7 +49,7 @@ export function resolveNativeVision(opts: {
   if (mode === "on") return true
   if (mode === "off") return false
   void opts.detected
-  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") ?? likelyMultimodal(opts.modelName)
+  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") ?? likelyMultimodal(opts.modelName, opts.baseUrl)
 }
 
 type VisionLike = Pick<LlmConfig, "protocol" | "auth_style" | "client_header_profile" | "claude_code_compat_version" | "extra_headers" | "anthropic_version"> & {

@@ -294,3 +294,12 @@ test("a negative image probe overrides a known multimodal name in auto mode", ()
   assert.equal(result.patch.vision_use_main_auth, true)
   assert.equal(result.patch.vision_api_key, undefined)
 })
+
+test("catalog image input matches the actual supported endpoint", () => {
+  assert.equal(likelyMultimodal("glm-5.4", "https://api.z.ai/api/coding/paas/v4"), true)
+  assert.equal(likelyMultimodal("glm-5.4", "https://open.bigmodel.cn/api/anthropic"), true)
+  assert.equal(likelyMultimodal("glm-5.4", "https://open.bigmodel.cn/api/paas/v4"), false)
+  assert.equal(likelyMultimodal("qwen4-max", "https://dashscope.aliyuncs.com/compatible-mode/v1"), true)
+  assert.equal(likelyMultimodal("gpt-6-luna", "https://api.openai.com/v1"), true)
+  assert.equal(likelyMultimodal("gpt-6-luna", "https://relay.example/v1"), false)
+})

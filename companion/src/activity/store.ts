@@ -6,6 +6,11 @@ import { iso, validateConfig, validateTask } from './validation'
 import { evidencedDeadline } from './deadline-evidence'
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 const digest = (v: string | Buffer): string => createHash('sha256').update(v).digest('hex')
+export function resolveDedicatedVision(previous: ActivityConfig['dedicated_vision'], model: ActivityConfig['dedicated_vision']) {
+  if (!model) return previous
+  const keepKey = !model.api_key || /^\*+$/.test(model.api_key)
+  return { ...previous, ...model, api_key: keepKey ? previous?.api_key || '' : model.api_key }
+}
 export class ActivityStore {
   private value: ActivityState
   readonly root: string
@@ -75,14 +80,13 @@ export class ActivityStore {
     } finally { fs.rmSync(pending, { force: true }) }
   }
   configure(revision: number, patch: unknown): boolean {
-    const update = validateConfig(patch) as Partial<ActivityConfig>
+    const update = { ...validateConfig(patch) } as Partial<ActivityConfig>
+    if (update.dedicated_vision) update.dedicated_vision = resolveDedicatedVision(this.value.config.dedicated_vision, update.dedicated_vision)
     const affectsJobs = (Object.keys(update) as Array<keyof ActivityConfig>).some(key =>
       !['interval_ms', 'image_output_tokens', 'title_ai_consent', 'title_ai_enabled'].includes(key) &&
       JSON.stringify(update[key]) !== JSON.stringify(this.value.config[key]))
     if (revision !== this.value.revision) throw new ActivityError('REVISION_CONFLICT', '活动设置已变化，请刷新后重试')
     this.mutate(s => {
-      const model = update.dedicated_vision
-      const previous = s.config.dedicated_vision
       // Revoke the old queue in the same durable write as the configuration.
       // A crash between saving settings and aborting a request cannot revive old work.
       if (affectsJobs) for (const source of s.sources) {
@@ -90,7 +94,6 @@ export class ActivityStore {
           source.recognition = { status: 'saved', reason: '设置已变化，请核对后重新识别' }
       }
       Object.assign(s.config, update)
-      if (model) s.config.dedicated_vision = { ...previous, ...model, api_key: !model.api_key || /^\*+$/.test(model.api_key) ? previous?.api_key || '' : model.api_key }
       s.config.allowed_apps = [...new Set(s.config.allowed_apps)] })
     return affectsJobs
   }
@@ -101,11 +104,11 @@ export class ActivityStore {
     if (!this.value.sources.some(s => s.id === id)) return
     this.mutate(s => { s.sources.find(item => item.id === id)!.recognition = receipt })
   }
-  addSource(input: Omit<ActivitySource, 'id' | 'bytes' | 'sha256'>, image: Buffer): ActivitySource | null {
+  addSource(input: Omit<ActivitySource, 'id' | 'bytes' | 'sha256'>, image: Buffer, reuseExisting = false): ActivitySource | null {
     if (image.length === 0 || image.length > 16 * 1024 * 1024) throw new ActivityError('QUOTA_EXCEEDED', '截图大小不合适')
     const sha256 = digest(image)
     const same = this.value.sources.find(s => !s.deleted && s.binding_id === input.binding_id && s.app_id === input.app_id && s.window_title === input.window_title && (s.conversation_title || '') === (input.conversation_title || '') && (s.sha256 === sha256 || (input.ocr_text.trim().length > 0 && s.ocr_text === input.ocr_text)))
-    if (same) return null
+    if (same) return reuseExisting ? clone(same) : null
     if (this.value.sources.length >= 2000) throw new ActivityError('QUOTA_EXCEEDED', '活动记录数已达上限')
     const source: ActivitySource = { ...input, id: randomUUID(), bytes: image.length, sha256 }
     const file = this.imagePath(source.id)
@@ -166,6 +169,7 @@ export class ActivityStore {
     const todo: PersonalTodo = {
       id: randomUUID(), revision: 0, created_at: now, updated_at: now,
       title: String(patch.title).trim(), owner: String(patch.owner).trim(), due_at: patch.due_at === undefined ? this.candidateDeadline(candidate) : iso(patch.due_at), remind_at,
+      tracker: typeof patch.tracker === 'string' ? patch.tracker.trim() : candidate.tracker || '',
       feedback_to: typeof patch.feedback_to === 'string' ? patch.feedback_to.trim() : candidate.feedback_to, feedback_required: feedback,
       kind: patch.kind === 'supervise' ? 'supervise' : 'own', handling_status: 'open', feedback_status: feedback ? 'pending' : 'not_required', evidence: clone(candidate.evidence), reminder: { status: remind_at ? 'scheduled' : 'none' },
     }
@@ -183,6 +187,7 @@ export class ActivityStore {
     const todo: PersonalTodo = {
       id: randomUUID(), revision: 0, created_at: now, updated_at: now,
       title: String(patch.title).trim(), owner: String(patch.owner).trim(), due_at: patch.due_at === undefined ? null : iso(patch.due_at), remind_at,
+      tracker: typeof patch.tracker === 'string' ? patch.tracker.trim() : '',
       feedback_to: typeof patch.feedback_to === 'string' ? patch.feedback_to.trim() : '', feedback_required: feedback,
       kind: patch.kind === 'supervise' ? 'supervise' : 'own', handling_status: 'open', feedback_status: feedback ? 'pending' : 'not_required',
       evidence: { source_id: source.id, app_id: source.app_id, group: '', sender: '', message_time: '', quote: source.ocr_text.slice(0, 2000) },
@@ -200,6 +205,7 @@ export class ActivityStore {
       const t = s.todos.find(t => t.id === id)!
       const previousReminderAt = t.remind_at === null ? null : iso(t.remind_at)
       Object.assign(t, patch)
+      if (typeof patch.tracker === 'string') t.tracker = patch.tracker.trim()
       if (patch.due_at !== undefined) t.due_at = iso(patch.due_at)
       if (patch.remind_at !== undefined) {
         t.remind_at = iso(patch.remind_at)

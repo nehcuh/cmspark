@@ -20,6 +20,7 @@ import {
 import { SUMMONER_WEB_DISPATCH_ALLOW, SUMMONER_WEB_EVENT_ALLOW } from "../src/summoner-web"
 import { assertSummonerAllowed } from "../src/ws/summoner-acl"
 import { validateWsMessage } from "../src/ws/validate"
+import { CompanionClient } from "../src/tray/companion-client"
 import { getToolDefinitions } from "../src/bridge/tool-definitions"
 
 const ROOT = path.resolve(__dirname, "..", "..")
@@ -248,4 +249,14 @@ test("menu-bar-agent operate inject uses sendAppRequest and ignores broadcast ec
   const companionBlock = src.slice(companionStart, src.indexOf("summonerClient = new CompanionClient"))
   assert.match(companionBlock, /ui\.open_sidepanel/)
   assert.match(companionBlock, /msg\.type !== ["']ui\.open_sidepanel["']/)
+})
+
+test('desktop screenshot menu routes to the intake workspace and awaits the extension receipt', async () => {
+  const client = new CompanionClient({ host: '127.0.0.1', port: 0, reconnectInterval: 0, maxReconnectAttempts: 0 })
+  assert.deepEqual(client.quickActions[0], { id: 'screenshot-todo', title: '截图录待办…' })
+  const frames: Record<string, unknown>[] = []
+  const opening = handleUiOpenSidepanel({ destination: 'screenshot_todo' }, traySession(frames))
+  assert.equal(frames[0].destination, 'screenshot_todo')
+  handleUiOpenSidepanelResult({ id: frames[0].id, ok: true }, panelSession())
+  assert.equal((await opening).type, 'ui.open_sidepanel.opened')
 })

@@ -80,6 +80,7 @@ export interface TodoCandidate {
   created_at: string
   title: string
   owner: string
+  tracker?: string
   due_at: string | null
   feedback_to: string
   feedback_required: boolean
@@ -94,6 +95,7 @@ export interface PersonalTodo {
   updated_at: string
   title: string
   owner: string
+  tracker?: string
   due_at: string | null
   remind_at: string | null
   feedback_to: string

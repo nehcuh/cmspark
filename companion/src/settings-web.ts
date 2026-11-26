@@ -803,7 +803,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   function syncVisionReuseUi(){
     var on=visionEnabledEl.checked;
     var known=savedMainVision&&savedMainVision.url===baseUrlEl.value&&savedMainVision.model===modelNameEl.value;
-    var canReuse=mainNativeMode==="on"||(mainNativeMode!=="off"&&(known?savedMainVision.supported:mainSupportsVision(modelNameEl.value)));
+    var canReuse=mainNativeMode==="on"||(mainNativeMode!=="off"&&(known?savedMainVision.supported:mainSupportsVision(modelNameEl.value, baseUrlEl.value)));
     var reuse=$("visionReuseMain"),fields=$("visionIndependentFields"),bar=$("visionReuseBar"),hint=$("visionReuseHint");
     reuse.checked=canReuse&&visionReusePreference;
     reuse.disabled=!configLoaded||!canReuse||!on;

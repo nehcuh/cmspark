@@ -51,11 +51,11 @@ export function validateConfig(patch: unknown): Record<string, unknown> {
   }
   return patch
 }
-const taskKeys = ['title', 'owner', 'due_at', 'remind_at', 'feedback_to', 'feedback_required', 'kind', 'handling_status', 'feedback_status']
+const taskKeys = ['title', 'owner', 'tracker', 'due_at', 'remind_at', 'feedback_to', 'feedback_required', 'kind', 'handling_status', 'feedback_status']
 export function validateTask(patch: unknown, confirm = false): Record<string, unknown> {
   checkObject(patch, taskKeys)
   for (const [k, v] of Object.entries(patch)) {
-    if (['title', 'owner', 'feedback_to'].includes(k)) text(v, k === 'title' ? 300 : 200, k !== 'feedback_to')
+    if (['title', 'owner', 'tracker', 'feedback_to'].includes(k)) text(v, k === 'title' ? 300 : 200, k === 'title' || k === 'owner')
     else if (k === 'due_at' || k === 'remind_at') iso(v)
     else if (k === 'feedback_required') { if (typeof v !== 'boolean') throw new ActivityError('INVALID_REQUEST', '反馈标识无效') }
     else if (k === 'kind' && !['own', 'supervise'].includes(String(v))) throw new ActivityError('INVALID_REQUEST', '事项类型无效')
@@ -72,7 +72,7 @@ export function validateActivityMessage(message: unknown): boolean {
     const extras: Record<string, string[]> = {
       'activity.state': [], 'activity.apps': [], 'activity.configure': ['expected_revision', 'expected_model_target', 'patch'], 'activity.scan': [],
       'activity.bind_window': ['app_id', 'binding_id'], 'activity.unbind_window': ['binding_id'], 'activity.pause_window': ['binding_id', 'paused'], 'activity.preview': ['app_id'], 'activity.preview_ocr': ['image_base64', 'rect', 'ocr_language'],
-      'activity.import': ['image_base64'], 'activity.analyze': ['source_id', 'queue_only'], 'activity.source': ['source_id'], 'activity.delete': ['source_id'],
+      'activity.import': ['image_base64', 'expected_model_target'], 'activity.analyze': ['source_id', 'queue_only'], 'activity.source': ['source_id'], 'activity.delete': ['source_id'],
       'todo.create': ['source_id', 'expected_revision', 'task'], 'todo.confirm': ['candidate_id', 'expected_revision', 'task'], 'todo.update': ['todo_id', 'expected_revision', 'patch'], 'todo.dismiss': ['candidate_id', 'expected_revision'],
     }
     if (!Object.hasOwn(extras, message.type)) return false

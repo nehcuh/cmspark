@@ -483,6 +483,19 @@ async function handleCompanionMessage(msg: any) {
       }
     }
     try {
+      if (msg.destination === "screenshot_todo") {
+        const url = chrome.runtime.getURL("tabs/workspace.html?view=todos&capture=todo")
+        const [existing] = await chrome.tabs.query({ url })
+        if (existing?.id != null) {
+          await chrome.tabs.update(existing.id, { active: true, url: url + "#todos/capture/" + crypto.randomUUID() })
+          await chrome.windows.update(existing.windowId, { focused: true })
+        } else {
+          const tab = await chrome.tabs.create({ url, active: true })
+          await chrome.windows.update(tab.windowId, { focused: true })
+        }
+        reply(true)
+        return
+      }
       const wins = await chrome.windows.getAll({ windowTypes: ["normal"], populate: true })
       let windowId = pickSidePanelWindow(wins)
       if (windowId == null) {
