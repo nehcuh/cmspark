@@ -47,6 +47,12 @@ export class VisionRequestError extends Error {
 interface VisionAnalysisOptions {
   requireComplete?: boolean
   disableReasoning?: boolean
+  /** Bind the user's click to one transport snapshot through both asynchronous endpoint checks. */
+  consent?: { main: LlmConfig; current(): boolean }
+}
+
+function checkVisionConsent(options?: VisionAnalysisOptions): void {
+  if (options?.consent && !options.consent.current()) throw new VisionRequestError("图像处理目标或授权已变化，请重新确认")
 }
 
 interface CacheEntry {
@@ -159,7 +165,10 @@ export async function analyzeImage(
   // Scope the image hash to endpoint + model so two models (or the native
   // track vs the vision track) never share a cached description — and
   // model_used on a cache hit names the model that actually produced it.
-  const key = hashBase64(JSON.stringify([resolveVisionLlmConfig(config), customPrompt || config.prompt || DEFAULT_VISION_PROMPT, config.max_tokens, options, image.base64]))
+  checkVisionConsent(options)
+  const providerConfig = resolveVisionLlmConfig(config, options?.consent?.main)
+  const key = hashBase64(JSON.stringify([providerConfig, customPrompt || config.prompt || DEFAULT_VISION_PROMPT, config.max_tokens,
+    options?.requireComplete, options?.disableReasoning, !!options?.consent, image.base64]))
 
   // Check cache
   const cached = getCached(key, config.cache_ttl_seconds)
@@ -178,7 +187,9 @@ export async function analyzeImage(
     return buildFallback(image, config, "Image too large for local model")
   }
 
-  const promise = doAnalyze(image, config, key, customPrompt, signal, options)
+  const promise = doAnalyze(image, config, providerConfig, key, customPrompt, signal, options)
+  // Each consent-bound caller owns its own final permission check and abort signal.
+  if (options?.consent) return promise
   inflight.set(key, promise)
 
   try {
@@ -191,6 +202,7 @@ export async function analyzeImage(
 async function doAnalyze(
   image: ImageInput,
   config: VisionConfig,
+  providerConfig: LlmConfig,
   cacheKey: string,
   customPrompt?: string,
   signal?: AbortSignal,
@@ -231,7 +243,6 @@ async function doAnalyze(
 
     timeout = AbortSignal.timeout(config.timeout_ms)
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
-    const providerConfig = resolveVisionLlmConfig(config)
     const support = reasoningSupport(providerConfig.protocol, providerConfig.base_url, config.model_name)
     const disableReasoning = options?.disableReasoning || reasoningWireEffort(support, "none") === "none"
     const response = await createProvider(providerConfig).complete({
@@ -244,7 +255,12 @@ async function doAnalyze(
       reasoning_effort: disableReasoning ? "none" : undefined,
       temperature: 0.3,
       signal: requestSignal,
-      beforeSend: () => { attemptedModel = config.model_name },
+      rejectRedirects: !!options?.consent,
+      beforeSend: () => {
+        requestSignal.throwIfAborted()
+        checkVisionConsent(options)
+        attemptedModel = config.model_name
+      },
     })
     const description = response.content.trim()
     const latencyMs = Date.now() - startTime

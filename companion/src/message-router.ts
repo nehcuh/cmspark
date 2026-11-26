@@ -352,6 +352,7 @@ interface SessionCallbacks {
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal, options?: { siteContextTabId?: number; siteContextRequireActive?: boolean }) => Promise<{ success: boolean; data?: any; error?: string }>
   broadcast?: (data: any) => void
+  miniPanel?: () => { id: string; send: (frame: Record<string, unknown>) => void } | undefined
   /**
    * Origin-bound security-confirmation channel (App tab D2 biometric gates).
    * server.ts wires this exactly like executeTool's sendConfirmation —
@@ -1188,6 +1189,10 @@ async function dispatchMessage(
       return handleOverlayShellOpen(rest, session)
     }
 
+    case "mini.request": {
+      const { miniPanelRequest } = await import("./mini/panel-request")
+      return miniPanelRequest(msg, session, skillEngine)
+    }
     case "ui.open_sidepanel": {
       const { handleUiOpenSidepanel } = await import("./message-router/handlers/ui-open-sidepanel")
       return handleUiOpenSidepanel(rest, session)

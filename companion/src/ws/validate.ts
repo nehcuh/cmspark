@@ -379,6 +379,8 @@ export function validateWsMessage(msg: any, rawBytes?: number): WsValidationResu
       }
       return { valid: true }
     },
+    "mini.request": (m) => typeof m.id === "string" && m.id.length <= 100 && ["claim", "target", "ocr", "ask", "search", "read"].includes(m.op)
+      ? { valid: true } : { valid: false, error: "invalid mini.request" },
     "ui.open_sidepanel": () => ({ valid: true }),
     "ui.command": (m) => {
       if (typeof m.action !== "string" || !m.action.trim()) {

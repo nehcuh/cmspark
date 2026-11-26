@@ -23,12 +23,13 @@ export function parseActivityImage(raw: string, source: ActivitySource, onTransc
 }
 
 export async function extractActivityImage(source: ActivitySource, image: Buffer, config: ActivityConfig, root: string, signal: AbortSignal, onTranscript?: (text: string) => void): Promise<ActivityImageExtraction> {
-  if (!hasActivityImageConsent(config)) throw new ActivityError('IMAGE_CONSENT_REQUIRED', '请核对处理目标并允许图像模型读取截图')
+  const app = getConfig()
+  if (!hasActivityImageConsent(config, app)) throw new ActivityError('IMAGE_CONSENT_REQUIRED', '请核对处理目标并允许图像模型读取截图')
   signal.throwIfAborted()
   const prompt = activityExtractionPrompt(ACTIVITY_IMAGE_PROMPT, config.extraction_prompt)
   let raw: string
   if (config.extraction_mode === 'qwen') {
-    const variant = getConfig().computer?.modelVariant
+    const variant = app.computer?.modelVariant
     const session = new QwenVlSession({ variant: variant === '4b' || variant === '8b' ? variant : '2b' })
     const cancel = () => { void session.dispose() }
     signal.addEventListener('abort', cancel, { once: true })
@@ -49,7 +50,7 @@ export async function extractActivityImage(source: ActivitySource, image: Buffer
       throw new ActivityError('QWEN_FAILED', '本机 Qwen3-VL 推理失败，可打开已保存的截图并重试')
     } finally { signal.removeEventListener('abort', cancel); await session.dispose() }
   } else {
-    const model = activityVisionConfig(config)
+    const model = activityVisionConfig(config, app)
     if (!model.base_url || !model.model_name) throw new ActivityError('MODEL_UNAVAILABLE', '请先配置所选图像模型')
     const input = { base64: image.toString('base64'), width: 0, height: 0, title: '', url: '' }
     try {
@@ -57,7 +58,8 @@ export async function extractActivityImage(source: ActivitySource, image: Buffer
       const localGemma = model.protocol !== 'anthropic' && ['localhost', '127.0.0.1', '[::1]'].includes(host) &&
         /^(?:google\/)?gemma-4-/i.test(model.model_name)
       if (localGemma) model.max_tokens = Math.max(model.max_tokens, 2048)
-      raw = (await analyzeImage(input, model, prompt, signal, { requireComplete: true, disableReasoning: localGemma })).description
+      raw = (await analyzeImage(input, model, prompt, signal, { requireComplete: true, disableReasoning: localGemma,
+        consent: { main: app.llm, current: () => hasActivityImageConsent(config) } })).description
     } catch (error) {
       signal.throwIfAborted()
       if (error instanceof VisionOutputError) {

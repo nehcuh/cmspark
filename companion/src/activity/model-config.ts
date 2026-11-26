@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto'
-import { getConfig, type VisionConfig } from '../config'
+import { modelRecipient } from '../llm/recipient'
+import { getConfig, type CompanionConfig, type VisionConfig } from '../config'
 import type { ActivityConfig } from './types'
 import { endpointsMatch } from '../llm/vision-reuse-inherit'
 import { visionConfigForAnalyze } from '../llm/likely-multimodal'
 
-export function activityModelTarget(config: ActivityConfig): { id: string; label: string; unavailable?: string } {
+export function activityModelTarget(config: ActivityConfig, snapshot?: CompanionConfig): { id: string; label: string; unavailable?: string } {
   const mode = config.extraction_mode || 'ocr'
   if (mode === 'ocr') return { id: 'ocr', label: 'OCR 文本 → 主对话模型' }
-  const app = getConfig()
+  const app = snapshot ?? getConfig()
   if (mode === 'qwen') {
     const variant = app.computer?.modelVariant || '2b'
     return { id: createHash('sha256').update(JSON.stringify([mode, variant, app.computer?.modelRootDir, app.computer?.pythonMode, app.computer?.pythonPath])).digest('hex'), label: `本机 Qwen3-VL ${variant} · 内容不离机` }
@@ -34,26 +35,25 @@ export function activityModelTarget(config: ActivityConfig): { id: string; label
   return { id, label: `${mode === 'dedicated' ? '专用图像模型' : '复用视觉配置'} · ${host} · ${model.model_name} · ${model.protocol || 'openai'}` }
 }
 
-function consentMatches(config: ActivityConfig, consent: string | undefined): boolean {
-  const target = activityModelTarget(config)
+function consentMatches(config: ActivityConfig, consent: string | undefined, snapshot?: CompanionConfig): boolean {
+  const target = activityModelTarget(config, snapshot)
   return !target.unavailable && consent === target.id
 }
 
-export function hasActivityTitleConsent(config: ActivityConfig): boolean {
+export function hasActivityTitleConsent(config: ActivityConfig, snapshot?: CompanionConfig): boolean {
   return config.title_ai_enabled === true && (config.extraction_mode === 'vision' || config.extraction_mode === 'dedicated') &&
-    consentMatches(config, config.title_ai_consent)
+    consentMatches(config, config.title_ai_consent, snapshot)
 }
 
-export function hasActivityImageConsent(config: ActivityConfig): boolean {
+export function hasActivityImageConsent(config: ActivityConfig, snapshot?: CompanionConfig): boolean {
   return config.extraction_mode !== undefined && config.extraction_mode !== 'ocr' &&
-    config.image_ai_enabled === true && consentMatches(config, config.image_ai_consent)
+    config.image_ai_enabled === true && consentMatches(config, config.image_ai_consent, snapshot)
 }
 
 // Persist only a fingerprint. A queued OCR job must not follow a changed main endpoint.
 export function recognitionTarget(config: ActivityConfig): string {
   if ((config.extraction_mode || 'ocr') !== 'ocr') return activityModelTarget(config).id
-  const { base_url, model_name, protocol, api_key, extra_headers, auth_style, client_header_profile, claude_code_compat_version, anthropic_version } = getConfig().llm
-  return createHash('sha256').update(JSON.stringify(['ocr', base_url, model_name, protocol, api_key, auth_style, client_header_profile, claude_code_compat_version, anthropic_version, Object.entries(extra_headers || {}).sort(([a], [b]) => a.localeCompare(b))])).digest('hex')
+  return modelRecipient('ocr', getConfig().llm)
 }
 
 export function activityVisionConfig(config: ActivityConfig, app = getConfig()): VisionConfig {

@@ -1,3 +1,5 @@
+import { privateMiniRequest } from '../../../utils/mini-request'
+
 /** Wire projection of Companion activity/types.ts; personal tasks never alias Agent Board records. */
 export interface TaskEvidence {
   action_quote?: string
@@ -54,7 +56,7 @@ export function requestActivity(type: string, data: Record<string, unknown> = {}
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
-      chrome.runtime.onMessage.removeListener(receive)
+      if (type !== 'activity.import') chrome.runtime.onMessage.removeListener(receive)
       signal?.removeEventListener('abort', cancel)
       if (error) reject(error); else resolve(result!)
     }
@@ -70,10 +72,17 @@ export function requestActivity(type: string, data: Record<string, unknown> = {}
       else if (matchingActivityReply(message, type, data)) finish(undefined, message)
     }
     if (signal?.aborted) { cancel(); return }
-    chrome.runtime.onMessage.addListener(receive)
+    if (type !== 'activity.import') chrome.runtime.onMessage.addListener(receive)
     signal?.addEventListener('abort', cancel, { once: true })
     timer = setTimeout(() => finish(new Error('未收到后台确认，请刷新核实；不会自动重试更改。')), type === 'activity.bind_window' ? 95_000 : type === 'activity.preview' ? 90_000 : type === 'activity.preview_ocr' ? 45_000 : type === 'activity.scan' || type === 'activity.import' || type === 'activity.analyze' ? 720_000 : 15_000)
     try {
+      if (type === 'activity.import') {
+        void privateMiniRequest<ActivityReply>({ ...data, type }, signal).then(result => {
+          if (result.type === 'activity.result') receive({ ...result, id })
+          if (!settled) finish(new Error(result.error || '未收到有效的截图提交结果，请刷新核实。'))
+        }).catch(() => finish(new Error('连接中断，请刷新核实操作结果。')))
+        return
+      }
       Promise.resolve(chrome.runtime.sendMessage({ type, ...data, id, require_connected: true })).then(ack => {
         if (ack?.ok === false) finish(new Error(ack.error || 'Companion 未连接。'))
       }).catch(() => finish(new Error('连接中断，请刷新核实操作结果。')))

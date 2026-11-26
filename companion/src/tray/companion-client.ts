@@ -241,6 +241,12 @@ export class CompanionClient {
     return this._state
   }
 
+  /** User gestures may outlive an authenticated socket, including a reconnect to the same port. */
+  currentConnectionGuard(): () => boolean {
+    const binding = this.ws && { socket: this.ws, auth: this.meetingAuth }
+    return () => !!binding && this.isMeetingConnection(binding)
+  }
+
   // --- Data fetching ---
 
   async fetchQuickActions(): Promise<QuickActionItem[]> {

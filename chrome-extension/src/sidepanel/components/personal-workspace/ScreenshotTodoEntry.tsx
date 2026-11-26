@@ -4,6 +4,7 @@ import { tokens } from '../../ui/tokens'
 import { recognitionLabel } from './RecentActivitySources'
 import { selectWindowFrame } from './WindowScreenshotImport'
 import type { ActivityController } from './useActivity'
+import { requestMini } from '../../../utils/mini-request'
 
 type FloatingWindow = { requestWindow(options: { width: number; height: number }): Promise<Window> }
 
@@ -23,6 +24,7 @@ export function ScreenshotTodoEntry({ controller, connected, active, review, con
   const [floating, setFloating] = useState<Window | null>(null)
   const popup = useRef<Window | null>(null), capture = useRef<AbortController | null>(null), alive = useRef(false)
   const panel = useRef<HTMLElement>(null)
+  const claimed = useRef('')
   useEffect(() => {
     alive.current = true
     return () => { alive.current = false; capture.current?.abort(); popup.current?.close() }
@@ -32,10 +34,25 @@ export function ScreenshotTodoEntry({ controller, connected, active, review, con
     if (active && expanded) panel.current?.focus()
   }, [active, expanded])
   useEffect(() => {
-    const reopen = () => { if (window.location.hash.startsWith('#todos/capture/')) setExpanded(true) }
+    const reopen = () => {
+      const hash = window.location.hash || ''
+      if (!hash.startsWith('#todos/capture/')) return
+      setExpanded(true)
+      const ticket = hash.match(/^#todos\/capture\/mini\/([a-f\d-]{36})$/i)?.[1]
+      if (!connected || !ticket || ticket === claimed.current) return
+      claimed.current = ticket
+      setError('')
+      void requestMini('claim', { action: 'todo', ticket }).then(result => {
+        if (!alive.current || claimed.current !== ticket) return
+        if (!result.ok || !result.image_base64) throw new Error(result.error || '未取得截图')
+        setPreview('data:image/png;base64,' + result.image_base64)
+        setSourceId('')
+      }).catch(error => { if (alive.current && claimed.current === ticket) setError(error.message) })
+    }
+    reopen()
     window.addEventListener('hashchange', reopen)
     return () => window.removeEventListener('hashchange', reopen)
-  }, [])
+  }, [connected])
   const pip = typeof window === 'undefined' ? undefined : (window as Window & { documentPictureInPicture?: FloatingWindow }).documentPictureInPicture
   const source = snapshot?.sources.find(item => item.id === sourceId && !item.deleted)
   const candidates = snapshot?.candidates.filter(item => item.status === 'pending' && item.evidence.source_id === sourceId) || []

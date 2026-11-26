@@ -88,6 +88,7 @@ import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
 import { surfaceFromOrigin, isChromeExtensionWsOrigin } from "./handshake-surface"
+import { miniPanelOwner } from "../mini/capture-handoff"
 import { getActivityService } from "../activity"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 import {
@@ -1570,6 +1571,15 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                     }
                   } catch { /* ignore disconnected */ }
                 }
+              },
+              miniPanel: () => {
+                const eligible = [...clients].filter(client => {
+                  const auth = wsAuth.get(client)
+                  return client.readyState === WebSocket.OPEN && auth?.authenticated === true && auth.surface === "panel" && isChromeExtensionWsOrigin(auth.origin)
+                })
+                const peer = miniPanelOwner(eligible)
+                const id = peer && (peer as any).__cmsparkPanelId
+                return typeof id === "string" && peer ? { id, send: frame => peer.send(JSON.stringify(frame)) } : undefined
               },
               // WP4: 每连接面板标识(computer.evidence.open P6 频率上限计数)。
               panelId,
