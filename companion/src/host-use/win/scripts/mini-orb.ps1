@@ -886,6 +886,11 @@ public class OrbWindow : Window {
         foreach (var pair in buttons)
             if (pair.Value == b)
                 current = pair.Key;
+        if (e.Key == Key.Enter && current != null) {
+            e.Handled = true;
+            Choose(current);
+            return;
+        }
         if (e.Key == Key.Left && sub) {
             e.Handled = true;
             sub = false;

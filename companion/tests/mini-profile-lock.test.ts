@@ -52,6 +52,7 @@ test("a second tray cannot start shortcut settings or toggle the first tray's hi
   const first = tray(), second = tray(), third = tray()
   try {
     await writeFile(join(dir, "mini-hidden"), "")
+    await writeFile(join(dir, "mini-hotkeys.json"), '{"version":2,"bindings":{}}')
     await first.start()
     await second.start()
     await second.openHotkeySettings()

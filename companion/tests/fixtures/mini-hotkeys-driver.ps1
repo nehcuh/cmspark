@@ -173,6 +173,8 @@ try {
     if($OwnershipOnly){
         $stage='system ownership on startup, conflict and release'
         Expect-Free $f17; Expect-Free $f19
+        Check ([ShortcutKeys]::RegisterHotKey($form.Handle,72,3,32)) 'default chord is already occupied'
+        Check ([ShortcutKeys]::UnregisterHotKey($form.Handle,72)) 'could not release default chord for the fixture'
         $seed='{"version":1,"bindings":{"chat":{"modifiers":7,"key":128},"ocr":{"modifiers":7,"key":130}}}'
         [IO.File]::WriteAllText($BindingsFile,$seed,[Text.UTF8Encoding]::new($false))
         Check ([ShortcutKeys]::RegisterHotKey($form.Handle,71,$mods,$f19)) 'fixture failed to reserve key'

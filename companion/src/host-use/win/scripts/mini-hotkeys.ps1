@@ -78,7 +78,7 @@ public class GlobalHotkeys : IDisposable {
         }
         public bool Reserved() {
             return Key == 0x7b || (Key == 0x2e && (Mods & 3) == 3) || (Key == 0x4c && Mods == 8) ||
-                   (Key == 0x20 && (Mods & 8) != 0 && (Mods & 1) == 0);
+                   (Key == 0x20 && (Mods == 8 || Mods == 10 || Mods == 12));
         }
         public bool Valid() {
             if ((Mods & ~15) != 0 || Reserved())

@@ -97,7 +97,8 @@ function seaDispatch759(source) {
   assert.equal(copy.length, 1)
   assert.ok(copy[0].index > guard[0].index)
   const direct = [...source.matchAll(/^\s*(node|& \$NodeExe) (.+)\r?$/gm)]
-  assert.equal(direct.length, 10, 'complete direct Node call inventory')
+  assert.equal(direct.length, 11, 'complete direct Node call inventory')
+  assert.equal(direct.filter(call => call[2].includes('verify-windows-host-scripts.mjs')).length, 1)
   assert.equal((source.match(/Get-Command node\.exe/g) || []).length, 1)
   assert.equal((source.match(/^\s*\$NodeExe\s*=/gm) || []).length, 1)
   return io => {
@@ -128,7 +129,7 @@ test('SEA validates and copies one bound executable despite a different bare nod
   const s = seaInputs759(), result = seaDispatch759(seaSource759())(s.io)
   assert.equal(s.resolutions(), 1)
   assert.equal(result.copied, 'C:\\owned real\\node.exe')
-  assert.deepEqual(result.calls, Array(10).fill(result.copied))
+  assert.deepEqual(result.calls, Array(11).fill(result.copied))
   for (const version of ['22.23.2', '22.23.3', '24.22.1']) assert.throws(() => seaDispatch759(seaSource759())(seaInputs759(version).io), /NODE_PIN_REFUSED/)
   assert.throws(() => seaDispatch759(seaSource759())(seaInputs759(patched, 'arm64').io), /NODE_PIN_REFUSED/)
 })
@@ -152,7 +153,7 @@ test('SEA refuses missing/shim-only resolution and never re-resolves after valid
   s.io.runtime = () => { changed = true; return {version: patched, arch: 'x64'} }
   const result = seaDispatch759(seaSource759())(s.io)
   assert.equal(result.copied, 'C:\\initial\\node.exe')
-  assert.deepEqual(result.calls, Array(10).fill(result.copied))
+  assert.deepEqual(result.calls, Array(11).fill(result.copied))
 })
 
 test('activity notifier staging reuses the same validated SEA executable', () => {
@@ -165,7 +166,7 @@ test('activity notifier staging reuses the same validated SEA executable', () =>
   assert.notEqual(mutant, actual)
   const good = seaDispatch759(actual)(seaInputs759().io)
   const bad = seaDispatch759(mutant)(seaInputs759().io)
-  assert.deepEqual(good.calls, Array(10).fill(good.copied))
+  assert.deepEqual(good.calls, Array(11).fill(good.copied))
   assert.equal(bad.calls.filter(binary => binary !== bad.copied).length, 1)
   assert.ok(bad.calls.includes('C:\\shim\\node.cmd'))
 })
