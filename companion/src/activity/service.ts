@@ -74,8 +74,8 @@ export class ActivityService {
     const config = this.store.config()
     return (config.extraction_mode || 'ocr') === 'ocr' ? config.ocr_ai_enabled : hasActivityImageConsent(config)
   }
-  private async extractSource(source: ActivitySource, signal: AbortSignal, current: () => boolean, localOnly: boolean): Promise<void> {
-    const config = this.store.config(), target = activityModelTarget(config).id
+  private async extractSource(source: ActivitySource, signal: AbortSignal, current: () => boolean, target: string): Promise<void> {
+    const config = this.store.config(), localOnly = target === 'local-ocr'
     const imageMode = (config.extraction_mode || 'ocr') !== 'ocr'
     if (!localOnly && !this.canExtract()) throw new ActivityError(imageMode ? 'IMAGE_CONSENT_REQUIRED' : 'SEMANTIC_CONSENT_REQUIRED', '请核对处理目标并允许所选模型处理聊天内容')
     if (!imageMode) {
@@ -94,7 +94,7 @@ export class ActivityService {
       }
       const entries = await this.extract(source, signal, config.extraction_prompt)
       if (!current() || signal.aborted) throw new ActivityError('CANCELLED', '设置或来源已变化，此次抽取已取消')
-      this.store.addCandidates(source, entries, new Date(this.now()).toISOString())
+      this.store.addCandidates(source, entries, { target, completed_at: new Date(this.now()).toISOString() })
       return
     }
     const data = this.store.source(source.id).image_data_url
@@ -108,7 +108,7 @@ export class ActivityService {
     })
     if (!current() || signal.aborted || activityModelTarget(this.store.config()).id !== target || !this.canExtract()) throw new ActivityError('CANCELLED', '处理目标或来源已变化，此次抽取已取消')
     const updated = this.store.saveVisualTranscript(source, result.transcript)
-    this.store.addCandidates(updated, result.entries, new Date(this.now()).toISOString())
+    this.store.addCandidates(updated, result.entries, { target, completed_at: new Date(this.now()).toISOString() })
   }
   private initialRecognition(automatic: boolean, extract: boolean, hasText: boolean): ActivityRecognition {
     const config = this.store.config()
@@ -143,7 +143,7 @@ export class ActivityService {
         if (receipt?.status !== 'queued' || receipt.target !== target) throw new ActivityError('CANCELLED', '此项识别已取消')
         this.store.setRecognition(sourceId, { ...receipt, status: 'running' })
         started = true
-        await this.extractSource(source, signal, current, localOnly)
+        await this.extractSource(source, signal, current, target)
       } catch (error) {
         const failure = error instanceof ActivityError ? error : new ActivityError('EXTRACTION_FAILED', '识别失败，请核对模型服务、输出格式后重试')
         // Unclaimed automatic work survives a clean shutdown. In-flight delivery is ambiguous.
@@ -467,10 +467,12 @@ export class ActivityService {
       const config = this.store.config()
       if (activityModelTarget(config).id !== expectedTarget || !this.canExtract())
         throw new ActivityError('MODEL_TARGET_CHANGED', '请核对当前处理目标与授权后重试')
+      const target = recognitionTarget(config)
       this.store.prune(this.now())
       const source = this.store.addSource({ ...metadata, captured_at: new Date(this.now()).toISOString(), ocr_text: '',
-        recognition: { status: 'queued', automatic: false, target: recognitionTarget(config) } }, image, true)!
-      if (source.recognition?.status !== 'complete') await this.analyze(source.id, requestCurrent, true)
+        recognition: { status: 'queued', automatic: false, target } }, image, true)!
+      if (source.recognition?.status !== 'complete' || source.last_completed_target !== target)
+        await this.analyze(source.id, requestCurrent, true)
       this.store.prune(this.now())
       return source.id
     }

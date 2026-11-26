@@ -129,11 +129,15 @@ export class ActivityStore {
     this.mutate(s => { s.sources.find(item => item.id === source.id)!.ocr_text = text })
     return this.sourceMetadata(source.id)
   }
-  addCandidates(source: ActivitySource, entries: Array<Omit<TodoCandidate, 'id' | 'revision' | 'created_at' | 'status'>>, completedAt?: string): void {
+  addCandidates(source: ActivitySource, entries: Array<Omit<TodoCandidate, 'id' | 'revision' | 'created_at' | 'status'>>, completion?: { target: string; completed_at: string }): void {
     const canonical = this.value.sources.find(s => s.id === source.id)
     if (!canonical || canonical.sha256 !== source.sha256 || canonical.ocr_text !== source.ocr_text) throw new ActivityError('SOURCE_EXPIRED', '来源已清理，本次抽取结果不再接纳')
     this.mutate(s => {
       const sourceById = new Map(s.sources.map(row => [row.id, row]))
+      const savedSource = sourceById.get(source.id)!
+      if (completion && savedSource.origin === 'manual_import' && savedSource.last_completed_target !== completion.target) {
+        s.candidates = s.candidates.filter(row => row.evidence.source_id !== source.id || row.status !== 'pending')
+      }
       const actions = new Set<string>(), titles = new Set<string>(), legacyTitles = new Set<string>()
       function seen(row: Pick<TodoCandidate, 'title' | 'evidence'>): boolean {
         const e = row.evidence, origin = sourceById.get(e.source_id)
@@ -153,7 +157,10 @@ export class ActivityStore {
         if (s.candidates.length >= 3000) throw new ActivityError('QUOTA_EXCEEDED', '候选已达上限，请清理来源后重试')
         s.candidates.unshift({ ...item, id: randomUUID(), revision: 0, created_at: source.captured_at, status: 'pending' })
       }
-      if (completedAt) s.sources.find(item => item.id === source.id)!.recognition = { status: 'complete', completed_at: completedAt, candidates: entries.length }
+      if (completion) {
+        savedSource.last_completed_target = completion.target
+        savedSource.recognition = { status: 'complete', completed_at: completion.completed_at, candidates: entries.length }
+      }
     })
   }
   confirm(id: string, revision: number, task: unknown, now: string): PersonalTodo {

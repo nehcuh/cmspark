@@ -239,6 +239,29 @@ test('retry after settings change queues behind a canceled OCR without letting t
   } finally { release(); await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('a legacy screenshot completion is refreshed once, then reused after restarting with the same model', async () => {
+  const dir = temp(), store = new ActivityStore(dir)
+  store.configure(0, { ocr_ai_enabled: true })
+  const source = store.addSource({ ...sourceInput, app_id: 'manual.screenshot', window_title: '', origin: 'manual_import',
+    recognition: { status: 'complete', completed_at: sourceInput.captured_at, candidates: 0 } }, png)!
+  const requests: string[] = []
+  const reopen = () => new ActivityService({ dataDir: dir, extract: async item => { requests.push(item.id); return [] } })
+  let service = reopen()
+  const intake = { type: 'activity.import', image_base64: png.toString('base64'), expected_model_target: 'ocr' }
+  try {
+    assert.equal((await service.handle(intake)).source_id, source.id)
+    await turn()
+    assert.deepEqual(requests, [source.id])
+    assert.equal(service.store.sourceMetadata(source.id).recognition?.status, 'complete')
+    await service.stop()
+    service = reopen()
+    assert.equal((await service.handle(intake)).source_id, source.id)
+    await turn()
+    assert.deepEqual(requests, [source.id])
+    assert.equal(service.state().sources.length, 1)
+  } finally { await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('desktop screenshot intake queues a specific source, retries a failed extraction and confirms editable fields', async () => {
   const dir = temp()
   const quote = '小陈整理报告，小林跟踪进度，发给小王。'

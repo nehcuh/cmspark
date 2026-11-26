@@ -50,6 +50,8 @@ export type ActivityRecognition =
 export interface ActivitySource {
   binding_id?: string
   recognition?: ActivityRecognition
+  /** Target that produced the drafts, retained across retries and absent on legacy sources. */
+  last_completed_target?: string
   id: string
   captured_at: string
   app_id: string

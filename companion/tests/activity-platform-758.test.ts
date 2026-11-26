@@ -9,6 +9,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { ActivityService } from '../src/activity/service'
+import { activityVisionConfig } from '../src/activity/model-config'
 import { DEFAULT_ACTIVITY_CONFIG } from '../src/activity/types'
 import { WindowsPassiveRecorder, LinuxPassiveRecorder, platformSupport, resolveLinuxRecorder } from '../src/activity/platform'
 import { validatePng } from '../src/activity/image'
@@ -159,6 +160,71 @@ test('Windows captured PNG reaches the consented main, shared independent, and d
   } finally {
     await service.stop()
     await new Promise<void>(resolve => server.close(() => resolve()))
+    saveConfig({ vision: original.vision, llm: original.llm }, { llmKey: true, visionKey: true })
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('reimporting the same screenshot after switching from the main to the independent image model uses its new authorization', async () => {
+  const dir = fresh(), original = structuredClone(getConfig())
+  const models: string[] = []
+  const service = new ActivityService({ dataDir: dir, extractImage: async (source, image, config) => {
+    assert.deepEqual(image, png)
+    const model = activityVisionConfig(config).model_name
+    models.push(model)
+    const actions = ['整理报告', '核对清单', '归档记录', '检查附录']
+    const transcript = '小陈和小周整理报告、核对清单、归档记录、检查附录。'
+    const candidates = (model === 'main-vl' ? actions : actions.slice(0, 3)).map(title => ({
+      title, quote: transcript, action_quote: title, owner: model === 'main-vl' ? '小陈' : '小周',
+    }))
+    const entries = parseExtractedCandidates(JSON.stringify({ candidates }),
+      { ...source, ocr_text: transcript })
+    return { transcript, entries }
+  } })
+  const authorize = (target: string) => service.handle({ type: 'activity.configure', expected_revision: service.store.revision(),
+    expected_model_target: target, patch: { extraction_mode: 'vision', image_ai_enabled: true } })
+  async function intake(target: string) {
+    const reply = await service.handle({ type: 'activity.import', expected_model_target: target, image_base64: png.toString('base64') })
+    await new Promise<void>(resolve => setImmediate(resolve)) // Let the queued in-memory extractor commit its result.
+    return reply
+  }
+  try {
+    const vision = { ...original.vision!, enabled: true, reuse_main_model: true, model_name: 'independent-vl', base_url: 'http://127.0.0.1:1234/v1' }
+    saveConfig({ llm: { ...original.llm, model_name: 'main-vl', native_vision: 'on' }, vision })
+    const first = service.state().runtime.model_target_ids!.vision!
+    assert.equal((await authorize(first)).ok, true)
+    const imported = await intake(first)
+    assert.equal(imported.ok, true)
+    const id = String(imported.source_id)
+    assert.equal(service.store.sourceMetadata(id).recognition?.status, 'complete')
+    assert.deepEqual(models, ['main-vl'])
+    const drafts = service.state().candidates
+    const confirm = drafts.find(item => item.title === '核对清单')!, dismiss = drafts.find(item => item.title === '归档记录')!
+    assert.equal((await service.handle({ type: 'todo.confirm', candidate_id: confirm.id, expected_revision: confirm.revision,
+      task: { title: '已核对的清单', owner: '小陈' } })).ok, true)
+    assert.equal((await service.handle({ type: 'todo.dismiss', candidate_id: dismiss.id, expected_revision: dismiss.revision })).ok, true)
+    const decisions = service.state().candidates.filter(item => item.status !== 'pending'), todos = service.state().todos
+
+    saveConfig({ vision: { ...vision, reuse_main_model: false } })
+    const second = service.state().runtime.model_target_ids!.vision!
+    assert.notEqual(first, second)
+    assert.equal((await intake(second)).error_code, 'MODEL_TARGET_CHANGED')
+    assert.equal((await authorize(second)).ok, true)
+    assert.equal((await intake(first)).error_code, 'MODEL_TARGET_CHANGED')
+    assert.deepEqual(models, ['main-vl'])
+    assert.equal((await intake(second)).source_id, id)
+    assert.deepEqual(models, ['main-vl', 'independent-vl'])
+    assert.equal(service.store.sourceMetadata(id).recognition?.status, 'complete')
+    const updated = service.state()
+    assert.deepEqual(updated.candidates.filter(item => item.status === 'pending').map(item => [item.evidence.source_id, item.title, item.owner]),
+      [[id, '整理报告', '小周']])
+    assert.deepEqual(updated.candidates.filter(item => item.status !== 'pending'), decisions)
+    assert.deepEqual(updated.todos, todos)
+    assert.equal((await intake(second)).source_id, id)
+    assert.deepEqual(models, ['main-vl', 'independent-vl'])
+    assert.equal(service.state().sources.length, 1)
+  } finally {
+    await service.stop()
     saveConfig({ vision: original.vision, llm: original.llm }, { llmKey: true, visionKey: true })
     fs.rmSync(dir, { recursive: true, force: true })
   }

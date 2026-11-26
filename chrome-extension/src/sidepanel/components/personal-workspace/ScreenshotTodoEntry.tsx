@@ -124,7 +124,7 @@ export function ScreenshotTodoEntry({ controller, connected, active, review, con
       {!authorized && <button type="button" className="cm-p-link" onClick={configure}>前往活动记录授权待办识别</button>}
       {source && <div><p role="status">{recognitionLabel(source.recognition)}</p>
         {(source.recognition?.status === 'failed' || source.recognition?.status === 'saved') && <button type="button" className="cm-p-button" disabled={unavailable || !authorized} onClick={() => void mutate('activity.analyze', { source_id: source.id, queue_only: true }, '已重新提交识别。')}>重试识别</button>}
-        {candidates.map(candidate => <button className="cm-personal-row" type="button" key={candidate.id} onClick={() => review(candidate.id)}>{candidate.title} · 核对草稿</button>)}
+        {source.recognition?.status === 'complete' && candidates.map(candidate => <button className="cm-personal-row" type="button" key={candidate.id} onClick={() => review(candidate.id)}>{candidate.title} · 核对草稿</button>)}
         {manual(source.id)}
       </div>}
     </>}
