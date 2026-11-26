@@ -23,6 +23,7 @@ export type TrayActionType =
   | "summoner"
   | "summoner-toggle"
   | "mini-toggle"
+  | "mini-hotkeys"
   | "desktop"
 
 export interface TrayMenuAction {

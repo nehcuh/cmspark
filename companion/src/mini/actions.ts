@@ -1,6 +1,11 @@
 import type { CompanionClient } from '../tray/companion-client'
 
-export type MiniAction = 'search' | 'todo' | 'ask' | 'ocr' | 'capture'
+const miniActions = ['search', 'todo', 'ask', 'ocr', 'capture'] as const
+export type MiniAction = typeof miniActions[number]
+
+export function isMiniAction(key: string): key is MiniAction {
+  return miniActions.some(action => action === key)
+}
 
 /** The tray has already hidden the orb and completed the user's region selection. */
 export async function openMiniAction(client: Pick<CompanionClient, 'sendAppRequest'>, action: MiniAction, png?: Buffer): Promise<void> {

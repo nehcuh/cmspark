@@ -110,6 +110,7 @@ public class OrbWindow : Window {
     readonly TextBlock noticeText = new TextBlock();
     string pending;
     bool chatting;
+    bool temporary = Environment.GetEnvironmentVariable("CMSPARK_MINI_TEMPORARY") == "1";
     readonly string positionFile = Environment.GetEnvironmentVariable("CMSPARK_MINI_POSITION_FILE");
     IntPtr handle;
     Pixel anchor, press, pressAnchor;
@@ -469,6 +470,7 @@ public class OrbWindow : Window {
         }
         LayoutHost();
         orb.Focus();
+        HideWhenIdle();
     }
     OrbWindow() {
         Title = "CMspark Mini";
@@ -700,6 +702,14 @@ public class OrbWindow : Window {
         menu = sub = false;
         hot = null;
         LayoutHost();
+        HideWhenIdle();
+    }
+    void HideWhenIdle() {
+        if (temporary)
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(delegate {
+                if (temporary && !menu && !chatting && !down)
+                    Hide();
+            }));
     }
     void Choose(string key) {
         if (key == "shot") {
@@ -899,6 +909,27 @@ public class OrbWindow : Window {
         }
     }
     void Command(string command) {
+        if (command != null && command.StartsWith("invoke:", StringComparison.Ordinal)) {
+            string key = command.Substring(7);
+            if (Array.IndexOf(Keys, key) < 0)
+                return;
+            ResetGesture();
+            ClearNotice();
+            if (key == "chat" || key == "shot") {
+                if (!IsVisible)
+                    Show();
+                if (key == "chat")
+                    OpenChat();
+                else {
+                    OpenMenu(true);
+                    Choose("shot");
+                }
+            } else {
+                CloseChat();
+                RunAction(key);
+            }
+            return;
+        }
         if (command != null && command.StartsWith("notice:", StringComparison.Ordinal)) {
             if (command.Length > 8192)
                 return;
@@ -925,6 +956,7 @@ public class OrbWindow : Window {
             CloseMenu();
             Hide();
         } else if (command == "show") {
+            temporary = false;
             LayoutHost();
             if (!IsVisible)
                 Show();

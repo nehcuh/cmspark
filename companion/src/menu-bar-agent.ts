@@ -1959,6 +1959,7 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       break
     case "autostart": await toggleAutoStart(); break
     case "mini-toggle": await windowsMini?.toggle(); break
+    case "mini-hotkeys": await windowsMini?.openHotkeySettings(); break
     case "quick-action":
       handleQuickAction(action.payload?.id || "").catch((err) => {
         console.error("[menu-bar] Quick action error:", err)
@@ -2156,8 +2157,10 @@ export async function startMenuBarAgent(): Promise<void> {
   // Connect (non-blocking — data arrives via callbacks)
   companionClient.connect().catch(() => {})
   if (process.platform === "win32" && activeBackend === "systray2") {
-    windowsMini = new WindowsMini(getConfigDir(), runMiniAction, visible => trayInstance?.setMiniVisible?.(visible))
-    try { windowsMini.start() } catch (error) { console.warn("[mini] Failed to start desktop orb:", error) }
+    windowsMini = new WindowsMini(getConfigDir(), runMiniAction,
+      visible => trayInstance?.setMiniVisible?.(visible),
+      message => safeNotify({ title: "CMspark Mini", message, timeout: 5 }))
+    try { await windowsMini.start() } catch (error) { console.warn("[mini] Failed to start desktop orb:", error) }
   }
   void pollUnattendedCruiseChip()
 

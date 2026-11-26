@@ -225,6 +225,7 @@ export class SysTray2Adapter implements UnifiedTray {
     push("状态详情", { type: "status" })
     if (process.platform === "win32") {
       push("显示 Mini 桌面小球", { type: "mini-toggle" }, { checked: this.miniVisible })
+      push("Mini 快捷键设置", { type: "mini-hotkeys" })
     }
 
     // Quick Actions
