@@ -479,7 +479,7 @@ async function handleCompanionMessage(msg: any) {
   if (msg.type === "ui.open_sidepanel") {
     // True result round-trip: companion awaits ui.open_sidepanel.result by id
     // (short timeout → honest failure in the overlay), so never swallow errors.
-    const reply = (ok: boolean, error?: string) => {
+    const reply = (ok: boolean, error?: string, meetingOpened = false) => {
       if (typeof msg.id !== "string" || !msg.id) return
       try {
         wsClient?.send({
@@ -487,6 +487,7 @@ async function handleCompanionMessage(msg: any) {
           id: msg.id,
           ok,
           ...(error ? { error } : {}),
+          ...(meetingOpened ? { meeting_opened: true } : {}),
           ...(typeof msg.destination === "string" && msg.destination.startsWith("mini_") ? { destination: msg.destination } : {}),
         })
       } catch {
@@ -497,13 +498,17 @@ async function handleCompanionMessage(msg: any) {
       const mini = miniPagePath(msg.destination, msg.ticket)
       if (mini) {
         const url = chrome.runtime.getURL(mini)
-        if (msg.destination === "mini_todo") {
+        if (msg.destination === "mini_todo" || msg.destination === "mini_meeting") {
           const tab = await chrome.tabs.create({ url, active: true })
           await chrome.windows.update(tab.windowId, { focused: true })
         } else {
           await chrome.windows.create({ url, type: "popup", focused: true, width: 510, height: 680 })
         }
-        reply(true)
+        reply(true, undefined, msg.destination === "mini_meeting")
+        return
+      }
+      if (typeof msg.destination === "string" && msg.destination.startsWith("mini_")) {
+        reply(false, "当前 Chrome 扩展不支持此 Mini 操作")
         return
       }
       if (msg.destination === "screenshot_todo") {

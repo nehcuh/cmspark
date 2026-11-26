@@ -86,13 +86,13 @@ public class OrbWindow : Window {
     [DllImport("shcore.dll")]
     static extern int GetDpiForMonitor(IntPtr monitor, int kind, out uint x, out uint y);
     const double OrbSize = 54, Radius = OrbSize / 2 + 3;
-    static readonly string[] Roots = { "chat", "shot", "search" }, Leaves = { "todo", "ask", "ocr", "capture" };
-    static readonly string[] Names = { "快速对话", "截图",     "资料搜索", "截图抽取待办",
+    static readonly string[] Roots = { "chat", "shot", "search", "meeting" }, Leaves = { "todo", "ask", "ocr", "capture" };
+    static readonly string[] Names = { "快速对话", "截图",     "资料搜索", "会议记录", "截图抽取待办",
                                        "截图询问", "截图 OCR", "仅截图" };
-    static readonly string[] Labels = { "快速对话", "截图",  "资料搜索", "抽取待办",
+    static readonly string[] Labels = { "快速对话", "截图",  "资料搜索", "会议记录", "抽取待办",
                                         "询问图片", "OCR 识别", "仅截图" };
-    static readonly string[] Glyphs = { "\uE8BD", "\uE722", "\uE721", "\uE8FD", "\uE9CE", "\uE8D2", "\uE7C5" };
-    static readonly string[] Keys = { "chat", "shot", "search", "todo", "ask", "ocr", "capture" };
+    static readonly string[] Glyphs = { "\uE8BD", "\uE722", "\uE721", "\uE787", "\uE8FD", "\uE9CE", "\uE8D2", "\uE7C5" };
+    static readonly string[] Keys = { "chat", "shot", "search", "meeting", "todo", "ask", "ocr", "capture" };
     readonly Dictionary<string, Button> buttons = new Dictionary<string, Button>();
     readonly Dictionary<string, PathShape> slices = new Dictionary<string, PathShape>();
     readonly Dictionary<string, Point> centers = new Dictionary<string, Point>();
@@ -631,7 +631,8 @@ public class OrbWindow : Window {
                 double fy = Math.Min(1, ((sy > 0 ? h - orbCenter.Y : orbCenter.Y) - 18) / 180.0);
                 SetCenter("chat", 102, 1, sx, sy, fx, fy);
                 SetCenter("shot", 96, 63, sx, sy, fx, fy);
-                SetCenter("search", 48, 123, sx, sy, fx, fy);
+                SetCenter("search", 64, 119, sx, sy, fx, fy);
+                SetCenter("meeting", 27, 178, sx, sy, fx, fy);
                 SetCenter("todo", 210, 12, sx, sy, fx, fy);
                 SetCenter("ask", 234, 65, sx, sy, fx, fy);
                 SetCenter("ocr", 216, 122, sx, sy, fx, fy);
@@ -795,7 +796,8 @@ public class OrbWindow : Window {
         if (Dist(p, orbCenter) > Radius + 3)
             traveled = true;
         string k = Hit(p);
-        bool closeBranch = k == "chat" || k == "search" || (traveled && Dist(p, orbCenter) <= Radius);
+        bool closeBranch = (k != "shot" && Array.IndexOf(Roots, k) >= 0) ||
+                           (traveled && Dist(p, orbCenter) <= Radius);
         if ((k == "shot" && !sub) || (sub && closeBranch)) {
             sub = k == "shot";
             LayoutHost();
@@ -911,18 +913,21 @@ public class OrbWindow : Window {
     void Command(string command) {
         if (command != null && command.StartsWith("invoke:", StringComparison.Ordinal)) {
             string key = command.Substring(7);
-            if (Array.IndexOf(Keys, key) < 0)
+            if (key != "summon" && Array.IndexOf(Keys, key) < 0)
                 return;
             ResetGesture();
             ClearNotice();
-            if (key == "chat" || key == "shot") {
+            if (key == "chat" || key == "shot" || key == "summon") {
                 if (!IsVisible)
                     Show();
                 if (key == "chat")
                     OpenChat();
                 else {
+                    sub = false;
+                    hot = null;
                     OpenMenu(true);
-                    Choose("shot");
+                    if (key == "shot")
+                        Choose("shot");
                 }
             } else {
                 CloseChat();

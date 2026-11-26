@@ -29,9 +29,10 @@ using System.Windows.Threading;
 namespace CMspark.Mini {
 public class GlobalHotkeys : IDisposable {
     const int NoRepeat = 0x4000, WmHotkey = 0x0312, WmInput = 0x00ff;
-    static readonly string[] Actions = { "chat", "search", "shot", "capture", "todo", "ask", "ocr" };
+    static readonly Chord DefaultSummon = new Chord(3, 0x20);
+    static readonly string[] Actions = { "chat", "search", "shot", "capture", "todo", "ask", "ocr", "meeting", "summon" };
     static readonly string[] Labels = { "快速对话",     "资料搜索", "截图菜单", "仅截图",
-                                        "截图抽取待办", "截图询问", "截图 OCR" };
+                                        "截图抽取待办", "截图询问", "截图 OCR", "会议记录", "召唤 Mini" };
     [DllImport("user32.dll", SetLastError = true)]
     static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
     [DllImport("user32.dll")]
@@ -76,7 +77,8 @@ public class GlobalHotkeys : IDisposable {
             return Mods == other.Mods && Key == other.Key;
         }
         public bool Reserved() {
-            return Key == 0x7b || (Key == 0x2e && (Mods & 3) == 3) || (Key == 0x4c && Mods == 8);
+            return Key == 0x7b || (Key == 0x2e && (Mods & 3) == 3) || (Key == 0x4c && Mods == 8) ||
+                   (Key == 0x20 && (Mods & 8) != 0 && (Mods & 1) == 0);
         }
         public bool Valid() {
             if ((Mods & ~15) != 0 || Reserved())
@@ -160,7 +162,7 @@ public class GlobalHotkeys : IDisposable {
         settings.Title = "CMspark Mini 快捷键";
         Identify(settings, "MiniHotkeySettings", settings.Title);
         settings.Width = 520;
-        settings.Height = 530;
+        settings.Height = 590;
         settings.MinWidth = 370;
         settings.MinHeight = 320;
         settings.WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -421,7 +423,7 @@ public class GlobalHotkeys : IDisposable {
             var map = new Dictionary<string, object>();
             foreach (var pair in candidate)
                 map[pair.Key] = new { modifiers = pair.Value.Mods, key = pair.Value.Key };
-            byte[] body = Encoding.UTF8.GetBytes(json.Serialize(new { version = 1, bindings = map }));
+            byte[] body = Encoding.UTF8.GetBytes(json.Serialize(new { version = 2, bindings = map }));
             Directory.CreateDirectory(Path.GetDirectoryName(file));
             using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
                 stream.Write(body, 0, body.Length);
@@ -445,15 +447,17 @@ public class GlobalHotkeys : IDisposable {
         return false;
     }
     void Load() {
-        if (!File.Exists(file))
-            return;
         try {
+            if (!File.Exists(file)) {
+                LoadBinding("summon", DefaultSummon);
+                return;
+            }
             if (new FileInfo(file).Length > 32768)
                 throw new InvalidDataException();
             var root = json.DeserializeObject(File.ReadAllText(file)) as Dictionary<string, object>;
             object version, content;
             if (root == null || !root.TryGetValue("version", out version) || !(version is int) ||
-                (int)version != 1 || !root.TryGetValue("bindings", out content))
+                ((int)version != 1 && (int)version != 2) || !root.TryGetValue("bindings", out content))
                 throw new InvalidDataException();
             var map = content as Dictionary<string, object>;
             if (map == null)
@@ -469,21 +473,11 @@ public class GlobalHotkeys : IDisposable {
                 var chord = new Chord((int)mods, (int)key);
                 if (!chord.Valid())
                     continue;
-                bool duplicate = false;
-                foreach (var assigned in bindings.Values)
-                    if (assigned.Same(chord)) {
-                        duplicate = true;
-                        break;
-                    }
-                bindings[action] = chord;
-                int id = NextId(action);
-                if (!duplicate && Register(id, chord))
-                    ids[action] = id;
-                else {
-                    startupConflict = true;
-                    Message("部分已保存的快捷键已被占用，请重新录制。");
-                }
+                LoadBinding(action, chord);
             }
+            // Version 2 records an explicit clear by omitting the binding from the saved map.
+            if ((int)version == 1 && !bindings.ContainsKey("summon") && !HasBinding(DefaultSummon))
+                LoadBinding("summon", DefaultSummon);
         } catch (IOException) {
             Message("无法读取快捷键配置。");
         } catch (UnauthorizedAccessException) {
@@ -494,6 +488,23 @@ public class GlobalHotkeys : IDisposable {
             Message("快捷键配置格式无效。");
         } catch (InvalidDataException) {
             Message("快捷键配置格式无效。");
+        }
+    }
+    bool HasBinding(Chord chord) {
+        foreach (var assigned in bindings.Values)
+            if (assigned.Same(chord))
+                return true;
+        return false;
+    }
+    void LoadBinding(string action, Chord chord) {
+        bool duplicate = HasBinding(chord);
+        bindings[action] = chord;
+        int id = NextId(action);
+        if (!duplicate && Register(id, chord))
+            ids[action] = id;
+        else {
+            startupConflict = true;
+            Message("部分 Mini 快捷键已被占用，请重新录制。");
         }
     }
     IntPtr OnHotkey(IntPtr hwnd, int msg, IntPtr wp, IntPtr lp, ref bool handled) {
@@ -515,7 +526,7 @@ public class GlobalHotkeys : IDisposable {
                     RecordKey(chord.Key, chord.Mods);
                 break;
             }
-            if (action == "chat" || action == "shot") {
+            if (action == "chat" || action == "shot" || action == "summon") {
                 grantUntil = DateTime.UtcNow.AddSeconds(5);
                 if (orbPid > 0)
                     AllowSetForegroundWindow(orbPid);

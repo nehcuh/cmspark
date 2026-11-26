@@ -13,6 +13,7 @@ import crypto from "node:crypto"
 import { logger } from "../../logger"
 import { isChromeExtensionWsOrigin } from "../../ws/handshake-surface"
 import { miniCaptures, miniDestination } from "../../mini/capture-handoff"
+import { isMiniCapture } from "../../mini/actions"
 
 export type UiOpenSidepanelSession = {
   origin?: string
@@ -62,7 +63,8 @@ export function handleUiOpenSidepanelResult(
   const id = typeof rest.id === "string" ? rest.id : ""
   const pending = id ? pendingResults.get(id) : undefined
   if (pending && (!pending.panelId || pending.panelId === session?.panelId)) {
-    const supported = !pending.destination || pending.destination === rest.destination
+    const supported = (!pending.destination || pending.destination === rest.destination) &&
+      (pending.destination !== "mini_meeting" || rest.ok !== true || rest.meeting_opened === true)
     pending.settle({
       ok: rest.ok === true && supported,
       error: !supported ? "请更新 Chrome 扩展以使用 Mini 快速操作" : typeof rest.error === "string" ? rest.error : undefined,
@@ -92,7 +94,7 @@ export async function handleUiOpenSidepanel(
   catch (error) { return uiOpenError("MINI_PANEL_AMBIGUOUS", (error as Error).message) }
   if (mini && !peer) return uiOpenError("MINI_PANEL_UNAVAILABLE", "尚未连接 Chrome 扩展")
   let ticket: string | undefined
-  if (mini && mini !== "search") {
+  if (mini && isMiniCapture(mini)) {
     try { ticket = miniCaptures.stage(mini, rest.image_base64, peer!.id) }
     catch (error) { return uiOpenError("MINI_CAPTURE_INVALID", (error as Error).message) }
   }

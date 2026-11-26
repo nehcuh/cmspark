@@ -41,6 +41,21 @@ test('desk region goes through the real tray command and only the elected extens
   assert.equal((await miniPanelRequest(claim, panel, knowledge)).ok, false)
 })
 
+test('Mini meetings open in the elected browser without capturing a PNG', async () => {
+  const open = (meetingOpened?: boolean) => handleUiOpenSidepanel({ destination: 'mini_meeting' }, {
+    surface: 'tray', origin: 'cmspark-tray://local', broadcast: () => assert.fail('must target the elected browser'),
+    miniPanel: () => ({ id: panel.panelId, send: frame => {
+      assert.equal(frame.destination, 'mini_meeting')
+      assert.equal(frame.ticket, undefined)
+      handleUiOpenSidepanelResult({ id: frame.id, ok: true, destination: frame.destination, meeting_opened: meetingOpened }, panel)
+    } }),
+  })
+  assert.deepEqual(await open(true), { type: 'ui.open_sidepanel.opened', destination: 'mini_meeting' })
+  const oldExtensionReply = await open()
+  assert.equal(oldExtensionReply.type, 'error')
+  assert.match(String(oldExtensionReply.error), /更新 Chrome 扩展/)
+})
+
 test('invalid/expired screenshots and incompatible extension results fail honestly', async () => {
   const handoff = new MiniCaptureHandoff(5)
   assert.throws(() => handoff.stage('ocr', 'broken!', panel.panelId))

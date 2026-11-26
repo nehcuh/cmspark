@@ -5,6 +5,7 @@ const ticketPattern = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$
 /** Only an opaque, one-use ticket belongs in a window URL. */
 export function miniPagePath(destination: unknown, ticket: unknown): string | undefined {
   if (destination === 'mini_search') return 'tabs/mini.html?view=search'
+  if (destination === 'mini_meeting') return 'tabs/workspace.html?view=meeting'
   if (!['mini_todo', 'mini_capture', 'mini_ask', 'mini_ocr'].includes(String(destination))) return undefined
   if (typeof ticket !== 'string' || !ticketPattern.test(ticket)) throw new Error('截图编号无效')
   if (destination === 'mini_todo') return 'tabs/workspace.html?view=todos&capture=todo#todos/capture/mini/' + ticket

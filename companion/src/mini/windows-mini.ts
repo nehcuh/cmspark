@@ -6,7 +6,7 @@ import { resolvePowerShellExe, resolveWinScript } from "../host-use/win/powershe
 import { isMiniAction, type MiniAction } from "./actions"
 import { MiniChat } from "./chat"
 import { MiniProfileLock } from "./profile-lock"
-import { WindowsMiniHotkeys, type MiniHotkey } from "./windows-hotkeys"
+import { isMiniOrbHotkey, WindowsMiniHotkeys, type MiniHotkey } from "./windows-hotkeys"
 
 export class WindowsMini {
   private child?: ChildProcessWithoutNullStreams
@@ -62,7 +62,7 @@ export class WindowsMini {
     if (this.retiring) await this.retiring
     if (this.stopped || this.action) return
     // A hidden orb is unnecessary for Chrome destinations and native region selection.
-    if (!this.enabled && !this.child && key !== "chat" && key !== "shot") {
+    if (!this.enabled && !this.child && !isMiniOrbHotkey(key)) {
       await this.perform(key)
       return
     }
@@ -157,7 +157,7 @@ export class WindowsMini {
       if (!pid || !this.pendingHotkey) return
       // USER32 can reject a newly spawned PID until WPF creates its first window.
       // Let the shortcut owner finish the targeted grant before opening the input UI.
-      const needsFocus = this.pendingHotkey === "chat" || this.pendingHotkey === "shot"
+      const needsFocus = isMiniOrbHotkey(this.pendingHotkey)
       if (!needsFocus || !this.hotkeys.prepareForeground(pid)) this.dispatchPending(pid)
       return
     }

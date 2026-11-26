@@ -25,7 +25,7 @@ import {
 import { CompanionClient } from "./tray/companion-client"
 import { WindowsMini } from "./mini/windows-mini"
 import { captureMiniRegion } from "./mini/region-capture"
-import { openMiniAction, type MiniAction } from "./mini/actions"
+import { isMiniCapture, openMiniAction, type MiniAction } from "./mini/actions"
 import { readPairingSecret, hasPaired } from "./tray/pairing"
 import { copyTextToClipboard } from "./tray/clipboard"
 import { OSASCRIPT_BIN } from "./process-path"
@@ -1717,7 +1717,7 @@ async function runMiniAction(action: MiniAction, signal: AbortSignal): Promise<v
   const client = companionClient
   const current = client?.currentConnectionGuard()
   if (!client || !current?.()) throw new Error("Companion 未连接，请在托盘中启动服务。")
-  const image = action === "search" ? undefined : await captureMiniRegion(signal)
+  const image = isMiniCapture(action) ? await captureMiniRegion(signal) : undefined
   if (image === null || signal.aborted) return
   if (client !== companionClient || !current()) throw new Error("Companion 连接已更改，请重新选择操作。")
   await openMiniAction(client, action, image)

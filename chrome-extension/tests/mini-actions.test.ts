@@ -8,6 +8,7 @@ import { requestActivity } from '../src/sidepanel/components/personal-workspace/
 test('each quick action opens its intended page and only region actions require a ticket', () => {
   const ticket = '93d60098-db73-4ffe-b4ae-e504fbab63a8'
   assert.equal(miniPagePath('mini_search', undefined), 'tabs/mini.html?view=search')
+  assert.equal(miniPagePath('mini_meeting', undefined), 'tabs/workspace.html?view=meeting')
   for (const action of ['ask', 'ocr', 'capture']) {
     assert.equal(miniPagePath('mini_' + action, ticket), 'tabs/mini.html?view=' + action + '#' + ticket)
     let invalid = false

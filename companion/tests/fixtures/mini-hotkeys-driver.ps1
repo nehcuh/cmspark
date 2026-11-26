@@ -60,14 +60,14 @@ public static class ShortcutKeys {
             Send(new[]{down,up});
         } finally { SetCursorPos(old.X,old.Y);if(raised)SetWindowPos(hwnd,new IntPtr(-2),0,0,0,0,0x13); }
     }
-    public static void Press(IntPtr foreground,int key) {
+    public static void Press(IntPtr foreground,int key,bool shift=true) {
         if(GetForegroundWindow()!=foreground)throw new Exception("Refusing to type outside the test window");
-        int[] sequence={0x11,0x12,0x10,key,key,0x10,0x12,0x11};
+        int[] sequence=shift?new[]{0x11,0x12,0x10,key,key,0x10,0x12,0x11}:new[]{0x11,0x12,key,key,0x12,0x11};
         foreach(int vk in sequence)if(GetAsyncKeyState(vk)<0)throw new Exception("Key is already held");
         var inputs=new Input[sequence.Length];
         for(int i=0;i<inputs.Length;i++){
             inputs[i].Type=1; inputs[i].Data.Keyboard.Key=(ushort)sequence[i];
-            inputs[i].Data.Keyboard.Flags=i>=4?2u:0u;
+            inputs[i].Data.Keyboard.Flags=i>=sequence.Length/2?2u:0u;
         }
         Send(inputs);
     }
@@ -181,6 +181,7 @@ try {
         $child.StandardInput.WriteLine("orb-ready:$PID")
         Expect "orb-ready:$PID"
         Check (![ShortcutKeys]::RegisterHotKey($form.Handle,72,$mods,$f17)) 'loaded chat key was unclaimed'
+        Check (![ShortcutKeys]::RegisterHotKey($form.Handle,72,3,32)) 'legacy profile did not get the default summon shortcut'
         Check ([IO.File]::ReadAllText($BindingsFile) -ceq $seed) 'startup conflict discarded bindings'
         Quit
         Expect-Free $f17
@@ -195,6 +196,23 @@ try {
     $form.Show()
     Focus $form.Handle
     foreach($key in @($f17,$f18,$f19,$f20)){Expect-Free $key}
+    Launch
+    $stage='default summon from another application'
+    Focus $form.Handle
+    [ShortcutKeys]::Press($form.Handle,32,$false)
+    Expect 'action:summon'
+    Quit
+    $stage='an existing shortcut keeps priority over the new default'
+    $seed='{"version":1,"bindings":{"chat":{"modifiers":3,"key":32}}}'
+    [IO.File]::WriteAllText($BindingsFile,$seed,[Text.UTF8Encoding]::new($false))
+    Launch
+    Focus $form.Handle
+    [ShortcutKeys]::Press($form.Handle,32,$false)
+    Expect 'action:chat'
+    Open-Settings
+    Check ((Element MiniHotkeyRecordSummon).Current.HelpText -eq '未设置') 'the legacy chord was also allocated to summon'
+    Quit
+    [IO.File]::Delete($BindingsFile)
     Launch
     $stage='record and trigger chat from another process'
     Open-Settings
@@ -229,13 +247,21 @@ try {
     Expect-Binding chat $f20
     Click MiniHotkeyClearShot
     $null=Poll {$null -eq (Binding shot)}
+    Click MiniHotkeyClearSummon
+    $null=Poll {(Element MiniHotkeyStatus).Current.Name -match '已清除' -and (Element MiniHotkeyRecordSummon).Current.HelpText -eq '未设置'}
+    Record Meeting $f18
+    Expect-Binding meeting $f18
     Click MiniHotkeyClose
-    Expect-Free $f17; Expect-Free $f18
+    Expect-Free $f17
+    Expect-Action $f18 'meeting'
     Expect-Action $f20 'chat'
     Quit
     Expect-Free $f20
     Launch
-    Expect-Free $f17; Expect-Free $f18
+    Expect-Free $f17
+    Check ([ShortcutKeys]::RegisterHotKey($form.Handle,72,3,32)) 'cleared summon returned on restart'
+    Check ([ShortcutKeys]::UnregisterHotKey($form.Handle,72)) 'could not release summon shortcut'
+    Expect-Action $f18 'meeting'
     Expect-Action $f20 'chat'
     Quit
     Expect-Free $f20

@@ -9,6 +9,7 @@ export function miniDestination(value: unknown): MiniAction | undefined {
     case 'mini_ask': return 'ask'
     case 'mini_ocr': return 'ocr'
     case 'mini_search': return 'search'
+    case 'mini_meeting': return 'meeting'
   }
 }
 

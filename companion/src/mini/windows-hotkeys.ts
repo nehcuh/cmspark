@@ -1,11 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
-import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { resolvePowerShellExe, resolveWinScript } from "../host-use/win/powershell"
 import { isMiniAction, type MiniAction } from "./actions"
 
-export type MiniHotkey = MiniAction | "chat" | "shot"
+type MiniOrbHotkey = "chat" | "shot" | "summon"
+export type MiniHotkey = MiniAction | MiniOrbHotkey
+
+export function isMiniOrbHotkey(key: string): key is MiniOrbHotkey {
+  return key === "chat" || key === "shot" || key === "summon"
+}
 
 /** The message window owns its registrations even while the desktop orb is hidden. */
 export class WindowsMiniHotkeys {
@@ -20,7 +24,7 @@ export class WindowsMiniHotkeys {
   }
 
   start(): void {
-    if (existsSync(this.file)) this.getHost()
+    this.getHost()
   }
 
   settings(): void {
@@ -60,7 +64,7 @@ export class WindowsMiniHotkeys {
         this.foregroundReady(this.orbPid)
       } else if (line.startsWith("action:")) {
         const action = line.slice(7)
-        if (action === "chat" || action === "shot" || isMiniAction(action)) this.invoke(action)
+        if (isMiniOrbHotkey(action) || isMiniAction(action)) this.invoke(action)
       }
     })
     child.once("error", error => console.warn("[mini] Windows hotkey host unavailable:", error.message))

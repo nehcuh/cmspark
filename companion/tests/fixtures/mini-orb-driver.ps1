@@ -155,6 +155,10 @@ try{
     }
     Check ($through -eq 4) 'transparent menu corners intercept the desktop'
     Invoke-Control MiniSearch;Expect 'action:search'
+    $stage='meetings from summoned menu'
+    $child.StandardInput.WriteLine('invoke:summon')
+    $null=Center MiniMeeting
+    Invoke-Control MiniMeeting;Expect 'action:meeting'
     foreach($action in @('todo','ask','ocr','capture')){
         $stage="capture $action"
         Expand;Invoke-Control MiniShot
