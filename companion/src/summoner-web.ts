@@ -354,6 +354,15 @@ export function summonerWebEventStatus(msg: unknown): string {
   return "出错了"
 }
 
+function releaseFinishedOverlayCapture(status: ReturnType<typeof projectCaptureStatus>, observation: unknown): void {
+  const owner = overlayContinuousCapture
+  if (!owner || !status || owner.observation !== observation || owner.captureId !== status.capture_id ||
+      owner.epoch !== status.capture_epoch || owner.meetingId !== status.meeting_id ||
+      (status.phase !== "finished" && status.phase !== "failed")) return
+  meetingHttpBegin.terminal(owner.captureId, observation)
+  overlayContinuousCapture = null
+}
+
 export function pushSummonerWebEvent(msg: unknown): boolean {
   if (!msg || typeof msg !== "object" || Array.isArray(msg)) return false
   const type = (msg as { type?: unknown }).type
@@ -363,11 +372,7 @@ export function pushSummonerWebEvent(msg: unknown): boolean {
   if (!projected) return false
   if (type === "meeting.capture.status") {
     const status = projected as ReturnType<typeof projectCaptureStatus>
-    const owner = overlayContinuousCapture
-    if (owner && status && status.capture_id === owner.captureId && status.capture_epoch === owner.epoch && ["finished", "failed"].includes(status.phase)) {
-      meetingHttpBegin.terminal(owner.captureId, owner.observation)
-      if (overlayContinuousCapture === owner) overlayContinuousCapture = null
-    }
+    releaseFinishedOverlayCapture(status, activeMeetingPcmConnection?.())
   }
   const line = `data: ${JSON.stringify(projected)}\n\n`
   for (const res of sseClients) {
@@ -1195,6 +1200,8 @@ async function handleRequest(
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
         const reply = await dispatchMeetingPcmHttp("voice.stt.abort", body, meetingObservation)
+        // An abort before the first audio block can finish via HTTP alone.
+        releaseFinishedOverlayCapture(projectCaptureStatus(reply), meetingObservation)
         jsonResponse(res, reply)
         return
       }
@@ -1908,15 +1915,14 @@ try{
     el.textContent=engine+" · "+voiceSettings.localModelId;
   }
   function loadVoiceSettings(captureId){
-    delete voiceSettings.meeting_pcm_contract;
     return api("/api/voice-settings"+(captureId?"?capture_id="+encodeURIComponent(captureId):"")).then(function(d){
-      if(!d||typeof d!=="object") return;
+      if(!d||typeof d!=="object"||d.error)throw new Error("无法读取录制设置，请重新开始录制");
       if(d.sttEngine==="browser"||d.sttEngine==="local"||d.sttEngine==="system") voiceSettings.sttEngine=d.sttEngine;
       if(d.localModelId==="small"||d.localModelId==="medium"||d.localModelId==="large-v3-turbo") voiceSettings.localModelId=d.localModelId;
       if(typeof d.lang==="string"&&d.lang) voiceSettings.lang=d.lang;
-      if(d.meeting_pcm_contract===1)voiceSettings.meeting_pcm_contract=1;
       paintMeetingVoiceMeta();
-    }).catch(function(){});
+      return d.meeting_pcm_contract===1;
+    }).catch(function(e){if(captureId)throw e});
   }
   loadVoiceSettings();
   var busy=false;

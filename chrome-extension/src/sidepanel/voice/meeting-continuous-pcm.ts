@@ -143,7 +143,7 @@ export function meetingCaptureErrorMessage(code: string): string {
     desktop_selection_failed: "未取得所选画面和声音，请检查共享来源后重新开始。",
     desktop_source_lost: "桌面共享或声音来源已断开，采集已停止。",
     desktop_video_partial: "桌面录屏未完整保存。请核对已有视频和转写后生成纪要。",
-    permission_denied: "麦克风访问被拒绝，请检查浏览器设备权限后重试",
+    permission_denied: "麦克风访问被拒绝。请在系统和当前应用的权限设置中允许使用麦克风，再开始录制。",
     startup_timeout: "麦克风或本机转写启动超时，请检查后重新开始",
     audio_retention_unsupported: "现有会议选择了保留原始音频，连续录制暂不支持此模式；原有选择未改变",
     capture_flush_timeout: "末尾音频未按时送达，不能视为完整转写",

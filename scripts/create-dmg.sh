@@ -138,10 +138,18 @@ fi
 # DMG users dragged the unsigned .app into /Applications, overwriting the
 # manually re-signed version, and TCC prompts came back.)
 echo "[4/6] Ad-hoc codesigning .app bundle..."
-ENTITLEMENTS="${ROOT_DIR}/companion/src/host-use/darwin/host.entitlements"
-codesign --force --deep --sign - --options runtime \
-  --entitlements "${ENTITLEMENTS}" \
-  "${APP_BUNDLE}"
+(
+  # TCC checks the responsible app when the meeting WebView requests the microphone.
+  app_entitlements="$(mktemp)"
+  trap 'rm -f "${app_entitlements}"' EXIT
+  /usr/bin/plutil -insert 'com\.apple\.security\.device\.audio-input' -bool true \
+    -o "${app_entitlements}" "${ROOT_DIR}/companion/src/host-use/darwin/host.entitlements"
+  codesign --force --deep --sign - --options runtime --entitlements "${app_entitlements}" "${APP_BUNDLE}"
+)
+if [[ "$(codesign -d --entitlements - --xml "${APP_BUNDLE}" | /usr/bin/plutil -extract 'com\.apple\.security\.device\.audio-input' raw -expect bool -)" != true ]]; then
+  echo "[create-dmg] ERROR: signed app lacks the microphone input entitlement" >&2
+  exit 1
+fi
 if ! codesign --verify --verbose "${APP_BUNDLE}"; then
   echo "[create-dmg] ERROR: codesign verify failed for ${APP_BUNDLE}"
   exit 1

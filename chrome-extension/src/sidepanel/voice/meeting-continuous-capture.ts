@@ -222,7 +222,8 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
       if (silent || ended) return
       stopping = true; closeGraph()
       const code = error instanceof Error && error.name === "NotAllowedError" ? "permission_denied" : "startup_timeout"
-      options.onError?.(code); await abort()
+      options.onError?.(code)
+      if (!cancelled) await abort()
     }
   }
   return { start, stop, abort, handleStatus, get backend() { return backend },

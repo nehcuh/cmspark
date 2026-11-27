@@ -13,7 +13,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     if(meetingContinuous!==s || s.lost)return;
     s.lost=true;meetingFailure=e;stopRecClock();s.capture&&s.capture.destroy();
     s.reject(e);meetingContinuous=null;meetingId="";setRecordingUi(false);meetingControls(meetingWorkBusy);
-    $("meetingCancel").hidden=true;$("meetingHint").textContent="采集已停止；服务端未确认范围不属于完整转写";meetingProblem(e);
+    $("meetingCancel").hidden=true;$("meetingHint").textContent=s.started?"采集已停止；服务端未确认范围不属于完整转写":"录制未开始";meetingProblem(e);
   }
   function syncContinuousMeeting(s){
     if(s.syncing)return s.syncing;
@@ -38,14 +38,14 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
     if(meetingId || meetingContinuous || meetingWorkBusy || meetingEnding)return;
     if(!meetingAck || !voiceAck){requestMeetingConsent(beginContinuousMeeting);return}
     if(!lastMeetingId){showMeetingDesk(true);meetingSay("请先点击新会议或选择历史会议，再开始连续录制");return}
-    var s={owner:lastMeetingId,sid:crypto.randomUUID(),epoch:null,active:false,lost:false,capture:null,wanted:0,synced:-1,syncing:null,seen:new Set(),resolve:null,reject:null};
+    var s={owner:lastMeetingId,sid:crypto.randomUUID(),epoch:null,started:false,active:false,lost:false,capture:null,wanted:0,synced:-1,syncing:null,seen:new Set(),resolve:null,reject:null};
     s.done=new Promise(function(resolve,reject){s.resolve=resolve;s.reject=reject});s.done.catch(function(){});
-    meetingContinuous=s;meetingFailure=null;meetingViewRev++;showMeetingDesk(true);meetingControls(true);$("meetingCancel").hidden=false;$("meetingHint").textContent="正在准备连续录制…";
+    meetingContinuous=s;meetingFailure=null;meetingViewRev++;showMeetingDesk(true);meetingControls(true);meetingSay("");$("meetingCancel").hidden=false;$("meetingHint").textContent="正在准备连续录制…";
     try{
       if(summonerVoice)summonerVoice.cancel();
-      await loadVoiceSettings(s.sid);
+      var ready=await loadVoiceSettings(s.sid);
       if(meetingContinuous!==s || s.lost)return;
-      if(voiceSettings.meeting_pcm_contract!==1)throw new Error("当前连接不支持连续会议；请更新后重新显式开始");
+      if(!ready)throw new Error("会议服务尚未就绪，请稍后再次开始录制");
       var loaded=await meetingRequest("/api/meeting?id="+encodeURIComponent(s.owner));
       if(meetingContinuous!==s || s.lost)return;
       if(loaded.meeting&&loaded.meeting.privacy&&loaded.meeting.privacy.audio_retained)throw new Error("连续录制暂不支持保留原始音频；现有选择未改变");
@@ -56,7 +56,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
       s.epoch=status.capture_epoch;meetingId=s.owner;lastMeetingId=s.owner;
       (started.meeting.original_transcript||[]).forEach(function(line){if(line.segment_id)s.seen.add(line.segment_id)});
       s.capture=CMsparkMeetingPcm.createMeetingContinuousCapture({meetingId:s.owner,captureId:s.sid,epoch:s.epoch,engine:voiceSettings.sttEngine==="system"?"system":undefined,modelId:voiceSettings.localModelId||"medium",lang:$("meetingLanguage").value || "system",request:continuousMeetingRequest,
-        onStart:function(){if(meetingContinuous!==s)return;s.active=true;setRecordingUi(true);$("meetingRec").disabled=false;$("meetingMinutesBtn").disabled=false;startRecClock();$("meetingHint").textContent="持续采集中"},
+        onStart:function(){if(meetingContinuous!==s)return;s.started=true;s.active=true;setRecordingUi(true);$("meetingRec").disabled=false;$("meetingMinutesBtn").disabled=false;startRecClock();$("meetingHint").textContent="持续采集中"},
         onStopped:function(){if(meetingContinuous!==s)return;s.active=false;stopRecClock();$("meetingRec").disabled=true;$("meetingHint").textContent="已停止采集，正在排空此前音频"},
         onStatus:function(value){continuousMeetingStatus(s,value)},
         onError:function(code){continuousMeetingLost(s,new Error(CMsparkMeetingPcm.meetingCaptureErrorMessage(code)))},
