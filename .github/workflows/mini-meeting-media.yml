@@ -1,0 +1,45 @@
+name: Mini meeting recording
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  recording:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+      - uses: astral-sh/setup-uv@v7
+      - name: Build Mini
+        working-directory: companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: |
+          npm ci
+          npm run build
+      - name: Capture mixed sources and replay downloaded history
+        run: uv run --no-project --with playwright python companion/scripts/test-mini-meeting-video.py
+      - name: Capture a named Chrome conference tab with its audio
+        run: uv run --no-project --with playwright python companion/scripts/test-mini-meeting-video.py --tab
+      - name: Record system playback from an isolated PulseAudio output
+        if: runner.os == 'Linux'
+        env:
+          PULSE_SINK: cmspark_test
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y pulseaudio pulseaudio-utils
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=cmspark_test
+          pactl set-default-sink cmspark_test
+          uv run --no-project --with playwright python companion/scripts/test-mini-meeting-video.py --monitor

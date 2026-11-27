@@ -57,7 +57,7 @@ export const SUMMONER_MEETING_WORKFLOW_JS = String.raw`
       var loaded=await meetingRequest("/api/meeting?id="+encodeURIComponent(s.owner));
       if(meetingContinuous!==s || s.lost)return;
       if(loaded.meeting&&loaded.meeting.privacy&&loaded.meeting.privacy.audio_retained)throw new Error("连续录制暂不支持保留原始音频；现有选择未改变");
-      var started=await meetingPost("/api/meeting/start",{v:1,id:s.owner,queue_contract:1,capture_id:s.sid,expected_capture_epoch:loaded.meeting&&loaded.meeting.capture_epoch||0,...(voiceSettings.sttEngine==="browser"?{live_asr:"local"}:{}),privacy_ack_v1:true,privacy_ack_v2:true,audio_retained:false,...(s.mode==="transcript"?{}:{save_recording:true})});
+      var started=await meetingPost("/api/meeting/start",{v:1,id:s.owner,queue_contract:1,capture_id:s.sid,expected_capture_epoch:loaded.meeting&&loaded.meeting.capture_epoch||0,...(voiceSettings.sttEngine==="browser"?{live_asr:"local"}:{}),privacy_ack_v1:true,privacy_ack_v2:true,audio_retained:false,...(s.mode==="transcript"?{}:{save_recording:true}),...(s.desktop?{save_video:true}:{})});
       var status=started.continuous_capture;
       if(meetingContinuous!==s || s.lost)return;
       if(started.type!=="meeting.started" || !started.meeting || started.meeting.id!==s.owner || !status || status.capture_id!==s.sid || status.meeting_id!==s.owner || status.queue_contract!==1)throw new Error("连续开始回执不匹配");

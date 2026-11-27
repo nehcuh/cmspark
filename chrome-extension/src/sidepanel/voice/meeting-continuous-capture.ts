@@ -2,6 +2,7 @@ import { MeetingPcmEncoder, type MeetingBlock, type MeetingCredit } from "./meet
 import { MEETING_PCM_WORKLET_JS } from "./meeting-pcm-worklet-generated"
 
 export { meetingChapters, linkMeetingQuotes, turnTime } from "./meeting-chapters"
+export { openDesktopMeetingMedia } from "./desktop-meeting-media"
 export { meetingLanguages } from "./meeting-language"
 
 export type MeetingCaptureOptions = {

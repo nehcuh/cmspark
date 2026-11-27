@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net"
 import { createMeeting, deleteMeeting } from "../src/meeting/meeting-store"
 import { MeetingWaveFile, listMeetingRecordings, recordingDirectory } from "../src/meeting/meeting-recordings"
 import { MeetingPcmQueue } from "../src/voice/meeting-pcm-queue"
+import { MeetingVideoUpload } from "../src/summoner/meeting-video-upload"
 import { serveMeetingRecordings } from "../src/summoner/meeting-recording-http"
 
 test("meeting history serves the exact ordered WAV prefix and only completed video files", async t => {
@@ -49,4 +50,34 @@ test("meeting history serves the exact ordered WAV prefix and only completed vid
   assert.equal((await fetch(base + "&file=" + capture + ".mp4", { method: "HEAD" })).headers.get("content-type"), "video/mp4")
   assert.equal(deleteMeeting(id, root), true)
   assert.equal((await fetch(url)).status, 404)
+})
+
+test("video blocks belong to their capture and interrupted files retain the acknowledged prefix", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mini-video-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const { id } = createMeeting({ dataDir: root })
+  const capture = randomUUID(), upload = new MeetingVideoUpload(root)
+  const server = createServer((req, res) => {
+    const params = new URL(req.url!, "http://localhost").searchParams
+    void upload.handle(req, res, new Map(params), { meetingId: id, captureId: capture })
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  t.after(() => server.close())
+  const url = new URL("http://127.0.0.1:" + (server.address() as AddressInfo).port)
+  async function post(action: string, offset = 0, body?: string, captureId = capture) {
+    url.search = new URLSearchParams({ meeting: id, capture: captureId, action, offset: String(offset) }).toString()
+    return (await fetch(url, { method: "POST", body })).status
+  }
+  assert.equal(await post("open", 0, undefined, randomUUID()), 409)
+  assert.equal(await post("open"), 200)
+  assert.equal(await post("append", 0, "first"), 200)
+  assert.equal(await post("append", 0, "first"), 409)
+  assert.equal(await post("finish", 9), 409)
+  assert.deepEqual(listMeetingRecordings(id, root), [])
+  upload.close()
+  assert.equal(await post("append", 5, "late"), 409)
+  const name = capture + ".partial.webm"
+  assert.equal(listMeetingRecordings(id, root)[0].name, name)
+  assert.equal(fs.readFileSync(path.join(recordingDirectory(id, root), name), "utf8"), "first")
 })

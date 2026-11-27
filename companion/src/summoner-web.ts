@@ -6,6 +6,7 @@
  * existing summoner-stamped CompanionClient.
  */
 import { SUMMONER_MEETING_MEDIA_JS } from "./summoner/meeting-media"
+import { MeetingVideoUpload } from "./summoner/meeting-video-upload"
 import { serveMeetingRecordings } from "./summoner/meeting-recording-http"
 import * as http from "http"
 import { once } from "node:events"
@@ -445,7 +446,8 @@ let overlayCloseRequested = false
 let overlaySttSessionId = ""
 let overlayMeetingId = ""
 const meetingHttpBegin = new MeetingPcmHttpBegin()
-let overlayContinuousCapture: { meetingId: string; captureId: string; epoch: number; observation: unknown } | null = null
+const meetingVideoUpload = new MeetingVideoUpload()
+let overlayContinuousCapture: { video: boolean; meetingId: string; captureId: string; epoch: number; observation: unknown } | null = null
 
 function overlayLaunchInGrace(): boolean {
   return !!(overlayLaunchAt && Date.now() - overlayLaunchAt < overlayLaunchGraceMs)
@@ -511,6 +513,7 @@ function readMeetingIdFromDispatch(result: unknown, fallback: string): string {
 
 /** Hide / last-SSE / idle-stop: stop overlay capture even if HTML pagehide never ran. */
 function abortOverlayCaptureSessions(): void {
+  meetingVideoUpload.close()
   const continuous = overlayContinuousCapture
   overlayContinuousCapture = null
   if (continuous) {
@@ -688,6 +691,7 @@ export async function startSummonerWebServer(opts: {
 }
 
 export function stopSummonerWebServer(): void {
+  meetingVideoUpload.close()
   if (autoCloseTimer) {
     clearInterval(autoCloseTimer)
     autoCloseTimer = null
@@ -793,6 +797,7 @@ async function handleRequest(
       }
       const html = SUMMONER_HTML.replace("<script>", `<script nonce="${nonce}">`)
         .replace("%%CRUISE_LABEL%%", escHtml(cruise))
+        .replaceAll("%%OVERLAY_PLATFORM%%", process.platform)
         .replaceAll("%%OVERLAY_SESSION%%", token)
       res.end(html)
       return
@@ -1228,6 +1233,10 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/meeting/video" && req.method === "POST") {
+      await meetingVideoUpload.handle(req, res, query, overlayContinuousCapture?.video ? overlayContinuousCapture : null)
+      return
+    }
     if (pathOnly === "/api/meeting/recordings" && (req.method === "GET" || req.method === "HEAD")) {
       serveMeetingRecordings(req, res, query)
       return
@@ -1262,10 +1271,12 @@ async function handleRequest(
       if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
         const binding = meetingHttpBegin.binding(body.capture_id, meetingObservation, activeMeetingPcmConnection?.() ?? null)
         if (!binding) { jsonResponse(res, { type: "error", code: "contract_unavailable", error: "连续开始观测已失效，请重新显式开始" }); return }
-        const reply: any = await dispatchMeetingPcmHttp("meeting.start", body, binding)
+        const { save_video, ...start } = body
+        const video = save_video === true && start.save_recording === true
+        const reply: any = await dispatchMeetingPcmHttp("meeting.start", start, binding)
         if (reply?.type === "meeting.started" && reply.continuous_capture?.capture_id === body.capture_id && reply.meeting?.id === (body.meeting_id ?? body.id)) {
           meetingHttpBegin.accepted(body.capture_id, binding)
-          overlayContinuousCapture = { meetingId: reply.meeting.id, captureId: String(body.capture_id), epoch: reply.continuous_capture.capture_epoch, observation: binding }
+          overlayContinuousCapture = { video, meetingId: reply.meeting.id, captureId: String(body.capture_id), epoch: reply.continuous_capture.capture_epoch, observation: binding }
         } else if (["error", "meeting.error", "voice.stt.error"].includes(reply?.type)) meetingHttpBegin.terminal(body.capture_id, binding)
         jsonResponse(res, reply)
         return
@@ -1856,6 +1867,7 @@ ${QUICK_CHAT_CSS}
 
     </div>
     <div class="meeting-hist" id="meetingHistList" hidden></div>
+    <button type="button" id="meetingChooseSource" hidden>选择会议画面</button>
     <section id="meetingRecordings" aria-label="本地录制文件" hidden></section>
     <details id="meetingMaterials"><summary>录音与参考材料</summary>
     <div class="meeting-tools">
@@ -2638,7 +2650,10 @@ try{
     return beginContinuousMeeting();
   }
   ${MEETING_PCM_BROWSER_JS}
+  var miniPlatform="%%OVERLAY_PLATFORM%%";
   if(window.webkit?.messageHandlers?.meetingVideo)$("meetingRecordingMode").add(new Option("视频会议（MP4＋录音）","video"),1);
+  else if(["win32","linux"].includes(miniPlatform) && navigator.mediaDevices?.getDisplayMedia && window.MediaRecorder?.isTypeSupported("video/webm"))
+    $("meetingRecordingMode").add(new Option("视频会议（WebM＋录音）","video"),1);
   for (const [value,label] of CMsparkMeetingPcm.meetingLanguages) $("meetingLanguage").add(new Option(label,value));
   ${SUMMONER_MEETING_MEDIA_JS}
   ${SUMMONER_MEETING_WORKFLOW_JS}

@@ -56,7 +56,7 @@ Summary:        CMspark Browser Agent Companion
 License:        MIT
 URL:            https://github.com/nehcuh/cmspark
 BuildArch:      ${RPM_ARCH}
-Requires:       glibc, libstdc++, libgcc, libappindicator-gtk3, gtk3, xclip, python3-gobject, python3-cairo
+Requires:       glibc, libstdc++, libgcc, libappindicator-gtk3, gtk3, xclip, python3-gobject, python3-cairo, pulseaudio-utils
 Recommends:     wl-clipboard, xdg-desktop-portal
 
 %description

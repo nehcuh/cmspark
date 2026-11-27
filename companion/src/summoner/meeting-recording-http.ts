@@ -21,7 +21,7 @@ export function serveMeetingRecordings(req: IncomingMessage, res: ServerResponse
     if (!stat.isFile() || !stat.size) throw new Error("Recording unavailable")
     const size = stat.size
     const headers: Record<string, string | number> = {
-      "Content-Type": name.endsWith(".wav") ? "audio/wav" : "video/mp4",
+      "Content-Type": name.endsWith(".wav") ? "audio/wav" : name.endsWith(".webm") ? "video/webm" : "video/mp4",
       "Cache-Control": "private, no-store", "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff",
     }
     if (query.get("download") === "1") headers["Content-Disposition"] = 'attachment; filename="' + name + '"'

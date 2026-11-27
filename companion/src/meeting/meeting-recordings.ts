@@ -13,8 +13,8 @@ export function recordingDirectory(meeting: string, root = DATA_DIR): string {
 }
 
 export function validRecordingName(name: string): boolean {
-  const dot = name.lastIndexOf(".")
-  return isCaptureId(name.slice(0, dot)) && ["wav", "mp4"].includes(name.slice(dot + 1))
+  const dot = name.indexOf(".")
+  return isCaptureId(name.slice(0, dot)) && ["wav", "mp4", "webm", "partial.webm"].includes(name.slice(dot + 1))
 }
 
 export function listMeetingRecordings(id: string, root = DATA_DIR) {
