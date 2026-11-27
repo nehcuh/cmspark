@@ -17,7 +17,13 @@ async function captureMacRegion(signal?: AbortSignal): Promise<Buffer | null> {
   const dir = await mkdtemp(join(tmpdir(), "cmspark-mini-"))
   const file = join(dir, "region.png")
   try {
-    await run("/usr/sbin/screencapture", ["-i", "-s", "-x", "-tpng", file], { signal })
+    try {
+      await run("/usr/sbin/screencapture", ["-i", "-s", "-x", "-tpng", file], { signal })
+    } catch (error) {
+      const e = error as { code?: number; stderr?: string }
+      if (signal?.aborted || (e.code === 1 && !e.stderr?.trim())) return null
+      throw new Error("无法框选屏幕，请检查 macOS 系统设置中的屏幕录制权限。")
+    }
     if (signal?.aborted) return null
     const size = await stat(file).catch((err: NodeJS.ErrnoException) => {
       if (err.code === "ENOENT") return null
@@ -28,11 +34,6 @@ async function captureMacRegion(signal?: AbortSignal): Promise<Buffer | null> {
     const image = await readFile(file)
     validatePng(image)
     return image
-  } catch (error) {
-    const e = error as { code?: number; stderr?: string }
-    if (signal?.aborted || (e.code === 1 && !e.stderr?.trim())) return null
-    if (e.code) throw new Error("无法框选屏幕，请检查 macOS 系统设置中的屏幕录制权限。")
-    throw error
   } finally { await rm(dir, { recursive: true, force: true }) }
 }
 
