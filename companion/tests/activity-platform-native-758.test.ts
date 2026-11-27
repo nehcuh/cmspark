@@ -39,7 +39,7 @@ test('#758 actual desktop foreground identity, passive pixels and local OCR; min
   const win=process.platform==='win32'
   let binary=''
   try{if(win)binary=await buildOwnedWpf758(dir,owned.signal)}catch(error){try{t.diagnostic('ACTIVITY758_COMPILER_FAILURE '+JSON.stringify(compilerFailureObservation758(error)))}catch{}fs.rmSync(dir,{recursive:true,force:true});throw error}
-  const child=win?spawn(binary,[dir],{windowsHide:false,stdio:['ignore','ignore','pipe']}):spawn('/usr/bin/python3',[path.resolve('tests/fixtures/activity-linux-758.py'),dir],{stdio:['ignore','ignore','pipe']})
+  const child=win?spawn(binary,[dir],{windowsHide:false,stdio:['ignore','ignore','pipe']}):spawn('/bin/bash',[path.resolve('scripts/test-activity-x11-758.sh'),'--owned-window',dir],{stdio:['ignore','ignore','pipe']})
   let stderr=Buffer.alloc(0)
   child.stderr?.on('data',(chunk:Buffer)=>{if(stderr.length<4096)stderr=Buffer.concat([stderr,chunk.subarray(0,4096-stderr.length)])}) // keep draining after the finite prefix
   const diagnostic=()=>{
