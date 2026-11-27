@@ -148,7 +148,7 @@ is bounded to min(36dvh, 360px), or 28dvh at short height, and yields to confirm
 Wide settings use a bounded centered dialog. Only message/supporting content shrinks;
 composer/stop remain reachable. Long titles wrap/truncate without hiding actions.
 Verify 320/390/759/760/1040/1440px widths, 420/480px heights and 200% equivalent reflow.
-Summoner default 1040×760, explicit compact 360×420; clamp and retain user resizing.
+Quick Chat opens at 520×620 and expands to 1040×760. The host places it on screen.
 
 ## Interaction states
 

@@ -25,8 +25,8 @@ function srcFile(...parts: string[]): string {
 const web = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
 
 test("#243 ① 顶栏保留新对话，#477 导航取代历史盖层", () => {
-  assert.match(web, /<button type="button" id="historyOpen"[^>]*>导航<\/button>/)
-  assert.match(web, /<button type="button" id="newChat">新对话<\/button>/)
+  assert.match(web, /<button type="button" id="historyOpen"[^>]*aria-label="导航"/)
+  assert.match(web, /<button type="button" id="newChat"[^>]*>[^\n]*新对话<\/button>/)
   // 唯一的「+」图标按钮（作曲区 #newThreadBar）保持隐藏，顶栏不靠神秘 + 开新对话
   assert.match(web, /#newThreadBar\{display:none\}/)
 })
@@ -48,8 +48,10 @@ test("#243 ② 「新对话」清空到文字空态（newChat → newThread → 
   // 空线程渲染文字空态：无装饰标识 + 无任务标题 + 发送提示（不是工作台首页）
   assert.match(
     web,
-    /if\(!n\)\{[\s\S]{0,400}?empty\.id="empty";[\s\S]{0,300}?<strong>\$\{CHAT_SHELL_TITLE_NONE\}<\/strong>/,
+    /if\(!n\) log\.appendChild\(welcome\.cloneNode\(true\)\)/,
   )
+  assert.match(web, /const welcome=\$\("empty"\)\.cloneNode\(true\)/)
+  assert.match(web, /<strong>\$\{CHAT_SHELL_TITLE_NONE\}<\/strong>/)
   assert.equal(CHAT_SHELL_TITLE_NONE, "要我帮你做什么？")
 })
 

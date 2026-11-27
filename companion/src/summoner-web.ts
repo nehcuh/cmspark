@@ -43,6 +43,7 @@ import { currentOverlayCruiseChipLabel } from "./summoner/hydrate"
 import { MeetingPcmHttpBegin } from "./voice/meeting-pcm-http-begin"
 import { MEETING_PCM_BROWSER_JS } from "./summoner/meeting-continuous-generated"
 import { SUMMONER_MEETING_WORKFLOW_JS } from "./summoner/meeting-workflow"
+import { chatIcon, QUICK_CHAT_CSS } from "./summoner/quick-chat-view"
 import { QUICK_CHAT_COMPOSER_JS } from "./summoner/quick-chat-composer"
 import { SUMMONER_DICTATION_JS } from "./summoner/voice-input"
 import { SUMMONER_THREAD_MANAGEMENT_JS } from "./summoner/thread-management"
@@ -1632,35 +1633,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 #threadMetadata{padding:12px 0;border-top:1px solid var(--line)}#threadMetadata label{display:block;margin-top:10px}
 #metadataTitle{display:block;overflow-wrap:anywhere}.metadata-actions{display:flex;gap:8px}.metadata-actions button{min-height:32px;border:1px solid var(--line);border-radius:8px;padding:4px 10px;background:var(--paper);font:inherit;color:var(--text)}
 #metadataError{color:#b91c1c;font-size:12px;overflow-wrap:anywhere}.thread-group-heading{font-size:12px;color:var(--secondary);padding:12px 10px 4px;overflow-wrap:anywhere}.trow .thread-classify{width:auto;min-width:40px;padding:0 6px;font:inherit;font-size:12px;color:var(--secondary)}
-/* Quick chat uses the same composer on small and expanded windows. */
-.brand-actions{align-items:center}
-#quickActions{position:absolute;top:46px;right:12px;z-index:6;display:grid;width:min(220px,calc(100% - 24px));margin:0;padding:5px;gap:1px;border:1px solid var(--line);border-radius:12px;background:var(--paper);box-shadow:var(--shadow);max-height:calc(100% - 58px);overflow:auto}
-#quickActions[hidden],#quickActions button[hidden],#fileSummary[hidden],#pinnedNotice[hidden]{display:none}
-#pinnedNotice{height:100%;display:grid;place-content:center;justify-items:center;gap:12px;color:var(--secondary)}
-#returnChat{border:1px solid var(--line);border-radius:8px;padding:8px 14px;background:var(--canvas);color:var(--text);font:inherit;cursor:pointer}
-#quickActions button{background:transparent;color:var(--text);font:inherit;font-weight:400;text-align:left;min-height:36px;border:0;padding:7px 12px;border-radius:7px}
-#quickActions button:hover,#quickActions button:focus-visible{background:var(--canvas)}
-#quickActions .cruise-chip{max-width:none;background:transparent!important;font-weight:400}
-#quickActions .cruise-chip::before{content:"执行档位 · "}
-#quickActions #windowMode{border-top:1px solid var(--line);border-radius:0}
-#moreActions[aria-expanded="true"]{background:var(--canvas)}
-.brand-id{display:block;font-weight:600}.brand-actions button{font:inherit;font-weight:500}
-#sendHint{font-size:11px;color:var(--faint)}#sendGo:disabled{background:var(--canvas);color:var(--faint);opacity:1;cursor:default}
-#fileSummary{display:flex;align-items:center;gap:6px;background:var(--canvas);color:var(--secondary);padding:4px 8px;border-radius:6px;font-size:12px}
-#fileNames{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#clearFiles{margin-left:auto;flex:none;border:0;background:transparent;color:var(--indigo);min-height:28px;cursor:pointer}
-.status{margin-bottom:6px;color:var(--secondary);background:var(--canvas);overflow-wrap:anywhere}
-@media(max-width:759px){
-  .hud{background:var(--paper)}.brand{flex-wrap:nowrap;gap:4px}.brand-actions{flex-wrap:nowrap}
-  .composer{padding:8px 14px 12px}.field{border-radius:16px}
-  .hud.history .list{max-height:48vh}.hud.history .list-scroll{overflow:auto}
-}
-@media(prefers-color-scheme:dark){
-  :root{color-scheme:dark;--paper:#202122;--canvas:#2d2e30;--rail-bg:#252628;--text:#f3f3ef;--secondary:#cecec9;--faint:#aeafa9;--line:rgba(255,255,255,.16);--indigo:#b1acff;--indigo-soft:#35334b}
-  .msg.user,.rail-btn[aria-current="true"],.item.active{background:var(--canvas);color:var(--text)}
-  #sendGo,#attachSilent,#openConfirm,.privacy-sheet .cta-actions button{background:var(--indigo);color:#181828}
-  .cta-box,.privacy-sheet{background:var(--canvas);color:var(--text)}
-}
+${QUICK_CHAT_CSS}
 </style>
 </head>
 <body>
@@ -1714,26 +1687,33 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     </aside>
     <section class="main">
       <div class="brand">
-        <span class="brand-id" id="workspaceTitle">快速对话</span>
+        <div class="brand-identity"><div class="brand-caption"><span class="wordmark">CMspark</span><span class="brand-id" id="workspaceTitle">快速对话</span></div></div>
         <span class="brand-actions">
-          <button type="button" id="historyOpen" aria-expanded="false">导航</button>
-          <button type="button" id="newChat">新对话</button>
-          <button type="button" id="moreActions" aria-controls="quickActions" aria-expanded="false">更多</button>
+          <button type="button" id="historyOpen" aria-expanded="false" title="导航" aria-label="导航">${chatIcon("history")}</button>
+          <button type="button" id="newChat" title="新对话">${chatIcon("compose")}新对话</button>
+          <button type="button" id="moreActions" aria-controls="quickActions" aria-expanded="false" title="更多" aria-label="更多">${chatIcon("more")}</button>
           <span id="quickActions" role="group" aria-label="更多操作" hidden>
-            <button type="button" id="meetingStart" aria-pressed="false">开始会议</button>
-            <button type="button" id="meetingOpen">会议材料</button>
-            <button type="button" id="operateOpen">打开浏览器侧栏</button>
-            <button type="button" id="cruiseChip" class="cruise-chip" title="在侧栏调整执行档位">%%CRUISE_LABEL%%</button>
-            <button type="button" id="pinChat" hidden>置顶显示</button>
-            <button type="button" id="windowMode">展开窗口</button>
+            <button type="button" id="meetingStart" aria-pressed="false">${chatIcon("mic")}开始会议</button>
+            <button type="button" id="meetingOpen">${chatIcon("folder")}会议材料</button>
+            <span class="menu-rule" aria-hidden="true"></span>
+            <button type="button" id="operateOpen">${chatIcon("history")}打开浏览器侧栏</button>
+            <button type="button" id="cruiseChip" class="cruise-chip" title="在侧栏调整执行档位">${chatIcon("controls")}<span>执行档位 · <span id="cruiseLabel">%%CRUISE_LABEL%%</span></span></button>
+            <span class="menu-rule" aria-hidden="true"></span>
+            <button type="button" id="pinChat" hidden>${chatIcon("pin")}<span id="pinLabel">置顶显示</span></button>
+            <button type="button" id="windowMode">${chatIcon("resize")}<span id="sizeLabel">展开窗口</span></button>
           </span>
         </span>
       </div>
       <div class="log" id="log" aria-label="对话记录">
         <div class="empty" id="empty">
           <strong>${CHAT_SHELL_TITLE_NONE}</strong>
+          <div class="starters">
+            <button type="button" data-prompt="请把下面的记录整理成待办，列出事项、负责人和截止时间。">${chatIcon("tasks")}整理待办</button>
+            <button type="button" data-prompt="请提炼下面这段材料的要点。">${chatIcon("notes")}提炼要点</button>
+          </div>
         </div>
       </div>
+      <button type="button" id="jumpLatest" hidden>${chatIcon("down")}回到最新</button>
     </section>
   </div>
   <!-- Retained handler targets, excluded from the composer and accessibility tree. -->
@@ -1755,16 +1735,16 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
         <textarea id="text" rows="2" autofocus placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
         <div id="fileSummary" hidden><span id="fileNames"></span><button type="button" id="clearFiles">移除附件</button></div>
         <div class="composer-actions">
-      <button type="button" class="icon-btn" id="attachFile" title="📎 添加附件" aria-label="添加附件">
+      <button type="button" class="icon-btn" id="attachFile" title="添加附件" aria-label="添加附件">
         <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
       </button>
-        <span id="sendHint" aria-hidden="true">Enter 发送</span>
+        <div class="input-feedback"><div class="status" id="status" role="status"></div><span id="sendHint" aria-hidden="true">Enter 发送</span></div>
         <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
         </button>
         <button class="icon-btn" id="stopGo" type="button" hidden title="停止" aria-label="停止"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
         <button class="icon-btn" id="sendGo" type="button" title="发送" aria-label="发送">
-          <svg viewBox="0 0 24 24"><path d="M5 12h12M13 6l6 6-6 6"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
         </button>
         </div>
       </div>
@@ -1794,7 +1774,6 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     <button class="ghost" id="queue" type="button">排队</button>
     <button class="ghost" id="stop" type="button">停止</button>
   </div>
-  <div class="status" id="status" role="status"></div>
     <div class="privacy-sheet" id="meetingPrivacy" hidden>
       <div id="meetingVoiceSection">
         <p>本机听写</p>
@@ -2176,24 +2155,41 @@ try{
       box.appendChild(row);
     });
   }
-  function clearStreamMsg(){
-    if(streamMsg&&streamMsg.parentNode) streamMsg.parentNode.removeChild(streamMsg);
+  const welcome=$("empty").cloneNode(true);
+  const transcript=$("log"), jumpLatest=$("jumpLatest");
+  function nearLatest(){return transcript.scrollHeight-transcript.clientHeight-transcript.scrollTop<32}
+  function jumpToLatest(){transcript.scrollTop=transcript.scrollHeight;jumpLatest.hidden=true}
+  transcript.addEventListener("scroll",function(){jumpLatest.hidden=nearLatest()},{passive:true});
+  jumpLatest.onclick=function(){jumpToLatest();$("text").focus()};
+  transcript.addEventListener("click",function(event){
+    const starter=event.target.closest("button[data-prompt]");
+    if(!starter)return;
+    const input=$("text");
+    input.value=starter.dataset.prompt+String.fromCharCode(10,10)+input.value;
+    input.dispatchEvent(new Event("input",{bubbles:true}));input.focus();
+    input.setSelectionRange(input.value.length,input.value.length);
+  });
+  const speaker='<span class="speaker">CMspark</span>';
+  function clearStreamMsg(keepVisible){
+    if(keepVisible && streamMsg) streamMsg.classList.remove("streaming");
+    else if(streamMsg&&streamMsg.parentNode) streamMsg.parentNode.removeChild(streamMsg);
     streamMsg=null;
   }
   function showStreamMsg(text){
-    var log=$("log");
+    var log=$("log"), follow=nearLatest();
     if(!streamMsg||!streamMsg.parentNode){
       var empty=$("empty");
       if(empty&&empty.parentNode) empty.parentNode.removeChild(empty);
       streamMsg=document.createElement("div");
       streamMsg.className="msg assistant streaming";
+      streamMsg.innerHTML=speaker+'<span class="reply"></span>';
       log.appendChild(streamMsg);
     }
-    streamMsg.textContent=text;
-    log.scrollTop=log.scrollHeight;
+    streamMsg.lastElementChild.textContent=text;
+    if(follow) jumpToLatest();
   }
   function renderMsgs(messages){
-    var log=$("log");
+    var log=$("log"), follow=nearLatest(), previousTop=log.scrollTop;
     log.innerHTML="";
     streamMsg=null;
     var n=0;
@@ -2203,18 +2199,13 @@ try{
       var d=document.createElement("div");
       d.className="msg "+m.role;
       var text=typeof m.content==="string"?m.content:(m.content&&m.content[0]&&m.content[0].text)||"";
-      if(m.role==="assistant") d.innerHTML=renderMd(text);
+      if(m.role==="assistant") d.innerHTML=speaker+renderMd(text);
       else d.textContent=text;
       log.appendChild(d);
     });
-    if(!n){
-      var empty=document.createElement("div");
-      empty.className="empty";
-      empty.id="empty";
-      empty.innerHTML="<strong>${CHAT_SHELL_TITLE_NONE}</strong>";
-      log.appendChild(empty);
-    }
-    log.scrollTop=log.scrollHeight;
+    if(!n) log.appendChild(welcome.cloneNode(true));
+    if(!n || follow) jumpToLatest();
+    else {log.scrollTop=previousTop;jumpLatest.hidden=nearLatest()}
   }
   function syncBusyUi(){
     $("stopGo").hidden=!busy;
@@ -2576,6 +2567,7 @@ try{
   }
   const actions=$("quickActions"), more=$("moreActions");
   function showActions(open,restore){
+    if(open && $("hud").classList.contains("history")) showHistory(false);
     actions.hidden=!open;
     more.setAttribute("aria-expanded",String(open));
     if(open) $("meetingStart").focus();
@@ -2592,7 +2584,7 @@ try{
     if(!actions.hidden && !actions.contains(e.target) && e.target!==more) showActions(false,false);
   });
   const wideWindow=window.matchMedia("(min-width:760px)");
-  function updateWindowMode(){$("windowMode").textContent=wideWindow.matches?"收为小窗":"展开窗口"}
+  function updateWindowMode(){$("sizeLabel").textContent=wideWindow.matches?"收为小窗":"展开窗口"}
   wideWindow.addEventListener("change",updateWindowMode);
   updateWindowMode();
   $("windowMode").onclick=function(){
@@ -2615,7 +2607,7 @@ try{
           document.body.insertBefore(chatSurface,pinnedNotice);
           pinnedNotice.hidden=true;
           pinnedWindow=null;
-          pinButton.textContent="置顶显示";
+          $("pinLabel").textContent="置顶显示";
           $("windowMode").hidden=false;
           $("text").focus();
         },{once:true});
@@ -2626,7 +2618,7 @@ try{
         pinned.document.body.appendChild(chatSurface);
         document=pinned.document;
         pinnedNotice.hidden=false;
-        pinButton.textContent="取消置顶";
+        $("pinLabel").textContent="取消置顶";
         $("windowMode").hidden=true;
         $("text").focus();
       }catch(error){
@@ -2850,7 +2842,7 @@ try{
       }
       if(t==="overlay.cruise"){
         var lab=typeof d.cruise_label==="string"?d.cruise_label.trim():"";
-        var chip=$("cruiseChip");
+        var chip=$("cruiseLabel");
         if(chip && lab){ chip.textContent=lab.slice(0,40); }
         return;
       }
@@ -2902,7 +2894,7 @@ try{
       }
       if(t==="chat.done"||t==="chat.aborted"){
         if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
-        clearStreamMsg();
+        clearStreamMsg(t==="chat.done");
         busy=false;
         syncBusyUi();
         stopPoll();

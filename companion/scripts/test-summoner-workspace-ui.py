@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory() as out:
   browser_status={'connected':False}
   thread={'id':'fixture-1','alias':'演示对话','user_tags':[],'topic_folder':None}
   metadata_ack={'valid':True}
-  extra_threads=[];held=[];delay_select={'enabled':False}
+  extra_threads=[];messages=[];held=[];delay_select={'enabled':False}
   errors=[];requests=[];page.on('pageerror',lambda e:errors.append(str(e)))
   page.add_init_script('window.EventSource=class {constructor(){window.fixtureEvents=this} addEventListener(){} close(){}};window.resizeTo=()=>{};window.moveTo=()=>{};')
   def route(r):
@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as out:
      owner_thread=next(t for t in [thread]+extra_threads if t['id']==owner_id)
      if metadata_ack['valid']:owner_thread.update(req.post_data_json)
      data={'type':'thread.updated','thread':owner_thread.copy()}
-    else:data={'thread':thread,'messages':[],'run_status':'idle'}
+    else:data={'thread':thread,'messages':messages.copy(),'run_status':'idle'}
    elif path in ['/api/chat','/api/files']:
     submissions.append(req.post_data_json)
     data={'type':'accepted'}
@@ -56,6 +56,13 @@ with tempfile.TemporaryDirectory() as out:
   page.wait_for_function('document.querySelector("#empty strong")')
   assert page.locator('.mark').count()==0 and '山' not in page.locator('#empty').inner_text()
   assert ('POST','/api/threads') in requests
+  starter=page.get_by_role('button',name='整理待办',exact=True)
+  text.fill('周五发出评审材料')
+  starter.click()
+  assert text.input_value().startswith('请把下面的记录整理成待办') and text.input_value().endswith('周五发出评审材料')
+  assert not submissions
+  expect(text).to_be_focused();text.fill('')
+
   page.get_by_role('button',name='导航',exact=True).click();assert page.locator('.hud.history .list').is_visible()
   page.get_by_role('button',name='完成',exact=True).click()
   assert page.locator('#historyOpen').evaluate('(el)=>el===document.activeElement')
@@ -174,6 +181,22 @@ with tempfile.TemporaryDirectory() as out:
   for r in held:r.fulfill(content_type='application/json',body=json.dumps({'messages':[{'role':'assistant','content':'旧对话迟到内容'}],'run_status':'llm'}))
   page.wait_for_timeout(100)
   assert '旧对话迟到内容' not in page.locator('#log').inner_text()
+  # Preserve a reader's position during incremental delivery and the final history repaint.
+  page.set_viewport_size({'width':520,'height':620})
+  page.emulate_media(color_scheme='dark',reduced_motion='reduce')
+  answer='\n'.join('第 %d 条评审记录，负责人核对材料。' % i for i in range(60))
+  event({'type':'chat.token','thread_id':'fixture-2','content':answer})
+  page.locator('#log').evaluate('(log)=>log.scrollTop=40')
+  back=page.get_by_role('button',name='回到最新')
+  expect(back).to_be_visible()
+  event({'type':'chat.token','thread_id':'fixture-2','content':answer+'\n后续'})
+  assert page.locator('#log').evaluate('(log)=>log.scrollTop')==40
+  messages.append({'role':'assistant','content':answer+'\n后续'})
+  event({'type':'chat.done','thread_id':'fixture-2'})
+  page.locator('#log .msg.assistant p').first.wait_for()
+  assert abs(page.locator('#log').evaluate('(log)=>log.scrollTop')-40)<2
+  back.click();expect(back).to_be_hidden();expect(text).to_be_focused()
+
   assert not page.locator('#stopGo').is_visible()
   assert not errors,errors
   b.close()
