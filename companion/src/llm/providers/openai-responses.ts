@@ -59,6 +59,7 @@ export async function* streamOpenAIResponses(client: OpenAI, model: string, effo
   const body: ResponseCreateParamsStreaming = {
     model, input: responsesInput(params.messages, search ? params.tools : undefined), stream: true, store: false, include: ["reasoning.encrypted_content"],
     tools: wireTools as ResponseCreateParamsStreaming["tools"],
+    ...(search && params.temperature !== undefined ? { temperature: params.temperature } : {}),
     ...(params.max_tokens ? { max_output_tokens: params.max_tokens } : {}),
   }
   // The installed SDK predates xhigh and max. The model catalog validates the wire value.
@@ -71,10 +72,12 @@ export async function* streamOpenAIResponses(client: OpenAI, model: string, effo
     if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") {
       visibleText ||= !!event.delta
       yield { type: "token", text: event.delta }
-    } else if (event.type === "response.reasoning_summary_text.delta") {
+    } else if (event.type === "response.reasoning_summary_text.delta" || event.type === "response.reasoning_text.delta") {
       yield { type: "reasoning", text: event.delta }
     } else if (event.type === "response.output_item.added" && event.item.type === "function_call") {
-      const index = calls.size
+      // A client search can arrive only in the final output. Use the wire
+      // position so that mixed batches replay in their original order.
+      const index = search ? event.output_index : calls.size
       calls.set(event.output_index, { index, args: "" })
       yield { type: "tool_call_delta", index, id: event.item.call_id, name: event.item.name }
     } else if (event.type === "response.function_call_arguments.delta") {
@@ -106,7 +109,7 @@ export async function* streamOpenAIResponses(client: OpenAI, model: string, effo
   }
   for (const [position, item] of output.entries()) {
     if (search && item.type === "tool_search_call") {
-      const index = calls.size, args = JSON.stringify(item.arguments)
+      const index = position, args = JSON.stringify(item.arguments)
       calls.set(position, { index, args })
       yield { type: "tool_call_delta", index, id: item.call_id, name: SEARCH_MCP, arguments: args }
       continue
@@ -114,7 +117,7 @@ export async function* streamOpenAIResponses(client: OpenAI, model: string, effo
     if (item.type !== "function_call") continue
     const call = calls.get(position)
     if (!call) {
-      const index = calls.size
+      const index = search ? position : calls.size
       calls.set(position, { index, args: item.arguments })
       yield { type: "tool_call_delta", index, id: item.call_id, name: item.name, arguments: item.arguments }
     } else if (item.arguments !== call.args) {

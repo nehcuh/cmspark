@@ -70,7 +70,7 @@ export class OpenAIProvider implements LlmProvider {
     const effort = params.reasoning_effort ?? this.config.reasoning_effort
     const searchMcp = supportsMcpSearch(this.config.protocol, this.config.base_url, model) && params.tools?.some(t => t.function.name === SEARCH_MCP)
     if ((spec?.responsesForTools || searchMcp) && params.tools?.length) {
-      yield* streamOpenAIResponses(this.client, model, reasoningWireEffort(support, effort), { ...params,
+      yield* streamOpenAIResponses(this.client, model, reasoningWireEffort(support, effort), { ...params, temperature,
         max_tokens: params.max_tokens && Math.min(params.max_tokens, spec?.output ?? Infinity) })
       return
     }

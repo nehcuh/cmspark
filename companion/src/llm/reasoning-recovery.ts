@@ -31,7 +31,8 @@ export class ReasoningRecoveryError extends Error {}
 type RecoveryEvent = { type: "reasoning_reset"; cause: "loop" | "limit" | "empty" | "transport"; effort?: string; chars: number; completionTokens?: number; reasoningTokens?: number }
 
 /** Retry only this provider step. No tools are executed or history written here. */
-export async function* streamChatWithRecovery(provider: LlmProvider, params: StreamChatParams, config: LlmConfig):
+export async function* streamChatWithRecovery(provider: LlmProvider, params: StreamChatParams, config: LlmConfig,
+  currentTools?: () => StreamChatParams["tools"]):
   AsyncGenerator<CanonicalStreamEvent | RecoveryEvent> {
   const spec = modelSpec(config.protocol, config.base_url, params.model ?? config.model_name)
   const support = spec?.support ?? "unsupported"
@@ -53,7 +54,8 @@ export async function* streamChatWithRecovery(provider: LlmProvider, params: Str
     let cause: RecoveryEvent["cause"] | undefined
     try {
       for await (const event of provider.streamChat({
-        ...params, signal, ...(attempt ? { messages: recoveryMessages(params.messages), reasoning_effort: lower } : {}),
+        ...params, signal, ...(currentTools ? { tools: currentTools() } : {}),
+        ...(attempt ? { messages: recoveryMessages(params.messages), reasoning_effort: lower } : {}),
       })) {
         if ((event.type === "token" && event.text.trim()) || event.type === "tool_call_delta") hasAnswerOrTool = true
         if (event.type === "reasoning" && !hasAnswerOrTool) {

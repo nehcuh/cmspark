@@ -33,18 +33,24 @@ test("Responses loads schemas at the matched search output, keeping the opening 
   const requests: any[] = []
   const client = { responses: { async *create(body: object) {
     requests.push(body)
+    yield { type: "response.reasoning_text.delta", delta: "Finding tools" }
+    const regularCall = { type: "function_call", call_id: "ordinary-1", name: builtin.function.name, arguments: "{}" }
+    yield { type: "response.output_item.added", output_index: 1, item: regularCall }
     yield { type: "response.completed", response: { status: "completed", usage: { input_tokens: 384, output_tokens: 7, total_tokens: 391, input_tokens_details: { cached_tokens: 256 } },
-      output: [{ type: "tool_search_call", execution: "client", call_id: "search-1", arguments: { query: "clock" } }] } }
+      output: [{ type: "tool_search_call", execution: "client", call_id: "search-1", arguments: { query: "clock" } }, regularCall] } }
   } } }
   for (const [messages, catalog] of [[opening, tools], [history, tools], [history, [builtin, mcpSearchTool]]] as const) {
     const events = []
-    for await (const ev of streamOpenAIResponses(client as any, "deepseek-flash", "none", { messages, tools: [...catalog] })) events.push(ev)
-    assert.ok(events.some(ev => ev.type === "tool_call_delta" && ev.name === SEARCH_MCP && ev.id === "search-1"))
+    for await (const ev of streamOpenAIResponses(client as any, "deepseek-flash", "none", { messages, tools: [...catalog], temperature: 0 })) events.push(ev)
+    assert.ok(events.some(ev => ev.type === "reasoning" && ev.text === "Finding tools"))
+    assert.ok(events.some(ev => ev.type === "tool_call_delta" && ev.id === "search-1" && ev.index === 0))
+    assert.ok(events.some(ev => ev.type === "tool_call_delta" && ev.id === "ordinary-1" && ev.index === 1))
     assert.ok(events.some(ev => ev.type === "usage" && ev.cached_input_tokens === 256))
   }
   assert.deepEqual(activeMcpSchemas(opening, tools), [builtin, mcpSearchTool])
   assert.deepEqual(activeMcpSchemas(history, tools), [builtin, clock, mcpSearchTool])
   assert.deepEqual(requests[0].tools.map((t: any) => t.type), ["function", "tool_search"])
+  assert.equal(requests[0].temperature, 0)
   assert.deepEqual(requests[0].tools, requests[1].tools)
   assert.deepEqual(requests[1].input.slice(0, 1), requests[0].input)
   assert.equal(requests[1].input[1].type, "tool_search_call")
@@ -80,7 +86,8 @@ test("chatCreate discovers only the selected MCP server and executes the returne
   const engine = new SkillEngine()
   engine.bindThreadManager(tm)
   const manager = getMcpManager()
-  t.mock.method(manager, "getAggregatedToolsForServers", (ids: Set<string>) => ids.has("fixture") ? [clock] : [])
+  let liveClock = clock
+  t.mock.method(manager, "getAggregatedToolsForServers", (ids: Set<string>) => ids.has("fixture") ? [liveClock] : [])
   t.mock.method(dns.promises, "lookup", async () => [{ address: "8.8.8.8", family: 4 }])
   const requests: any[] = []
   const executed: string[] = []
@@ -88,21 +95,31 @@ test("chatCreate discovers only the selected MCP server and executes the returne
     const body = JSON.parse(String(init.body))
     requests.push(body)
     const round = requests.length
+    if (round === 1) liveClock = { ...clock, function: { ...clock.function,
+      parameters: { type: "object", properties: { zone: { type: "string" } }, required: ["zone"] } } }
+    if (round === 3) tm.update(thread.id, { execution_policy: "plan_readonly" })
     const name = round === 1 ? SEARCH_MCP : clock.function.name
     const frames = round <= 2 ? [
       { type: "content_block_start", index: 0, content_block: { type: "tool_use", name, id: "fixture-"+round } },
-      { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: round === 1 ? '{"query":"clock"}' : "{}" } },
-    ] : [{ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "fixture success" } }]
-    const messages = [...frames, { type: "message_delta", delta: { stop_reason: round <= 2 ? "tool_use" : "end_turn" } }]
+      { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: round === 1 ? '{"query":"clock"}' : '{"zone":"UTC"}' } },
+    ] : round === 3 ? [{ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "checking" } }]
+      : [{ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "fixture success" } }]
+    const messages = [...frames, { type: "message_delta", delta: { stop_reason: round <= 2 ? "tool_use" : round === 3 ? "max_tokens" : "end_turn" } }]
     return new Response(messages.map(f => "data: "+JSON.stringify(f)+"\n\n").join(""))
   })
-  await chatCreate({ threadId: thread.id, message: "read the test clock", config: { protocol: "anthropic",
+  const run = () => chatCreate({ threadId: thread.id, message: "read the test clock", config: { protocol: "anthropic",
     base_url: "https://api.deepseek.com/anthropic", model_name: "deepseek-flash", api_key: "fixture", temperature: 0, context_window: 65536 },
     skillIds: [], knowledgeIds: [], threadManager: tm, skillEngine: engine, historyStore: new HistoryStore(),
     executeTool: async (_id, name) => { executed.push(name); return { success: true, data: { value: 7231 } } }, sendToExtension() {} })
-  assert.equal(requests.length, 3)
+  await run()
+  assert.equal(requests.length, 4)
   assert.deepEqual(executed, [clock.function.name])
   assert.equal(requests[0].tools.find((t: any) => t.name === clock.function.name).defer_loading, true)
   const searchResult = requests[1].messages.at(-1).content.find((b: any) => b.type === "tool_result")
   assert.deepEqual(searchResult.content, [{ type: "tool_reference", tool_name: clock.function.name }])
+  assert.deepEqual(requests[1].tools.find((t: any) => t.name === clock.function.name).input_schema.required, ["zone"])
+  assert.ok(requests[2].tools.some((t: any) => t.name === clock.function.name))
+  assert.ok(!requests[3].tools.some((t: any) => t.name === clock.function.name))
+  await run()
+  assert.ok(!requests[4].tools.some((t: any) => [SEARCH_MCP, clock.function.name].includes(t.name)))
 })

@@ -1121,8 +1121,10 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     tools = tools.filter((t) => t.function.name !== EXECUTION_CONTRACT_PROPOSE_TOOL)
   }
   tools = filterToolsForSurface(tools, params.surface)
-  const deferredMcp = !!thread && !thread.parent_thread_id && supportsMcpSearch(config.protocol, config.base_url, config.model_name)
-    && tools.some(t => t.function.name.startsWith("mcp__"))
+  const discoverySupported = !!thread && !thread.parent_thread_id && supportsMcpSearch(config.protocol, config.base_url, config.model_name)
+  const planReadonly = () => resolveEffectiveExecutionPolicy(threadId, id => threadManager.get(id)) === "plan_readonly"
+  if (discoverySupported && planReadonly()) tools = tools.filter(t => !t.function.name.startsWith("mcp__"))
+  const deferredMcp = discoverySupported && tools.some(t => t.function.name.startsWith("mcp__"))
   if (deferredMcp) {
     tools.push(mcpSearchTool)
     mcpSearchHint = "Use the tool search to discover MCP tools by server, function name, or task before calling them."
@@ -1132,12 +1134,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   function currentTools() {
     if (!deferredMcp) return tools
     const active = threadManager.get(threadId)
-    const selected = active?.mcp_selection_mode === "manual"
+    const selected = !active || active.trashed_at || planReadonly() ? [] : active.mcp_selection_mode === "manual"
       ? mcpManager.getAggregatedToolsForServers(new Set(active.active_mcp_server_ids ?? []))
       : mcpManager.getAggregatedTools()
-    const names = new Set(selected.map(t => t.function.name))
-    return tools.filter(t => !t.function.name.startsWith("mcp__") ||
-      (!!active && !active.trashed_at && names.has(t.function.name) && threadManager.isToolAllowed(threadId, t.function.name)))
+    const live = new Map(selected.map(t => [t.function.name, t]))
+    return tools.flatMap(t => {
+      const name = t.function.name
+      if (!name.startsWith("mcp__")) return [t]
+      const definition = live.get(name)
+      return definition && threadManager.isToolAllowed(threadId, name) ? [definition] : []
+    })
   }
   const offeredToolNames = new Set(tools.map((t) => t.function.name))
   if (!offeredToolNames.has("fleet_suggest_propose") || !offeredToolNames.has("spawn_worker")) fleetDispatchHint = ""
@@ -1168,7 +1174,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   const executeToolBeforeCatalog = executeTool
   executeTool = async (toolCallId, toolName, execParams, execSignal) => {
     if (toolName === SEARCH_MCP && deferredMcp) return searchMcpCatalog(currentTools(), execParams?.query)
-    const gated = gateUnofferedMcpTool(toolName, offeredToolNames)
+    const allowed = deferredMcp && toolName.startsWith("mcp__") ? new Set(currentTools().map(t => t.function.name)) : offeredToolNames
+    const gated = gateUnofferedMcpTool(toolName, allowed)
     if (gated) return gated
     if (toolName === "lcu_js" || toolName === "lcu_js_reset") return { success: false, error: "DESKTOP_TOOL_RETIRED" }
     const desktopVision = toolName === "host_computer" && offeredToolNames.has(toolName) && desktopVisionCurrent()
@@ -1735,12 +1742,12 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       for await (const ev of streamChatWithRecovery(provider, {
         messages,
         promptCacheKey,
-        tools: currentTools() as CanonicalToolDefinition[],
+        tools: tools as CanonicalToolDefinition[],
         temperature: config.temperature,
         model: config.model_name,
         signal,
         max_tokens: outputMaxTokens,
-      }, config)) {
+      }, config, deferredMcp ? currentTools : undefined)) {
         params.assertCurrentRun?.()
         if (ev.type === "reasoning_reset") {
           recoveringReasoning = true
