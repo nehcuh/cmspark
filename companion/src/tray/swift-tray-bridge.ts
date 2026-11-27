@@ -56,7 +56,7 @@ import {
 /** Build-time literal; never sourced from environment or a mutable sidecar at runtime. */
 declare const __CMSPARK_SWIFT_TRAY_SHA256__: string | undefined
 declare const __CMSPARK_PACKAGED_TRAY__: boolean | undefined
-// Non-bundled development retains the historic fixed pin. Production build
+// Non-bundled development uses its own fixed pin. Production build
 // integration must supply a pin from the controlled, signed tray build.
 /** Mac 菜单/热键「召唤器」= HTML Capture 卡（与侧栏弹出对话框同一出口）。 */
 const packagedTray = typeof __CMSPARK_PACKAGED_TRAY__ !== "undefined" && __CMSPARK_PACKAGED_TRAY__ === true
