@@ -83,6 +83,7 @@ export function AtThreadPopover({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      if (e.isComposing || e.keyCode === 229) return
       if (!visible) return
       switch (e.key) {
         case "ArrowDown":

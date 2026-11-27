@@ -24,6 +24,8 @@ DEB_PATH="${OUTPUT_DIR}/cmspark_${DEB_VERSION}_${DEB_ARCH}.deb"
 
 for required in \
   cmspark-agent.js \
+  linux-mini-orb.py \
+  linux-mini-region.py \
   launch-companion.sh \
   node \
   assets/cmspark.png \

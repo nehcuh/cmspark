@@ -9,6 +9,7 @@ const root = path.resolve(__dirname, '../..'), output = path.resolve(process.arg
 const { ActivityService } = require(path.join(root, 'companion/dist/activity'))
 const { parseExtractedCandidates } = require(path.join(root, 'companion/dist/activity/adapters'))
 const { SettingsAssistant } = require(path.join(root, 'companion/dist/settings-assistant'))
+const { handleMeetingMessage } = require(path.join(root, 'companion/dist/meeting/meeting-handlers'))
 const recorded = JSON.parse(fs.readFileSync(path.join(root, 'companion/tests/fixtures/activity-752.json'), 'utf8'))
 const source = recorded.source.source, image = Buffer.from(source.image_data_url.split(',')[1], 'base64')
 const activity = new ActivityService({ dataDir: data, platform: process.env.CMSPARK_FIXTURE_ACTIVITY_PLATFORM || 'darwin', recorder: { ocrImage: async () => 'PROJECT ALPHA\nSEND REPORT FRIDAY（受控本地 OCR）', capture: async () => null, listApps: async () => recorded.apps.apps }, notify: async () => {}, extract: async () => [] })
@@ -25,13 +26,14 @@ const assistant = new SettingsAssistant({ read: () => structuredClone(config), s
   if (/语音|错字/.test(description)) return JSON.stringify({ intent: '改善语音识别准确度（受控模型响应）', candidates: [{ title: '检查听写后纠错', reason: '先核对当前听写偏好', tradeoffs: '纠错可能发送转写文本到模型', changes: [{ settingId: 'voice.asrCorrection', after: true, reason: '在原设置中核对并启用' }] }] })
   return JSON.stringify({ intent: '减少主动建议（受控模型响应）', candidates: [{ title: '按需使用编程助手', reason: '减少主动建议', tradeoffs: '需要自行打开助手', changes: [{ settingId: 'coding.autoSuggest', after: false, reason: '仅关闭建议，保留能力入口' }] }, { title: '减少日志保留', reason: '缩短本机保留周期', tradeoffs: '旧日志到期清理不可撤销', changes: [{ settingId: 'logs.retentionDays', after: 7, reason: '只保留近期排障记录' }] }] })
 } })
-const bootstrap = `<script>window.fixtureResponse=(m,cb)=>{if(!/^(activity\\.|todo\\.|settings\\.assistant\\.)/.test(m.type))return;fetch('/fixture',{method:'POST',body:JSON.stringify(m)}).then(r=>r.json()).then(reply=>window.emitRuntime(reply));const ack={ok:true};cb?.(ack);return Promise.resolve(ack)};</script>`
+const bootstrap = `<script>window.fixtureResponse=(m,cb)=>{if(!/^(activity\\.|todo\\.|settings\\.assistant\\.|meeting\\.list$)/.test(m.type))return;fetch('/fixture',{method:'POST',body:JSON.stringify(m)}).then(r=>r.json()).then(reply=>window.emitRuntime(reply));const ack={ok:true};cb?.(ack);return Promise.resolve(ack)};</script>`
 const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && request.url === '/fixture') {
     try {
       let bytes = ''; for await (const chunk of request) { bytes += chunk; if (bytes.length > 8_389_000) throw Error('fixture request too large') }
       const { require_connected: _hint, ...frame } = JSON.parse(bytes)
-      const result = frame.type.startsWith('settings.assistant.') ? await assistant.handle(frame, 'fixture') : await activity.handle(frame)
+      const result = frame.type === 'meeting.list' ? { ...await handleMeetingMessage(frame, { origin: 'chrome-extension://' + 'a'.repeat(32), surface: 'panel' }), id: frame.id }
+        : frame.type.startsWith('settings.assistant.') ? await assistant.handle(frame, 'fixture') : await activity.handle(frame)
       response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(result))
     } catch { response.statusCode = 500; response.end('{}') }
     return

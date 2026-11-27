@@ -61,6 +61,7 @@ import {
   CompanionMark,
   IconBranch,
   IconChat,
+  IconChevronDown,
   IconCopy,
   IconDownload,
   IconEdit,
@@ -332,6 +333,7 @@ export function ChatView() {
     return () => ro.disconnect()
   }, [scrollToBottom])
 
+  const [readingEarlier, setReadingEarlier] = useState(false)
   const handleScroll = useCallback(() => {
     if (ignoreScrollRef.current) return
     const container = containerRef.current
@@ -340,6 +342,7 @@ export function ChatView() {
       container.scrollHeight - container.scrollTop - container.clientHeight
     // Slightly looser threshold: subpixel + large side-panel fonts on long threads.
     pinnedRef.current = distanceFromBottom < 120
+    setReadingEarlier(!pinnedRef.current)
   }, [])
 
   // On thread switch, re-pin to the bottom so the new thread auto-scrolls
@@ -347,6 +350,7 @@ export function ChatView() {
   // thread (audit L5).
   useEffect(() => {
     pinnedRef.current = true
+    setReadingEarlier(false)
     lastStickKeyRef.current = ""
     lastMessageCountRef.current = -1
     requestAnimationFrame(() => scrollToBottom())
@@ -409,7 +413,7 @@ export function ChatView() {
     <div style={styles.shell}>
       <style>{quietActionsCSS}</style>
       {/* #321 PR-2: popout bar removed — the 弹出对话框 affordance lives on StatusRail now. */}
-      <div className="cm-chat-scroll" style={styles.container} ref={containerRef} onScroll={handleScroll}>
+      <div className="cm-chat-scroll" tabIndex={-1} role="region" aria-label="对话记录" style={styles.container} ref={containerRef} onScroll={handleScroll}>
       <div className="cm-chat-content" ref={contentRef} style={styles.contentInner}>
         {showCompactBanner && (
           <NoticeCard tone="warning" role="status" testId="context-notice-card">
@@ -541,6 +545,7 @@ export function ChatView() {
         {(streamingReasoning || streamingContent) && (
           <div style={styles.agentMsg}>
             <div style={styles.messageCol}>
+              <ReplyAuthor />
               {streamingReasoning ? (
                 <ReasoningBlock
                   content={streamingReasoning}
@@ -625,8 +630,18 @@ export function ChatView() {
       </div>
       <KnowledgeImportModal />
       </div>
+      {readingEarlier && <button type="button" className="cm-latest" onClick={() => {
+        pinnedRef.current = true
+        setReadingEarlier(false)
+        scrollToBottom()
+        containerRef.current?.focus({ preventScroll: true })
+      }}><IconChevronDown size={14} />回到最新</button>}
     </div>
   )
+}
+
+function ReplyAuthor() {
+  return <span className="cm-speaker"><CompanionMark size={16} />CMspark</span>
 }
 
 /** 48px transcript thumb — preview JPEG or empty tile + name. No lightbox. */
@@ -801,14 +816,16 @@ const MessageRow = memo(function MessageRow({
   )
 
   return (
-    <div className="cmspark-msg-row" style={isUser ? styles.userMsg : styles.agentMsg}>
+    <div className="cmspark-msg-row" data-role={msg.role} style={isUser ? styles.userMsg : styles.agentMsg}>
       <div style={styles.messageCol}>
+        {msg.role === "assistant" && !isToolStubContent && (msg.content || msg.reasoning_content) ? <ReplyAuthor /> : null}
         {isEditing ? (
           <div style={styles.editWrap}>
             <textarea
               value={editingText}
               onChange={(e) => setEditingText(e.target.value)}
               onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
                 // Mirror InputArea's strict modifier check so editor submit matches the
                 // configured send shortcut (Cmd-only / Ctrl-only / Enter-only).
                 const shortcut = sendShortcutRef.current
@@ -2148,7 +2165,9 @@ const markdownCSS = `
   .markdown-body h1 { font-size: 16px; border-bottom: 1px solid ${tokens.border}; padding-bottom: 4px; }
   .markdown-body h2 { font-size: 14px; }
   .markdown-body h3 { font-size: 13px; }
-  .markdown-body p { margin: 8px 0; line-height: 1.55; }
+  .markdown-body p { margin: 0 0 .65em; line-height: 1.75; }
+  .markdown-body > :last-child { margin-bottom: 0; }
+  .cmspark-msg-row[data-role="user"] > div { max-width: 86% !important; }
   .markdown-body ul, .markdown-body ol { margin: 4px 0; padding-left: 18px; }
   .markdown-body li { margin: 2px 0; }
   .markdown-body a { color: ${tokens.accent}; text-decoration: none; }
@@ -2219,6 +2238,7 @@ const markdownCSS = `
 
 const styles: Record<string, React.CSSProperties> = {
   shell: {
+    position: "relative",
     flex: 1,
     minHeight: 0,
     display: "flex",
@@ -2246,21 +2266,26 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
   },
   empty: {
+    width: "100%",
+    maxWidth: 470,
+    marginInline: "auto",
+    boxSizing: "border-box",
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "flex-start",
+    alignItems: "flex-start",
+    justifyContent: "safe center",
     color: tokens.text,
-    textAlign: "center",
+    textAlign: "left",
     padding: "clamp(16px, 6vh, 56px) 8px 16px",
     fontFamily: tokens.font,
   },
   emptyTitle: {
-    fontSize: tokens.emptyTitle,
+    fontSize: `clamp(${tokens.emptyTitle}px, 4vw, 32px)`,
+    fontFamily: "Songti SC, Noto Serif CJK SC, SimSun, serif",
     fontWeight: 600,
     color: tokens.text,
-    margin: "12px 0 10px",
+    margin: "12px 0 8px",
     letterSpacing: "-0.035em",
     lineHeight: 1.25,
   },
@@ -2269,7 +2294,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.textSecondary,
     lineHeight: 1.5,
     maxWidth: 260,
-    margin: "0 0 28px",
+    margin: "0 0 16px",
   },
   codingEntryHints: {
     fontSize: 11,
@@ -2339,7 +2364,7 @@ const styles: Record<string, React.CSSProperties> = {
   userMsg: {
     display: "flex",
     justifyContent: "flex-end",
-    marginBottom: 24,
+    marginBottom: 22,
   },
   agentMsg: {
     display: "flex",
@@ -2349,7 +2374,8 @@ const styles: Record<string, React.CSSProperties> = {
   messageCol: {
     display: "flex",
     flexDirection: "column",
-    maxWidth: "90%",
+    minWidth: 0,
+    maxWidth: "100%",
     width: "fit-content" as const,
   },
   thumbRow: {
@@ -2402,8 +2428,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.userBubbleInk,
     border: `1px solid ${tokens.userBubbleBorder}`,
     borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px ${tokens.radiusBubble}px`,
-    padding: "12px 16px",
-    fontSize: 14,
+    padding: "9px 14px",
+    fontSize: 15,
     lineHeight: 1.5,
     wordBreak: "break-word" as const,
     whiteSpace: "pre-wrap",
@@ -2413,8 +2439,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: tokens.assistantBubbleBg,
     color: tokens.assistantBubbleText,
     borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px`,
-    padding: "8px 2px",
-    fontSize: 14,
+    padding: "2px 0",
+    fontSize: 15,
     lineHeight: 1.75,
     wordBreak: "break-word" as const,
     border: "none",

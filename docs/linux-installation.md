@@ -16,7 +16,9 @@ ARM64 分别选用文件名带 `arm64` 和 `aarch64` 的安装包。
 桌面入口位于 `/usr/share/applications/cmspark.desktop`，图标使用标准 hicolor 路径。
 不会向各用户的 Desktop 文件夹强行复制快捷方式；可用桌面环境的“添加到桌面/收藏”功能固定图标。
 桌面会话须提供 systemd 用户服务及 GTK/AppIndicator 托盘支持；GNOME 需启用 AppIndicator 支持。
-包管理器按包依赖安装托盘所需的 GTK、AppIndicator 和剪贴板工具。
+包管理器按包依赖安装托盘和桌面 Mini 所需的 GTK 3、Python GObject、Cairo、AppIndicator 和剪贴板工具。
+
+从托盘的「显示 Mini 桌面小球」可以显示或隐藏 Mini。单击小球打开快聊，拖动移动，长按或右键打开截图、资料搜索与会议入口。X11 会恢复上次位置；Wayland 上窗口位置和置顶由桌面合成器决定。
 
 将独立扩展 ZIP 解压到长期保留的目录，打开 `chrome://extensions`，开启开发者模式，
 点击“加载已解压的扩展程序”，选择包含 `manifest.json` 的目录。
@@ -31,6 +33,13 @@ Linux 本次交付托盘和 Chrome 扩展，不包含 Windows/macOS 的独立原
 `make package-linux-deb` / `make package-linux-rpm` 构建 x86_64；
 `make package-linux-deb-arm64` / `make package-linux-rpm-arm64` 在原生 ARM64 Linux 构建。
 ARM64 构建额外需要 Go、GCC、pkg-config 和 `libappindicator3-dev`。
+
+桌面 Mini 的 X11 图形回归可在构建 Companion 后运行。安装 Xvfb、Openbox 和 xdotool，从仓库根目录执行以下命令。它使用隔离的配置目录，验证单击、拖动、长按菜单、截图时让窗、隐藏与位置恢复。
+
+```sh
+xvfb-run -a sh -c 'openbox >/dev/null 2>&1 & node companion/scripts/test-linux-mini-ui.cjs'
+/usr/bin/python3 companion/scripts/test-linux-mini-region.py
+```
 
 x64 托盘保留 systray2 2.1.4 原包及其现有 SHA256 核验。
 ARM64 使用同一协议的上游 [systray-portable](https://github.com/felixhao28/systray-portable/tree/6eddc917bf39fcc0d95b57a0741d0c065fbd1e23)

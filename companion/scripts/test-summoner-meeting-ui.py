@@ -107,6 +107,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             page.on("request", lambda request: requests.append(request.url))
             page.add_init_script("window.resizeTo=()=>{};window.moveTo=()=>{};")
             page.goto(origin)
+            page.locator("#moreActions").click()
             expect(page.locator("#meetingStart")).to_be_visible()
             no_model()
 
@@ -148,6 +149,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             page.locator("#meetingBack").click()
 
             # The start entry may open the materials desk; mic starts only on the explicit record button.
+            page.locator("#moreActions").click()
             page.locator("#meetingStart").click()
             if page.locator("#meetingPrivacyAck").is_visible():
                 page.locator("#meetingPrivacyAck").click()
@@ -346,6 +348,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             imported_page.on("request", lambda request: requests.append(request.url))
             imported_page.add_init_script("window.resizeTo=()=>{};window.moveTo=()=>{};")
             imported_page.goto(origin)
+            imported_page.locator("#moreActions").click()
             imported_page.locator("#meetingOpen").click()
             with imported_page.expect_file_chooser() as chooser:
                 imported_page.locator("#meetingReferenceImport").click()
@@ -380,6 +383,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             failed_page.on("pageerror", lambda error: errors.append(str(error)))
             failed_page.on("request", lambda request: requests.append(request.url))
             failed_page.goto(origin)
+            failed_page.locator("#moreActions").click()
             failed_page.locator("#meetingOpen").click()
             marker = control()["traces"][-1]["n"]
             failed_page.locator("#meetingNew").click()

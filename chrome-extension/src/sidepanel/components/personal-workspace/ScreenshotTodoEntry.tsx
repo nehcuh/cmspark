@@ -119,7 +119,7 @@ export function ScreenshotTodoEntry({ controller, connected, active, review, con
       {pip && <button type="button" className="cm-p-link" onClick={() => void openFloating()}>{floating ? '显示桌面小窗' : '置顶桌面小窗'}</button>}
     </div>
     {floating && createPortal(<button type="button" disabled={unavailable} onClick={() => { window.focus(); captureWindow() }}
-      style={{ width: '100%', height: '100vh', cursor: 'pointer', border: 0, background: tokens.actionPrimary, color: tokens.bg, font: '600 15px ' + tokens.font }}>截图录待办</button>, floating.document.body)}
+      style={{ width: '100%', height: '100vh', cursor: 'pointer', border: 0, background: tokens.actionPrimary, color: tokens.actionInk, font: '600 15px ' + tokens.font }}>截图录待办</button>, floating.document.body)}
     {expanded && <>
       <p className="cm-personal-fieldnote">选一个窗口，或用系统截图框选任意屏幕的区域，再把截图粘贴到这里。</p>
       <div className="cm-personal-actions">{canCapture && <button type="button" className="cm-p-button" disabled={unavailable} onClick={captureWindow}>{selecting ? '正在读取截图…' : '选择窗口截图'}</button>}

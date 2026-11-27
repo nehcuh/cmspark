@@ -7,10 +7,10 @@ import test from "node:test"
 import { MiniProfileLock } from "../src/mini/profile-lock"
 import { WindowsMini } from "../src/mini/windows-mini"
 
-test("Mini profile ownership is exclusive across instances and transfers after release", { skip: process.platform !== "win32" }, async () => {
+test("Mini profile ownership is exclusive across instances and transfers after release", async () => {
   const dir = join(tmpdir(), "cmspark-mini-" + randomUUID())
   const first = new MiniProfileLock(dir)
-  const second = new MiniProfileLock(dir.toUpperCase() + "\\child\\..\\")
+  const second = new MiniProfileLock(process.platform === "win32" ? dir.toUpperCase() + "\\child\\..\\" : join(dir, "child", ".."))
   const other = new MiniProfileLock(dir + "-other")
   try {
     const acquired = await Promise.all([first.acquire(), second.acquire()])
@@ -28,7 +28,7 @@ test("Mini profile ownership is exclusive across instances and transfers after r
   }
 })
 
-test("overlapping Mini lock operations finish in call order", { skip: process.platform !== "win32" }, async () => {
+test("overlapping Mini lock operations finish in call order", async () => {
   const dir = join(tmpdir(), "cmspark-mini-" + randomUUID())
   const owner = new MiniProfileLock(dir)
   const contender = new MiniProfileLock(dir)

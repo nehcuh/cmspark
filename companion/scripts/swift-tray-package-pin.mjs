@@ -10,7 +10,7 @@ export function trayPinLiteral(bytes) {
   return PREFIX + createHash("sha256").update(bytes).digest("hex")
 }
 
-/** Values handed directly to esbuild by the macOS ARM64 package producer. */
+/** Values handed directly to esbuild by the macOS package producer. */
 export function trayBuildDefines(bytes) {
   return {
     __CMSPARK_PACKAGED_TRAY__: "true",

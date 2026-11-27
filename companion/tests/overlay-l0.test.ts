@@ -486,5 +486,5 @@ test("Capture copy is 可以继续聊; Operate is 打开侧栏 — no overlay-op
   assert.doesNotMatch(SUMMONER_RENTER_CHROME_DOWN, /浏览器没在/)
   const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
   assert.match(html, /id="operateOpen"/)
-  assert.match(html, /打开浏览器并打开侧栏/)
+  assert.match(html, /打开浏览器侧栏/)
 })

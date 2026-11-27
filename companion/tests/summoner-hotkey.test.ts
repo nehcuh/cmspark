@@ -118,7 +118,7 @@ test("Tray.swift candidate table matches TS and registers Carbon hotkey", () => 
   assert.ok(stolen.includes('"cmd+space"'))
   assert.ok(stolen.includes('"alt+space"'))
   assert.ok(stolen.includes('"ctrl+shift+space"'))
-  assert.match(src, /对话浮窗（旧版）…/)
+  assert.match(src, /快速对话/)
   assert.match(src, /keyEquivalent: ""/)
 })
 

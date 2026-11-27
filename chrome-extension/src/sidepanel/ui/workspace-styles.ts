@@ -1,7 +1,8 @@
-import { tokens } from "./tokens"
+import { tokens, workspaceThemeCSS } from "./tokens"
 
 /** Scoped shell styles; colors remain owned by tokens.ts. */
 export const workspaceCSS = `
+${workspaceThemeCSS}
 .cm-projects{font-size:12px;padding:8px 0;border-bottom:1px solid ${tokens.border}}
 .cm-projects summary{cursor:pointer;min-height:32px}.cm-project-controls{display:flex;flex-direction:column;gap:8px;padding:8px 2px}.cm-project-controls p{margin:0;overflow-wrap:anywhere}.cm-project-controls form,.cm-project-controls label{display:flex;flex-direction:column;gap:6px}.cm-project-controls input,.cm-project-controls select,.cm-project-controls button{box-sizing:border-box;max-width:100%;min-height:32px;font:inherit}.cm-project-controls button{white-space:normal}.cm-project-controls [role=alert]{color:${tokens.danger}}
 .cm-workspace{display:flex;height:100dvh;min-height:0;width:100%;overflow:hidden;position:relative;background:${tokens.bg};font-family:${tokens.font};color:${tokens.text}}
@@ -15,7 +16,7 @@ export const workspaceCSS = `
 .cm-tool-groups{display:flex;flex-direction:column;gap:8px;padding:8px 2px}
 .cm-tool-groups p{margin:0;color:${tokens.textMuted};font-size:11px}
 [aria-label="工作区导航"] .cm-navigation{width:100%}
-.cm-nav-brand{display:flex;align-items:center;gap:10px;padding:0 8px 20px;font-size:15px;letter-spacing:-.03em}
+.cm-nav-brand{display:flex;align-items:center;gap:10px;padding:0 8px 16px;font-size:17px;letter-spacing:-.045em}
 .cm-nav-brand .cm-icon-button{margin-left:auto}
 .cm-nav-new,.cm-nav-item,.cm-nav-thread{font:inherit;border:0;border-radius:${tokens.radiusMd}px;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left;min-height:36px;width:100%;padding:8px 10px;color:${tokens.text};background:transparent;font-size:13px;flex-shrink:0}
 .cm-nav-new{background:${tokens.bgElevated};border:1px solid ${tokens.border};margin-bottom:10px;font-weight:500}
@@ -48,10 +49,14 @@ export const workspaceCSS = `
 .cm-parent-task-title{color:${tokens.textSecondary}}
 .cm-child-task-title{font-weight:500}
 .cm-parent-task-status{font-size:11px;color:${tokens.textSecondary}}
-.cm-chat-content,.cm-composer-dock{width:100%;max-width:780px;margin-left:auto;margin-right:auto;box-sizing:border-box}
-.cm-composer-dock{padding:12px 20px 18px!important}
+.cm-chat-content,.cm-composer-dock{width:100%;max-width:740px;margin-left:auto;margin-right:auto;box-sizing:border-box}
+.cm-composer-dock{padding:12px 20px max(18px,env(safe-area-inset-bottom))!important}
+.cm-key-hint{font-size:11px;color:${tokens.textMuted};white-space:nowrap}
+@media(max-width:374px){.cm-key-hint{display:none}}
+.cm-speaker{display:flex;align-items:center;gap:7px;color:${tokens.textSecondary};font-size:12px;font-weight:600;line-height:1.4;margin:0 0 4px}
+.cm-latest{align-self:center;position:absolute;bottom:6px;z-index:1;display:flex;align-items:center;gap:6px;background:${tokens.bgElevated};color:${tokens.text};font:inherit;font-size:12px;cursor:pointer;padding:7px 13px;border:1px solid ${tokens.borderStrong};border-radius:24px;box-shadow:${tokens.shadowSm}}
 .cm-composer-actions{display:flex;align-items:center;gap:8px;min-width:0}
-.cm-composer-capsule:focus-within{border-color:${tokens.accent}!important;box-shadow:${tokens.shadowFocus}!important}
+.cm-composer-capsule:focus-within{border-color:${tokens.actionPrimary}!important;box-shadow:0 0 0 2px ${tokens.userBubbleBg}!important}
 .cm-workspace button:focus-visible,.cm-workspace [role="button"]:focus-visible,.cm-workspace input:focus-visible,.cm-workspace textarea:focus-visible,[role="dialog"] button:focus-visible,[role="dialog"] input:focus-visible{outline:2px solid ${tokens.accent};outline-offset:3px}
 .cm-workspace button:disabled{cursor:not-allowed}
 .cm-settings-panel{width:min(780px,100vw - 32px)!important;max-height:88dvh!important;border-radius:${tokens.radiusSheet}px!important;box-shadow:${tokens.shadowLg}}
@@ -59,13 +64,15 @@ export const workspaceCSS = `
 .cm-settings-body{padding:8px 24px 24px!important}
 .cm-context-panel{max-height:min(36dvh,360px)!important;margin:0 16px;border:1px solid ${tokens.border};border-radius:${tokens.radiusLg}px;box-shadow:${tokens.shadowSm}}
 .cm-history-group{flex:1;border:0;background:transparent;color:inherit;font:inherit;text-align:left;min-height:32px;cursor:pointer;padding:4px 0}
-.cm-workbench-launch{font-size:12px;white-space:nowrap;padding:0 4px}
+.cm-workbench-launch{gap:5px;font-size:12px;white-space:nowrap;padding:0 5px}
+.cm-workspace-layered .cm-navigation-toggle>span,.cm-workspace-layered .cm-workbench-label{display:none}
+.cm-workspace-layered .cm-task-title{padding-inline:4px;font-size:13px}
 @media(max-width:380px){.cm-workbench-prefix,.cm-navigation-toggle span{display:none}.cm-status-rail{column-gap:3px!important;padding-inline:6px!important}}
 .cm-navigation-toggle{gap:4px;flex-shrink:0}
 .cm-header-new{flex-shrink:0}
 .cm-history-panel{max-width:720px;margin:0 auto}
 .cm-history-panel button:focus-visible,.cm-history-panel [role="button"]:focus-visible{outline:2px solid ${tokens.accent};outline-offset:-2px}
-@media(min-width:760px){.cm-status-rail{padding:12px 24px!important;border-bottom:1px solid ${tokens.border}!important}.cm-chat-scroll{padding:28px 32px!important}.cm-composer-dock{padding-bottom:24px!important}}
+@media(min-width:760px){.cm-status-rail{padding:8px 22px!important;border-bottom:1px solid ${tokens.border}!important}.cm-chat-scroll{padding:28px 32px!important}.cm-composer-dock{padding-bottom:24px!important}}
 @media(max-width:759px){.cm-workspace{flex-direction:column;height:100dvh;overflow:hidden}.cm-workspace .cm-navigation,.cm-workspace-layered .cm-navigation{flex-shrink:1;width:100%;height:auto;max-height:30dvh;min-height:0;overflow:auto}.cm-shell-column{flex:1;min-height:0}.cm-task-title{font-size:12px}.cm-composer-dock{padding:8px 12px 12px!important}.cm-settings-panel{align-self:flex-end;width:100%!important;max-height:90dvh!important;border-radius:16px 16px 0 0!important}.cm-settings-header{padding:16px!important}.cm-settings-body{padding:8px 16px 16px!important}}
 @media(max-height:560px){.cm-context-panel{max-height:26vh!important}.cm-composer-dock{padding-top:4px!important;padding-bottom:6px!important}.cm-navigation{padding-top:10px}.cm-nav-brand{padding-bottom:8px}.cm-nav-resources{margin-bottom:4px}.cm-nav-new{margin-bottom:2px}}
 /* Shared R3/R4 navigation across side panel, popout and work center. */
@@ -144,7 +151,7 @@ export const workspaceCSS = `
 .cm-settings-body [hidden],.cm-settings-nav[hidden]{display:none}
 .cm-settings-footer{flex-wrap:wrap;padding:12px 24px!important;gap:8px!important}
 .cm-settings-footer button{min-height:36px}
-.cm-settings-footer .cm-settings-save{background:${tokens.actionPrimary}!important}
+.cm-settings-footer .cm-settings-save{background:${tokens.actionPrimary}!important;color:${tokens.actionInk}!important}
 .cm-settings-body input,.cm-settings-body select,.cm-settings-body textarea{max-width:100%;box-sizing:border-box}
 @media(max-width:759px){.cm-settings-panel{height:94dvh;max-height:94dvh!important;width:100%!important}.cm-settings-layout{flex-direction:column}.cm-settings-nav{display:none}.cm-settings-categories{grid-template-columns:minmax(0,1fr)}.cm-settings-layout .cm-settings-body{padding:16px!important}.cm-settings-status{padding:0 16px 8px}.cm-settings-home-status{padding:0 0 12px}.cm-settings-page-heading h3{font-size:18px}.cm-settings-footer{padding:10px 16px!important}}
 .cm-settings-body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),.cm-settings-body select{min-height:36px}

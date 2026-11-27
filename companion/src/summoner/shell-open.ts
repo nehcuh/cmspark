@@ -22,25 +22,9 @@ export type SummonerShellOpenOpts = {
   platform: NodeJS.Platform
   browserPath?: string | null
   userDataDir?: string | null
-  windowPosition?: { x: number; y: number }
 }
 
-/** Inner --app viewport. Outer adds ~28px title bar when centering. */
-export const OVERLAY_WINDOW_SIZE = { w: 1040, h: 760 } as const
-const OVERLAY_TITLEBAR_PX = 28
-
-export function overlayWindowPosition(
-  screenW: number,
-  screenH: number,
-  innerW: number = OVERLAY_WINDOW_SIZE.w,
-  innerH: number = OVERLAY_WINDOW_SIZE.h,
-): { x: number; y: number } {
-  const outerH = innerH + OVERLAY_TITLEBAR_PX
-  return {
-    x: Math.max(0, Math.floor((screenW - innerW) / 2)),
-    y: Math.max(0, Math.floor((screenH - outerH) / 2)),
-  }
-}
+export const OVERLAY_WINDOW_SIZE = { w: 520, h: 620 } as const
 
 export function parseOverlayChromePids(psOutput: string, userDataDir: string): number[] {
   if (!userDataDir) return []
@@ -80,18 +64,6 @@ export function closeOverlayChrome(userDataDir: string): number {
   return n
 }
 
-export function parseFinderDesktopBounds(raw: string): { w: number; h: number } | null {
-  const parts = String(raw)
-    .split(/[,\s]+/)
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n))
-  if (parts.length < 4) return null
-  const w = parts[2] - parts[0]
-  const h = parts[3] - parts[1]
-  if (!(w > 0) || !(h > 0)) return null
-  return { w, h }
-}
-
 export function isSummonerLoopbackUrl(url: string): boolean {
   if (typeof url !== "string" || !url) return false
   try {
@@ -129,10 +101,6 @@ export function planSummonerShellOpen(
     const args = [`--app=${url}`, `--window-size=${w},${h}`, "--no-first-run", "--no-default-browser-check"]
     const dir = typeof opts.userDataDir === "string" ? opts.userDataDir.trim() : ""
     if (dir) args.push(`--user-data-dir=${dir}`)
-    const pos = opts.windowPosition
-    if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
-      args.push(`--window-position=${Math.max(0, pos.x | 0)},${Math.max(0, pos.y | 0)}`)
-    }
     return {
       kind: "app-window",
       command: browserPath,
@@ -146,7 +114,7 @@ export function planSummonerShellOpen(
     return { kind: "browser-tab", command: "xdg-open", args: [url] }
   }
   if (opts.platform === "win32") {
-    return { kind: "browser-tab", command: "cmd.exe", args: ["/c", "start", "", url] }
+    return { kind: "browser-tab", command: "rundll32.exe", args: ["url.dll,FileProtocolHandler", url] }
   }
   return { error: `unsupported platform: ${opts.platform}` }
 }
@@ -198,6 +166,12 @@ export function resolveSummonerBrowserPath(
   pathEnv: string = process.env.PATH || "",
 ): string | null {
   const fixed = platform === "darwin" ? DARWIN_BINS : platform === "win32" ? WIN_BINS : []
+  if (platform === "win32" && process.env.LOCALAPPDATA) {
+    for (const relative of ["Google/Chrome/Application/chrome.exe", "Microsoft/Edge/Application/msedge.exe"]) {
+      const candidate = path.win32.join(process.env.LOCALAPPDATA, relative)
+      if (exists(candidate)) return candidate
+    }
+  }
   for (const p of fixed) {
     if (exists(p)) return p
   }

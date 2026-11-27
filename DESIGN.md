@@ -39,6 +39,8 @@ membership. Project directory defaults, a global activity center, merged code/te
 workspace and native management remain future work. No copied Codex assets, mandatory
 external agent, blanket permission or automatic live-configuration migration.
 
+Quick Chat (#917) opens as a compact, chat-first window from the first tray item. The desktop workbench keeps its own entry and shortcut. Secondary meeting, browser and sizing commands share one disclosure. [Interaction design](docs/superpowers/specs/2026-11-27-tray-quick-chat.md).
+
 ## Personas and jobs
 Change managers assemble sourced requirements, versions, artifacts, architecture,
 runtime, code and test evidence. Developers continue across conversations and
@@ -146,7 +148,7 @@ is bounded to min(36dvh, 360px), or 28dvh at short height, and yields to confirm
 Wide settings use a bounded centered dialog. Only message/supporting content shrinks;
 composer/stop remain reachable. Long titles wrap/truncate without hiding actions.
 Verify 320/390/759/760/1040/1440px widths, 420/480px heights and 200% equivalent reflow.
-Summoner default 1040×760, explicit compact 360×420; clamp and retain user resizing.
+Quick Chat opens at 520×620 and expands to 1040×760. The host places it on screen.
 
 ## Interaction states
 

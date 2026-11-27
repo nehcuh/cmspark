@@ -1,0 +1,30 @@
+name: Linux Mini native
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mini-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Install desktop dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-gtk-3.0 xdotool xvfb openbox x11-utils
+      - name: Install and build companion
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: |
+          cd companion
+          npm ci
+          npm run build
+      - name: Mini orb gestures and interactive region capture
+        run: |
+          xvfb-run -a sh -c 'openbox >/dev/null 2>&1 & node companion/scripts/test-linux-mini-ui.cjs'
+          /usr/bin/python3 companion/scripts/test-linux-mini-region.py

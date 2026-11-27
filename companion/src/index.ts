@@ -92,7 +92,7 @@ async function handleTrayStatus(): Promise<void> {
   console.log(`  Companion: ${pid && isProcessRunning(pid) ? "运行中" : "已停止"}`)
   console.log(`  WebSocket: ws://127.0.0.1:${wsPortForDisplay()}`)
 
-  if (platform === "darwin" && process.arch === "arm64") {
+  if (platform === "darwin") {
     const swiftBin = getSwiftTrayPath()
     console.log(`  Swift 托盘: ${fs.existsSync(swiftBin) ? "可用" : "未编译"}`)
   }

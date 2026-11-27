@@ -27,13 +27,13 @@ const target = argsJson.target || "node22"
 const requested = process.argv.slice(2)
 const whisperVerification = requested.length === 1 && ["--verify-whisper-macos-arm64", "--verify-whisper-macos-x64"].includes(requested[0])
 const whisperArch = whisperVerification ? requested[0].slice("--verify-whisper-macos-".length) : null
-const packageTray = whisperVerification ? (whisperArch === "arm64" ? ["--packaged-macos-arm64-tray"] : []) : requested
-const verifyStaging = packageTray[0] === "--verify-macos-arm64-tray"
-if (packageTray.length && (packageTray.length !== 1 || !["--packaged-macos-arm64-tray", "--verify-macos-arm64-tray"].includes(packageTray[0]))) {
-  throw new Error("Unrecognized bundle arguments")
-}
-if (packageTray.length && (process.platform !== "darwin" || process.arch !== "arm64")) {
-  throw new Error("Packaged Swift tray requires macOS ARM64")
+const packageTray = whisperVerification ? [`--packaged-macos-${whisperArch}-tray`] : requested
+const trayTarget = /^--(packaged|verify)-macos-(arm64|x64)-tray$/.exec(packageTray[0] ?? "")
+if (packageTray.length && (packageTray.length !== 1 || !trayTarget)) throw new Error("Unrecognized bundle arguments")
+const verifyStaging = trayTarget?.[1] === "verify"
+const trayArch = trayTarget?.[2]
+if (trayArch && (process.platform !== "darwin" || process.arch !== trayArch)) {
+  throw new Error(`Packaged Swift tray requires macOS ${trayArch}`)
 }
 if (whisperVerification && (process.platform !== "darwin" || process.arch !== whisperArch)) {
   throw new Error("Whisper bundle verification requires the target macOS architecture")
@@ -50,7 +50,7 @@ if (packageTray.length) {
   assertFreshTraySource({ typescript, source: readFileSync(sourceFile, "utf8"),
     compiled: readFileSync(compiledFile, "utf8"), compilerOptions: parsed.options, fileName: sourceFile })
 }
-const staging = path.resolve(companionRoot, "..", "dist-package", "cmspark-macos-arm64")
+const staging = path.resolve(companionRoot, "..", "dist-package", `cmspark-macos-${trayArch}`)
 const trayPath = verifyStaging ? path.join(staging, "cmspark-tray") : path.join(companionRoot, "dist", "cmspark-tray")
 const trayDefines = packageTray.length ? trayBuildDefines(readFileSync(trayPath)) : {}
 

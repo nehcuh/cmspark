@@ -251,7 +251,7 @@ test("SummonerController emits companion.ui.rect and renders assistant markdown"
 
 test("SummonerController hotkey picker is tray-menu, not HUD chrome", () => {
   const src = traySwiftSrc()
-  assert.match(src, /召唤器快捷键…/)
+  assert.match(src, /工作台快捷键/)
   assert.match(src, /func toggleHotkeyPicker/)
   assert.match(src, /func showHotkeyPicker/)
   const overlay = fs.readFileSync(srcFile("tray", "SummonerOverlay.swift"), "utf8")
@@ -332,7 +332,7 @@ test("Tray.swift stdin handles summoner.open/hydrate/token/done/error/close", ()
   ]) {
     assert.ok(src.includes(`"${cmd}"`), `missing stdin cmd ${cmd}`)
   }
-  assert.match(src, /对话浮窗（旧版）…/)
+  assert.match(src, /快速对话/)
 })
 
 test("swift-tray-bridge send/recv Task 7 summoner protocol", () => {

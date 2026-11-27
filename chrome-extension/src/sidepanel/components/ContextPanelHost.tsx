@@ -293,20 +293,6 @@ export function ContextPanelHostProvider({
     window.dispatchEvent(new CustomEvent("cmspark:focus-knowledge", { detail: { id } }))
   }, [activePanel])
 
-  // Esc collapses any open context panel (priority stack §4.9 layer 2)
-  useEffect(() => {
-    if (!activePanel) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return
-      const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return
-      e.preventDefault()
-      closePanel()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [activePanel, closePanel])
-
   const api = useMemo<ContextPanelHostApi>(
     () => ({ activePanel, openPanel, openPanelForce, closePanel, registerBeforeClose }),
     [activePanel, openPanel, openPanelForce, closePanel, registerBeforeClose],
@@ -328,13 +314,28 @@ export function ContextPanelHostProvider({
 export function ContextPanelHost() {
   const { activePanel, closePanel, registerBeforeClose } = useContextPanelHost()
   const meetingCaptureActive = useAgentStore().state.meetingCaptureActive
+  const panelRef = useRef<HTMLDivElement>(null)
+  // A mounted context panel can be hidden behind conversation management.
+  useEffect(() => {
+    if (!activePanel) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || !panelRef.current?.getClientRects().length) return
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return
+      e.preventDefault()
+      closePanel()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [activePanel, closePanel])
+
   if (!activePanel) return null
 
   const label = contextPanelLabel(activePanel)
   const closeEndsMeeting = activePanel === "meeting" && meetingCaptureActive
 
   return (
-    <div className="cm-context-panel" style={styles.panel} data-testid="context-panel-host">
+    <div ref={panelRef} className="cm-context-panel" style={styles.panel} data-testid="context-panel-host">
       <div style={styles.panelHeader}>
         <span style={styles.panelTitle}>{label}</span>
         {closeEndsMeeting ? (

@@ -32,12 +32,11 @@
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
 
-    <!-- Force ARM64 to prevent Rosetta prompt on Apple Silicon.
-         The launcher script runs via bash (universal binary); without this,
-         Launch Services may cache/select x86_64 from prior installs. -->
+    <!-- Prefer native Apple Silicon while allowing the Intel DMG to launch natively. -->
     <key>LSArchitecturePriority</key>
     <array>
         <string>arm64</string>
+        <string>x86_64</string>
     </array>
 </dict>
 </plist>

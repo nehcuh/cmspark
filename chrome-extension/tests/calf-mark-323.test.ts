@@ -112,9 +112,9 @@ test("#323 brandRed vs danger passes normal AND deuteranopia distance gates", ()
 
 test("#323 CompanionMark is the only empty-state imprint usage", () => {
   const chat = src("src/sidepanel/components/ChatView.tsx")
-  // CompanionMark imported once and rendered once (EmptyState only).
-  assert.equal((chat.match(/CompanionMark/g) ?? []).length, 2) // import + <CompanionMark …/>
+  // The empty state has exactly one imprint. Message authors may use the same mark.
   const emptyFn = chat.slice(chat.indexOf("function EmptyState"), chat.indexOf("const markdownCSS"))
+  assert.equal((emptyFn.match(/<CompanionMark/g) ?? []).length, 1)
   assert.match(emptyFn, /<CompanionMark size=\{\d+\}\s*\/>/)
 })
 

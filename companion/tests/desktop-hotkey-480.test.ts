@@ -32,15 +32,15 @@ function actionFixture(client: unknown) {
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
   const functions = ast.statements.filter((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === "handleAction")
   assert.equal(functions.length, 1)
-  const effects = { legacyOpen: 0, legacyToggle: 0, notifications: [] as unknown[] }
+  const effects = { openedThreads: [] as string[], legacyOpen: 0, legacyToggle: 0, notifications: [] as unknown[] }
   const context = { module: { exports: {} }, companionClient: client, console: { log() {} },
-    openSummonerWebShell: async () => { effects.legacyOpen++ },
+    openSummonerWebShell: async (id: string) => { effects.openedThreads.push(id); effects.legacyOpen++ },
     toggleSummonerWebShell: async () => { effects.legacyToggle++ },
     safeNotify: (value: unknown) => { effects.notifications.push(value) },
   }
   const js = ts.transpileModule(functions[0].getText(ast) + "\nmodule.exports = handleAction", { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   vm.runInNewContext(js, context)
-  return { run: context.module.exports as (action: { type: string }) => Promise<void>, effects }
+  return { run: context.module.exports as (action: { type: string; payload?: { id: string } }) => Promise<void>, effects }
 }
 function actualHotkeyAction(): string {
   const source = fs.readFileSync(path.resolve("src/tray/Tray.swift"), "utf8")
@@ -60,13 +60,15 @@ test("registered hotkey and explicit desktop menu use the exact same compact lau
   noLegacy(f); assert.equal(f.effects.notifications.length, 0)
 })
 
-test("explicit old conversation window remains separate from the native hotkey", async () => {
+test("quick chat and recent conversations open the requested chat window", async () => {
   let requests = 0
   const f = actionFixture({ sendAppRequest: async () => { requests++; return { ok: true } } })
   await f.run({ type: "summoner" })
   assert.equal(f.effects.legacyOpen, 1); assert.equal(f.effects.legacyToggle, 0); assert.equal(requests, 0)
+  await f.run({ type: "recent-thread", payload: { id: "chosen-thread" } })
+  assert.deepEqual(f.effects.openedThreads, ["", "chosen-thread"])
   for (const file of ["src/tray/Tray.swift", "src/tray/systray2-bridge.ts", "src/tray/readline-tray.ts"])
-    assert.equal(fs.readFileSync(path.resolve(file), "utf8").includes("对话浮窗（旧版）…"), true, file)
+    assert.equal(fs.readFileSync(path.resolve(file), "utf8").includes("快速对话"), true, file)
 })
 
 for (const mode of ["disconnected", "denied", "throw"] as const) test(`native hotkey/menu ${mode} stays explicit without opening the old window`, async () => {

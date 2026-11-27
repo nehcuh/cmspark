@@ -221,10 +221,11 @@ function AppContent() {
     <ContextPanelHostProvider capabilityLevel={level} openMeetingWorkspace={openWorkbench}>
     <WorkspaceFrame
       level={level}
-      top={({ compact, onNewThread, onSelectHistory }) => <>
+      top={({ compact, inConversation, onNewThread, onSelectHistory }) => <>
         <style>{globalCSS + workspaceCSS}</style>
         <StatusRail
           compact={compact}
+          inConversation={inConversation}
           onNewThread={onNewThread}
           onSelectHistory={onSelectHistory}
           connectionState={connectionState}
@@ -551,6 +552,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     return composerPlaceholder(capabilityLevel)
   }
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
     // If popover is open and navigating/selecting, let the popover handle it
     // Dual-review B3: gate @ popover the same way as / (parity)
     if (
@@ -986,6 +988,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               <IconAttach size={16} />
             </button>
           )}
+          {!showStop && <span className="cm-key-hint" aria-hidden="true">{state.sendShortcut || "Enter"} 发送</span>}
           <span style={{ flex: 1 }} />
           {showVoiceMic && (
             <VoiceMicButton
@@ -1042,7 +1045,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               style={{
                 ...styles.sendBtn,
                 background: canSend ? tokens.actionPrimary : tokens.sendDisabledBg,
-                color: canSend ? tokens.userBubbleText : tokens.textMuted,
+                color: canSend ? tokens.actionInk : tokens.textMuted,
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
               onClick={() => handleSend()}
@@ -1281,7 +1284,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "none",
     borderRadius: tokens.radiusMd,
     padding: "4px 0",
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: "inherit",
     resize: "none" as const,
     outline: "none",
@@ -1308,7 +1311,7 @@ const styles: Record<string, React.CSSProperties> = {
   sendBtn: {
     width: 32,
     height: 32,
-    borderRadius: tokens.radiusPill,
+    borderRadius: 11,
     border: "none",
     background: tokens.sendDisabledBg,
     color: tokens.userBubbleText,

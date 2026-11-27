@@ -5,7 +5,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { tokens } from "../src/sidepanel/ui/tokens"
+import { tokens, workspacePalette } from "../src/sidepanel/ui/tokens"
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
 
@@ -25,7 +25,7 @@ test("#488: CompanionMark empty imprint stays 36px with connection branding", ()
   assert.match(mark, /viewBox="0 0 24 24"/)
 })
 
-test("#321 PR-4: greeting stays 22px; three invites live in EmptyState (above the fold)", () => {
+test("#321 PR-4: greeting has a 22px minimum; three invites live in EmptyState (above the fold)", () => {
   assert.equal(tokens.emptyTitle, 22)
   const chat = src("src/sidepanel/components/ChatView.tsx")
   const emptyFn = chat.slice(chat.indexOf("function EmptyState"), chat.indexOf("const markdownCSS"))
@@ -70,8 +70,8 @@ test("#321 PR-4: composer minHeight ~52 leaves 32px attach/mic/send room", () =>
 })
 
 test("#321 PR-4: canon revision — user bubble is not a filled indigo slab", () => {
-  assert.equal(tokens.userBubbleBg, "#f3f3f1")
-  assert.equal(tokens.accent, "#4f46e5")
+  assert.equal(workspacePalette.userBubbleBg[0], "#e5efe6")
+  assert.equal(workspacePalette.accent[0], "#4f46e5")
   assert.ok(String(tokens.userBubbleBg) !== String(tokens.accent))
   const tokenFile = src("src/sidepanel/ui/tokens.ts")
   assert.match(tokenFile, /canon revision|#321 PR-4/i)
@@ -84,7 +84,7 @@ test("#321 PR-4: canon revision — user bubble is not a filled indigo slab", ()
   assert.doesNotMatch(bubble, /shadowAccent/)
 })
 
-test("#321 PR-4: unarmed send SoT is sendDisabledBg, armed send is neutral ink (#469)", () => {
+test("#321 PR-4: unarmed send SoT is sendDisabledBg, armed send uses the primary action color", () => {
   const app = src("src/sidepanel/App.tsx")
   assert.match(app, /canSend \? tokens\.actionPrimary : tokens\.sendDisabledBg/)
   const tokenFile = src("src/sidepanel/ui/tokens.ts")

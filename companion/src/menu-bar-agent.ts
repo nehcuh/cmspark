@@ -23,9 +23,11 @@ import {
   RecentThreadItem,
 } from "./tray/tray-adapter"
 import { CompanionClient } from "./tray/companion-client"
+import { DesktopMini, type DesktopMiniAction } from "./mini/desktop-mini"
+import { LinuxMiniHost } from "./mini/linux-mini"
 import { WindowsMini } from "./mini/windows-mini"
 import { captureMiniRegion } from "./mini/region-capture"
-import { isMiniCapture, openMiniAction, type MiniAction } from "./mini/actions"
+import { isMiniAction, isMiniCapture, openMiniAction, type MiniAction } from "./mini/actions"
 import { readPairingSecret, hasPaired } from "./tray/pairing"
 import { copyTextToClipboard } from "./tray/clipboard"
 import { OSASCRIPT_BIN } from "./process-path"
@@ -202,6 +204,7 @@ let state: MenuBarState = {
 
 let trayInstance: UnifiedTray | null = null
 let windowsMini: WindowsMini | undefined
+let desktopMini: DesktopMini | undefined
 
 /**
  * P0a — accessor for server.ts to dispatch confirmation requests to the tray
@@ -1858,7 +1861,7 @@ function reportOverlayShellUnavailable(): void {
 async function openSummonerWebShell(threadId: string): Promise<void> {
   const client = summonerClient
   if (!client) {
-    safeNotify({ title: "CMspark 召唤器", message: "Companion 未连接，无法打开召唤器", timeout: 5 })
+    safeNotify({ title: "CMspark 快速对话", message: "请先从托盘启动 Companion，再打开快速对话", timeout: 5 })
     reportOverlayShellUnavailable()
     return
   }
@@ -1896,21 +1899,20 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
       const join = url.includes("?") ? "&" : "?"
       url = url + join + "thread=" + encodeURIComponent(threadId)
     }
-    const opened = openLoopbackPage(url)
+    const opened = await openLoopbackPage(url)
     if (!opened) {
       safeNotify({
-        title: "CMspark 召唤器",
-        message: "打开召唤器失败: 无法打开召唤器页面",
+        title: "CMspark 快速对话",
+        message: "无法打开快速对话，请检查默认浏览器",
         timeout: 5,
       })
       reportOverlayShellUnavailable()
       return
     }
-    safeNotify({ title: "CMspark 召唤器", message: "已在浏览器打开召唤器（实验）", timeout: 3 })
   } catch (err: any) {
     safeNotify({
-      title: "CMspark 召唤器",
-      message: `打开召唤器失败: ${err?.message || err}`,
+      title: "CMspark 快速对话",
+      message: `无法打开快速对话： ${err?.message || err}`,
       timeout: 5,
     })
     reportOverlayShellUnavailable()
@@ -1958,7 +1960,12 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       }
       break
     case "autostart": await toggleAutoStart(); break
-    case "mini-toggle": await windowsMini?.toggle(); break
+    case "mini-toggle": await (desktopMini ?? windowsMini)?.toggle(); break
+    case "mini-action": {
+      const id = action.payload?.id
+      if (id === "chat" || isMiniAction(id)) await desktopMini?.perform(id)
+      break
+    }
     case "mini-hotkeys": await windowsMini?.openHotkeySettings(); break
     case "quick-action":
       handleQuickAction(action.payload?.id || "").catch((err) => {
@@ -1966,13 +1973,7 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       })
       break
     case "recent-thread":
-      if (!companionClient) {
-        safeNotify({ title: "CMspark Agent", message: "Companion 未运行", timeout: 3 })
-      } else if (action.payload?.id) {
-        companionClient.openThread(action.payload.id)
-          .then(() => safeNotify({ title: "CMspark Agent", message: "已切换到对话 ✅", timeout: 3 }))
-          .catch((err: any) => safeNotify({ title: "CMspark Agent", message: `切换对话失败: ${err.message}`, timeout: 5 }))
-      }
+      if (action.payload?.id) await openSummonerWebShell(action.payload.id)
       break
     case "quit":
       // Product: 退出 tray = 停掉 Companion 守护进程及本 tray 进程（不再留下孤儿 node/exe）
@@ -2025,6 +2026,7 @@ export async function startMenuBarAgent(): Promise<void> {
   await pollCompanionStatus()
   lastNotifiedStatus = state.companionStatus
 
+  let miniBounds: Record<string, unknown> | undefined
   const backend = detectTrayBackend()
   console.log(`[tray] Detected backend: ${backend}`)
 
@@ -2063,10 +2065,12 @@ export async function startMenuBarAgent(): Promise<void> {
       trayInstance.onCompanionUiRect?.((raw) => {
         try {
           if (!raw || typeof raw !== "object") return
+          const rect = raw as Record<string, unknown>
+          if (rect.surface === "mini") miniBounds = rect.hidden ? undefined : rect
           // Route by rect surface: "overlay" rides the summoner socket, while
           // pairing/tray/hud must use the tray socket (the daemon drops any
           // non-overlay rect arriving on a summoner-surface connection).
-          forwardCompanionUiRect(raw as Record<string, unknown>, {
+          forwardCompanionUiRect(rect, {
             summoner: summonerClient,
             companion: companionClient,
           })
@@ -2103,6 +2107,11 @@ export async function startMenuBarAgent(): Promise<void> {
     port: boundClientsPort,
     reconnectInterval: 5000,
     maxReconnectAttempts: -1,
+  })
+
+  companionClient.onConnected(() => {
+    // The orb can already be mapped when the tray connects or the daemon restarts.
+    if (miniBounds) forwardCompanionUiRect(miniBounds, { summoner: summonerClient, companion: companionClient })
   })
 
   // Push data changes to tray
@@ -2161,6 +2170,19 @@ export async function startMenuBarAgent(): Promise<void> {
       visible => trayInstance?.setMiniVisible?.(visible),
       message => safeNotify({ title: "CMspark Mini", message, timeout: 5 }))
     try { await windowsMini.start() } catch (error) { console.warn("[mini] Failed to start desktop orb:", error) }
+  } else if ((process.platform === "darwin" && activeBackend === "swift") ||
+      (process.platform === "linux" && (process.env.DISPLAY || process.env.WAYLAND_DISPLAY))) {
+    const dir = getConfigDir()
+    const menu = (value: boolean) => trayInstance?.setMiniVisible?.(value)
+    const mac = process.platform === "darwin"
+    const host = mac ? {
+      show: async () => menu(true), hide: () => menu(false), stop: async () => menu(false),
+    } : new LinuxMiniHost(dir, async id => { await desktopMini?.perform(id) }, message => desktopMini?.closed(message))
+    const run = (id: DesktopMiniAction, signal: AbortSignal) => id === "chat" ? openSummonerWebShell("") : runMiniAction(id, signal)
+    desktopMini = new DesktopMini(dir, host, run, mac ? () => {} : menu,
+      message => safeNotify({ title: "CMspark Mini", message, timeout: 5 }), mac ? () => menu(true) : undefined)
+    // A missing GUI or a slow compositor must not delay the other tray connections.
+    void desktopMini.start()
   }
   void pollUnattendedCruiseChip()
 
@@ -2377,6 +2399,8 @@ async function runHudSpikeDualProcess(): Promise<void> {
 }
 
 export async function stopMenuBarAgent(): Promise<void> {
+  await desktopMini?.stop()
+  desktopMini = undefined
   await windowsMini?.stop()
   windowsMini = undefined
   if (trayInstance) {

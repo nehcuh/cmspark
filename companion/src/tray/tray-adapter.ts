@@ -22,6 +22,7 @@ export type TrayActionType =
   | "show-pairing"
   | "summoner"
   | "summoner-toggle"
+  | "mini-action"
   | "mini-toggle"
   | "mini-hotkeys"
   | "desktop"
@@ -171,8 +172,8 @@ export function isSwiftTrayAvailable(): boolean {
  * Detect the best tray backend for the current platform.
  *
  * Priority:
- *  1. macOS ARM64 + Swift binary → 'swift'
- *  2. macOS x86 / Windows (x64 + ARM64 via emulation) / Linux → 'systray2'
+ *  1. macOS with packaged Swift binary → 'swift'
+ *  2. macOS without Swift / Windows (x64 + ARM64 via emulation) / Linux → 'systray2'
  *
  * Never returns 'readline': the readline terminal menu is only reachable as
  * an automatic fallback in startMenuBarAgent's tryOrder (menu-bar-agent.ts)
@@ -183,7 +184,7 @@ export function isSwiftTrayAvailable(): boolean {
 export function detectTrayBackend(): TrayBackend {
   const platform = getPlatform()
 
-  if (platform === "darwin" && process.arch === "arm64" && isSwiftTrayAvailable()) {
+  if (platform === "darwin" && isSwiftTrayAvailable()) {
     return "swift"
   }
 

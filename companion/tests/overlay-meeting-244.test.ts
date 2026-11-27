@@ -59,7 +59,7 @@ test("#244 禁止假装-1: 隐私「我已了解」后出现会议台，不是�
   assert.match(deskCss, /position:absolute/)
   assert.match(deskCss, /inset:0/)
   assert.match(deskCss, /z-index:7/)
-  assert.match(overlayHtml, /\.capture-row\{[^}]*z-index:1/)
+  assert.match(fs.readFileSync(srcFile("summoner", "quick-chat-view.ts"), "utf8"), /#quickActions\{[^}]*z-index:6/)
   assert.match(overlayHtml, />返回对话</)
   assert.match(overlayHtml, />生成会议纪要</)
   assert.match(overlayHtml, />开始录制</)

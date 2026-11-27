@@ -29,7 +29,7 @@ for (const failure of [false, true]) for (const navigation of ["no-switch", "A-t
     let held: { reply: any; release: () => void } | undefined
     const selections: string[] = []
     const context = vm.createContext({ crypto: { randomUUID }, Number, Promise, Object, document: { createElement: () => ({}), getElementById: (id: string) => elements[id] },
-      threads: [a, b], threadId: a.id, busy: false, selections, seed: { revision: created.revision, projects: [created.project] },
+      composer: { select() {} }, threads: [a, b], threadId: a.id, busy: false, selections, seed: { revision: created.revision, projects: [created.project] },
       renderThreads() {}, clearStreamMsg() {}, showHistory() { selections.push(context.threadId) }, renderMsgs() {}, startPoll() {}, stopPoll() {}, syncBusyUi() {}, setStatus() {}, statusFromEvent() {}, refresh: () => Promise.resolve(),
       api: async (route: string, options?: any) => {
         if (route === "/api/lease") return {} // inert existing lease seam, not an authority assertion
