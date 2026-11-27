@@ -54,12 +54,17 @@ const volumeEnd = source.indexOf('\n\n# Set Finder window layout', volumeStart);
 assert.ok(signedStart >= 0 && signedEnd > signedStart && volumeStart >= 0 && volumeEnd > volumeStart);
 function runPost(f, kind, resources) {
   const runner = path.join(f.root, 'post-' + kind);
-  fs.writeFileSync(runner, 'set -euo pipefail\n' + source.slice(kind === 'signed' ? signedStart : volumeStart, kind === 'signed' ? signedEnd : volumeEnd));
+  const cleanup = source.slice(source.indexOf('cleanup_dmg() {'), source.indexOf('trap cleanup_dmg EXIT'));
+  const unwind = kind === 'volume' ? cleanup + 'trap \'if [ $? -ne 0 ]; then cleanup_dmg; fi\' EXIT\n' : '';
+  fs.writeFileSync(runner, 'set -euo pipefail\n' + unwind + source.slice(kind === 'signed' ? signedStart : volumeStart, kind === 'signed' ? signedEnd : volumeEnd));
   const commands = path.join(f.root, 'commands');
-  fs.writeFileSync(path.join(commands, 'hdiutil'), '#!/bin/bash\nprintf detach > "$DETACH_LOG"\n', { mode: 0o700 });
+  fs.copyFileSync(path.join(repo, 'scripts/detach-dmg.sh'), path.join(f.root, 'scripts/detach-dmg.sh'));
+  fs.writeFileSync(path.join(commands, 'hdiutil'), '#!/bin/bash\n[[ "$1" == detach && "$2" == "$VOLUME" ]] || exit 1\nmv "$VOLUME" "$VOLUME.detached"\nprintf detach > "$DETACH_LOG"\n', { mode: 0o700 });
+  const work = fs.mkdtempSync(path.join(f.root, 'dmg-work-'));
   return spawnSync('/bin/bash', [runner], { cwd: f.root, env: {
     ...process.env, PATH: commands + ':' + path.dirname(process.execPath) + ':/usr/bin:/bin', NODE_BINARY: process.execPath,
-    ROOT_DIR: f.root, RESOURCES: resources, VOLUME: path.join(f.root, 'volume'), DEVICE: 'owned-device', DETACH_LOG: path.join(f.root, 'detach-log'),
+    ROOT_DIR: f.root, RESOURCES: resources, VOLUME: path.join(f.root, 'volume'), DMG_MOUNTED: 'true',
+    DMG_WORK: work, TMP_DMG: path.join(work, 'installer.sparseimage'), DETACH_LOG: path.join(f.root, 'detach-log'),
     _WHISPER_PIN: f.pin, _WHISPER_STORE: path.join(f.root, 'companion/dist/.whisper-generations'), _WHISPER_CURRENT: f.current,
   }, encoding: 'utf8' });
 }

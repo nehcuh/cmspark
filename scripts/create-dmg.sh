@@ -186,13 +186,21 @@ echo "[5/6] Creating DMG..."
 DMG_OUTPUT="${ROOT_DIR}/dist-package/${DMG_NAME}"
 rm -f "${DMG_OUTPUT}"
 
-TMP_DMG="/tmp/cmspark-dmg-${VERSION}.dmg"
-rm -f "${TMP_DMG}" "${TMP_DMG}.sparseimage"
-
-# Eject any previously mounted CMspark volumes (from prior failed runs or opened DMG)
-for dev in $(hdiutil info | grep "/Volumes/CMspark" | awk '{print $1}' || true); do
-  [[ -n "${dev}" ]] && hdiutil detach "${dev}" -force 2>/dev/null || true
-done
+DMG_WORK="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-image-XXXXXX")"
+TMP_DMG="${DMG_WORK}/installer.sparseimage"
+VOLUME="${DMG_WORK}/volume"
+mkdir "${VOLUME}"
+DMG_MOUNTED=false
+cleanup_dmg() {
+  if [ "${DMG_MOUNTED}" = true ] && ! bash "${ROOT_DIR}/scripts/detach-dmg.sh" "${VOLUME}"; then
+    echo "[create-dmg] Image still mounted at ${VOLUME}; retained ${TMP_DMG}" >&2
+    return
+  fi
+  rm -f "${TMP_DMG}"
+  if [ -d "${VOLUME}" ]; then rmdir "${VOLUME}"; fi
+  rmdir "${DMG_WORK}"
+}
+trap cleanup_dmg EXIT
 
 # Create writable sparse image from staging
 # Count each hard link because copying the app to HFS+ can allocate each path
@@ -206,17 +214,8 @@ hdiutil create -size "${DMG_SIZE}" \
   -type SPARSE \
   "${TMP_DMG}"
 
-# Sparse image adds .sparseimage suffix
-TMP_DMG="${TMP_DMG}.sparseimage"
-
-# Mount the writable sparse image and capture the actual mount point
-ATTACH_OUTPUT=$(hdiutil attach "${TMP_DMG}" -noverify -noautoopen)
-echo "${ATTACH_OUTPUT}"
-
-# Extract device and actual volume path from the last matching line
-VOLUME_LINE=$(echo "${ATTACH_OUTPUT}" | grep "/Volumes/CMspark" | tail -1)
-DEVICE=$(echo "${VOLUME_LINE}" | awk '{print $1}')
-VOLUME=$(echo "${VOLUME_LINE}" | awk '{print $NF}')
+hdiutil attach "${TMP_DMG}" -noautoopen -nobrowse -mountpoint "${VOLUME}"
+DMG_MOUNTED=true
 
 # Copy app bundle and create Applications symlink
 # cp -R (not -r): BSD -r resolves symlinks — it turned Resources/cmspark-host
@@ -230,13 +229,11 @@ ln -sf /Applications "${VOLUME}/Applications"
 # (catches seal-breaking copy regressions before the compressed DMG ships).
 if ! codesign --verify --verbose "${VOLUME}/CMspark.app"; then
   echo "[create-dmg] ERROR: codesign verify failed for DMG copy of ${APP_BUNDLE}"
-  hdiutil detach "${DEVICE}" -force 2>/dev/null || true
   exit 1
 fi
 if ! cmp -s "${STAGING}/cmspark-agent.js" "${VOLUME}/CMspark.app/Contents/Resources/cmspark-agent.js" || \
    { [ -f "${STAGING}/cmspark-tray" ] && ! cmp -s "${STAGING}/cmspark-tray" "${VOLUME}/CMspark.app/Contents/Resources/cmspark-tray"; }; then
   echo "[create-dmg] ERROR: DMG copy differs from checked staging pair" >&2
-  hdiutil detach "${DEVICE}" -quiet 2>/dev/null || true
   exit 1
 fi
 if [ -n "${_WHISPER_PIN}" ]; then
@@ -244,31 +241,40 @@ if [ -n "${_WHISPER_PIN}" ]; then
   if ! node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH:-arm64}" "${_DMG_RESOURCES}" "${_WHISPER_PIN}" || \
      ! node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${_DMG_RESOURCES}" "cmspark-whisper-darwin-${MACOS_ARCH:-arm64}"; then
     echo "[create-dmg] ERROR: DMG whisper copy differs from the verified generation" >&2
-    if ! hdiutil detach "${DEVICE}" -quiet; then echo "[create-dmg] ERROR: failed to detach DMG" >&2; fi
     exit 1
   fi
 fi
 
 # Set Finder window layout via AppleScript
-osascript <<APPLESCRIPT 2>/dev/null || true
+osascript - "${VOLUME}" <<'APPLESCRIPT' 2>/dev/null || true
+on run argv
+set mountedFolder to POSIX file (item 1 of argv) as alias
 tell application "Finder"
-  set dmg to disk "CMspark"
-  open dmg
-  set current view of front window to icon view
-  set toolbar visible of front window to false
-  set statusbar visible of front window to false
-  set the bounds of front window to {100, 100, 700, 480}
-  set theViewOptions to the icon view options of front window
-  set arrangement of theViewOptions to not arranged
-  set icon size of theViewOptions to 96
-  set position of item "CMspark.app" of front window to {200, 210}
-  set position of item "Applications" of front window to {500, 210}
-  close front window
+  open mountedFolder
+  set imageWindow to container window of mountedFolder
+  try
+    set current view of imageWindow to icon view
+    set toolbar visible of imageWindow to false
+    set statusbar visible of imageWindow to false
+    set the bounds of imageWindow to {100, 100, 700, 480}
+    set theViewOptions to the icon view options of imageWindow
+    set arrangement of theViewOptions to not arranged
+    set icon size of theViewOptions to 96
+    set position of item "CMspark.app" of imageWindow to {200, 210}
+    set position of item "Applications" of imageWindow to {500, 210}
+  end try
+  close imageWindow
 end tell
+end run
 APPLESCRIPT
 
 sync
-hdiutil detach "${DEVICE}" -quiet
+if ! bash "${ROOT_DIR}/scripts/detach-dmg.sh" "${VOLUME}"; then
+  trap - EXIT
+  echo "[create-dmg] ERROR: image still mounted at ${VOLUME}; retained ${TMP_DMG}" >&2
+  exit 1
+fi
+DMG_MOUNTED=false
 
 # --- Step 5: Convert to compressed read-only DMG ---
 echo "[6/6] Compressing DMG..."
@@ -276,8 +282,6 @@ hdiutil convert "${TMP_DMG}" \
   -format UDZO \
   -imagekey zlib-level=9 \
   -o "${DMG_OUTPUT}"
-
-rm -f "${TMP_DMG}"
 
 echo ""
 echo "=== Done: dist-package/${DMG_NAME} ==="

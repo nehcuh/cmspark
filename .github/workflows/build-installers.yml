@@ -143,7 +143,7 @@ jobs:
             mount="$RUNNER_TEMP/meeting-whisper-dmg"
             mkdir -p "$mount"
             hdiutil attach -readonly -nobrowse -mountpoint "$mount" dist-package/CMspark-v*-macOS-${{ matrix.arch }}.dmg
-            trap 'hdiutil detach "$mount" -quiet' EXIT
+            trap 'bash scripts/detach-dmg.sh "$mount"' EXIT
             stage="$mount/CMspark.app/Contents/Resources"
             arch="darwin-${arch#macos-}"
           fi
@@ -151,6 +151,10 @@ jobs:
           if [[ "$arch" == windows-* ]]; then node_bin="$stage/node.exe"; arch="win-${arch#windows-}"; fi
           curl -fsSL --retry 3 https://raw.githubusercontent.com/ggml-org/whisper.cpp/5eaee0cc9024eb9e9a99469199920c8b7f5cb9ec/samples/jfk.wav -o jfk.wav
           "$node_bin" scripts/tests/packaged-meeting-whisper.mjs "$stage" "$arch" jfk.wav "$RUNNER_TEMP/whisper-models"
+          if [[ "$arch" == darwin-* ]]; then
+            trap - EXIT
+            bash scripts/detach-dmg.sh "$mount"
+          fi
 
       - name: Collect platform installers
         shell: bash
