@@ -12,6 +12,40 @@ import { MeetingWaveFile, listMeetingRecordings, recordingDirectory } from "../s
 import { MeetingPcmQueue } from "../src/voice/meeting-pcm-queue"
 import { MeetingVideoUpload } from "../src/summoner/meeting-video-upload"
 import { serveMeetingRecordings } from "../src/summoner/meeting-recording-http"
+import { finalizeWebmDuration } from "../src/summoner/webm-duration"
+
+test("finishing a streaming Chromium WebM adds duration in place without shifting its frames", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mini-duration-"))
+  // EBML, Segment and Info from a Chromium tab capture with microphone and tab audio.
+  const prefix = Buffer.from(
+    "1a45dfa39f4286810142f7810142f2810442f381084282847765626d4287810442858102" +
+    "1853806701ffffffffffffff1549a966992ad7b1830f42404d80864368726f6d655741864368726f6d65",
+    "hex")
+  const file = path.join(root, "stream.webm")
+  const fd = fs.openSync(file, "w+")
+  t.after(() => {
+    fs.closeSync(fd)
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  const tailOffset = 2 * 1024 * 1024
+  const tail = Buffer.from("last encoded frame")
+  fs.writeSync(fd, prefix, 0, prefix.length, 0)
+  fs.writeSync(fd, tail, 0, tail.length, tailOffset)
+  const length = fs.fstatSync(fd).size
+  const elapsedMs = 10_799_999
+  finalizeWebmDuration(file, length, elapsedMs)
+  assert.equal(fs.fstatSync(fd).size, length)
+  const header = Buffer.alloc(prefix.length)
+  assert.equal(fs.readSync(fd, header, 0, header.length, 0), header.length)
+  const scale = prefix.indexOf(Buffer.from("2ad7b1830f4240", "hex"))
+  assert.deepEqual(header.subarray(0, scale), prefix.subarray(0, scale))
+  assert.deepEqual(header.subarray(scale, scale + 3), Buffer.from("448984", "hex"))
+  assert.equal(header.readFloatBE(scale + 3), elapsedMs)
+  assert.deepEqual(header.subarray(scale + 7), prefix.subarray(scale + 7))
+  const frame = Buffer.alloc(tail.length)
+  assert.equal(fs.readSync(fd, frame, 0, frame.length, tailOffset), tail.length)
+  assert.deepEqual(frame, tail)
+})
 
 test("meeting history serves the exact ordered WAV prefix and only completed video files", async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mini-recording-"))

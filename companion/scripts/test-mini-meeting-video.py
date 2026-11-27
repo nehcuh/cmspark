@@ -151,18 +151,32 @@ def main():
             page.reload()
             page.locator("#meetingHistToggle").click()
             page.locator("#meetingHistList button").first.click()
+            playback_seconds = {}
             for tag in ["audio", "video"]:
                 player = page.locator("#meetingRecordings " + tag)
                 player.wait_for(state="attached")
                 result = player.evaluate("""async p=>{
                   p.parentElement.open=true; p.muted=true; await p.play();
                   await new Promise(r=>setTimeout(r,220)); p.pause();
-                  return {elapsed:p.currentTime,width:p.videoWidth||0,src:p.src};
+                  const elapsed=p.currentTime, duration=p.duration;
+                  if (!Number.isFinite(duration)) throw Error("Unknown duration in completed recording");
+                  const target=duration/2;
+                  const seeked=new Promise((resolve,reject)=>{
+                    const timeout=setTimeout(()=>reject(Error("History seek timed out")),4000);
+                    p.addEventListener("seeked",()=>{clearTimeout(timeout);resolve(p.currentTime)},{once:true});
+                  });
+                  p.currentTime=target;
+                  return {elapsed,width:p.videoWidth||0,duration,target,seeked:await seeked};
                 }""")
                 assert result["elapsed"] > 0 and (
                     tag == "audio"
                     or (result["width"] > 0 if native_tab else result["width"] == 240)
                 ), result
+                assert (
+                    result["duration"] > 2
+                    and abs(result["seeked"] - result["target"]) < 0.15
+                ), result
+                playback_seconds[tag] = result["duration"]
                 with page.expect_download() as event:
                     player.locator("..").locator("a").click()
                 saved = data / (tag + ".copy")
@@ -201,6 +215,8 @@ def main():
                         "saved": ["WAV", "WebM"],
                         "shared_mic_tones": amplitudes,
                         "historyPlayback": True,
+                        "durationSeconds": playback_seconds,
+                        "seekedToMidpoint": True,
                         "downloadExact": True,
                     }
                 )

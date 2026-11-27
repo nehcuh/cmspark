@@ -2,6 +2,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { finalizeWebmDuration } from "./webm-duration"
 import { recordingDirectory } from "../meeting/meeting-recordings"
 import { isCaptureId } from "../voice/meeting-pcm-contract"
 
@@ -91,6 +92,7 @@ export class MeetingVideoUpload {
           video.bytes += length
         } else if (action === "finish" || action === "partial") {
           if (action === "finish" && String(video.bytes) !== query.get("offset")) { reply(409, { error: "视频长度尚未确认" }); return }
+          if (action === "finish" && video.bytes) finalizeWebmDuration(video.file, video.bytes, Number(query.get("elapsed_ms")))
           this.finish(video, action === "partial")
         } else if (action === "discard") this.finish(video, true)
         else { reply(400, { error: "无效的视频操作" }); return }

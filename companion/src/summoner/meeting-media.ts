@@ -55,14 +55,17 @@ export const SUMMONER_MEETING_MEDIA_JS = String.raw`
     return "/api/meeting/video?meeting="+encodeURIComponent(s.owner)+"&capture="+encodeURIComponent(s.sid)+"&action="+action;
   }
   function browserRecordingStore(s) {
-    async function send(action, offset, body) {
-      const response = await fetch(miniVideoUrl(s,action)+(offset == null ? "" : "&offset="+offset),
-        {method:"POST",credentials:"same-origin",body:body});
+    async function send(action, offset, body, elapsedMs) {
+      let url = miniVideoUrl(s,action);
+      if (offset != null) url += "&offset="+offset;
+      if (elapsedMs != null) url += "&elapsed_ms="+elapsedMs;
+      const response = await fetch(url,{method:"POST",credentials:"same-origin",body:body});
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.error || "视频写入失败");
     }
     return {
-      save: row => send(row.state === "open" ? "open" : row.state === "complete" ? "finish" : "partial",row.bytes),
+      save: row => row.state === "complete" ? send("finish",row.bytes,undefined,row.elapsedMs) :
+        send(row.state === "open" ? "open" : "partial",row.bytes),
       remove: () => send("discard"),
       async append(row, blob, elapsedMs) {
         const block = 1024*1024;
