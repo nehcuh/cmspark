@@ -184,16 +184,23 @@ with tempfile.TemporaryDirectory() as out:
   # Preserve a reader's position during incremental delivery and the final history repaint.
   page.set_viewport_size({'width':520,'height':620})
   page.emulate_media(color_scheme='dark',reduced_motion='reduce')
-  answer='\n'.join('第 %d 条评审记录，负责人核对材料。' % i for i in range(60))
+  md='## 进度\n\n| 项目 | 状态 |\n|---|---|\n| Mini | **完成** |\n\n- 父项\n  - 子项\n\n```js\nconst literal = "<b>"\n```'
+  answer=md+'\n\n'+'\n'.join('第 %d 条评审记录，负责人核对材料。' % i for i in range(60))
   event({'type':'chat.token','thread_id':'fixture-2','content':answer})
+  live=page.locator('#log .streaming')
+  expect(live.locator('td strong')).to_have_text('完成')
+  expect(live.locator('ul ul li')).to_have_text('子项')
+  expect(live.locator('pre code')).to_contain_text('"<b>"')
   page.locator('#log').evaluate('(log)=>log.scrollTop=40')
   back=page.get_by_role('button',name='回到最新')
   expect(back).to_be_visible()
   event({'type':'chat.token','thread_id':'fixture-2','content':answer+'\n后续'})
   assert page.locator('#log').evaluate('(log)=>log.scrollTop')==40
-  messages.append({'role':'assistant','content':answer+'\n后续'})
+  messages.append({'role':'assistant','content':[{'type':'text','text':answer},{'type':'text','text':'后续'}]})
   event({'type':'chat.done','thread_id':'fixture-2'})
-  page.locator('#log .msg.assistant p').first.wait_for()
+  final=page.locator('#log .assistant:not(.streaming)')
+  expect(final.locator('td strong')).to_have_text('完成')
+  expect(final.locator('p').last).to_have_text('后续')
   assert abs(page.locator('#log').evaluate('(log)=>log.scrollTop')-40)<2
   back.click();expect(back).to_be_hidden();expect(text).to_be_focused()
 

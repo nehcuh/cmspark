@@ -82,9 +82,11 @@ body,.hud,.main,.composer{background:var(--desk)}
 .msg.assistant p{margin:0 0 .65em}
 .msg.assistant h1,.msg.assistant h2,.msg.assistant h3{line-height:1.45;margin:1em 0 .45em}
 .msg.assistant li+li{margin-top:.35em}
-.msg.assistant pre{padding:12px 14px;border:1px solid var(--line);background:var(--paper)}
+.msg.assistant pre{white-space:pre;max-width:100%;box-sizing:border-box;padding:12px 14px;border:1px solid var(--line);background:var(--paper)}
 .msg.assistant blockquote{border-color:var(--keyline)}
-.msg.assistant .reply{white-space:pre-wrap}
+.msg.assistant table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:.6em 0}
+.msg.assistant :is(th,td){border:1px solid var(--line);padding:.35em .65em}
+.msg.assistant th{background:var(--canvas)}
 .msg.assistant.streaming::after{content:none}
 .msg.streaming .reply::after{content:"▍";color:var(--accent);animation:streamBlink 1s steps(2) infinite}
 .empty{align-items:flex-start;text-align:left;width:100%;max-width:480px;margin:auto;padding:18px 0;gap:20px}

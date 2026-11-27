@@ -236,7 +236,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /msg assistant streaming/)
     assert.match(r.body, /\.msg\.assistant\.streaming::after\{[^}]*animation:streamBlink/)
     assert.match(r.body, /@keyframes streamBlink/)
-    assert.match(r.body, /streamMsg\.lastElementChild\.textContent=text/)
+    assert.match(r.body, /streamMsg\.lastElementChild\.innerHTML=renderMd\(text\)/)
     assert.match(r.body, /if\(t==="chat\.token"\)\{/)
     assert.doesNotMatch(r.body, /t==="chat\.token"\|\|t==="chat\.done"/)
     assert.match(r.body, /clearStreamMsg\(t==="chat\.done"\)/)

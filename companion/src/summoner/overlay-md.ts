@@ -1,84 +1,27 @@
-/**
- * Overlay Capture-card markdown. Inlined into summoner-web HTML (no marked,
- * no DOMPurify, no mermaid). Escape first, then wrap. Tests call the same
- * source via new Function so HTML and unit tests cannot drift.
- */
-export const OVERLAY_RENDER_MD_JS = [
-  "function renderMd(src){",
-  "  src=String(src||\"\");",
-  "  var tick=String.fromCharCode(96);",
-  "  var fence=tick+tick+tick;",
-  "  var blocks=[];",
-  "  var parts=[], i=0;",
-  "  while(i<=src.length){",
-  "    var a=src.indexOf(fence, i);",
-  "    if(a<0){ parts.push(esc(src.slice(i))); break; }",
-  "    parts.push(esc(src.slice(i, a)));",
-  "    var rest=src.slice(a+3);",
-  "    var end=rest.indexOf(fence);",
-  "    if(end<0){ parts.push(esc(src.slice(a))); break; }",
-  "    var nl=rest.indexOf(\"\\n\");",
-  "    var body=nl>=0 && nl<end ? rest.slice(nl+1, end) : rest.slice(0, end);",
-  "    body=body.replace(/\\n$/, \"\");",
-  "    blocks.push(\"<pre><code>\"+esc(body)+\"</code></pre>\");",
-  "    parts.push(\"%%MD\"+(blocks.length-1)+\"%%\");",
-  "    i=a+3+end+3;",
-  "  }",
-  "  src=parts.join(\"\");",
-  "  function inline(t){",
-  "    t=t.replace(/\\*\\*([^*]+)\\*\\*/g,\"<strong>$1</strong>\");",
-  "    t=t.replace(/(^|[^*])\\*([^*]+)\\*(?!\\*)/g,\"$1<em>$2</em>\");",
-  "    t=t.replace(new RegExp(tick+\"([^\"+tick+\"]+)\"+tick,\"g\"),\"<code>$1</code>\");",
-  "    t=t.replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g,function(_m,tx,u){",
-  "      if(!/^https?:\\/\\//i.test(u)) return tx;",
-  "      u=String(u).replace(/\"/g,\"&quot;\").replace(/'/g,\"&#39;\");",
-  "      return \"<a href=\\\"\"+u+\"\\\" target=\\\"_blank\\\" rel=\\\"noopener noreferrer\\\">\"+tx+\"</a>\";",
-  "    });",
-  "    return t;",
-  "  }",
-  "  var lines=src.split(\"\\n\");",
-  "  var html=[], para=[], list=null;",
-  "  function flushPara(){",
-  "    if(!para.length) return;",
-  "    html.push(\"<p>\"+inline(para.join(\"<br>\"))+\"</p>\");",
-  "    para=[];",
-  "  }",
-  "  function flushList(){",
-  "    if(!list) return;",
-  "    html.push(\"<\"+list.kind+\">\"+list.items.map(function(it){return \"<li>\"+inline(it)+\"</li>\"}).join(\"\")+\"</\"+list.kind+\">\");",
-  "    list=null;",
-  "  }",
-  "  function flush(){ flushList(); flushPara(); }",
-  "  for(var li=0; li<lines.length; li++){",
-  "    var line=lines[li];",
-  "    var fenceHit=line.match(/^%%MD(\\d+)%%$/);",
-  "    if(fenceHit){ flush(); html.push(blocks[Number(fenceHit[1])]||\"\"); continue; }",
-  "    if(/^#{1,3} /.test(line)){",
-  "      flush();",
-  "      var n=line.replace(/[^#].*$/, \"\").length;",
-  "      if(n>3) n=3;",
-  "      html.push(\"<h\"+n+\">\"+inline(line.replace(/^#{1,3} /, \"\"))+\"</h\"+n+\">\");",
-  "      continue;",
-  "    }",
-  "    if(/^&gt; /.test(line)){ flush(); html.push(\"<blockquote>\"+inline(line.slice(5))+\"</blockquote>\"); continue; }",
-  "    if(/^[-*] /.test(line)){",
-  "      flushPara();",
-  "      if(!list||list.kind!==\"ul\"){ flushList(); list={kind:\"ul\",items:[]}; }",
-  "      list.items.push(line.slice(2));",
-  "      continue;",
-  "    }",
-  "    var ol=line.match(/^\\d+\\. (.*)$/);",
-  "    if(ol){",
-  "      flushPara();",
-  "      if(!list||list.kind!==\"ol\"){ flushList(); list={kind:\"ol\",items:[]}; }",
-  "      list.items.push(ol[1]);",
-  "      continue;",
-  "    }",
-  "    if(line===\"\"){ flush(); continue; }",
-  "    flushList();",
-  "    para.push(line);",
-  "  }",
-  "  flush();",
-  "  return html.join(\"\")||inline(src);",
-  "}",
-].join("\n")
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+import { getAssetsDir } from "../paths"
+
+// Both tsc development builds and the installed companion serve the pinned browser
+// distribution under the page's existing nonce. No network request is necessary.
+const staged = join(getAssetsDir(), "markdown-it.umd.min.js")
+const browser = readFileSync(existsSync(staged) ? staged : require.resolve("markdown-it/browser"), "utf8")
+  .replace(/^\/\/# sourceMappingURL=.*$/m, "")
+  .replace(/<\/script/gi, "<\\/script")
+
+export const OVERLAY_RENDER_MD_JS = `
+const chatMarkdown = (function(){
+  const module = {exports:{}}, exports = module.exports;
+  ${browser}
+  const md = new module.exports({html:false, breaks:true});
+  md.validateLink = url => url.toLowerCase().startsWith("https://") || url.toLowerCase().startsWith("http://");
+  md.renderer.rules.link_open = (tokens, i, options, env, renderer) => {
+    tokens[i].attrSet("target", "_blank");
+    tokens[i].attrSet("rel", "noopener noreferrer");
+    return renderer.renderToken(tokens, i, options);
+  };
+  md.renderer.rules.image = (tokens, i) => md.utils.escapeHtml(tokens[i].content);
+  return md;
+})();
+function renderMd(src){ return chatMarkdown.render(String(src || "")); }
+`

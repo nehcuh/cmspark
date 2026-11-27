@@ -1512,7 +1512,7 @@ body{
 .msg.assistant code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
 .msg.assistant :not(pre)>code{background:var(--canvas);padding:1px 4px;border-radius:4px}
 .msg.assistant blockquote{margin:6px 0;padding:0 0 0 10px;border-left:3px solid var(--line);color:var(--secondary)}
-.msg.assistant.streaming{white-space:pre-wrap}
+
 .msg.assistant.streaming::after{content:"▍";color:var(--indigo);animation:streamBlink 1s steps(2) infinite}
 @keyframes streamBlink{
   0%,50%{opacity:1}
@@ -1882,6 +1882,7 @@ try{
   var threads=[];
   var poll=null;
   var streamMsg=null;
+  var streamTimer=null, pendingStreamText="";
   function $(id){return document.getElementById(id)}
   function setStatus(t){$("status").textContent=t||""}
   var CHROME_DOWN={
@@ -2171,34 +2172,50 @@ try{
   });
   const speaker='<span class="speaker">CMspark</span>';
   function clearStreamMsg(keepVisible){
+    clearTimeout(streamTimer);
+    if(keepVisible && streamTimer!==null && streamMsg) paintStreamMsg(pendingStreamText);
+    streamTimer=null;
     if(keepVisible && streamMsg) streamMsg.classList.remove("streaming");
     else if(streamMsg&&streamMsg.parentNode) streamMsg.parentNode.removeChild(streamMsg);
     streamMsg=null;
   }
   function showStreamMsg(text){
-    var log=$("log"), follow=nearLatest();
+    var log=$("log");
     if(!streamMsg||!streamMsg.parentNode){
       var empty=$("empty");
       if(empty&&empty.parentNode) empty.parentNode.removeChild(empty);
       streamMsg=document.createElement("div");
       streamMsg.className="msg assistant streaming";
-      streamMsg.innerHTML=speaker+'<span class="reply"></span>';
+      streamMsg.innerHTML=speaker+'<div class="reply"></div>';
+      var follow=nearLatest();
       log.appendChild(streamMsg);
+      paintStreamMsg(text,follow);
+      return;
     }
-    streamMsg.lastElementChild.textContent=text;
+    pendingStreamText=text;
+    if(streamTimer===null) streamTimer=setTimeout(function(){
+      streamTimer=null;
+      if(streamMsg) paintStreamMsg(pendingStreamText);
+    },50);
+  }
+  function paintStreamMsg(text,follow=nearLatest()){
+    streamMsg.lastElementChild.innerHTML=renderMd(text);
     if(follow) jumpToLatest();
   }
   function renderMsgs(messages){
     var log=$("log"), follow=nearLatest(), previousTop=log.scrollTop;
+    clearStreamMsg();
     log.innerHTML="";
-    streamMsg=null;
     var n=0;
     (messages||[]).forEach(function(m){
       if(!m||(m.role!=="user"&&m.role!=="assistant")) return;
       n++;
       var d=document.createElement("div");
       d.className="msg "+m.role;
-      var text=typeof m.content==="string"?m.content:(m.content&&m.content[0]&&m.content[0].text)||"";
+      var text=typeof m.content==="string" ? m.content : "";
+      if(Array.isArray(m.content)) text=m.content
+        .filter(part=>part && (!part.type || part.type==="text") && typeof part.text==="string")
+        .map(part=>part.text).join(String.fromCharCode(10,10));
       if(m.role==="assistant") d.innerHTML=speaker+renderMd(text);
       else d.textContent=text;
       log.appendChild(d);

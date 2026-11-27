@@ -19,7 +19,7 @@ test("macOS Mini gestures, native action menu, capture handoff and saved monitor
     // Exercise the production menu/command handlers in AppKit with a controlled event stream.
     const tray = path.join(dir, "Tray.swift"), binary = path.join(dir, "test-orb")
     await writeFile(tray, source.replace(/^@main$/m, ""))
-    await run("swiftc", [tray, "src/tray/SummonerOverlay.swift", "tests/fixtures/mini-orb-driver.swift",
+    await run("swiftc", [tray, "src/tray/MiniActionFan.swift", "src/tray/SummonerOverlay.swift", "tests/fixtures/mini-orb-driver.swift",
       "-o", binary, "-framework", "AppKit", "-framework", "AVFoundation", "-framework", "Carbon"])
     const opts = { env: { ...process.env, CMSPARK_DATA_DIR: dir }, timeout: 10_000 }
     const { stdout } = await run(binary, [], opts)
@@ -27,7 +27,7 @@ test("macOS Mini gestures, native action menu, capture handoff and saved monitor
     const frames = (output: string) => output.split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line))
     const events = frames(stdout)
     assert.ok(events.some(e => e.action === "mini-toggle"))
-    assert.deepEqual(events.filter(e => e.action === "mini-action").map(e => e.id), ["chat", "todo", "search", "meeting", "ask", "ocr", "capture"])
+    assert.deepEqual(events.filter(e => e.action === "mini-action").map(e => e.id), ["chat", "todo", "chat", "search", "meeting", "ask", "ocr", "capture", "chat"])
     for (const id of ["todo", "ask", "ocr", "capture"]) {
       const previous = events[events.findIndex(e => e.id === id) - 1]
       assert.equal(previous.surface, "mini")

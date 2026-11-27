@@ -255,6 +255,8 @@ if [ -d companion/assets ]; then
   cp -r companion/assets "${STAGING}/"
 fi
 
+node companion/scripts/stage-markdown-assets.mjs "${STAGING}/assets"
+
 # Chrome extension
 cp -r chrome-extension/build/chrome-mv3-prod "${STAGING}/chrome-extension"
 

@@ -22,8 +22,8 @@ test("overlay markdown renders bold, italic, code, lists, headings", () => {
   assert.match(html, /<strong>bold<\/strong>/)
   assert.match(html, /<em>em<\/em>/)
   assert.match(html, /<code>code<\/code>/)
-  assert.match(html, /<ul><li>a<\/li><li>b<\/li><\/ul>/)
-  assert.match(html, /<ol><li>one<\/li><\/ol>/)
+  assert.match(html, /<ul>\s*<li>a<\/li>\s*<li>b<\/li>\s*<\/ul>/)
+  assert.match(html, /<ol>\s*<li>one<\/li>\s*<\/ol>/)
 })
 
 test("overlay markdown escapes HTML and drops javascript links", () => {
@@ -38,7 +38,7 @@ test("overlay markdown escapes HTML and drops javascript links", () => {
 test("overlay markdown keeps fenced code escaped", () => {
   const renderMd = loadRender()
   const html = renderMd("```js\nconst x = \"<b>\"\n```")
-  assert.match(html, /<pre><code>/)
+  assert.match(html, /<pre><code class="language-js">/)
   assert.match(html, /&lt;b&gt;/)
   assert.doesNotMatch(html, /<b>/)
 })
@@ -46,7 +46,7 @@ test("overlay markdown keeps fenced code escaped", () => {
 test("overlay markdown does not break out of href with quote in URL", () => {
   const renderMd = loadRender()
   const html = renderMd('[x](https://evil/"onclick="alert(1))')
-  assert.match(html, /<a href="https:\/\/evil\/&quot;onclick=&quot;alert\(1"/)
+  assert.match(html, /<a href="https:\/\/evil\/%22onclick=%22alert\(1\)"/)
   assert.doesNotMatch(html, /\sonclick=/i)
   assert.doesNotMatch(html, /href="https:\/\/evil\/"/)
   const href = html.match(/href="([^"]*)"/)
@@ -58,4 +58,14 @@ test("overlay markdown query ampersand is a single HTML escape", () => {
   const html = renderMd("[ok](https://example.com/?a=1&b=2)")
   assert.match(html, /href="https:\/\/example.com\/\?a=1&amp;b=2"/)
   assert.doesNotMatch(html, /&amp;amp;/)
+})
+
+test("overlay renders tables, nested lists and literal inline code without loading images", () => {
+  const render = loadRender()
+  const table = render("| 项目 | 状态 |\n|---|---|\n| Mini | **完成** |")
+  assert.match(table, /<table>/)
+  assert.match(table, /<td><strong>完成<\/strong><\/td>/)
+  assert.match(render("- 父项\n  - 子项"), /父项\s*<ul>\s*<li>子项/)
+  assert.match(render("`**原样**`"), /<code>\*\*原样\*\*<\/code>/)
+  assert.doesNotMatch(render("![一张图](https://example.com/img.png)"), /<img/)
 })

@@ -143,6 +143,11 @@ private struct MiniOrbPosition: Codable {
 
 private final class MiniOrbButton: NSButton {
   var openMenu: (() -> Void)?
+  var openFan: (() -> MiniActionFan?)?
+  var selectFanAction: ((String) -> Void)?
+  var closedFan: (() -> Void)?
+  private var fan: MiniActionFan?
+  var visibleMenu: NSWindow? { fan }
   var moved: ((NSPoint, NSPoint) -> Void)?
   var finishedMove: (() -> Void)?
   private var press: Timer?
@@ -159,8 +164,7 @@ private final class MiniOrbButton: NSButton {
     startOrigin = window.frame.origin
     let timer = Timer(timeInterval: 0.45, repeats: false) { [weak self] _ in
       guard let self else { return }
-      self.cancelGesture()
-      self.openMenu?()
+      self.fan = self.openFan?()
     }
     press = timer
     RunLoop.main.add(timer, forMode: .common)
@@ -169,6 +173,7 @@ private final class MiniOrbButton: NSButton {
   override func mouseDragged(with event: NSEvent) {
     guard let startPointer, let window else { return }
     let point = window.convertPoint(toScreen: event.locationInWindow)
+    if let fan { _ = fan.aim(at: point); return }
     let dx = point.x - startPointer.x, dy = point.y - startPointer.y
     if !dragging && hypot(dx, dy) < 4 { return }
     dragging = true
@@ -178,6 +183,12 @@ private final class MiniOrbButton: NSButton {
 
   override func mouseUp(with event: NSEvent) {
     guard startPointer != nil else { return }
+    if let fan, let window {
+      let choice = fan.aim(at: window.convertPoint(toScreen: event.locationInWindow))
+      cancelGesture()
+      if let choice { selectFanAction?(choice) }
+      return
+    }
     let didDrag = dragging
     cancelGesture()
     if didDrag { finishedMove?() }
@@ -188,6 +199,12 @@ private final class MiniOrbButton: NSButton {
   override func accessibilityPerformShowMenu() -> Bool { openMenu?(); return true }
 
   func cancelGesture() {
+    if let fan {
+      self.fan = nil
+      fan.orderOut(nil)
+      fan.close()
+      closedFan?()
+    }
     press?.invalidate()
     press = nil
     startPointer = nil
@@ -256,12 +273,22 @@ private final class DesktopMini: NSObject {
     control.wantsLayer = true
     control.layer?.backgroundColor = NSColor(srgbRed: 0.09, green: 0.12, blue: 0.16, alpha: 1).cgColor
     control.layer?.cornerRadius = size.height / 2
-    control.toolTip = "CMspark Mini · 点按快速对话，拖动移动，长按或右键查看更多操作"
+    control.toolTip = "CMspark Mini · 点按快速对话，拖动移动；长按展开扇形菜单，滑选后松手执行。右键查看更多操作"
     control.setAccessibilityLabel("CMspark Mini")
     control.setAccessibilityHelp(control.toolTip)
     control.target = self
     control.action = #selector(openChat)
     control.openMenu = { [weak self] in self?.showActions() }
+    control.openFan = { [weak self, weak orb, weak control] in
+      guard let self, let orb, let screen = orb.screen, self.enabled else { return nil }
+      let fan = MiniActionFan(orb: orb, screen: screen)
+      fan.onCancel = { [weak control] in control?.cancelGesture() }
+      fan.makeKeyAndOrderFront(nil)
+      emitCompanionUiRect("mini", window: fan)
+      return fan
+    }
+    control.selectFanAction = { [weak self] in self?.emitAction($0) }
+    control.closedFan = { [weak self] in self?.publishVisibleRect() }
     control.moved = { [weak self] origin, pointer in self?.move(to: origin, pointer: pointer) }
     control.finishedMove = { [weak self] in self?.savePosition() }
     orb.contentView = control
@@ -303,11 +330,12 @@ private final class DesktopMini: NSObject {
   }
 
   func publishVisibleRect() {
-    if panel?.isVisible == true { emitCompanionUiRect("mini", window: panel) }
+    if panel?.isVisible == true { emitCompanionUiRect("mini", window: button?.visibleMenu ?? panel) }
   }
 
   @objc private func screensChanged() {
     guard panel?.isVisible == true else { return }
+    button?.cancelGesture()
     restorePosition()
     emitCompanionUiRect("mini", window: panel)
   }

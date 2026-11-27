@@ -369,6 +369,9 @@ if (Test-Path $AssetsSrc) {
     Ok "assets/"
 }
 
+& node "$CompanionDir\scripts\stage-markdown-assets.mjs" "$StagingDir\assets"
+if ($LASTEXITCODE -ne 0) { Fail "Could not stage quick-chat Markdown assets" }
+
 # Builtin skills
 $SkillsSrc = "$CompanionDir\builtin-skills"
 if (Test-Path $SkillsSrc) {

@@ -49,6 +49,7 @@ fi
 swiftc \
   -O -Xlinker -adhoc_codesign \
   -o "${OUTPUT_BIN}" \
+  "${SCRIPT_DIR}/MiniActionFan.swift" \
   "${SCRIPT_DIR}/Tray.swift" \
   "${SCRIPT_DIR}/SummonerOverlay.swift" \
   -framework AppKit \
