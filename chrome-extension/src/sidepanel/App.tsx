@@ -9,10 +9,10 @@ import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ToastHost, useToastQueue } from "./components/ToastHost"
 import { ChatView } from "./components/ChatView"
 import {
-  ContextPanelHost,
   ContextPanelHostProvider,
   useContextPanelHost,
 } from "./components/ContextPanelHost"
+import { ContextPanelBody } from "./components/ContextPanelBody"
 import { FocusBand } from "./components/FocusBand"
 import { CodingAgentPanel } from "./components/CodingAgentPanel"
 import { SettingsSlideout } from "./components/SettingsSlideout"
@@ -244,7 +244,7 @@ function AppContent() {
         </div>
       </>}
       bottom={<>
-        <ContextPanelHost />
+        <ContextPanelBody />
         <InputArea capabilityLevel={level} />
       </>}
       overlays={<>

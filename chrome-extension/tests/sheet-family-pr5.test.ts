@@ -128,7 +128,7 @@ test("PR-5 red line: privacy copy v1/v2/v3 bodies byte-identical after extractio
 // ── Nine-panel header + icon collision ───────────────────────────────────────
 
 test("PR-5: Host header is the one panel header — 15px title + 「收起」 close copy", () => {
-  const host = src("src/sidepanel/components/ContextPanelHost.tsx")
+  const host = src("src/sidepanel/components/ContextPanelBody.tsx")
   const titleStyle = host.slice(host.indexOf("panelTitle: {"), host.indexOf("panelCloseBtn:"))
   assert.match(titleStyle, /fontSize: 15/)
   assert.match(host, />\s*收起\s*<\//)
@@ -148,7 +148,7 @@ test("#342: MeetingPanel panel action is 结束并收起, not a second 收起", 
   // must not reuse the Host header's plain「收起」wording.
   assert.match(meeting, />\s*结束并收起\s*<\/button>/)
   assert.ok(meeting.includes("结束录制并收起面板"))
-  const host = src("src/sidepanel/components/ContextPanelHost.tsx")
+  const host = src("src/sidepanel/components/ContextPanelBody.tsx")
   assert.match(host, />\s*收起\s*<\//)
 })
 

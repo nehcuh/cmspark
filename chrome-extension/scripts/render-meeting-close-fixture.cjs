@@ -31,7 +31,8 @@ fs.writeFileSync(path.join(out,'meeting-contract.json'),JSON.stringify(recorded,
 const source = `
 import React,{useEffect,useState} from 'react';import{createRoot}from'react-dom/client';
 import{AgentStoreProvider,initialState,useAgentStore}from'./src/sidepanel/store/agentStore';
-import{ContextPanelHostProvider,ContextPanelHost,useContextPanelHost}from'./src/sidepanel/components/ContextPanelHost';
+import{ContextPanelBody}from'./src/sidepanel/components/ContextPanelBody';
+import{ContextPanelHostProvider,useContextPanelHost}from'./src/sidepanel/components/ContextPanelHost';
 import{MeetingPanel}from'./src/sidepanel/components/MeetingPanel';
 const recorded=${JSON.stringify(recorded)};
 const listeners=new Set();window.sent=[];window.persisted=[];window.originals=[];window.deferStart=false;window.failRead=false;window.deferEnd=false;window.failWrite=false;
@@ -55,7 +56,7 @@ if(m.type==='meeting.apply_silence_cut')window.reply('cut',m);
 if(m.type==='meeting.end'&&!window.deferEnd)window.reply('ended',m);
 });return Promise.resolve({ok:true})}},storage:{local:{get:(k,cb)=>{const r={meeting_privacy_ack_v1:true};cb?.(r);return Promise.resolve(r)},set:(v,cb)=>{cb?.();return Promise.resolve()}},onChanged:event},tabs:{query:(q,cb)=>{cb?.([]);return Promise.resolve([])}}};
 function Harness(){const h=useContextPanelHost();const{state,dispatch}=useAgentStore();window.dispatchUI=dispatch;window.activePanel=h.activePanel;
-useEffect(()=>h.openPanelForce('meeting'),[]);return <><button onClick={()=>h.openPanelForce('skills')}>切换技能</button><button onClick={()=>h.openPanelForce('knowledge')}>切换知识</button><button onClick={()=>dispatch({type:'SET_SETTINGS_OPEN',open:true})}>打开设置</button><span data-testid='settings-state'>{state.settingsOpen?'设置已打开':'设置未打开'}</span><ContextPanelHost/></>}
+useEffect(()=>h.openPanelForce('meeting'),[]);return <><button onClick={()=>h.openPanelForce('skills')}>切换技能</button><button onClick={()=>h.openPanelForce('knowledge')}>切换知识</button><button onClick={()=>dispatch({type:'SET_SETTINGS_OPEN',open:true})}>打开设置</button><span data-testid='settings-state'>{state.settingsOpen?'设置已打开':'设置未打开'}</span><ContextPanelBody/></>}
 function Standalone(){const[open,setOpen]=useState(true);window.activePanel=open?'meeting':null;return open?<MeetingPanel onClose={()=>{window.sent.push({type:'fixture.closed'});setOpen(false)}} onSendToDraft={()=>{}}/>:<span>独立面板已关闭</span>}
 createRoot(document.getElementById('root')).render(<AgentStoreProvider initialState={{...initialState,connectionState:'connected',activeThreadId:'thread-fixture',voicePrivacyAckV2:true,voiceRealtimeStreaming:true,voiceModel:{sttEngine:'local',localModelId:'medium',binary:{status:'ready'},models:{medium:{status:'ready'}}}}}>{location.search.includes('standalone')?<Standalone/>:<ContextPanelHostProvider capabilityLevel='chat'><Harness/></ContextPanelHostProvider>}</AgentStoreProvider>);
 `;

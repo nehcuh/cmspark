@@ -50,3 +50,13 @@ test("M1: registry includes meeting panel (meeting-minutes scene)", () => {
   assert.equal(isContextPanelId("meeting"), true)
   assert.equal(contextPanelLabel("meeting"), "会议")
 })
+
+declare const require: { cache: Record<string, unknown>; resolve(id: string): string }
+
+test("loading panel navigation does not initialize panel bodies", () => {
+  const component = (name: string) => require.resolve(`../src/sidepanel/components/${name}`)
+  assert.ok(require.cache[component("ContextPanelHost")])
+  for (const name of ["ContextPanelBody", "KnowledgeSubPanel", "McpPanel", "AppsPanel", "PacksPanel", "BoardPanel", "MeetingPanel"]) {
+    assert.equal(require.cache[component(name)], undefined, name)
+  }
+})
