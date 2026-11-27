@@ -523,7 +523,9 @@ export class CompanionClient {
     try {
       const pong = await this.sendMeetingBoundRequest("system.ping", {}, 5000, connection, false)
       if (!this.isMeetingConnection(connection) || pong?.type !== "system.pong" || pong.meeting_pcm_contract !== 1) return null
-      this.meetingObservation = Object.freeze(connection)
+      // Parallel probes on the same authenticated socket must retain one
+      // binding, since an in-flight meeting start compares it by identity.
+      if (!this.getMeetingPcmObservation()) this.meetingObservation = Object.freeze(connection)
       return 1
     } catch { return null }
   }

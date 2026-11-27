@@ -37,6 +37,26 @@ function setup(backend: (message: any) => Promise<any>) {
   }
   return { client, sockets, connect }
 }
+
+test("simultaneous capability probes keep the same authenticated connection binding", async () => {
+  const replies: Array<(value: any) => void> = []
+  const { client, connect } = setup(msg => msg.type === "system.ping"
+    ? new Promise(resolve => replies.push(resolve))
+    : Promise.resolve(null))
+  try {
+    await connect()
+    const first = client.observeMeetingPcm()
+    const second = client.observeMeetingPcm()
+    assert.equal(replies.length, 2)
+    replies[0](meetingPcmPong())
+    assert.equal(await first, 1)
+    const binding = client.getMeetingPcmObservation()
+    assert.ok(binding)
+    replies[1](meetingPcmPong())
+    assert.equal(await second, 1)
+    assert.equal(client.getMeetingPcmObservation(), binding)
+  } finally { client.disconnect() }
+})
 function actualTrayDispatch(): (client: CompanionClient, message: any, observation?: unknown) => Promise<any> {
   const file = path.resolve("src/menu-bar-agent.ts"), source = fs.readFileSync(file, "utf8")
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
