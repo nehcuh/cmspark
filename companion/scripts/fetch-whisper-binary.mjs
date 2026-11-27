@@ -94,6 +94,9 @@ async function main() {
     arch: args.arch,
     destDir: args.dest,
     skipIfReady: !args.force,
+    bundledArchivePath: args.arch === "win-arm64"
+      ? path.join(companionRoot, "vendor", "whisper", path.basename(new URL(entry.url).pathname))
+      : undefined,
     onProgress: (p) => {
       if (p.phase === "download" && p.totalBytes > 0) {
         const pct = Math.min(100, Math.floor((100 * p.receivedBytes) / p.totalBytes))
