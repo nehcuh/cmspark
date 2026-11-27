@@ -10,10 +10,9 @@ import * as net from "net"
 import { randomBytes, createHmac, timingSafeEqual } from "node:crypto"
 import * as fs from "fs"
 import * as path from "path"
-import * as os from "os"
 import { spawn } from "child_process"
 import { getConfigDir } from "./config"
-import { getLockPath, isWindows } from "./platform"
+import { isWindows } from "./platform"
 
 // ---------------------------------------------------------------------------
 // Error classification (matches security.ts pattern)
@@ -37,13 +36,7 @@ export class DaemonError extends Error {
 // Default paths
 // ---------------------------------------------------------------------------
 
-export function getDefaultLockPath(): string {
-  return getLockPath()
-}
-
-export function getDefaultPidPath(): string {
-  return path.join(getConfigDir(), "daemon.pid")
-}
+export { getLockFilePath as getDefaultLockPath, getPidFilePath as getDefaultPidPath } from "./config"
 
 // ---------------------------------------------------------------------------
 // Unix Domain Socket lock

@@ -1,9 +1,8 @@
 // Platform abstraction layer for CMspark Companion
-// Provides cross-platform APIs for lock files, service management, Chrome opening, etc.
+// Provides cross-platform APIs for service management and opening desktop applications.
 
 import * as os from "os"
 import * as path from "path"
-import { getConfigDir } from "./config"
 import { OSASCRIPT_BIN } from "./process-path"
 
 export type PlatformName = "darwin" | "win32" | "linux" | "unknown"
@@ -26,30 +25,6 @@ export function isMacOS(): boolean {
 
 export function isLinux(): boolean {
   return getPlatform() === "linux"
-}
-
-// ---------------------------------------------------------------------------
-// Lock path
-// ---------------------------------------------------------------------------
-
-/**
- * Return the platform-appropriate lock path.
- * - macOS/Linux: Unix Domain Socket file under ~/.cmspark-agent/
- * - Windows: Named pipe path (\\?\pipe\...)
- */
-export function getLockPath(): string {
-  if (isWindows()) {
-    // Windows named pipe.  Must NOT be a filesystem path.
-    return "\\\\?\\pipe\\cmspark-agent-lock"
-  }
-  return path.join(getConfigDir(), "daemon.sock")
-}
-
-/**
- * Return the PID file path (common across platforms).
- */
-export function getPidPath(): string {
-  return path.join(getConfigDir(), "daemon.pid")
 }
 
 // ---------------------------------------------------------------------------

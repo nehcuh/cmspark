@@ -6,7 +6,6 @@ import * as os from "os"
 import { randomUUID } from "crypto"
 import { EventEmitter } from "events"
 import { isDeepStrictEqual } from "node:util"
-import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
 import { atomicWriteJSON } from "./io"
 import type { McpConfig, McpServerConfig } from "./mcp/types"
@@ -1586,7 +1585,11 @@ export function getLogDir(): string {
 }
 
 export function getLockFilePath(): string {
-  return getLockPath()
+  if (os.platform() === "win32") {
+    // Windows named pipe.  Must NOT be a filesystem path.
+    return "\\\\?\\pipe\\cmspark-agent-lock"
+  }
+  return path.join(getConfigDir(), "daemon.sock")
 }
 
 /**
