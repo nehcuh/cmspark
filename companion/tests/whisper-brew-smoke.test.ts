@@ -42,11 +42,12 @@ function installWithSmokeOutcome(outcome: Error | null, arch = "darwin-arm64", u
   return { run: () => install({ arch, destDir: "/destination", ...(aborted ? { signal: { aborted: true } } : {}) }), count: () => manifests, writes: () => writes, commands }
 }
 
-test("brew x64 without a release pin refuses before writing or launching", () => {
+test("Intel Mac recovery points to the release package before writing or launching a brew binary", () => {
   const fixture = installWithSmokeOutcome(null, "darwin-x64")
   assert.throws(fixture.run, (error: unknown) => {
     assert.equal((error as { reason?: unknown }).reason, "pin-mismatch")
     assert.match((error as Error).message, /无法验证 macOS x64/)
+    assert.match((error as Error).message, /Intel Mac 安装包/)
     return true
   })
   assert.equal(fixture.writes(), 0)
@@ -54,7 +55,7 @@ test("brew x64 without a release pin refuses before writing or launching", () =>
   assert.equal(fixture.count(), 0)
 })
 
-test("a future x64 pin cannot authorize an unverified brew executable", () => {
+test("an x64 pin cannot authorize an unverified brew executable", () => {
   const fixture = installWithSmokeOutcome(null, "darwin-x64", false, false, true)
   assert.throws(fixture.run, (error: unknown) => (error as { reason?: unknown }).reason === "pin-mismatch")
   assert.equal(fixture.writes(), 0)

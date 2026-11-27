@@ -134,11 +134,19 @@ jobs:
           CMSPARK_TEST_LINUX_STAGE="$PWD/dist-package/cmspark-${{ matrix.platform }}" dbus-run-session -- xvfb-run -a node --test scripts/tests/linux-tray-protocol.test.mjs
 
       - name: Transcribe a meeting with packaged native Whisper
-        if: matrix.family == 'windows' || matrix.family == 'linux'
         shell: bash
         run: |
           stage="dist-package/cmspark-${{ matrix.platform }}"
           arch="${{ matrix.platform }}"
+          if [[ "$arch" == macos-* ]]; then
+            node --test scripts/tests/whisper-release-restore.test.mjs
+            mount="$RUNNER_TEMP/meeting-whisper-dmg"
+            mkdir -p "$mount"
+            hdiutil attach -readonly -nobrowse -mountpoint "$mount" dist-package/CMspark-v*-macOS-${{ matrix.arch }}.dmg
+            trap 'hdiutil detach "$mount" -quiet' EXIT
+            stage="$mount/CMspark.app/Contents/Resources"
+            arch="darwin-${arch#macos-}"
+          fi
           node_bin="$stage/node"
           if [[ "$arch" == windows-* ]]; then node_bin="$stage/node.exe"; arch="win-${arch#windows-}"; fi
           curl -fsSL --retry 3 https://raw.githubusercontent.com/ggml-org/whisper.cpp/5eaee0cc9024eb9e9a99469199920c8b7f5cb9ec/samples/jfk.wav -o jfk.wav

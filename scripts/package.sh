@@ -178,6 +178,10 @@ if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ]; then
   exit 0
 fi
 
+if [[ "${PLATFORM}" == macos-* ]]; then
+  node "${ROOT_DIR}/scripts/prepare-macos-whisper.mjs" "darwin-${PLATFORM#macos-}"
+fi
+
 # Native desktop is an actual same-platform build; cross-package guessing is forbidden.
 case "${PLATFORM}" in
   macos-*|windows-*)
@@ -392,7 +396,7 @@ case "${PLATFORM}" in
       exit 1
     fi
     cp companion/dist/cmspark-tray "${STAGING}/"
-    # Path B: optional cmspark-whisper binary (local STT). Soft-warn if missing.
+    # Stage the sealed macOS Whisper runtime.
     case "${PLATFORM}" in
       macos-arm64) _WHISPER_BIN="cmspark-whisper-darwin-arm64" ;;
       macos-x64)   _WHISPER_BIN="cmspark-whisper-darwin-x64" ;;
@@ -454,7 +458,7 @@ case "${PLATFORM}" in
         if [ -e "companion/dist/bin/${_WHISPER_BIN}" ] || [ -L "companion/dist/bin/${_WHISPER_BIN}" ]; then
           echo "ERROR: legacy unsealed whisper binary cannot be packaged; rebuild it first" >&2; exit 1
         fi
-        echo "WARNING: local STT disabled (no sealed whisper generation)" >&2
+        echo "ERROR: missing sealed whisper generation" >&2; exit 1
       fi
     fi
     ;;

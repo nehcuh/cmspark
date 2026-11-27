@@ -45,7 +45,7 @@ test('DMG preflight refuses a modified staged library', t => { const f = fixture
 test('DMG preflight refuses a different bundle', t => { const f = fixture(t); f.ready(); fs.writeFileSync(path.join(f.staging, 'cmspark-agent.js'), 'stale'); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /staged agent differs/); });
 test('DMG preflight refuses a missing current pointer', t => { const f = fixture(t); f.ready(); fs.unlinkSync(f.current); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /WHISPER_GENERATION_FAILED/); });
 test('DMG preflight refuses a missing staged binary when a generation exists', t => { const f = fixture(t); f.ready(); fs.unlinkSync(path.join(f.staging, 'bin/cmspark-whisper-darwin-arm64')); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /WHISPER_GENERATION_FAILED/); });
-test('DMG preflight permits an intentionally absent optional helper', t => { const f = fixture(t); const r = f.run(); assert.equal(r.status, 0, r.stderr); });
+test('DMG preflight refuses staging without a speech runtime', t => { const f = fixture(t); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /missing sealed whisper generation/); });
 test('DMG preflight stops when the bundle proof fails', t => { const f = fixture(t); f.ready(); const r = f.run(f.pin, 23); assert.notEqual(r.status, 0); assert.match(r.stderr, /cannot verify the bundled whisper pin/); });
 const signedStart = source.indexOf('if [ -n "${_WHISPER_PIN}" ]; then', source.indexOf('# Deep signing must not change the pair'));
 const signedEnd = source.indexOf('\n\n# --- Step 4: Create DMG ---', signedStart);

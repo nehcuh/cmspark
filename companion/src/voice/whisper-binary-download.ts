@@ -563,7 +563,7 @@ export function installWhisperFromBrewDarwin(opts: {
     if (!pin.forceUnpinned) {
       throw new WhisperBinaryDownloadError(
         "pin-mismatch",
-        "当前版本无法验证 macOS x64 本机听写组件及其依赖，无法启用；请等待正式更新。",
+        "无法验证 macOS x64 的 Homebrew 听写组件。请使用 Intel Mac 安装包内置的本机听写组件。",
       )
     }
   }

@@ -65,6 +65,8 @@ if [ -e "${_WHISPER_BIN}" ] || [ -L "${_WHISPER_BIN}" ] || [ -e "${_WHISPER_CURR
   cmp -s "${STAGING}/cmspark-agent.js" "${ROOT_DIR}/companion/dist/cmspark-agent.js" || { echo "[create-dmg] ERROR: staged agent differs from verified bundle" >&2; exit 1; }
   node "${ROOT_DIR}/scripts/whisper-generation.mjs" verify "${_WHISPER_STORE}" "${_WHISPER_CURRENT}" "darwin-${MACOS_ARCH:-arm64}" "${STAGING}" "${_WHISPER_PIN}"
   node "${ROOT_DIR}/scripts/verify-macos-whisper-closure.mjs" "${STAGING}" "cmspark-whisper-darwin-${MACOS_ARCH:-arm64}"
+else
+  echo "[create-dmg] ERROR: missing sealed whisper generation" >&2; exit 1
 fi
 
 if [ ! -d "${ICONSET}" ]; then

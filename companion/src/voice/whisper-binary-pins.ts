@@ -16,8 +16,9 @@ export type WhisperPinnedArch = "darwin-arm64" | "darwin-x64" | "win-x64" | "win
  * P2 note: do **not** invent hashes — wrong pins break real installs silently.
  */
 export const WHISPER_BINARY_SHA256: Partial<Record<WhisperPinnedArch, string>> = {
-  "darwin-arm64": "d86ea8a9fc073fb79ea2d93155adc429fefc1d532d3014cb519dc20644e7b02d",
-  // "darwin-x64": "<sha256 from --write-pins>",
+  // macOS 12+ CPU builds from b5907; see scripts/package-macos-whisper.py.
+  "darwin-arm64": "0a350c600a91be8d7afa68aa046b9906802c02392f1f1a546768a6685059649d",
+  "darwin-x64": "b911433748f8e6a2b8b2714a92059c948ad016b42505ec332f4083c58a44840b",
   // whisper.cpp v1.7.6 official whisper-bin-x64.zip → cmspark-whisper-win-x64.exe
   // Keep in lock-step with assets/whisper-binary.manifest.json (win-x64 extract primary).
   "win-x64": "b7c6dc2e999a80bc2d23cd4c76701211f392ae55d5cabdf0d45eb2ca4faf09af",

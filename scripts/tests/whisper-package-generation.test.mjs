@@ -12,7 +12,7 @@ import { seal, publish } from '../whisper-generation.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const source = fs.readFileSync(path.join(repo, 'scripts/package.sh'), 'utf8');
-const start = source.indexOf('    if [ -n "${_WHISPER_BIN}" ]; then', source.indexOf('# Path B: optional cmspark-whisper'));
+const start = source.indexOf('    if [ -n "${_WHISPER_BIN}" ]; then', source.indexOf('# Stage the sealed macOS Whisper runtime.'));
 const end = source.indexOf('    ;;\n  windows-*)', start);
 assert.ok(start >= 0 && end > start, 'actual macOS package block exists');
 const block = source.slice(start, end);
@@ -63,8 +63,8 @@ test('legacy flat binary without a sealed generation is refused', t => {
   const f = fixture(t); fs.mkdirSync(path.join(f.dist, 'bin')); fs.writeFileSync(path.join(f.dist, 'bin/cmspark-whisper-darwin-arm64'), 'old');
   const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /legacy unsealed/);
 });
-test('no whisper artifact retains the optional disabled warning', t => {
-  const f = fixture(t); const r = f.run(); assert.equal(r.status, 0, r.stderr); assert.match(r.stderr, /local STT disabled/);
+test('a macOS package cannot omit its local speech runtime', t => {
+  const f = fixture(t); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /missing sealed whisper generation/);
 });
 test('failure to verify the bundle pin prevents staging', t => {
   const f = fixture(t); ready(f); const r = f.run(f.pin, 23);

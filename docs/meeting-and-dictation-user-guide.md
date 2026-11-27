@@ -4,7 +4,7 @@
 
 从 Mini 浮球选择 **会议记录**。macOS 在托盘进程自己的窗口中打开会议，Windows 和 Linux 使用快速对话小窗。点 **开始录制** 即可创建会议；首次使用需同意会议和麦克风说明，并准备本机识别模型。录制中可以最小化或返回对话，重新打开会议页即可查看进度。点击 **结束录制** 会处理最后一段并保存文字。
 
-Windows 和 Linux 的 x64、ARM64 安装包随附对应架构的本机 Whisper 程序。首次使用时在小窗准备识别模型即可。Linux 便携 ZIP 需要 glibc 2.34 或更高版本以及 libgomp；DEB、RPM 会声明这些依赖。
+macOS、Windows 和 Linux 的 x64、ARM64 安装包随附对应架构的本机 Whisper 程序。首次使用时在小窗准备识别模型即可。Linux 便携 ZIP 需要 glibc 2.34 或更高版本以及 libgomp，DEB、RPM 会声明这些依赖。
 
 小窗的 **保存** 默认为 **录音（WAV）**。在 macOS 15 及以上，选择 **视频会议（MP4＋录音）** 后，通过系统选择器指定会议窗口或屏幕。在 Windows 和 Linux 小窗中选择 **视频会议（WebM＋录音）**，再点击 **选择会议窗口、标签页或屏幕**。浏览器里的会议可以选对应标签页并勾选共享声音。Windows 桌面会议也可以共享整个屏幕和系统音频。Linux 上如果所选窗口没有音轨，小窗会询问是否录制当前输出设备播放的全部声音，含其他应用，需要 PulseAudio 或 PipeWire 的 PulseAudio 兼容服务。视频收录所选画面、会议声音和麦克风，另存一份供回听的 WAV。只需要文字时选 **仅转写**。
 
@@ -85,7 +85,7 @@ OS 级全局热键（失焦仍按住）属后续增强。
 
 | 层 | 内容 | 如何就绪 |
 |----|------|----------|
-| **本机组件** | `cmspark-whisper` + 动态库 | 安装包优先内置；若提示「未找到」→ **「安装本机听写组件」**。Windows、Linux：HTTPS 自动下载 + sha256 pin。macOS：安装包内置或从本机 **Homebrew whisper-cpp** 拷贝（需已 `brew install whisper-cpp`） |
+| **本机组件** | `cmspark-whisper` + 动态库 | Apple 芯片和 Intel Mac 的安装包均内置已校验的组件。Windows、Linux 安装包同样内置，如提示「未找到」，可点 **安装本机听写组件**，完成下载与 SHA-256 校验。 |
 | **模型权重** | ggml-small / medium / large-v3-turbo | 设置页下载到 `~/.cmspark-agent/models/whisper/`；下载完成自动设为活动模型；已下载模型会被自动识别（设置页状态探测） |
 
 下载源默认 huggingface.co，网络受限时在 **设置 → 输入与交互 → 聊天听写 → 模型下载源** 改填镜像（如 `https://hf-mirror.com`），或设环境变量 `CMSPARK_HF_ENDPOINT`（优先级更高）。

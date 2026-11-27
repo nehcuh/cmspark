@@ -6,10 +6,17 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { SttSessionService } from "../../companion/dist/voice/stt-session-service.js"
 import { downloadWhisperModel, probeWhisperModelDir } from "../../companion/dist/voice/whisper-download.js"
-import { resolveWhisperArch } from "../../companion/dist/voice/binary-resolve.js"
+import { resolveWhisperArch, resolveWhisperBinary } from "../../companion/dist/voice/binary-resolve.js"
+import { expectedWhisperSha256 } from "../../companion/dist/voice/whisper-binary-pins.js"
 
 const [stage, expectedArch, fixturePath, modelRoot, modelId = "small"] = process.argv.slice(2)
 assert.equal(resolveWhisperArch(), expectedArch)
+const packaged = resolveWhisperBinary({
+  searchRoots: [path.resolve(stage, "bin")],
+  expectedSha256: expectedWhisperSha256(expectedArch),
+  allowUnpinned: false,
+})
+assert.ok(packaged.ok && packaged.pinned, JSON.stringify(packaged))
 const wav = await readFile(fixturePath)
 // Upstream samples/jfk.wav is 16 kHz mono PCM with a LIST chunk before its data.
 assert.equal(createHash("sha256").update(wav).digest("hex"), "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e")
