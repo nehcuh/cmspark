@@ -18,6 +18,7 @@ mkdir -p "${STAGING}/assets" "${STAGING}/chrome-extension" "${STAGING}/node_modu
 printf 'fixture\n' > "${STAGING}/cmspark-agent.js"
 cp "${STAGING}/cmspark-agent.js" "${SOURCE}/companion/dist/"
 printf '#!/bin/sh\nexit 0\n' > "${STAGING}/launch-companion.sh"
+cp "${ROOT}"/companion/src/mini/linux-mini-{orb,region}.py "${STAGING}/"
 cp "${ROOT}/companion/assets/cmspark.png" "${STAGING}/assets/"
 node -e 'const fs=require("fs");fs.writeFileSync(process.argv[1],JSON.stringify({manifest_version:3,version:require(process.argv[2]).version}))' "${STAGING}/chrome-extension/manifest.json" "${ROOT}/companion/package.json"
 node - "${STAGING}" <<'JS'
@@ -36,6 +37,9 @@ desktop-file-validate "${desktop}"
 entry="$(sed -n 's/^Exec=//p' "${desktop}")"
 test -x "${TMP}/extracted${entry}"
 test -s "${TMP}/extracted/usr/share/icons/hicolor/256x256/apps/cmspark.png"
+for script in linux-mini-orb.py linux-mini-region.py; do
+  cmp "${STAGING}/${script}" "${TMP}/extracted/opt/cmspark/${script}"
+done
 mkdir "${TMP}/tools"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$CMSPARK_TEST_LOG"\n' > "${TMP}/tools/systemctl"
 chmod +x "${TMP}/tools/systemctl"

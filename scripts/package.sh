@@ -103,8 +103,7 @@ fi
 # Note: macOS host build is [2b/9] immediately below (same major step family as [2/9]).
 
 # --- Step 1b: macOS host binary + scripts (hard-required for macos packages) ---
-# P0-D: never ship a macOS zip without cmspark-host + precompiled .scpt (and
-# cmspark-tray on arm64). Soft WARNING was the OPS-2 packaging hole.
+# Both Mac distributions ship the matching trusted host, tray and compiled scripts.
 if [[ "${PLATFORM}" == macos-* ]]; then
   if [ "$(uname -s)" != "Darwin" ]; then
     echo "ERROR: packaging ${PLATFORM} requires macOS (swiftc/osacompile for cmspark-host)" >&2
@@ -117,7 +116,7 @@ if [[ "${PLATFORM}" == macos-* ]]; then
   else
     echo "[2b/9] Skipping build:host (CMSPARK_SKIP_HOST_BUILD=1 — test-only)"
   fi
-  if [ "${PLATFORM}" = "macos-arm64" ] && [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" != "1" ]; then
+  if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" != "1" ]; then
     echo "[2c/9] Building the Swift tray for this package..."
     (cd "${ROOT_DIR}/companion" && ./src/tray/build-tray.sh)
   fi
@@ -133,10 +132,16 @@ if [[ "${PLATFORM}" == macos-* ]]; then
     echo "ERROR: companion/dist/host-scripts/*.scpt missing — host_read/host_write would ENOENT at runtime" >&2
     exit 1
   fi
-  if [ "${PLATFORM}" = "macos-arm64" ] && [ ! -f "${ROOT_DIR}/companion/dist/cmspark-tray" ]; then
-    echo "ERROR: companion/dist/cmspark-tray missing — macos-arm64 package requires Swift tray binary" >&2
+  if [ ! -f "${ROOT_DIR}/companion/dist/cmspark-tray" ]; then
+    echo "ERROR: companion/dist/cmspark-tray missing — ${PLATFORM} package requires Swift tray binary" >&2
     exit 1
   fi
+  case "${PLATFORM}" in
+    macos-arm64) tray_cpu=arm64 ;;
+    macos-x64)   tray_cpu=x86_64 ;;
+    *) echo "ERROR: unsupported macOS target ${PLATFORM}" >&2; exit 1 ;;
+  esac
+  xcrun lipo "${ROOT_DIR}/companion/dist/cmspark-tray" -verify_arch "${tray_cpu}"
   if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ]; then
     echo "GATE-ONLY: macOS host/tray/scpt gates passed — exiting 0 before full package"
     exit 0
@@ -186,8 +191,8 @@ cd "${ROOT_DIR}/companion"
 # Keep onnxruntime-node external if any residual import remains in the graph;
 # the platform strip step selects the binary needed by speaker diarization.
 # SoT: companion/scripts/esbuild-bundle-args.json via run-esbuild-bundle.mjs
-if [ "${PLATFORM}" = "macos-arm64" ]; then
-  node scripts/run-esbuild-bundle.mjs --packaged-macos-arm64-tray 2>&1 | tail -3
+if [[ "${PLATFORM}" == macos-* ]]; then
+  node scripts/run-esbuild-bundle.mjs "--packaged-${PLATFORM}-tray" 2>&1 | tail -3
 else
   node scripts/run-esbuild-bundle.mjs 2>&1 | tail -3
 fi
@@ -227,6 +232,7 @@ case "${PLATFORM}" in
   linux-*)
     test -f companion/dist/activity/linux-recorder.py || { echo "ERROR: linux-recorder.py missing; build the complete companion first" >&2; exit 1; }
     cp companion/dist/activity/linux-recorder.py "${STAGING}/linux-recorder.py"
+    cp companion/src/mini/linux-mini-{orb,region}.py "${STAGING}/"
     ;;
 esac
 
@@ -381,15 +387,7 @@ case "${PLATFORM}" in
       echo "ERROR: failed to stage host-scripts/*.scpt" >&2
       exit 1
     fi
-    if [ "${PLATFORM}" = "macos-arm64" ]; then
-      cp companion/dist/cmspark-tray "${STAGING}/"
-      if [ ! -f "${STAGING}/cmspark-tray" ]; then
-        echo "ERROR: failed to stage cmspark-tray for macos-arm64" >&2
-        exit 1
-      fi
-    elif [ -f companion/dist/cmspark-tray ]; then
-      cp companion/dist/cmspark-tray "${STAGING}/"
-    fi
+    cp companion/dist/cmspark-tray "${STAGING}/"
     # Path B: optional cmspark-whisper binary (local STT). Soft-warn if missing.
     case "${PLATFORM}" in
       macos-arm64) _WHISPER_BIN="cmspark-whisper-darwin-arm64" ;;
@@ -658,7 +656,7 @@ echo "  $(du -sh "${STAGING}" | cut -f1) total"
 
 # The bundle producer checked this exact pair. Staging must not change either
 # member before it is archived; the runtime pin remains embedded in the bundle.
-if [ "${PLATFORM}" = "macos-arm64" ]; then
+if [[ "${PLATFORM}" == macos-* ]]; then
   cmp -s "${ROOT_DIR}/companion/dist/cmspark-agent.js" "${STAGING}/cmspark-agent.js" || { echo "ERROR: staged agent differs from checked bundle" >&2; exit 1; }
   cmp -s "${ROOT_DIR}/companion/dist/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "ERROR: staged tray differs from checked binary" >&2; exit 1; }
 fi

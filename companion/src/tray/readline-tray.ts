@@ -133,6 +133,7 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     console.log(`[${idx++}] 停止 Companion`)
     console.log(`[${idx++}] 重启 Companion`)
     console.log(`[${idx++}] 查看状态`)
+    if (this.hasLinuxDesktop()) console.log(`[${idx++}] 显示／隐藏 Mini 桌面小球`)
 
     // Quick actions
     for (const qa of this.quickActions) {
@@ -153,6 +154,10 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     process.stdout.write("请选择操作: ")
   }
 
+  private hasLinuxDesktop(): boolean {
+    return process.platform === "linux" && !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY)
+  }
+
   private handleInput(choice: string): void {
     // Map choices — indices shift dynamically based on quick actions / threads
     let idx = 1
@@ -163,6 +168,7 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     if (this.parseInt(choice) === idx++) { this.emit("stop"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("restart"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("status"); this.pause(); return }
+    if (this.hasLinuxDesktop() && this.parseInt(choice) === idx++) { this.emit("mini-toggle"); this.pause(); return }
 
     // Quick actions
     for (const qa of this.quickActions) {

@@ -13,7 +13,7 @@ esac
 VERSION="$(node -p "require('${ROOT_DIR}/companion/package.json').version")"
 RELEASE="${CMSPARK_RPM_RELEASE:-1}"
 [[ "${RELEASE}" =~ ^[A-Za-z0-9._+~]+$ ]] || { echo "ERROR: invalid RPM release" >&2; exit 1; }
-for required in cmspark-agent.js launch-companion.sh node assets/cmspark.png chrome-extension/manifest.json node_modules/systray2/traybin/tray_linux_release; do
+for required in cmspark-agent.js linux-mini-orb.py linux-mini-region.py launch-companion.sh node assets/cmspark.png chrome-extension/manifest.json node_modules/systray2/traybin/tray_linux_release; do
   [[ -s "${STAGING}/${required}" ]] || { echo "ERROR: staging is missing ${required}" >&2; exit 1; }
 done
 node "${ROOT_DIR}/scripts/verify-linux-tray.mjs" "${STAGING}" "${PLATFORM}"
@@ -56,8 +56,8 @@ Summary:        CMspark Browser Agent Companion
 License:        MIT
 URL:            https://github.com/nehcuh/cmspark
 BuildArch:      ${RPM_ARCH}
-Requires:       glibc, libstdc++, libgcc, libappindicator-gtk3, gtk3, xclip
-Recommends:     wl-clipboard
+Requires:       glibc, libstdc++, libgcc, libappindicator-gtk3, gtk3, xclip, python3-gobject, python3-cairo
+Recommends:     wl-clipboard, xdg-desktop-portal
 
 %description
 CMspark local companion and browser automation agent.

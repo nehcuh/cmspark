@@ -5,6 +5,7 @@
 //
 // Protocol (stdin ← Node.js):
 //   {"cmd":"update","status":"running|stopped|unknown","wsConnected":true,"pid":12345}
+//   {"cmd":"mini","visible":true}
 //   {"cmd":"update-autostart","enabled":true}
 //   {"cmd":"update-quick-actions","actions":[{"id":"read-page","title":"📖 读取当前页面"},...]}
 //   {"cmd":"update-recent-threads","threads":[{"id":"abc","title":"数据分析报告..."},...]}
@@ -14,6 +15,7 @@
 //   {"type":"ready","pid":12345}
 //   {"type":"click","action":"start|stop|restart|status|logs|chrome|settings|autostart|quit"}
 //   {"type":"click","action":"quick-action","id":"read-page"}
+//   {"type":"click","action":"mini-action","id":"chat|search|meeting|todo|ask|ocr|capture"}
 //   {"type":"click","action":"recent-thread","id":"abc"}
 //   {"type":"summoner.ready|closed|submit|search|attach_chrome|continue|composing|hotkey.chosen"}
 //   {"type":"exit","code":0}
@@ -45,8 +47,8 @@ func emitCompanionUiRect(_ surface: String, window: NSWindow?) {
     return
   }
   let f = window.frame
-  let globalMaxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? f.maxY
-  let yTop = globalMaxY - f.maxY
+  let primaryTop = NSScreen.screens.first?.frame.maxY ?? f.maxY
+  let yTop = primaryTop - f.maxY
   jsonLine([
     "type": "companion.ui.rect",
     "surface": surface,
@@ -89,7 +91,7 @@ var recentThreads: [RecentThread] = []
 // ---------------------------------------------------------------------------
 
 // Same 24-unit geometry as scripts/lib/brand-icon.mjs, drawn at native backing scale.
-func makeStatusIcon(_ status: CompanionStatus, size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
+func makeStatusIcon(_ status: CompanionStatus, size: NSSize = NSSize(width: 18, height: 18), tint: NSColor? = nil) -> NSImage {
   let color: NSColor
   switch status {
   case .running: color = NSColor(srgbRed: 22/255, green: 132/255, blue: 93/255, alpha: 1)
@@ -109,7 +111,7 @@ func makeStatusIcon(_ status: CompanionStatus, size: NSSize = NSSize(width: 18, 
       clip.appendOval(in: NSRect(x: 10.1, y: 10.1, width: 3.8, height: 3.8))
       clip.windingRule = .evenOdd; clip.addClip()
     }
-    color.setStroke(); color.setFill()
+    (tint ?? color).setStroke(); (tint ?? color).setFill()
     for point in [NSPoint(x: 5, y: 5), NSPoint(x: 5, y: 19), NSPoint(x: 20, y: 12)] {
       let line = NSBezierPath(); line.move(to: point); line.line(to: NSPoint(x: 12, y: 12))
       line.lineWidth = 2.3; line.lineCapStyle = .round; line.stroke()
@@ -125,8 +127,228 @@ func makeStatusIcon(_ status: CompanionStatus, size: NSSize = NSSize(width: 18, 
 }
 
 // ---------------------------------------------------------------------------
-// Menu tag constants
+// Desktop Mini
 // ---------------------------------------------------------------------------
+
+private struct MiniOrbPosition: Codable {
+  let display: UInt32
+  let x, y: Double
+
+  static let file: URL = {
+    let root = ProcessInfo.processInfo.environment["CMSPARK_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cmspark-agent")
+    return root.appendingPathComponent("mini-macos-position.json")
+  }()
+}
+
+private final class MiniOrbButton: NSButton {
+  var openMenu: (() -> Void)?
+  var moved: ((NSPoint, NSPoint) -> Void)?
+  var finishedMove: (() -> Void)?
+  private var press: Timer?
+  private var startPointer: NSPoint?
+  private var startOrigin = NSPoint.zero
+  private var dragging = false
+
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+  override func mouseDown(with event: NSEvent) {
+    guard let window else { return }
+    cancelGesture()
+    startPointer = window.convertPoint(toScreen: event.locationInWindow)
+    startOrigin = window.frame.origin
+    let timer = Timer(timeInterval: 0.45, repeats: false) { [weak self] _ in
+      guard let self else { return }
+      self.cancelGesture()
+      self.openMenu?()
+    }
+    press = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    guard let startPointer, let window else { return }
+    let point = window.convertPoint(toScreen: event.locationInWindow)
+    let dx = point.x - startPointer.x, dy = point.y - startPointer.y
+    if !dragging && hypot(dx, dy) < 4 { return }
+    dragging = true
+    press?.invalidate()
+    moved?(NSPoint(x: startOrigin.x + dx, y: startOrigin.y + dy), point)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    guard startPointer != nil else { return }
+    let didDrag = dragging
+    cancelGesture()
+    if didDrag { finishedMove?() }
+    else { sendAction(action, to: target) }
+  }
+
+  override func rightMouseDown(with event: NSEvent) { cancelGesture(); openMenu?() }
+  override func accessibilityPerformShowMenu() -> Bool { openMenu?(); return true }
+
+  func cancelGesture() {
+    press?.invalidate()
+    press = nil
+    startPointer = nil
+    dragging = false
+  }
+}
+
+private final class DesktopMini: NSObject {
+  private(set) var enabled = false
+  private let size = NSSize(width: 46, height: 46)
+  private var panel: NSPanel?
+  private var button: MiniOrbButton?
+  private var activeMenu: NSMenu?
+  private var position: MiniOrbPosition?
+
+  override init() {
+    super.init()
+    if let data = try? Data(contentsOf: MiniOrbPosition.file) {
+      position = try? JSONDecoder().decode(MiniOrbPosition.self, from: data)
+    }
+    NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
+      name: NSApplication.didChangeScreenParametersNotification, object: nil)
+  }
+
+  func setVisible(_ visible: Bool) {
+    enabled = visible
+    if visible {
+      if panel == nil { makePanel() }
+      restorePosition()
+      panel?.orderFrontRegardless()
+      emitCompanionUiRect("mini", window: panel)
+    } else {
+      hidePanel()
+    }
+  }
+
+  private func hidePanel() {
+    activeMenu?.cancelTracking()
+    button?.cancelGesture()
+    if panel?.isVisible == true {
+      panel?.orderOut(nil)
+      emitCompanionUiRect("mini", window: nil)
+    }
+  }
+
+  private func makePanel() {
+    let frame = NSRect(origin: .zero, size: size)
+    let orb = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
+                      backing: .buffered, defer: false)
+    orb.title = "CMspark Mini"
+    orb.isOpaque = false
+    orb.backgroundColor = .clear
+    orb.hasShadow = true
+    orb.level = .floating
+    orb.hidesOnDeactivate = false
+    orb.isReleasedWhenClosed = false
+    orb.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+
+    let control = MiniOrbButton(frame: frame)
+    control.isBordered = false
+    control.title = ""
+    control.image = makeStatusIcon(.running, size: NSSize(width: 26, height: 26),
+                                   tint: NSColor(srgbRed: 0.3, green: 0.88, blue: 0.67, alpha: 1))
+    control.imagePosition = .imageOnly
+    control.imageScaling = .scaleNone
+    control.wantsLayer = true
+    control.layer?.backgroundColor = NSColor(srgbRed: 0.09, green: 0.12, blue: 0.16, alpha: 1).cgColor
+    control.layer?.cornerRadius = size.height / 2
+    control.toolTip = "CMspark Mini · 点按快速对话，拖动移动，长按或右键查看更多操作"
+    control.setAccessibilityLabel("CMspark Mini")
+    control.setAccessibilityHelp(control.toolTip)
+    control.target = self
+    control.action = #selector(openChat)
+    control.openMenu = { [weak self] in self?.showActions() }
+    control.moved = { [weak self] origin, pointer in self?.move(to: origin, pointer: pointer) }
+    control.finishedMove = { [weak self] in self?.savePosition() }
+    orb.contentView = control
+    panel = orb
+    button = control
+  }
+
+  private func displayID(_ screen: NSScreen) -> UInt32 {
+    (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
+  }
+
+  private func restorePosition() {
+    guard let screen = NSScreen.screens.first(where: { displayID($0) == position?.display }) ?? NSScreen.main else { return }
+    let work = screen.visibleFrame
+    let x = position?.x ?? 0.98, y = position?.y ?? 0.28
+    panel?.setFrameOrigin(NSPoint(x: work.minX + min(1, max(0, x)) * max(0, work.width - size.width),
+                                  y: work.minY + min(1, max(0, y)) * max(0, work.height - size.height)))
+  }
+
+  private func move(to origin: NSPoint, pointer: NSPoint) {
+    guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) ?? panel?.screen else { return }
+    let work = screen.visibleFrame
+    panel?.setFrameOrigin(NSPoint(x: max(work.minX, min(origin.x, work.maxX - size.width)),
+                                  y: max(work.minY, min(origin.y, work.maxY - size.height))))
+    emitCompanionUiRect("mini", window: panel)
+  }
+
+  private func savePosition() {
+    guard let panel, let screen = panel.screen else { return }
+    let work = screen.visibleFrame
+    let saved = MiniOrbPosition(display: displayID(screen),
+      x: (panel.frame.minX - work.minX) / max(1, work.width - size.width),
+      y: (panel.frame.minY - work.minY) / max(1, work.height - size.height))
+    position = saved
+    do {
+      try FileManager.default.createDirectory(at: MiniOrbPosition.file.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try JSONEncoder().encode(saved).write(to: MiniOrbPosition.file, options: .atomic)
+    } catch { NSLog("CMspark Mini position could not be saved: %@", error.localizedDescription) }
+  }
+
+  func publishVisibleRect() {
+    if panel?.isVisible == true { emitCompanionUiRect("mini", window: panel) }
+  }
+
+  @objc private func screensChanged() {
+    guard panel?.isVisible == true else { return }
+    restorePosition()
+    emitCompanionUiRect("mini", window: panel)
+  }
+
+  @objc private func openChat() { emitAction("chat") }
+  @objc private func selectAction(_ item: NSMenuItem) {
+    if let id = item.representedObject as? String { emitAction(id) }
+  }
+
+  private func emitAction(_ id: String) {
+    guard enabled else { return }
+    if ["todo", "ask", "ocr", "capture"].contains(id) { hidePanel() }
+    jsonLine(["type": "click", "action": "mini-action", "id": id])
+  }
+
+  private func showActions() {
+    guard let button, panel?.isVisible == true else { return }
+    let menu = NSMenu()
+    func append(_ title: String, _ id: String) {
+      let item = NSMenuItem(title: title, action: #selector(selectAction(_:)), keyEquivalent: "")
+      item.representedObject = id
+      item.target = self
+      menu.addItem(item)
+    }
+    append("快速对话", "chat")
+    append("搜索资料", "search")
+    append("会议记录", "meeting")
+    menu.addItem(.separator())
+    append("截图录待办…", "todo")
+    append("询问图片…", "ask")
+    append("识别截图文字…", "ocr")
+    append("仅截图…", "capture")
+    activeMenu = menu
+    menu.popUp(positioning: nil, at: NSPoint(x: button.bounds.midX, y: button.bounds.minY - 4), in: button)
+    activeMenu = nil
+  }
+}
+
+private let desktopMini = DesktopMini()
+
+// MARK: - Menu tags
 
 enum MenuTag: Int {
   case header = -1
@@ -141,6 +363,7 @@ enum MenuTag: Int {
   case summoner = 204
   case summonerHotkey = 205
   case desktop = 206
+  case miniToggle = 207
   case autostart = 300
   case quit = 999
   // Dynamic ranges
@@ -165,6 +388,12 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   desktopItem.target = target
   desktopItem.tag = MenuTag.desktop.rawValue
   menu.addItem(desktopItem)
+
+  let miniItem = NSMenuItem(title: "显示 Mini 桌面小球", action: action, keyEquivalent: "")
+  miniItem.target = target
+  miniItem.tag = MenuTag.miniToggle.rawValue
+  miniItem.state = desktopMini.enabled ? .on : .off
+  menu.addItem(miniItem)
 
   let hotkeys = NSMenu()
   for candidate in summonerHotKeyCandidates {
@@ -391,6 +620,8 @@ class TrayDelegate: NSObject {
       }
     } else if tag == MenuTag.settings.rawValue {
       jsonLine(["type": "click", "action": "settings"])
+    } else if tag == MenuTag.miniToggle.rawValue {
+      jsonLine(["type": "click", "action": "mini-toggle"])
     } else if tag == MenuTag.autostart.rawValue {
       jsonLine(["type": "click", "action": "autostart"])
     } else if tag == MenuTag.quit.rawValue {
@@ -410,7 +641,7 @@ class TrayDelegate: NSObject {
   }
 
   func shutdown() {
-    // no-op; kept for compatibility
+    desktopMini.setVisible(false)
   }
 }
 
@@ -441,6 +672,10 @@ func startStdinReader(delegate: TrayDelegate) {
     if chunk.isEmpty {
       // EOF from parent (Node tray launcher exited)
       fh.readabilityHandler = nil
+      DispatchQueue.main.async {
+        delegate.shutdown()
+        NSApplication.shared.terminate(nil)
+      }
       return
     }
     buffer.append(chunk)
@@ -473,12 +708,19 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
       currentStatus = status
     }
     if let ws = json["wsConnected"] as? Bool {
+      if ws && !wsConnected { desktopMini.publishVisibleRect() }
       wsConnected = ws
     }
     if let pid = json["pid"] as? Int {
       currentPid = pid
     }
     delegate.updateAppearance()
+
+  case "mini":
+    if let visible = json["visible"] as? Bool {
+      desktopMini.setVisible(visible)
+      delegate.rebuildMenu()
+    }
 
   case "update-autostart":
     if let enabled = json["enabled"] as? Bool {

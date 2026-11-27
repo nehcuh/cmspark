@@ -203,6 +203,7 @@ export class SwiftTrayAdapter implements UnifiedTray {
   private lastStatus: { status: string; wsConnected: boolean; pid: number | null } = {
     status: "unknown", wsConnected: false, pid: null,
   }
+  private miniVisible = false
   private lastAutostart = false
   private lastQuickActions: QuickActionItem[] = []
   private lastThreads: RecentThreadItem[] = []
@@ -257,6 +258,11 @@ export class SwiftTrayAdapter implements UnifiedTray {
   updateAutostart(enabled: boolean): void {
     this.lastAutostart = enabled
     this.send({ cmd: "update-autostart", enabled })
+  }
+
+  setMiniVisible(visible: boolean): void {
+    this.miniVisible = visible
+    this.send({ cmd: "mini", visible })
   }
 
   setQuickActions(actions: QuickActionItem[]): void {
@@ -614,7 +620,7 @@ export class SwiftTrayAdapter implements UnifiedTray {
     const action = event.action as string
     if (!action) return
 
-    if (action === "quick-action" || action === "recent-thread") {
+    if (action === "quick-action" || action === "recent-thread" || action === "mini-action") {
       this.actionCallback({ type: action as TrayActionType, payload: { id: event.id } })
     } else {
       this.actionCallback({ type: action as TrayActionType })
@@ -649,6 +655,7 @@ export class SwiftTrayAdapter implements UnifiedTray {
         // Re-apply cached state after restart
         this.updateStatus(this.lastStatus.status as "running" | "stopped" | "unknown", this.lastStatus.wsConnected, this.lastStatus.pid)
         this.updateAutostart(this.lastAutostart)
+        this.setMiniVisible(this.miniVisible)
         if (this.lastQuickActions.length) this.setQuickActions(this.lastQuickActions)
         if (this.lastThreads.length) this.setRecentThreads(this.lastThreads)
       }).catch((err) => {

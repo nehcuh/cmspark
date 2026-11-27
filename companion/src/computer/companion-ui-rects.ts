@@ -2,7 +2,7 @@ import { ComputerError, type ComputerErrorCode } from "./types"
 
 export const COMPANION_UI_CLICK_DENIED = "COMPANION_UI_CLICK_DENIED" as const satisfies ComputerErrorCode
 
-export type CompanionUiSurface = "overlay" | "hud" | "tray" | "pairing"
+export type CompanionUiSurface = "overlay" | "hud" | "tray" | "pairing" | "mini"
 
 export type CompanionUiRect = {
   surface: CompanionUiSurface
@@ -18,7 +18,7 @@ export function clearCompanionUiRects(): void {
   rects.clear()
 }
 
-const SURFACES = new Set<CompanionUiSurface>(["overlay", "hud", "tray", "pairing"])
+const SURFACES = new Set<CompanionUiSurface>(["overlay", "hud", "tray", "pairing", "mini"])
 const MAX_RECT_EDGE = 8192
 
 export function applyCompanionUiRectEvent(

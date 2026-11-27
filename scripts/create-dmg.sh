@@ -39,17 +39,15 @@ if [ ! -d "${STAGING}" ]; then
   exit 1
 fi
 
-if [ "${MACOS_ARCH}" = "arm64" ]; then
-  # Rebuild and compare the architecture-specific tray before packaging.
-  (
-    tray_check_dir="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-tray-source-XXXXXX")"
-    trap 'rm -f "${tray_check_dir}/cmspark-tray"; rmdir "${tray_check_dir}"' EXIT
-    cd "${ROOT_DIR}/companion"
-    ./src/tray/build-tray.sh --output "${tray_check_dir}/cmspark-tray"
-    cmp -s "${tray_check_dir}/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "[create-dmg] ERROR: staged tray differs from source build" >&2; exit 1; }
-  )
-  node "${ROOT_DIR}/companion/scripts/run-esbuild-bundle.mjs" --verify-macos-arm64-tray
-fi
+# Rebuild and compare the architecture-specific tray before packaging.
+(
+  tray_check_dir="$(mktemp -d "${TMPDIR:-/tmp}/cmspark-tray-source-XXXXXX")"
+  trap 'rm -f "${tray_check_dir}/cmspark-tray"; rmdir "${tray_check_dir}"' EXIT
+  cd "${ROOT_DIR}/companion"
+  ./src/tray/build-tray.sh --output "${tray_check_dir}/cmspark-tray"
+  cmp -s "${tray_check_dir}/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "[create-dmg] ERROR: staged tray differs from source build" >&2; exit 1; }
+)
+node "${ROOT_DIR}/companion/scripts/run-esbuild-bundle.mjs" "--verify-${MACOS_PLATFORM}-tray"
 
 # Standalone DMG creation may be pointed at old staging. Bind any staged
 # whisper helper and libraries to the selected generation and bundled pin.

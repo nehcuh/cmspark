@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build script for CMspark Swift Tray
-# Compiles Tray.swift into a native macOS binary for Apple Silicon
+# Compiles Tray.swift into a native macOS binary for the build machine
 
 set -euo pipefail
 
@@ -47,7 +47,7 @@ fi
 
 # Compile
 swiftc \
-  -O \
+  -O -Xlinker -adhoc_codesign \
   -o "${OUTPUT_BIN}" \
   "${SCRIPT_DIR}/Tray.swift" \
   "${SCRIPT_DIR}/SummonerOverlay.swift" \

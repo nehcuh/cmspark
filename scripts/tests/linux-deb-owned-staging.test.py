@@ -19,7 +19,7 @@ class OwnedStagingTest(unittest.TestCase):
             for directory_path in (staging, output, tools):
                 directory_path.mkdir()
             for name in (
-                "cmspark-agent.js", "launch-companion.sh", "node", "assets/cmspark.png",
+                "cmspark-agent.js", "linux-mini-orb.py", "linux-mini-region.py", "launch-companion.sh", "node", "assets/cmspark.png",
                 "chrome-extension/manifest.json", "node_modules/systray2/traybin/tray_linux_release",
             ):
                 path = staging / name

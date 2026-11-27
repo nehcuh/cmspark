@@ -23,9 +23,11 @@ import {
   RecentThreadItem,
 } from "./tray/tray-adapter"
 import { CompanionClient } from "./tray/companion-client"
+import { DesktopMini, type DesktopMiniAction } from "./mini/desktop-mini"
+import { LinuxMiniHost } from "./mini/linux-mini"
 import { WindowsMini } from "./mini/windows-mini"
 import { captureMiniRegion } from "./mini/region-capture"
-import { isMiniCapture, openMiniAction, type MiniAction } from "./mini/actions"
+import { isMiniAction, isMiniCapture, openMiniAction, type MiniAction } from "./mini/actions"
 import { readPairingSecret, hasPaired } from "./tray/pairing"
 import { copyTextToClipboard } from "./tray/clipboard"
 import { OSASCRIPT_BIN } from "./process-path"
@@ -202,6 +204,7 @@ let state: MenuBarState = {
 
 let trayInstance: UnifiedTray | null = null
 let windowsMini: WindowsMini | undefined
+let desktopMini: DesktopMini | undefined
 
 /**
  * P0a — accessor for server.ts to dispatch confirmation requests to the tray
@@ -1957,7 +1960,12 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       }
       break
     case "autostart": await toggleAutoStart(); break
-    case "mini-toggle": await windowsMini?.toggle(); break
+    case "mini-toggle": await (desktopMini ?? windowsMini)?.toggle(); break
+    case "mini-action": {
+      const id = action.payload?.id
+      if (id === "chat" || isMiniAction(id)) await desktopMini?.perform(id)
+      break
+    }
     case "mini-hotkeys": await windowsMini?.openHotkeySettings(); break
     case "quick-action":
       handleQuickAction(action.payload?.id || "").catch((err) => {
@@ -2018,6 +2026,7 @@ export async function startMenuBarAgent(): Promise<void> {
   await pollCompanionStatus()
   lastNotifiedStatus = state.companionStatus
 
+  let miniBounds: Record<string, unknown> | undefined
   const backend = detectTrayBackend()
   console.log(`[tray] Detected backend: ${backend}`)
 
@@ -2056,10 +2065,12 @@ export async function startMenuBarAgent(): Promise<void> {
       trayInstance.onCompanionUiRect?.((raw) => {
         try {
           if (!raw || typeof raw !== "object") return
+          const rect = raw as Record<string, unknown>
+          if (rect.surface === "mini") miniBounds = rect.hidden ? undefined : rect
           // Route by rect surface: "overlay" rides the summoner socket, while
           // pairing/tray/hud must use the tray socket (the daemon drops any
           // non-overlay rect arriving on a summoner-surface connection).
-          forwardCompanionUiRect(raw as Record<string, unknown>, {
+          forwardCompanionUiRect(rect, {
             summoner: summonerClient,
             companion: companionClient,
           })
@@ -2096,6 +2107,11 @@ export async function startMenuBarAgent(): Promise<void> {
     port: boundClientsPort,
     reconnectInterval: 5000,
     maxReconnectAttempts: -1,
+  })
+
+  companionClient.onConnected(() => {
+    // The orb can already be mapped when the tray connects or the daemon restarts.
+    if (miniBounds) forwardCompanionUiRect(miniBounds, { summoner: summonerClient, companion: companionClient })
   })
 
   // Push data changes to tray
@@ -2154,6 +2170,19 @@ export async function startMenuBarAgent(): Promise<void> {
       visible => trayInstance?.setMiniVisible?.(visible),
       message => safeNotify({ title: "CMspark Mini", message, timeout: 5 }))
     try { await windowsMini.start() } catch (error) { console.warn("[mini] Failed to start desktop orb:", error) }
+  } else if ((process.platform === "darwin" && activeBackend === "swift") ||
+      (process.platform === "linux" && (process.env.DISPLAY || process.env.WAYLAND_DISPLAY))) {
+    const dir = getConfigDir()
+    const menu = (value: boolean) => trayInstance?.setMiniVisible?.(value)
+    const mac = process.platform === "darwin"
+    const host = mac ? {
+      show: async () => menu(true), hide: () => menu(false), stop: async () => menu(false),
+    } : new LinuxMiniHost(dir, async id => { await desktopMini?.perform(id) }, message => desktopMini?.closed(message))
+    const run = (id: DesktopMiniAction, signal: AbortSignal) => id === "chat" ? openSummonerWebShell("") : runMiniAction(id, signal)
+    desktopMini = new DesktopMini(dir, host, run, mac ? () => {} : menu,
+      message => safeNotify({ title: "CMspark Mini", message, timeout: 5 }), mac ? () => menu(true) : undefined)
+    // A missing GUI or a slow compositor must not delay the other tray connections.
+    void desktopMini.start()
   }
   void pollUnattendedCruiseChip()
 
@@ -2370,6 +2399,8 @@ async function runHudSpikeDualProcess(): Promise<void> {
 }
 
 export async function stopMenuBarAgent(): Promise<void> {
+  await desktopMini?.stop()
+  desktopMini = undefined
   await windowsMini?.stop()
   windowsMini = undefined
   if (trayInstance) {

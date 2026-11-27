@@ -31,7 +31,7 @@ function exercise({ platform = "darwin", arch = "arm64", args = [], data = tray,
     rmdirSync: directory => removed.push(directory),
     readFileSync(file) {
       reads.push(file)
-      if (file.endsWith("/dist/cmspark-tray") || file.endsWith("/cmspark-macos-arm64/cmspark-tray")) {
+      if (file.endsWith("/dist/cmspark-tray") || file.endsWith(`/cmspark-macos-${arch}/cmspark-tray`)) {
         if (data === null) throw new Error("ENOENT")
         return data
       }
@@ -39,10 +39,10 @@ function exercise({ platform = "darwin", arch = "arm64", args = [], data = tray,
       if (file.endsWith("/swift-tray-bridge.ts")) return "source"
       if (file.endsWith("/swift-tray-bridge.js")) return "compiled"
       if (file.endsWith("/meta.json")) {
-        const key = args[0] === "--verify-macos-arm64-tray" || args[0]?.startsWith("--verify-whisper-macos-") ? "../tmp/cmspark-tray-bundle-fixture/cmspark-agent.js" : "dist/cmspark-agent.js"
+        const key = args[0] === `--verify-macos-${arch}-tray` || args[0]?.startsWith("--verify-whisper-macos-") ? "../tmp/cmspark-tray-bundle-fixture/cmspark-agent.js" : "dist/cmspark-agent.js"
         return JSON.stringify(graph ? { outputs: { [key]: { inputs: { "dist/tray/swift-tray-bridge.js": { bytesInOutput: 1 } } } } } : { outputs: {} })
       }
-      if (file.endsWith("/cmspark-macos-arm64/cmspark-agent.js")) return stagingOverride ?? Buffer.from(`"${trayPinLiteral(data)}"`)
+      if (file.endsWith(`/cmspark-macos-${arch}/cmspark-agent.js`)) return stagingOverride ?? Buffer.from(`"${trayPinLiteral(data)}"`)
       if (file.endsWith("/cmspark-tray-bundle-fixture/cmspark-agent.js")) return bundleOverride ?? Buffer.from(`"${trayPinLiteral(data)}"`)
       if (file.endsWith("/dist/cmspark-agent.js")) return bundleOverride ?? Buffer.from(`"${trayPinLiteral(data)}"`)
       if (file.endsWith("/esbuild/bin/esbuild")) return Buffer.from("#!")
@@ -99,14 +99,26 @@ test("whisper verification rejects the wrong host and propagates proof failures"
   assert.ok(result.removed.includes("/owned/tmp/cmspark-tray-bundle-fixture/cmspark-agent.js"))
 })
 
-test("x64 whisper verification does not require an ARM tray", () => {
+test("x64 whisper verification replays the pinned Intel tray", () => {
   const result = exercise({ arch: "x64", args: ["--verify-whisper-macos-x64"] })
   assert.equal(result.thrown, undefined)
   assert.deepEqual(result.exits, [0])
   assert.equal(result.whispers.length, 1)
   assert.equal(result.whispers[0].arch, "darwin-x64")
-  assert.equal(result.reads.some(file => file.endsWith("/dist/cmspark-tray")), false)
+  assert.ok(result.reads.some(file => file.endsWith("/dist/cmspark-tray")))
   assert.deepEqual(result.logged, ["a".repeat(64)])
+})
+
+test("Intel package and DMG verification require the matching tray and target host", () => {
+  const packaged = exercise({ arch: "x64", args: ["--packaged-macos-x64-tray"] })
+  assert.equal(packaged.thrown, undefined)
+  assert.ok(packaged.calls[0].argv.includes("--define:__CMSPARK_PACKAGED_TRAY__=true"))
+  const args = ["--verify-macos-x64-tray"]
+  const verified = exercise({ arch: "x64", args })
+  assert.equal(verified.thrown, undefined)
+  assert.ok(verified.reads.some(file => file.endsWith("/cmspark-macos-x64/cmspark-tray")))
+  assert.match(exercise({ arch: "arm64", args }).thrown.message, /requires macOS x64/)
+  assert.match(exercise({ arch: "x64", args, stagingOverride: Buffer.from("changed") }).thrown.message, /TRAY_STAGING_BUNDLE_MISMATCH/)
 })
 
 test("entry passes actual producer defines as separate argv to its spawn seam", () => {
