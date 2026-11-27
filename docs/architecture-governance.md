@@ -1,0 +1,36 @@
+# 架构治理工作记录
+
+工作树基于 `36af0151`，覆盖 Companion、Chrome 扩展、Mini、原生桌面进程和发包工具。业务拓扑与能力边界沿用 [项目架构](architecture.md) 及 [ADR 索引](adr/)。本文件记录有代码证据的偏离、迁移与验收。历史审计补丁和已发布版本是研究资料。
+
+## 运行拓扑与状态所有权
+
+| 范围 | 状态或规则的写入方 | 消费者及约束 |
+| --- | --- | --- |
+| 会话与计划 | Companion 的 `threads/thread-manager.ts` 管理线程索引及消息文件。Board、Loop、Orchestrator 分别负责任务板、无人值守循环与工作者调度 | Side Panel、Mini 和桌面通过路由访问。聊天记录与 `history/store.ts` 的操作事件数据库有不同生命周期 |
+| 配置、环境与缓存 | `config.ts` 管理配置快照、修改事件与数据目录。`paths.ts` 解析随应用安装的资源。MCP 的确认缓存和 LLM 的视觉能力缓存分别由其域维护 | 目录存在启动时取值与逐次取值两种契约。`config-data-dir-live.test.ts` 验证切换目录后的差异 |
+| 身份与授权 | `ws-auth.ts` 管理本机配对，`ws/handshake-surface.ts` 区分连接来源，MCP 授权及 outbound grants 各有调用者与存储边界 | 一个界面的允许操作不能直接充当另一个界面的授权。参见 ADR-017、020、022 |
+| 语音与会议 | `voice/stt-session-service.ts` 管理采集，`meeting/meeting-store.ts` 管理会议元数据、转写和纪要。录制文件、视觉证据和连续采集检查点有独立的落盘与恢复要求 | Mini、Side Panel、Summoner 都能使用会议；消息校验、数据持久化、历史摘要和下载是独立的验收入口 |
+| API 与模型规则 | `ws/validate.ts`、`message-router.ts` 和分域 handlers 接收来信；`llm/providers/` 负责提供方协议，`bridge/` 描述可调用工具 | 浏览器的设置界面也解释推理力度和输出上限。两端打包方式不同，模型规则需要共同来源 |
+| UI 状态与设计 | `sidepanel/store/agentStore.tsx` 管理侧栏投影；面板 Host 管理导航与关闭保护；`DESIGN.md` 与 `sidepanel/ui/tokens.ts` 管理设计约定及 React 令牌 | MV3 background 持有浏览器操作能力。桌面宿主和 Mini 有各自生命周期。视图不能接管配对、录制或业务持久化 |
+| 错误、日志与重试 | `logger.ts` 和 `log-rotation.ts` 管理日志；`io.ts` 的重试专用于同卷原子替换时的 Windows 瞬态错误；LLM 传输错误由 `llm/transport-error.ts` 解释 | ACP、MCP 与录制中止各有不同可恢复性。合并重试策略前应验证超时、重放副作用和错误码 |
+| 构建与原生边界 | 两个 npm 包各有锁文件。Companion 用 TypeScript 编译并由 esbuild 打包；扩展用 Plasmo。原生宿主、语音二进制和安装包分别由平台脚本构建 | Makefile、CI 与安装包工作流是独立消费者。Companion 测试统一从 `node scripts/run-tests.mjs` 启动，数据由每个测试进程独占 |
+
+## 基线与优化任务池
+
+基线对两个产品源码树的 885 个 TS、TSX、JS 文件分析了编译后可解析的相对字面量依赖，得到 2,287 条同步加载边与 235 条延后加载边。强连通分量有三组。此计数不包含原生链接、生成脚本、进程间消息或运行时计算的模块名。另对命名函数体去注释后比对，得到 72 组重复候选，包含生成物与注入脚本，不能直接当作 72 个缺陷。
+
+| 优先处理 | 已定位的实现与下一项验收 |
+| --- | --- |
+| 配置与平台循环 | `config.ts` 与 `platform.ts` 互相加载。锁和 PID 在 CLI、后台和托盘消费，须保持命名管道、套接字与实时配置目录语义 |
+| 面板导航循环 | `ContextPanelHost`、`PacksPanel`、`ShellEnableActions` 在模块初始化时互相加载。导航调用不应初始化会议与场景面板 |
+| 会议存储循环 | `meeting-store`、`meeting-visual-store`、`meeting-visual-schema` 互相加载。保留证据损坏隔离、纪要失效和会话恢复 |
+| 跨客户端模型契约 | 推理力度和输出预算分别出现在 `companion/src/llm`、`chrome-extension/src/sidepanel/utils`。对照双方打包、所有导出以及浏览器端保存到服务端执行的行为 |
+| 原子存储 | `io.ts` 中 JSON 与文本替换执行相同清理；会议另有本地写入器。区分建目录、发布前权限、持久化和失败传播后再迁移 |
+| 浏览器注入与公共工具 | NotebookLM 有相同 DOM 操作函数体。检查函数是否序列化进不同执行上下文，再决定如何复用；各客户端的文件类型、图像估算和线程关联也需核对 |
+| 防回归检查 | 用可复现的依赖图核对启动环，并将已确认的模块边界接入 CI。继续审查类型边、延后加载、生成资产、原生协议和工具链 |
+
+## 决策与进度
+
+### 001 会议配置测试隔离
+
+直接执行检查点夹具时，测试会写入进程默认的语音配置。常规运行器在加载业务模块之前分配独立目录。会议测试复用该目录，单独运行则创建自己的临时目录并在退出时清理。保留已有单文件调试入口。用只含模拟配置的目录运行真实检查点用例，断言其内容和目录项均保持原样。另用 TAP、spec 及 Windows census 报告器检验子进程。首次人工基线绕过隔离入口写到了本机语音配置，后续基线已通过隔离入口重跑。
