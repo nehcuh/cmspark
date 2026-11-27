@@ -4,6 +4,7 @@ import { datetimeInput, taskDatePatch, dueToday, formatTaskTime, requestActivity
 import type { ActivityBulkAction, ActivityBulkItem, ActivityBulkResult, ActivityController } from './useActivity'
 import { RecentActivitySources, recognitionLabel } from './RecentActivitySources'
 import { WindowScreenshotImport } from './WindowScreenshotImport'
+import { ScreenshotTodoEntry } from './ScreenshotTodoEntry'
 import { ChatScopeEditor } from './ChatScopeEditor'
 
 /** Aliases help users find a process; only app_id grants the existing capture scope. */
@@ -95,7 +96,7 @@ function TodoPanel({ today, controller, connected, active, navigationOwner, navi
     if (!today && filter === 'supervise' && (item.kind !== 'supervise' || taskComplete(item))) return false
     if (!today && filter === 'feedback' && item.feedback_status !== 'pending') return false
     if (!today && filter === 'done' && !taskComplete(item)) return false
-    return `${item.title} ${item.owner} ${item.evidence.group} ${item.evidence.sender} ${item.feedback_to} ${sourceAppName(item.evidence) || ''} ${item.evidence.app_id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+    return `${item.title} ${item.owner} ${item.tracker || ''} ${item.evidence.group} ${item.evidence.sender} ${item.feedback_to} ${sourceAppName(item.evidence) || ''} ${item.evidence.app_id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
   }).sort((a, b) => (a.due_at || '9999').localeCompare(b.due_at || '9999'))
   const selection = snapshot!.todos.find(item => item.id === selected) || candidates.find(item => item.id === selected)
   const [confirmDismiss, setConfirmDismiss] = useState<string | null>(null)
@@ -103,6 +104,11 @@ function TodoPanel({ today, controller, connected, active, navigationOwner, navi
   const isCandidate = !!selection && 'status' in selection
   const listCandidates = showCandidates || today
   return <>
+    {!today && <ScreenshotTodoEntry controller={controller} connected={connected} active={active}
+      navigateToTodos={() => navigate('todos')} configure={() => navigate('activity')} review={id => {
+        setSelected(id); setConfirmDismiss(null); setShowCandidates(true)
+        requestAnimationFrame(() => document.getElementById('cm-todo-review')?.scrollIntoView?.({ block: 'start' }))
+      }} manual={sourceId => <ManualScreenshotTodo key={sourceId} sourceId={sourceId} controller={controller} connected={connected} />} />}
     {!today && <div className="cm-personal-filters" aria-label="待办筛选">
       {[['open', '全部待处理'], ['own', '我的待办'], ['supervise', '我督办的'], ['feedback', '待反馈'], ['done', '已完成']].map(([id, label]) => <button key={id} type="button" aria-pressed={!showCandidates && filter === id} disabled={busy} onClick={() => { setBulkAction(null); setFilter(id); setShowCandidates(false); setSelected(null) }}>{label}</button>)}
       <button type="button" aria-pressed={showCandidates} disabled={busy} onClick={() => { setBulkAction(null); setShowCandidates(true); setSelected(null) }}>待整理 {candidates.length}</button>
@@ -126,18 +132,18 @@ function TodoPanel({ today, controller, connected, active, navigationOwner, navi
       <div className="cm-personal-list">
         {!showCandidates && <><div className="cm-personal-section-title"><h2>{today ? '今天及已逾期' : filter === 'done' ? '已完成事项' : '确认的事项'}</h2><span className="cm-personal-count">{todos.length} 项</span></div>
           <div className="cm-personal-ledger">{todos.map(todo => <div className="cm-personal-selectable" key={todo.id}>{!today && <input type="checkbox" aria-label={`选择待办：${todo.title}`} checked={bulkSelected.some(item => item.kind === 'todo' && item.id === todo.id)} disabled={!bulkEnabled || busy || bulkStale} onChange={() => toggleBulk('todo', todo)} />}<button type="button" className="cm-personal-row" aria-current={selected === todo.id ? 'true' : undefined} onClick={() => { setSelected(todo.id); setConfirmDismiss(null) }}>
-            <span className="cm-personal-row-main"><span className="cm-personal-row-title">{todo.title}</span><span className="cm-personal-source-line">{sourceLine(todo.evidence, sourceAppName(todo.evidence))} · 负责人 {todo.owner}</span><span className="cm-personal-source-line">反馈至 {todo.feedback_to || '未指定'}{todo.kind === 'supervise' ? ' · 我督办的' : ''}</span></span>
+            <span className="cm-personal-row-main"><span className="cm-personal-row-title">{todo.title}</span><span className="cm-personal-source-line">{sourceLine(todo.evidence, sourceAppName(todo.evidence))} · 负责人 {todo.owner}{todo.tracker && ` · 跟踪人 ${todo.tracker}`}</span><span className="cm-personal-source-line">反馈至 {todo.feedback_to || '未指定'}{todo.kind === 'supervise' ? ' · 我督办的' : ''}</span></span>
             <span className="cm-personal-row-status"><span>{todo.due_at ? formatTaskTime(todo.due_at) : '无截止时间'}</span><span className="cm-personal-tag" data-warning={todo.feedback_status === 'pending'}>{todo.handling_status === 'open' ? '待处理' : todo.feedback_status === 'pending' ? '已处理 · 待反馈' : '已完成'}</span></span>
           </button></div>)}</div>
           {!todos.length && <div className="cm-personal-empty"><h2>{today ? '今天没有临期事项' : '这个分类还没有事项'}</h2><p>{today ? '有截止时间且尚未完成的事项会显示在这里。没有截止时间的事项仍可在待办中查看。' : '聊天抽取结果先进入待整理，只有你确认后才成为正式待办。'}</p><button type="button" className="cm-p-link" onClick={() => navigate(today ? 'todos' : 'activity')}>{today ? '查看全部待办' : '设置聊天采集'}</button></div>}
         </>}
         {listCandidates && <section style={{ marginTop: today ? 32 : 0 }} aria-label="待整理候选"><div className="cm-personal-section-title"><h2>从聊天中发现</h2><span className="cm-personal-count">{candidates.length} 项待确认</span></div>
           <p className="cm-personal-fieldnote" style={{ marginBottom: 14 }}>抽取可能误认责任人或时间；请核对原文后确认。不会自动变成待办或发出反馈。</p>
-          <div className="cm-personal-ledger">{candidates.filter(item => `${item.title} ${item.evidence.group} ${item.evidence.sender} ${sourceAppName(item.evidence) || ''} ${item.evidence.app_id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map(candidate => <div className="cm-personal-selectable" key={candidate.id}>{!today && <input type="checkbox" aria-label={`选择候选：${candidate.title}`} checked={bulkSelected.some(item => item.kind === 'candidate' && item.id === candidate.id)} disabled={!bulkEnabled || busy || bulkStale} onChange={() => toggleBulk('candidate', candidate)} />}<button type="button" className="cm-personal-row cm-personal-candidate" aria-current={selected === candidate.id ? 'true' : undefined} onClick={() => { setSelected(candidate.id); setConfirmDismiss(null) }}><span className="cm-personal-row-main"><span className="cm-personal-row-title">{candidate.title}</span><span className="cm-personal-source-line">{sourceLine(candidate.evidence, sourceAppName(candidate.evidence))}</span></span><span className="cm-personal-tag">核对并整理</span></button></div>)}</div>
+          <div className="cm-personal-ledger">{candidates.filter(item => `${item.title} ${item.owner} ${item.tracker || ''} ${item.evidence.group} ${item.evidence.sender} ${sourceAppName(item.evidence) || ''} ${item.evidence.app_id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map(candidate => <div className="cm-personal-selectable" key={candidate.id}>{!today && <input type="checkbox" aria-label={`选择候选：${candidate.title}`} checked={bulkSelected.some(item => item.kind === 'candidate' && item.id === candidate.id)} disabled={!bulkEnabled || busy || bulkStale} onChange={() => toggleBulk('candidate', candidate)} />}<button type="button" className="cm-personal-row cm-personal-candidate" aria-current={selected === candidate.id ? 'true' : undefined} onClick={() => { setSelected(candidate.id); setConfirmDismiss(null) }}><span className="cm-personal-row-main"><span className="cm-personal-row-title">{candidate.title}</span><span className="cm-personal-source-line">{sourceLine(candidate.evidence, sourceAppName(candidate.evidence))}</span></span><span className="cm-personal-tag">核对并整理</span></button></div>)}</div>
           {!candidates.length && <p className="cm-personal-fieldnote">暂无待整理内容。<button type="button" className="cm-p-link" onClick={() => navigate('activity')}>查看采集范围</button></p>}
         </section>}
       </div>
-      {selection ? <div className="cm-personal-detail" key={selection.id}>
+      {selection ? <div className="cm-personal-detail" id={today ? undefined : 'cm-todo-review'} key={selection.id}>
         <div className="cm-personal-detail-top"><span className="cm-personal-tag">{isCandidate ? '候选 · 需要你确认' : '个人事项'}</span><button className="cm-p-link" type="button" onClick={() => setSelected(null)}>返回列表</button></div>
         <h2>{selection.title}</h2><SourceEvidence appName={sourceAppName(selection.evidence)} evidence={selection.evidence} connected={connected} sourceAvailable={snapshot!.sources.some(source => source.id === selection.evidence.source_id && !source.deleted)} />
         <TaskEditor item={selection} busy={busy || !connected} onSave={async (task, revision) => {
@@ -179,10 +185,25 @@ function SourceEvidence({ evidence, connected, onSource, sourceAvailable = true,
   </>
 }
 
+function ManualScreenshotTodo({ sourceId, controller, connected }: { sourceId: string; controller: ActivityController; connected: boolean }) {
+  const [editing, setEditing] = useState(false)
+  const { snapshot, busy, mutate } = controller
+  return <div><button type="button" className="cm-p-link" onClick={() => setEditing(value => !value)}>{editing ? '取消补录' : '手动补录待办'}</button>
+    {editing && snapshot && <TaskEditor item={{ id: sourceId, revision: snapshot.revision, created_at: '', title: '', owner: '', due_at: null,
+      feedback_to: '', feedback_required: false, status: 'pending', evidence: { source_id: sourceId, app_id: 'manual.screenshot', group: '', sender: '', message_time: '', quote: '' } }}
+      busy={busy || !connected} onSave={async (task, revision) => {
+        const saved = await mutate('todo.create', { source_id: sourceId, expected_revision: revision, task }, '手动录入的待办已保存。')
+        if (saved) setEditing(false)
+        return saved
+      }} />}
+  </div>
+}
+
 function TaskEditor({ item, busy, onSave }: { item: PersonalTodo | TodoCandidate; busy: boolean; onSave: (task: Record<string, unknown>, revision: number) => Promise<boolean> }) {
   const candidate = 'status' in item
   const revision = useRef(item.revision)
   const [title, setTitle] = useState(item.title), [owner, setOwner] = useState(item.owner)
+  const [tracker, setTracker] = useState(item.tracker || '')
   const initialDates = useRef({ due: datetimeInput(item.due_at), remind: datetimeInput(candidate ? null : item.remind_at) })
   const [due, setDue] = useState(initialDates.current.due), [remind, setRemind] = useState(initialDates.current.remind)
   const [feedbackTo, setFeedbackTo] = useState(item.feedback_to), [feedbackRequired, setFeedbackRequired] = useState(item.feedback_required)
@@ -195,10 +216,11 @@ function TaskEditor({ item, busy, onSave }: { item: PersonalTodo | TodoCandidate
     event.preventDefault(); setError('')
     if (stale) { setError('这条事项已在其他界面更改；请返回列表重新打开，再核对草稿。'); return }
     try {
-      await onSave({ title: title.trim(), owner: owner.trim(), ...taskDatePatch(candidate, initialDates.current, { due, remind }), feedback_to: feedbackTo.trim(), feedback_required: feedbackRequired, kind, ...(!candidate ? { handling_status: handlingDone ? 'done' : 'open', feedback_status: !feedbackRequired ? 'not_required' : feedbackDone ? 'done' : 'pending' } : {}) }, revision.current)
+      await onSave({ title: title.trim(), owner: owner.trim(), tracker: tracker.trim(), ...taskDatePatch(candidate, initialDates.current, { due, remind }), feedback_to: feedbackTo.trim(), feedback_required: feedbackRequired, kind, ...(!candidate ? { handling_status: handlingDone ? 'done' : 'open', feedback_status: !feedbackRequired ? 'not_required' : feedbackDone ? 'done' : 'pending' } : {}) }, revision.current)
     } catch { setError('日期无效，请重新核对。') }
   }}>
-    <div className="cm-personal-form"><label className="cm-personal-wide">事项内容<input value={title} onChange={e => setTitle(e.target.value)} maxLength={300} required disabled={busy} /></label><label>负责人<input value={owner} onChange={e => setOwner(e.target.value)} maxLength={200} placeholder="核对后填写" required disabled={busy} /></label><label>事项归类<select value={kind} onChange={e => setKind(e.target.value as PersonalTodo['kind'])} disabled={busy}><option value="own">我的待办</option><option value="supervise">我督办的</option></select></label>
+    <div className="cm-personal-form"><label className="cm-personal-wide">事项内容<input value={title} onChange={e => setTitle(e.target.value)} maxLength={300} required disabled={busy} /></label><label>负责人<input value={owner} onChange={e => setOwner(e.target.value)} maxLength={200} placeholder="核对后填写" required disabled={busy} /></label>
+      <label>跟踪人<input value={tracker} onChange={e => setTracker(e.target.value)} maxLength={200} placeholder="负责跟进进度的人" disabled={busy} /></label><label>事项归类<select value={kind} onChange={e => setKind(e.target.value as PersonalTodo['kind'])} disabled={busy}><option value="own">我的待办</option><option value="supervise">我督办的</option></select></label>
       <label>截止时间<input type="datetime-local" value={due} onChange={e => setDue(e.target.value)} disabled={busy} /></label><label>提醒时间<input type="datetime-local" value={remind} onChange={e => setRemind(e.target.value)} disabled={busy} /></label>
       <p className="cm-personal-fieldnote cm-personal-wide">时间按当前设备时区（{Intl.DateTimeFormat().resolvedOptions().timeZone}）填写；空白表示不设置。</p>
       <label className="cm-personal-check cm-personal-wide"><input type="checkbox" checked={feedbackRequired} onChange={e => setFeedbackRequired(e.target.checked)} disabled={busy} />处理后需要反馈</label>

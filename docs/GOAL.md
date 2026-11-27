@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 项目目标
 
-> **产品版本 1.10.0**（已于 2026-11-25 正式发布。以 `companion/package.json` 与 `chrome-extension/package.json` 的 `version` 为准。文档修订号 1.8.0 自 2026-09-20（`5ff6087f`）起沿用，不是发行版本。此后正文有个别事实更新，修订号没有递增。当前正式安装包为 1.10.0）。Node：`companion/package.json` 与仓库根 `package.json` 的 `engines.node` 为 `>=22.23.4 <23`；`.github/workflows/ci.yml` 的 `node-version` 为 `22.23.4`。`chrome-extension/package.json` 没有单独的 `engines` 字段。当前阶段：安全稳定化 MVP（核心已完成）→ **产品 1.10.0**。T1 bake-off **已记分**：CMspark 臂完成 / Playwright 干净 profile 打不开门户（L7 PASS 带 nit，[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。**禁扩**默认 outbound profile。冻 [#230](https://github.com/nehcuh/cmspark/issues/230)（F-S-10 / overlay-acl）。0.5.3 快照：[post-227-status](superpowers/specs/2026-08-27-post-227-status.md)（**SNAPSHOT**）。需求设计必须先开 GitHub Issue。本页不关闭任何 Issue。
+> **产品 1.11.0**（尚未正式发布。以 `companion/package.json` 与 `chrome-extension/package.json` 的 `version` 为准。文档修订号 1.8.0 自 2026-09-20（`5ff6087f`）起沿用，不是发行版本。此后正文有个别事实更新，修订号没有递增。当前正式安装包为 1.10.0）。Node：`companion/package.json` 与仓库根 `package.json` 的 `engines.node` 为 `>=22.23.4 <23`；`.github/workflows/ci.yml` 的 `node-version` 为 `22.23.4`。`chrome-extension/package.json` 没有单独的 `engines` 字段。当前阶段：安全稳定化 MVP（核心已完成）→ **产品 1.10.0**。T1 bake-off **已记分**：CMspark 臂完成 / Playwright 干净 profile 打不开门户（L7 PASS 带 nit，[#228](https://github.com/nehcuh/cmspark/issues/228) 已关）。**禁扩**默认 outbound profile。冻 [#230](https://github.com/nehcuh/cmspark/issues/230)（F-S-10 / overlay-acl）。0.5.3 快照：[post-227-status](superpowers/specs/2026-08-27-post-227-status.md)（**SNAPSHOT**）。需求设计必须先开 GitHub Issue。本页不关闭任何 Issue。
 
 ---
 
@@ -8,7 +8,7 @@
 
 一个对着 **已登录 Chrome** 真干活的本机 Agent。热键召唤开口；人在 Chrome 里用侧栏操作；人在 Codex 里**租同一只手**（Outbound MCP）；危险走确认台。Side Panel 是 Operate 面之一，**不是家**。家是 **已登录的 Chrome + 硬闸**。
 
-形态 SoT：[2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md)。活切点：[CHANGELOG](../CHANGELOG.md) **1.10.0**。0.5.3 快照：[post-227-status](superpowers/specs/2026-08-27-post-227-status.md)（SNAPSHOT）。
+形态 SoT：[2026-08-26-product-form-deepening-design.md](superpowers/specs/2026-08-26-product-form-deepening-design.md)。活切点：[CHANGELOG](../CHANGELOG.md) **1.11.0**。0.5.3 快照：[post-227-status](superpowers/specs/2026-08-27-post-227-status.md)（SNAPSHOT）。
 
 通过 CDP/Chrome APIs 操作浏览器，通过本地 Companion 进程管理 LLM 调用、对话状态和技能系统。
 

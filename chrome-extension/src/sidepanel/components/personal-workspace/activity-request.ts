@@ -1,11 +1,13 @@
+import { privateMiniRequest } from '../../../utils/mini-request'
+
 /** Wire projection of Companion activity/types.ts; personal tasks never alias Agent Board records. */
 export interface TaskEvidence {
   action_quote?: string
   context_quote?: string
   deadline_text?: string
  source_id: string; app_id: string; group: string; sender: string; message_time: string; quote: string }
-export interface TodoCandidate { id: string; revision: number; created_at: string; title: string; owner: string; due_at: string | null; feedback_to: string; feedback_required: boolean; evidence: TaskEvidence; status: 'pending' | 'confirmed' | 'dismissed'; todo_id?: string }
-export interface PersonalTodo { id: string; revision: number; created_at: string; updated_at: string; title: string; owner: string; due_at: string | null; remind_at: string | null; feedback_to: string; feedback_required: boolean; kind: 'own' | 'supervise'; handling_status: 'open' | 'done'; feedback_status: 'pending' | 'done' | 'not_required'; evidence: TaskEvidence; reminder: { status: 'none' | 'scheduled' | 'attempting' | 'submitted' | 'failed' | 'unknown'; attempted_at?: string; error?: string } }
+export interface TodoCandidate { id: string; revision: number; created_at: string; title: string; owner: string; tracker?: string; due_at: string | null; feedback_to: string; feedback_required: boolean; evidence: TaskEvidence; status: 'pending' | 'confirmed' | 'dismissed'; todo_id?: string }
+export interface PersonalTodo { id: string; revision: number; created_at: string; updated_at: string; title: string; owner: string; tracker?: string; due_at: string | null; remind_at: string | null; feedback_to: string; feedback_required: boolean; kind: 'own' | 'supervise'; handling_status: 'open' | 'done'; feedback_status: 'pending' | 'done' | 'not_required'; evidence: TaskEvidence; reminder: { status: 'none' | 'scheduled' | 'attempting' | 'submitted' | 'failed' | 'unknown'; attempted_at?: string; error?: string } }
 export interface ActivityVisionModel { base_url: string; model_name: string; api_key: string; api_key_set?: boolean; protocol?: 'openai' | 'anthropic' }
 export interface ActivityRect { x: number; y: number; width: number; height: number }
 export interface ActivityChatProfile { window_class: string; logical_width?: number; logical_height?: number; width: number; height: number; content: ActivityRect; title: ActivityRect; allowed_titles: string[] }
@@ -25,7 +27,7 @@ export type ActivityRecognition =
 export interface ActivitySource { binding_id?: string; recognition?: ActivityRecognition; id: string; captured_at: string; app_id: string; app_name: string; window_title: string; conversation_title?: string; ocr_text: string; sha256: string; bytes: number; origin?: 'foreground' | 'fixed_window' | 'manual_import'; deleted?: boolean }
 export interface ActivitySnapshot { version: 1; revision: number; config: ActivityConfig; candidates: TodoCandidate[]; todos: PersonalTodo[]; sources: Array<Omit<ActivitySource, 'ocr_text'>>; runtime: { capture_mode?: 'automatic' | 'manual-only'; platform_note?: string; platform: string; supported: boolean; fixed_window_supported?: boolean; fixed_window_status?: Record<string, ActivityWindowStatus>; chat_scope_supported?: boolean; running: boolean; scanning: boolean; last_scan_at: string | null; last_success_at: string | null; status: string; error: string | null; scope_note?: string | null; model_target_ids?: Record<string, string>; model_targets?: Record<string, string>; model_target?: string; model_target_id?: string; coverage: string } }
 export interface ActivityApp { app_id: string; app_name: string; window_state?: 'visible' | 'minimized' | 'hidden' | 'none' }
-export interface ActivityReply { preview?: ActivityPreview; recognized_title?: string; apps?: ActivityApp[]; type: 'activity.result'; id: string; ok: boolean; state?: ActivitySnapshot; source?: ActivitySource & { image_data_url: string | null }; error?: string; error_code?: string }
+export interface ActivityReply { source_id?: string; preview?: ActivityPreview; recognized_title?: string; apps?: ActivityApp[]; type: 'activity.result'; id: string; ok: boolean; state?: ActivitySnapshot; source?: ActivitySource & { image_data_url: string | null }; error?: string; error_code?: string }
 
 export class ActivityRequestError extends Error {
   constructor(message: string, readonly state?: ActivitySnapshot) { super(message) }
@@ -54,7 +56,7 @@ export function requestActivity(type: string, data: Record<string, unknown> = {}
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
-      chrome.runtime.onMessage.removeListener(receive)
+      if (type !== 'activity.import') chrome.runtime.onMessage.removeListener(receive)
       signal?.removeEventListener('abort', cancel)
       if (error) reject(error); else resolve(result!)
     }
@@ -70,10 +72,17 @@ export function requestActivity(type: string, data: Record<string, unknown> = {}
       else if (matchingActivityReply(message, type, data)) finish(undefined, message)
     }
     if (signal?.aborted) { cancel(); return }
-    chrome.runtime.onMessage.addListener(receive)
+    if (type !== 'activity.import') chrome.runtime.onMessage.addListener(receive)
     signal?.addEventListener('abort', cancel, { once: true })
     timer = setTimeout(() => finish(new Error('未收到后台确认，请刷新核实；不会自动重试更改。')), type === 'activity.bind_window' ? 95_000 : type === 'activity.preview' ? 90_000 : type === 'activity.preview_ocr' ? 45_000 : type === 'activity.scan' || type === 'activity.import' || type === 'activity.analyze' ? 720_000 : 15_000)
     try {
+      if (type === 'activity.import') {
+        void privateMiniRequest<ActivityReply>({ ...data, type }, signal).then(result => {
+          if (result.type === 'activity.result') receive({ ...result, id })
+          if (!settled) finish(new Error(result.error || '未收到有效的截图提交结果，请刷新核实。'))
+        }).catch(() => finish(new Error('连接中断，请刷新核实操作结果。')))
+        return
+      }
       Promise.resolve(chrome.runtime.sendMessage({ type, ...data, id, require_connected: true })).then(ack => {
         if (ack?.ok === false) finish(new Error(ack.error || 'Companion 未连接。'))
       }).catch(() => finish(new Error('连接中断，请刷新核实操作结果。')))

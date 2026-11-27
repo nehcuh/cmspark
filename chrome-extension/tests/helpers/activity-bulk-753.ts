@@ -12,6 +12,7 @@ export async function createActivityFixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'activity-bulk-753-'))
   const root = path.resolve(process.cwd(), '../companion/src/activity')
   const modules = new Map<string, any>(), hostRequire = createRequire(path.resolve(process.cwd(), 'package.json'))
+  const models = { llm: {}, computer: {}, vision: { enabled: true, base_url: 'https://owned.invalid/v1', model_name: 'owned-vl', api_key: 'owned-fixture-only' } }
   const forbidden = () => assert.fail('unrelated native, provider, notification or background timer executed')
   const context = vm.createContext({ Buffer, process: { platform: 'linux', env: {} }, AbortController,
     setInterval: forbidden, clearInterval: forbidden, console })
@@ -19,10 +20,10 @@ export async function createActivityFixture() {
   function load(file: string): any {
     file = path.resolve(file)
     if (modules.has(file)) return modules.get(file)
-    assert.ok(['../llm/vision-reuse-inherit.ts', '../llm/image-preview.ts', '../computer/png-decode.ts'].some(name => file === path.resolve(root, name)) || ['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config', 'windows-apps', 'chat-scope'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
+    assert.ok(['../llm/recipient.ts', '../llm/vision-reuse-inherit.ts', '../llm/likely-multimodal.ts', '../llm/reasoning-effort.ts', '../llm/native-vision-probe-cache.ts', '../llm/image-preview.ts', '../computer/png-decode.ts'].some(name => file === path.resolve(root, name)) || ['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config', 'windows-apps', 'chat-scope'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
     const output: any = {}; modules.set(file, output)
     const requireValue = (id: string): any => {
-      if (id === '../config') return { DATA_DIR: directory, getConfig: () => ({ llm: {}, computer: {} }) }
+      if (id === '../config') return { DATA_DIR: directory, getConfig: () => models }
       if (id === './adapters') return { extractActivity: forbidden, submitReminder: forbidden, MacPassiveRecorder: class { constructor() { forbidden() } } }
       if (id === '../host-use/win/powershell') return { runPs: forbidden, resolveWinScript: forbidden }
       if (id === 'node:child_process') return { execFile: forbidden }
@@ -57,7 +58,7 @@ export async function createActivityFixture() {
     const initial = (await handle({ type: 'activity.state', id: 'fixture-state' })).state
     assert.equal(initial.todos.length, 3); assert.equal(initial.candidates.length, 2)
     assert.equal('ocr_text' in initial.sources[0], false)
-    return { directory, handle, state: () => JSON.parse(JSON.stringify(service.state())), initial, todos: initial.todos, candidates: initial.candidates,
+    return { service, into, models, directory, handle, state: () => JSON.parse(JSON.stringify(service.state())), initial, todos: initial.todos, candidates: initial.candidates,
       dispose: () => fs.rmSync(directory, { recursive: true, force: true }) }
   } catch (error) { fs.rmSync(directory, { recursive: true, force: true }); throw error }
 }

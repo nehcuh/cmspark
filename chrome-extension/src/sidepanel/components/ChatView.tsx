@@ -1473,7 +1473,9 @@ function ToolCallCard({ tc }: { tc: any }) {
           <span style={{ ...styles.toolMeta, color: tokens.textMuted }}>Vision cached</span>
         )}
         {isVisionTool && tc.vision_status === "error" && (
-          <span style={{ ...styles.toolMeta, color: tokens.warning }}>Vision failed</span>
+          <span style={{ ...styles.toolMeta, color: tokens.warning }} title={tc.vision_error}>
+            {tc.vision_model ? `${tc.vision_model} · ` : ""}识别失败{tc.vision_error ? ` · ${tc.vision_error}` : ""}
+          </span>
         )}
         {canExpandGeneric && (
           <button type="button" aria-label={`${expanded ? "收起" : "展开"} ${tc.tool_name} 详情`} aria-expanded={expanded} style={{ ...styles.toolExpandHint, border: "none", background: "transparent", cursor: "pointer", minHeight: 32 }} onClick={e => { e.stopPropagation(); setExpanded(!expanded) }}>{expanded ? "收起" : "详情"}</button>

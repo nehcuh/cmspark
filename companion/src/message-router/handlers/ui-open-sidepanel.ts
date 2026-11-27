@@ -12,11 +12,15 @@ import crypto from "node:crypto"
 
 import { logger } from "../../logger"
 import { isChromeExtensionWsOrigin } from "../../ws/handshake-surface"
+import { miniCaptures, miniDestination } from "../../mini/capture-handoff"
+import { isMiniCapture } from "../../mini/actions"
 
 export type UiOpenSidepanelSession = {
   origin?: string
   surface?: string
   broadcast?: (data: Record<string, unknown>) => void
+  panelId?: string
+  miniPanel?: () => { id: string; send: (frame: Record<string, unknown>) => void } | undefined
 }
 
 /** Must stay below the tray-side sendAppRequest timeout (8s in menu-bar-agent). */
@@ -25,6 +29,8 @@ const RESULT_TIMEOUT_MS = 6_000
 type SettleResult = { ok: boolean; error?: string; timedOut?: boolean }
 
 type PendingResult = {
+  panelId?: string
+  destination?: string
   /** First call wins: clears the timer, unregisters, resolves exactly once. */
   settle: (r: SettleResult) => void
 }
@@ -56,17 +62,19 @@ export function handleUiOpenSidepanelResult(
   }
   const id = typeof rest.id === "string" ? rest.id : ""
   const pending = id ? pendingResults.get(id) : undefined
-  if (pending) {
+  if (pending && (!pending.panelId || pending.panelId === session?.panelId)) {
+    const supported = (!pending.destination || pending.destination === rest.destination) &&
+      (pending.destination !== "mini_meeting" || rest.ok !== true || rest.meeting_opened === true)
     pending.settle({
-      ok: rest.ok === true,
-      error: typeof rest.error === "string" ? rest.error : undefined,
+      ok: rest.ok === true && supported,
+      error: !supported ? "请更新 Chrome 扩展以使用 Mini 快速操作" : typeof rest.error === "string" ? rest.error : undefined,
     })
   }
   return { type: "ok" }
 }
 
 export async function handleUiOpenSidepanel(
-  _rest: Record<string, unknown>,
+  rest: Record<string, unknown>,
   session?: UiOpenSidepanelSession,
   timeoutMs: number = RESULT_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
@@ -79,6 +87,16 @@ export async function handleUiOpenSidepanel(
   }
   if (typeof session?.broadcast !== "function") {
     return uiOpenError("UI_OPEN_SIDEPANEL_UNAVAILABLE")
+  }
+  const mini = miniDestination(rest.destination)
+  let peer: ReturnType<NonNullable<UiOpenSidepanelSession["miniPanel"]>>
+  try { if (mini) peer = session.miniPanel?.() }
+  catch (error) { return uiOpenError("MINI_PANEL_AMBIGUOUS", (error as Error).message) }
+  if (mini && !peer) return uiOpenError("MINI_PANEL_UNAVAILABLE", "尚未连接 Chrome 扩展")
+  let ticket: string | undefined
+  if (mini && isMiniCapture(mini)) {
+    try { ticket = miniCaptures.stage(mini, rest.image_base64, peer!.id) }
+    catch (error) { return uiOpenError("MINI_CAPTURE_INVALID", (error as Error).message) }
   }
   const id = `uosp-${crypto.randomBytes(8).toString("hex")}`
   const result = await new Promise<SettleResult>((resolve) => {
@@ -99,14 +117,17 @@ export async function handleUiOpenSidepanel(
     // timer ref'd — Node 22 `node --test` cancels pending cases once the
     // event loop is only unref'd handles (CI: 13 cancelled, 0 fail).
     if (!process.env.NODE_TEST_CONTEXT) timer.unref?.()
-    pendingResults.set(id, { settle })
-    session.broadcast!({ type: "ui.open_sidepanel", id })
+    pendingResults.set(id, { settle, ...(peer ? { panelId: peer.id, destination: String(rest.destination) } : {}) })
+    const frame = { type: "ui.open_sidepanel", id, ...(rest.destination === "screenshot_todo" || mini ? { destination: rest.destination } : {}), ...(ticket ? { ticket } : {}) }
+    try { if (peer) peer.send(frame); else session.broadcast!(frame) }
+    catch { settle({ ok: false, error: "Chrome 扩展已断开连接" }) }
   })
   if (!result.ok) {
+    if (ticket) miniCaptures.discard(ticket)
     if (result.timedOut) {
       return uiOpenError("UI_OPEN_SIDEPANEL_TIMEOUT", "extension did not report a side panel result in time")
     }
     return uiOpenError("UI_OPEN_SIDEPANEL_FAILED", result.error || "extension failed to open the side panel")
   }
-  return { type: "ui.open_sidepanel.opened" }
+  return { type: "ui.open_sidepanel.opened", ...(mini ? { destination: rest.destination } : {}) }
 }

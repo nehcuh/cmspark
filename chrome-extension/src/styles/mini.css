@@ -1,0 +1,47 @@
+:root {
+  color-scheme: light dark;
+  --mini-base: #f3f6fa;
+  --mini-surface: #fff;
+  --mini-text: #18263a;
+  --mini-muted: #536478;
+  --mini-line: #cbd7e1;
+  --mini-focus: #125d72;
+  --mini-on-focus: #fff;
+  --mini-error: #b02833;
+  font: 15px/1.55 system-ui, 'Microsoft YaHei', sans-serif;
+  background: var(--mini-base);
+  color: var(--mini-text);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mini-base: #101825;
+    --mini-surface: #192536;
+    --mini-text: #e7f1fa;
+    --mini-muted: #b0bfd1;
+    --mini-line: #364658;
+    --mini-focus: #8cd8e7;
+    --mini-on-focus: #11262b;
+    --mini-error: #ffb3ba;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+.mini-tools { max-width: 760px; margin: auto; padding: 24px clamp(16px, 5vw, 32px); }
+.mini-brand, small, .mini-model { color: var(--mini-muted); font-size: .85rem; }
+h1 { font-size: 1.65rem; line-height: 1.2; margin: 4px 0 22px; }
+h2 { font-size: 1.1rem; margin: .6rem 0; overflow-wrap: anywhere; }
+.mini-preview { display: block; width: 100%; max-height: 45vh; object-fit: contain; border: 1px solid var(--mini-line); border-radius: 10px; background: var(--mini-surface); margin-bottom: 18px; }
+button, .mini-primary, input, textarea { font: inherit; border: 1px solid var(--mini-line); border-radius: 8px; background: var(--mini-surface); color: inherit; padding: 8px 12px; }
+button, a { cursor: pointer; }
+button:disabled { opacity: .55; cursor: default; }
+:focus-visible { outline: 2px solid var(--mini-focus); outline-offset: 2px; }
+.mini-primary { background: var(--mini-focus); color: var(--mini-on-focus); border-color: transparent; text-decoration: none; }
+.mini-actions, .mini-query { display: flex; gap: 8px; }
+input { min-width: 0; flex: 1; }
+label { display: block; font-size: .92rem; margin: .6rem 0; }
+textarea { width: 100%; resize: vertical; margin-bottom: 8px; }
+article, .mini-hit { margin-top: 12px; padding: 14px; border: 1px solid var(--mini-line); background: var(--mini-surface); border-radius: 10px; }
+.mini-hit { display: grid; width: 100%; text-align: start; gap: 3px; }
+.mini-hit span, .mini-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+article small { display: block; margin-top: 10px; }
+[role="alert"] { color: var(--mini-error); }

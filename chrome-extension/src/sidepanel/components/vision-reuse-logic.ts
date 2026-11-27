@@ -1,3 +1,4 @@
+import { modelSpec } from "../utils/reasoning-effort"
 // Vision settings: multimodal heuristic + "reuse main LLM for vision side-pipeline".
 // Pure functions only (model-switch-logic precedent) — node:test, no React.
 //
@@ -81,10 +82,16 @@ export function extractHostname(url: string | undefined | null): string {
 // lock-step companion/src/llm/likely-multimodal.ts
 export type NativeVisionMode = "auto" | "on" | "off"
 
-export function likelyMultimodal(modelName: string | undefined | null): boolean {
+export function likelyMultimodal(modelName: string | undefined | null, baseUrl?: string | null): boolean {
   const m = (modelName || "").trim().toLowerCase()
   if (!m) return false
-  if (/deepseek/.test(m)) return false
+  if (baseUrl && (modelSpec("openai", baseUrl, m)?.imageInput || modelSpec("anthropic", baseUrl, m)?.imageInput)) return true
+  if (/deepseek/.test(m)) {
+    // Flash and its legacy aliases accept images on the official API. A gateway
+    // with the same model name needs its own probe or explicit override.
+    return ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].includes(m) &&
+      /^https:\/\/api\.deepseek\.com(?::443)?(?:\/(?:anthropic(?:\/v1)?|v1))?\/?$/i.test((baseUrl || "").trim())
+  }
   if (/\br1\b/.test(m) && !/vision|vl/.test(m)) return false
   if (/(^|[-_])(coder|reasoner)($|[-_])/.test(m) && !/vl|vision|omni/.test(m)) return false
   if (/kimi-k2/.test(m) && !/vl|vision|omni/.test(m)) return false
@@ -170,7 +177,7 @@ export function resolveNativeVision(opts: {
   if (mode === "off") return false
   // Keyed {url,model} probe bit echoed by companion config.test. An unkeyed
   // session flag would leak "native" onto any later model — never accepted.
-  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") ?? likelyMultimodal(opts.modelName)
+  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") ?? likelyMultimodal(opts.modelName, opts.baseUrl)
 }
 
 /**

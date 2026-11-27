@@ -88,7 +88,7 @@ export class AnthropicProvider implements LlmProvider {
       temperature: support === "anthropic-47" || support === "anthropic-46" ? undefined : temperature,
       stream: true,
       maxTokens: streamMax,
-      maxTokenCeiling: providerModelLimits(this.config, model)?.output,
+      maxTokenCeiling: providerModelLimits(this.config, model, params.reasoning_effort ?? this.config.reasoning_effort)?.output,
     })
 
     Object.assign(body, reasoningParams(support, params.reasoning_effort ?? this.config.reasoning_effort, "anthropic"))
@@ -143,7 +143,7 @@ export class AnthropicProvider implements LlmProvider {
       temperature: support === "anthropic-47" || support === "anthropic-46" ? undefined : temperature,
       stream: false,
       maxTokens: completeMax,
-      maxTokenCeiling: providerModelLimits(this.config, model)?.output,
+      maxTokenCeiling: providerModelLimits(this.config, model, params.reasoning_effort ?? this.config.reasoning_effort)?.output,
     })
 
     Object.assign(body, reasoningParams(support, params.reasoning_effort ?? this.config.reasoning_effort, "anthropic"))

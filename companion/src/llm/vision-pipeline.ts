@@ -8,6 +8,8 @@ import type { VisionConfig } from "../config"
 import { logger } from "../logger"
 import { sniffRasterImage } from "./image-sniff"
 import { shouldBlockVisionRequest } from "./vision-reuse-inherit"
+import { reasoningSupport, reasoningWireEffort } from "./reasoning-effort"
+import { formatProbeHttpError } from "./connection-test"
 
 const DEFAULT_VISION_PROMPT =
   "You are a browser screenshot analyzer. Describe what you see in this image in detail. Include: " +
@@ -26,17 +28,31 @@ export interface VisionResult {
   cached: boolean
   model_used: string
   latency_ms: number
+  attempted_model?: string
+  error?: string
 }
 
 export class VisionOutputError extends Error {
-  constructor(readonly code: "empty" | "truncated" | "timeout") {
-    super({ empty: "Vision model returned empty response", truncated: "Vision model exhausted its output token budget", timeout: "Vision request timed out" }[code])
+  constructor(readonly code: "empty" | "reasoning_only" | "truncated" | "timeout") {
+    super({ empty: "Vision model returned no description", reasoning_only: "Vision model returned reasoning without a description", truncated: "Vision model exhausted its output token budget", timeout: "Vision request timed out" }[code])
+  }
+}
+
+export class VisionRequestError extends Error {
+  constructor(readonly reason: string, readonly attemptedModel?: string, readonly latencyMs = 0, detail = reason) {
+    super(`Vision analysis failed: ${detail}`)
   }
 }
 
 interface VisionAnalysisOptions {
   requireComplete?: boolean
   disableReasoning?: boolean
+  /** Bind the user's click to one transport snapshot through both asynchronous endpoint checks. */
+  consent?: { main: LlmConfig; current(): boolean }
+}
+
+function checkVisionConsent(options?: VisionAnalysisOptions): void {
+  if (options?.consent && !options.consent.current()) throw new VisionRequestError("图像处理目标或授权已变化，请重新确认")
 }
 
 interface CacheEntry {
@@ -149,7 +165,10 @@ export async function analyzeImage(
   // Scope the image hash to endpoint + model so two models (or the native
   // track vs the vision track) never share a cached description — and
   // model_used on a cache hit names the model that actually produced it.
-  const key = hashBase64(JSON.stringify([resolveVisionLlmConfig(config), customPrompt || config.prompt || DEFAULT_VISION_PROMPT, config.max_tokens, options, image.base64]))
+  checkVisionConsent(options)
+  const providerConfig = resolveVisionLlmConfig(config, options?.consent?.main)
+  const key = hashBase64(JSON.stringify([providerConfig, customPrompt || config.prompt || DEFAULT_VISION_PROMPT, config.max_tokens,
+    options?.requireComplete, options?.disableReasoning, !!options?.consent, image.base64]))
 
   // Check cache
   const cached = getCached(key, config.cache_ttl_seconds)
@@ -168,7 +187,9 @@ export async function analyzeImage(
     return buildFallback(image, config, "Image too large for local model")
   }
 
-  const promise = doAnalyze(image, config, key, customPrompt, signal, options)
+  const promise = doAnalyze(image, config, providerConfig, key, customPrompt, signal, options)
+  // Each consent-bound caller owns its own final permission check and abort signal.
+  if (options?.consent) return promise
   inflight.set(key, promise)
 
   try {
@@ -181,6 +202,7 @@ export async function analyzeImage(
 async function doAnalyze(
   image: ImageInput,
   config: VisionConfig,
+  providerConfig: LlmConfig,
   cacheKey: string,
   customPrompt?: string,
   signal?: AbortSignal,
@@ -188,6 +210,7 @@ async function doAnalyze(
 ): Promise<VisionResult> {
   const startTime = Date.now()
   let timeout: AbortSignal | undefined
+  let attemptedModel: string | undefined
 
   try {
     const apiKey = config.api_key || "ollama"
@@ -220,31 +243,34 @@ async function doAnalyze(
 
     timeout = AbortSignal.timeout(config.timeout_ms)
     const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
-    const response = await createProvider(resolveVisionLlmConfig(config)).complete({
+    const support = reasoningSupport(providerConfig.protocol, providerConfig.base_url, config.model_name)
+    const disableReasoning = options?.disableReasoning || reasoningWireEffort(support, "none") === "none"
+    const response = await createProvider(providerConfig).complete({
       model: config.model_name,
       messages: [{ role: "user", content: [
         { type: "image_url", image_url: { url: dataUrl } },
         { type: "text", text: prompt },
       ] }],
       max_tokens: config.max_tokens,
-      reasoning_effort: options?.disableReasoning ? "none" : undefined,
+      reasoning_effort: disableReasoning ? "none" : undefined,
       temperature: 0.3,
       signal: requestSignal,
+      rejectRedirects: !!options?.consent,
+      beforeSend: () => {
+        requestSignal.throwIfAborted()
+        checkVisionConsent(options)
+        attemptedModel = config.model_name
+      },
     })
     const description = response.content.trim()
     const latencyMs = Date.now() - startTime
 
-    if (options?.requireComplete && ["length", "max_tokens"].includes(response.finish_reason ?? "")) {
+    if ((options?.requireComplete || !description) && ["length", "max_tokens"].includes(response.finish_reason ?? "")) {
       throw new VisionOutputError("truncated")
     }
     if (!description) {
       logger.warn("vision.empty_response", { model: config.model_name,  })
-      if (options?.requireComplete) throw new VisionOutputError("empty")
-      return buildFallback(
-        image,
-        config,
-        "Vision model returned empty response",
-      )
+      throw new VisionOutputError(response.reasoning?.trim() || response.usage?.reasoning_tokens ? "reasoning_only" : "empty")
     }
 
     setCache(cacheKey, description, config.model_name)
@@ -252,7 +278,8 @@ async function doAnalyze(
 
     return { description, cached: false, model_used: config.model_name, latency_ms: latencyMs }
   } catch (err: any) {
-    if (err instanceof VisionOutputError) throw err
+    if (err instanceof VisionRequestError) throw err
+    if (options?.requireComplete && err instanceof VisionOutputError) throw err
     if (options?.requireComplete && timeout?.aborted && !signal?.aborted) throw new VisionOutputError("timeout")
     const latencyMs = Date.now() - startTime
     logger.warn("vision.analysis_failed", {
@@ -260,7 +287,10 @@ async function doAnalyze(
       model: config.model_name,
       latency_ms: latencyMs,
     })
-    return buildFallback(image, config, err.message)
+    const reason = err instanceof VisionOutputError ? err.message : Number.isInteger(err.status)
+      ? formatProbeHttpError(err.status, config.protocol ?? "openai")
+      : "图像请求失败，请核对服务连接、协议和模型名称"
+    return buildFallback(image, config, err.message, attemptedModel, latencyMs, reason)
   }
 }
 
@@ -325,9 +355,9 @@ function extractRawServerError(err: unknown): string | undefined {
   return err
 }
 
-function buildFallback(image: ImageInput, config: VisionConfig, error: string): VisionResult {
+function buildFallback(image: ImageInput, config: VisionConfig, error: string, attemptedModel?: string, latencyMs = 0, reason = error): VisionResult {
   if (config.fallback === "error") {
-    throw new Error(`Vision analysis failed: ${error}`)
+    throw new VisionRequestError(reason, attemptedModel, latencyMs, error)
   }
 
   const subject = formatVisionFallbackSubject(image.title, image.url, image.width, image.height)
@@ -337,7 +367,7 @@ function buildFallback(image: ImageInput, config: VisionConfig, error: string): 
       description: `${subject}. Vision unavailable: ${error}`,
       cached: false,
       model_used: "none",
-      latency_ms: 0,
+      latency_ms: latencyMs, error: reason, attempted_model: attemptedModel,
     }
   }
 
@@ -346,6 +376,6 @@ function buildFallback(image: ImageInput, config: VisionConfig, error: string): 
     description: `${subject}. Vision model unavailable: ${error}`,
     cached: false,
     model_used: "none",
-    latency_ms: 0,
+    latency_ms: latencyMs, error: reason, attempted_model: attemptedModel,
   }
 }

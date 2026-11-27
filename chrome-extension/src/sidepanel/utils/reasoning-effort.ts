@@ -12,10 +12,10 @@ export const effortLevels = {
   "anthropic-46": [...three, "max"], "anthropic-47": five, "glm-53": ["low", "high", "max"],
   "glm-52": ["none", "high", "max"], three, four, five, six: ["none", ...five],
   "minimal-three": ["minimal", ...three], "off-three": ["none", ...three],
-  switch: ["none", "high"], "adaptive-switch": ["none", "high"], unsupported: [],
+  qwen4: ["none", "low", "high", "xhigh"], switch: ["none", "high"], "adaptive-switch": ["none", "high"], unsupported: [],
 } as const satisfies Record<string, readonly ReasoningEffort[]>
 export type ReasoningSupport = keyof typeof effortLevels
-type Provider = "OpenAI" | "DeepSeek" | "Anthropic" | "智谱" | "Kimi" | "Grok" | "Gemini" | "MiniMax" | "Magpie"
+type Provider = "OpenAI" | "DeepSeek" | "Anthropic" | "智谱" | "Kimi" | "Grok" | "Gemini" | "MiniMax" | "Magpie" | "千问"
 type ModelSpec = {
   provider: Provider
   models: readonly string[]
@@ -23,6 +23,7 @@ type ModelSpec = {
   output?: number
   support: ReasoningSupport
   source: string
+  imageInput?: boolean
   responsesForTools?: boolean
 }
 
@@ -48,8 +49,9 @@ const catalog: readonly ModelSpec[] = [
   { provider: "智谱", models: ["glm-5.1"], contextWindow: 200000, output: 128000, support: "switch", source: "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.1" },
   { provider: "Kimi", models: ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"], contextWindow: 1048576, output: 1048576, support: "kimi", source: "https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart" },
   { provider: "OpenAI", models: ["gpt-5.5"], contextWindow: 1050000, output: 128000, support: "openai", source: openaiSpecs },
-  { provider: "OpenAI", models: ["gpt-6.2-sol", "gpt-6.2-astra"], support: "five", contextWindow: 1050000, output: 128000, responsesForTools: true, source: openaiSpecs },
-  { provider: "OpenAI", models: ["gpt-6.1-terra"], support: "six", responsesForTools: true, source: openaiSpecs },
+  { provider: "OpenAI", models: ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol", "gpt-6-astra"], support: "five", contextWindow: 1050000, output: 128000, responsesForTools: true, imageInput: true, source: openaiSpecs },
+  { provider: "OpenAI", models: ["gpt-6-sol", "gpt-6-luna"], support: "six", contextWindow: 1050000, output: 128000, responsesForTools: true, imageInput: true, source: openaiSpecs },
+  { provider: "OpenAI", models: ["gpt-6.1-terra"], support: "six", contextWindow: 1050000, output: 128000, responsesForTools: true, imageInput: true, source: openaiSpecs + "gpt-6.1-terra" },
   { provider: "OpenAI", models: ["o3", "o4-mini"], support: "three", source: openaiSpecs },
   { provider: "OpenAI", models: ["gpt-5", "gpt-5-mini", "gpt-5-nano"], support: "minimal-three", source: openaiSpecs },
   { provider: "Anthropic", models: ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-2", "claude-mythos-5-2"], support: "anthropic-47", source: anthropicSpecs },
@@ -65,10 +67,25 @@ const catalog: readonly ModelSpec[] = [
   { provider: "智谱", models: ["glm-5", "glm-4.7"], support: "switch", source: glmSpecs },
   { provider: "Kimi", models: ["kimi-k3"], support: "kimi", source: "https://platform.kimi.com/docs/guide/kimi-k3-quickstart" },
   { provider: "Kimi", models: ["kimi-k2.6", "kimi-k2.5"], support: "switch", source: "https://platform.kimi.com/docs/guide/kimi-k2-5-quickstart" },
+  { provider: "千问", models: ["qwen4-max"], support: "qwen4", imageInput: true, contextWindow: 1000000, output: 262144, source: "https://help.aliyun.com/zh/model-studio/qwen4-max" },
   { provider: "MiniMax", models: ["MiniMax-M3.1-Flash"], support: "five", source: minimaxSpecs },
   { provider: "MiniMax", models: ["MiniMax-M3"], support: "adaptive-switch", source: minimaxSpecs },
   { provider: "MiniMax", models: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"], support: "unsupported", source: minimaxSpecs },
 ]
+
+// GLM-5.4 is available through Coding Plan before the standard Model API.
+const glm54: ModelSpec = { provider: "智谱", models: ["glm-5.4"], contextWindow: 1000000, output: 128000,
+  imageInput: true, support: "glm-53", source: "https://docs.bigmodel.cn/cn/coding-plan/latest-model" }
+
+function glmCodingPlan(protocol: unknown, baseUrl: unknown): boolean {
+  if (typeof baseUrl !== "string") return false
+  let url: URL
+  try { url = new URL(baseUrl) } catch { return false }
+  if (!["https://open.bigmodel.cn", "https://api.z.ai"].includes(url.origin) || url.username || url.password || url.search || url.hash) return false
+  const path = url.pathname.replace(/\/$/, "")
+  if (protocol === "anthropic") return path === "/api/anthropic" || path === "/api/anthropic/v1"
+  return (protocol === "openai" || protocol === undefined) && path === "/api/coding/paas/v4"
+}
 
 function directProvider(protocol: unknown, baseUrl: unknown): Provider | undefined {
   if (typeof baseUrl !== "string") return
@@ -77,6 +94,9 @@ function directProvider(protocol: unknown, baseUrl: unknown): Provider | undefin
   if (url.protocol !== "https:" || url.username || url.password || url.port || url.search || url.hash) return
   const path = url.pathname.replace(/\/$/, "")
   if (protocol === "anthropic" && url.hostname === "api.anthropic.com" && ["", "/v1"].includes(path)) return "Anthropic"
+  const dashscope = ["dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com", "dashscope-us.aliyuncs.com", "cn-hongkong.dashscope.aliyuncs.com"].includes(url.hostname)
+  if (dashscope && (protocol === "openai" || protocol === undefined) && path === "/compatible-mode/v1") return "千问"
+  if (dashscope && protocol === "anthropic" && ["/apps/anthropic", "/apps/anthropic/v1"].includes(path)) return "千问"
   const miniMax = ["api.minimax.io", "api.minimaxi.com"].includes(url.hostname)
   if (protocol === "anthropic" && url.hostname === "api.deepseek.com" && ["/anthropic", "/anthropic/v1"].includes(path)) return "DeepSeek"
   if (protocol === "anthropic" && miniMax && ["/anthropic", "/anthropic/v1"].includes(path)) return "MiniMax"
@@ -95,7 +115,8 @@ export function isCompatibilityGateway(protocol: unknown, baseUrl: unknown): boo
   return directProvider(protocol, baseUrl) === undefined
 }
 
-export function modelSpec(protocol: unknown, baseUrl: unknown, model: unknown): ModelSpec | undefined {
+export function modelSpec(protocol: unknown, baseUrl: unknown, model: unknown, effort?: unknown): ModelSpec | undefined {
+  if (model === "glm-5.4" && glmCodingPlan(protocol, baseUrl)) return glm54
   // Magpie exposes provider-qualified IDs, optional context suffixes, and
   // translates Messages output_config.effort to its upstream Grok request.
   if (typeof baseUrl === "string" && /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):3425(?:\/v1)?\/?$/.test(baseUrl)
@@ -104,12 +125,14 @@ export function modelSpec(protocol: unknown, baseUrl: unknown, model: unknown): 
     if (match) return { provider: "Magpie", models: [model], support: match[1] === "grok-4.5" ? "three" : "four", source: "https://github.com/yetone/magpie" }
   }
   const provider = directProvider(protocol, baseUrl)
-  return catalog.find(entry => entry.provider === provider && typeof model === "string" && entry.models.includes(model))
+  const spec = catalog.find(entry => entry.provider === provider && typeof model === "string" && entry.models.includes(model))
+  return spec?.support === "qwen4" && effort === "none" ? { ...spec, output: 131072 } : spec
 }
 
 export function modelSuggestions(protocol: unknown, baseUrl: unknown): string[] {
   const provider = directProvider(protocol, baseUrl)
-  return catalog.filter(entry => entry.provider === provider).flatMap(entry => entry.models)
+  const models = catalog.filter(entry => entry.provider === provider).flatMap(entry => entry.models)
+  return glmCodingPlan(protocol, baseUrl) ? [...glm54.models, ...models] : models
 }
 
 export function reasoningSupport(protocol: unknown, baseUrl: unknown, model: unknown): ReasoningSupport {
@@ -137,6 +160,7 @@ export function reasoningParams(support: ReasoningSupport, value: unknown, proto
   if (support === "switch" || support === "adaptive-switch") {
     return { thinking: { type: effort === "none" ? "disabled" : support === "adaptive-switch" ? "adaptive" : "enabled" } }
   }
+  if (support === "qwen4" && protocol === "openai") return effort === "none" ? { enable_thinking: false } : { enable_thinking: true, reasoning_effort: effort }
   if (support === "anthropic-46" || support === "anthropic-47") return { thinking: { type: "adaptive" }, output_config: { effort } }
   if (protocol === "anthropic" && effort === "none") return { thinking: { type: "disabled" } }
   return protocol === "anthropic" ? { output_config: { effort } } : { reasoning_effort: effort }

@@ -22,6 +22,8 @@ export type TrayActionType =
   | "show-pairing"
   | "summoner"
   | "summoner-toggle"
+  | "mini-toggle"
+  | "mini-hotkeys"
   | "desktop"
 
 export interface TrayMenuAction {
@@ -98,6 +100,7 @@ export interface UnifiedTray {
   start(config: TrayConfig): Promise<void>
   updateStatus(status: "running" | "stopped" | "unknown", wsConnected: boolean, pid: number | null): void
   updateAutostart(enabled: boolean): void
+  setMiniVisible?(visible: boolean): void
   setQuickActions(actions: QuickActionItem[]): void
   setRecentThreads(threads: RecentThreadItem[]): void
   onAction(callback: (action: TrayMenuAction) => void): void

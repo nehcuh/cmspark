@@ -29,6 +29,17 @@ test("resolveNativeVision: on/off override heuristic", () => {
   assert.equal(resolveNativeVision({ modelName: "foo-bar-7b", mode: "auto", detected: false }), false)
 })
 
+test("official DeepSeek Flash aliases support images while Pro and unprobed gateway aliases remain text-only", () => {
+  for (const modelName of ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]) {
+    for (const baseUrl of ["https://api.deepseek.com/v1", "https://api.deepseek.com/anthropic"]) {
+      assert.equal(resolveNativeVision({ baseUrl, modelName }), true)
+      assert.equal(resolveNativeVision({ baseUrl, modelName, mode: "off" }), false)
+    }
+    assert.equal(resolveNativeVision({ baseUrl: "https://gateway.invalid/v1", modelName }), false)
+  }
+  assert.equal(resolveNativeVision({ baseUrl: "https://api.deepseek.com", modelName: "deepseek-v4-pro" }), false)
+})
+
 test("visionConfigForAnalyze prefers main LLM when native", () => {
   const cfg = visionConfigForAnalyze(
     { base_url: "http://10.1.1.1/v1", api_key: "sk-x", model_name: "gpt-4o", protocol: "openai" },
@@ -41,9 +52,18 @@ test("visionConfigForAnalyze prefers main LLM when native", () => {
 
 test("visionConfigForAnalyze keeps vision rail when main is text-only", () => {
   const cfg = visionConfigForAnalyze(
-    { base_url: "https://api.deepseek.com/v1", api_key: "sk-x", model_name: "deepseek-v4-flash" },
+    { base_url: "https://api.deepseek.com/v1", api_key: "sk-x", model_name: "deepseek-v4-pro" },
     { enabled: true, base_url: "http://127.0.0.1:11434/v1", api_key: "ollama", model_name: "llava:7b" },
   )
   assert.ok(cfg)
   assert.equal(cfg!.model_name, "llava:7b")
+})
+
+test("catalog image input matches the actual supported endpoint", () => {
+  assert.equal(likelyMultimodal("glm-5.4", "https://api.z.ai/api/coding/paas/v4"), true)
+  assert.equal(likelyMultimodal("glm-5.4", "https://open.bigmodel.cn/api/anthropic"), true)
+  assert.equal(likelyMultimodal("glm-5.4", "https://open.bigmodel.cn/api/paas/v4"), false)
+  assert.equal(likelyMultimodal("qwen4-max", "https://dashscope.aliyuncs.com/compatible-mode/v1"), true)
+  assert.equal(likelyMultimodal("gpt-6-luna", "https://api.openai.com/v1"), true)
+  assert.equal(likelyMultimodal("gpt-6-luna", "https://relay.example/v1"), false)
 })

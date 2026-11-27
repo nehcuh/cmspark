@@ -241,6 +241,12 @@ export class CompanionClient {
     return this._state
   }
 
+  /** User gestures may outlive an authenticated socket, including a reconnect to the same port. */
+  currentConnectionGuard(): () => boolean {
+    const binding = this.ws && { socket: this.ws, auth: this.meetingAuth }
+    return () => !!binding && this.isMeetingConnection(binding)
+  }
+
   // --- Data fetching ---
 
   async fetchQuickActions(): Promise<QuickActionItem[]> {
@@ -565,7 +571,9 @@ export class CompanionClient {
 
   // --- Accessors for cached data ---
 
-  get quickActions(): QuickActionItem[] { return this.cachedQuickActions }
+  get quickActions(): QuickActionItem[] {
+    return [{ id: "screenshot-todo", title: "截图录待办…" }, ...this.cachedQuickActions]
+  }
   get recentThreads(): RecentThreadItem[] { return this.cachedThreads }
 
   // --- Internals ---

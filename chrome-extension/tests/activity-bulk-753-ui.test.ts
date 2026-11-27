@@ -78,13 +78,14 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos', allow
     dispatchEvent(event: any) { for (const fn of listeners.get(event.type) || []) fn(event); return true },
   }
   class CustomEventValue { type: string; detail: any; constructor(type: string, options?: any) { this.type = type; this.detail = options?.detail } }
-  const leafNames = new Set(['KnowledgeSubPanel', 'McpPanel', 'AppsPanel', 'PacksPanel', 'BoardPanel', 'MeetingPanel', 'ProjectPanel', 'personal-workspace/RecentActivitySources'])
+  const leafNames = new Set(['KnowledgeSubPanel', 'McpPanel', 'AppsPanel', 'PacksPanel', 'BoardPanel', 'MeetingPanel', 'ProjectPanel'])
   function load(file: string): any {
     file = path.resolve(file)
     if (modules.has(file)) return modules.get(file)
     const exports: any = {}; modules.set(file, exports)
     const source = fs.readFileSync(file === at('components/personal-workspace/PersonalWorkspace.tsx') && process.env.ACTIVITY_752_OLD_PERSONAL ? process.env.ACTIVITY_752_OLD_PERSONAL : file, 'utf8')
     const requireValue = (id: string): any => {
+      if (id === 'react-dom') return { createPortal: () => { throw new Error('unexpected floating window') } }
       if (id === 'react') return react
       if (id === 'react/jsx-runtime') return jsx
       assert.ok(id.startsWith('.'), `unexpected UI dependency ${id}`)
@@ -123,6 +124,7 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos', allow
           return unrelated()
         },
       }, tabs: { create: unrelated, query: unrelated } },
+      FileReader: class { result = 'data:image/png;base64,AA=='; onload?: () => void; readAsDataURL() { this.onload?.() } },
       CustomEvent: CustomEventValue, URL, URLSearchParams, AbortController, console, crypto: globalThis.crypto, setTimeout, clearTimeout,
     }, { timeout: 1000, filename: file })
     return exports
@@ -170,7 +172,7 @@ function uiHarness(fixture: Fixture, { full = true, initialView = 'todos', allow
   const navigate = (destination: string) => { const ui = render().root; const nav = find(ui, node => typeof node.type === 'function' && node.type.name === 'WorkspaceNavigation'); nav.props.onView(destination) }
   render(); render()
   return {
-    controller, calls, configurationCalls, activityApps, writes, rows, text, find, render, button, box, select, begin, navigate,
+    controller, calls, configurationCalls, activityApps, writes, rows, text, find, render, renderComponent, button, box, select, begin, navigate,
     setState(patch: any) { state = { ...state, ...patch } },
     state: () => state,
     defer() { deferEffects = true }, flush() { deferEffects = false; flush() },
@@ -185,6 +187,33 @@ async function withUI(run: (fixture: Fixture, ui: ReturnType<typeof uiHarness>) 
   const fixture = await createActivityFixture(); let ui: ReturnType<typeof uiHarness> | undefined
   try { ui = uiHarness(fixture, options); await run(fixture, ui) } finally { if (ui) await ui.dispose(); fixture.dispose() }
 }
+
+test('screenshot intake only offers drafts after the current recognition completes', async () => withUI(async (fixture, ui) => {
+  const draft = fixture.candidates[0]
+  const source = ui.controller.snapshot.sources.find((item: { id: string }) => item.id === draft.evidence.source_id)
+  ui.controller.snapshotCurrent = true
+  ui.controller.mutate = async (type: string, _payload: unknown, _notice: string, accept: (reply: unknown) => void) => {
+    assert.equal(type, 'activity.import')
+    accept({ source_id: source.id })
+    return true
+  }
+  function intake() {
+    const entry = ui.find(ui.render().panel, node => node.type?.name === 'ScreenshotTodoEntry')
+    return ui.renderComponent('screenshot-intake', entry.type, entry.props)
+  }
+  ui.button(intake(), '截图录待办').props.onClick()
+  const input = ui.find(intake(), node => node.type === 'input' && node.props.type === 'file')
+  input.props.onChange({ currentTarget: { files: [{ type: 'image/png', size: 1 }], value: 'test.png' } })
+  await new Promise<void>(resolve => setTimeout(resolve, 0))
+  await ui.button(intake(), '识别待办').props.onClick()
+
+  for (const status of ['queued', 'running', 'failed', 'complete']) {
+    source.recognition = { status, completed_at: source.captured_at, reason: '模型不可用', candidates: 1 }
+    const rendered = intake()
+    assert.equal(ui.text(rendered).includes(draft.title + ' · 核对草稿'), status === 'complete', status)
+    assert.equal(ui.find(rendered, node => node.type?.name === 'ManualScreenshotTodo').props.sourceId, source.id)
+  }
+}))
 
 test('753 actual full-page rows select explicit identities with sibling controls and preserve filtered selection preview', async () => withUI(async (fixture, ui) => {
   let panel = ui.render().panel

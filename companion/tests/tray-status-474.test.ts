@@ -17,6 +17,14 @@ test("tray has no adjacent title and status changes preserve menu action routing
     assert.equal(tray.seqMap[0].type, "start")
     assert.equal(tray.seqMap[1].type, "stop")
     assert.equal(tray.seqMap[2].type, "restart")
+    const settings = menu.items.findIndex((item: { title?: string }) => item.title === "Mini 快捷键设置")
+    if (process.platform === "win32") {
+      assert.ok(settings > 0)
+      assert.equal(tray.seqMap[settings - 1].type, "mini-toggle")
+      assert.equal(tray.seqMap[settings].type, "mini-hotkeys")
+    } else {
+      assert.equal(settings, -1)
+    }
   }
 })
 

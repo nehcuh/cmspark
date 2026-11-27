@@ -72,6 +72,7 @@ export class SysTray2Adapter implements UnifiedTray {
   // Cached state
   private status: string = "unknown"
   private autostartEnabled = false
+  private miniVisible = false
   private quickActions: QuickActionItem[] = []
   private recentThreads: RecentThreadItem[] = []
 
@@ -140,6 +141,12 @@ export class SysTray2Adapter implements UnifiedTray {
   updateAutostart(enabled: boolean): void {
     if (this.autostartEnabled === enabled) return
     this.autostartEnabled = enabled
+    this.rebuild()
+  }
+
+  setMiniVisible(visible: boolean): void {
+    if (this.miniVisible === visible) return
+    this.miniVisible = visible
     this.rebuild()
   }
 
@@ -216,6 +223,10 @@ export class SysTray2Adapter implements UnifiedTray {
 
     // Status detail
     push("状态详情", { type: "status" })
+    if (process.platform === "win32") {
+      push("显示 Mini 桌面小球", { type: "mini-toggle" }, { checked: this.miniVisible })
+      push("Mini 快捷键设置", { type: "mini-hotkeys" })
+    }
 
     // Quick Actions
     if (this.quickActions.length > 0) {
@@ -314,12 +325,12 @@ export class SysTray2Adapter implements UnifiedTray {
   private loadModule(): any {
     // In Node.js SEA mode, the standard require() cannot resolve npm packages
     // from the filesystem — it only finds built-in modules.
-    // Module.createRequire(process.execPath) creates a resolver that searches
-    // node_modules/ relative to the exe, which is where we place systray2.
+    // __filename is the executable in SEA, the bundle in portable builds, and
+    // this module in npm builds. Each resolves the dependencies of its own app.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Module = require("module") as typeof import("module")
-    const seaRequire = Module.createRequire(process.execPath)
-    const mod = seaRequire("systray2")
+    const localRequire = Module.createRequire(__filename)
+    const mod = localRequire("systray2")
     return (mod as any).default || (mod as any).SysTray || mod
   }
 }

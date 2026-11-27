@@ -615,7 +615,7 @@ export function SettingsSlideout() {
       Object.assign(config, { [key]: draft.value[key] })
     }
   }
-  const spec = modelSpec(config.protocol, config.base_url, config.model_name)
+  const spec = modelSpec(config.protocol, config.base_url, config.model_name, config.reasoning_effort)
   const support = spec?.support ?? "unsupported"
   const wireEffort = reasoningWireEffort(support, config.reasoning_effort)
   const toggleOnly = support === "switch" || support === "adaptive-switch"

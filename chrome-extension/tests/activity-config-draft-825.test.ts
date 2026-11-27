@@ -24,10 +24,7 @@ function exportedModule(source: string, file: string, requireValue = createRequi
  * no copy of submit, revision checks, RPC matching, service or store logic. */
 function loadHarness() {
   const fixtureFile = path.join(root, 'tests/helpers/activity-bulk-753.ts')
-  let fixtureSource = fs.readFileSync(fixtureFile, 'utf8')
-  fixtureSource = fixtureSource.replace('  const forbidden = () =>', '  const models = { llm: {}, computer: {}, vision: { base_url: "https://owned.invalid/v1", model_name: "owned-vl", api_key: "owned-fixture-only" } };\n  const forbidden = () =>')
-    .replace('getConfig: () => ({ llm: {}, computer: {} })', 'getConfig: () => models')
-    .replace('return { directory, handle, state:', 'return { service, into, models, directory, handle, state:')
+  const fixtureSource = fs.readFileSync(fixtureFile, 'utf8')
   const fixtureModule = exportedModule(fixtureSource, fixtureFile)
   const uiFile = path.join(root, 'tests/activity-bulk-753-ui.test.ts')
   let uiSource = fs.readFileSync(uiFile, 'utf8')

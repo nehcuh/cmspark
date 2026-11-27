@@ -176,6 +176,7 @@ function settingsNavigationHarness(full = true, sourceOverrides: Record<string, 
     const loadDependency = (id: string) => {
       if (id === "react") return react
       if (id === "react/jsx-runtime") return runtime
+      if (id === "react-dom") return { createPortal: () => assert.fail("unrelated floating window opened") }
       assert.ok(id.startsWith("."), `unexpected nonlocal component dependency ${id}`)
       const target = path.resolve(path.dirname(filename), id)
       if (target === at("store/agentStore") && store) return { ...store, useAgentStore: () => ({ state, dispatch }) }

@@ -23,9 +23,13 @@ import {
   RecentThreadItem,
 } from "./tray/tray-adapter"
 import { CompanionClient } from "./tray/companion-client"
+import { WindowsMini } from "./mini/windows-mini"
+import { captureMiniRegion } from "./mini/region-capture"
+import { isMiniCapture, openMiniAction, type MiniAction } from "./mini/actions"
 import { readPairingSecret, hasPaired } from "./tray/pairing"
 import { copyTextToClipboard } from "./tray/clipboard"
 import { OSASCRIPT_BIN } from "./process-path"
+import { resolvePowerShellExe } from "./host-use/win/powershell"
 import {
   attachChromeOnly,
   buildContinueChatCreate,
@@ -95,6 +99,7 @@ import { summonerVoiceRequestTimeout } from "./summoner/voice-input"
 const notifier = require("node-notifier") as {
   notify(options: { title?: string; message?: string; sound?: boolean | string; timeout?: number }): void
 }
+const windowsNotices = new Set<child_process.ChildProcess>()
 
 function safeNotify(options: { title?: string; message?: string; sound?: boolean | string; timeout?: number }): void {
   // Debug log to file (stdout is swallowed in SEA mode)
@@ -115,18 +120,14 @@ function safeNotify(options: { title?: string; message?: string; sound?: boolean
     return
   }
   if (process.platform === "win32") {
-    try {
-      const title = (options.title || "CMspark Agent").replace(/'/g, "''")
-      const msg = (options.message || "").replace(/'/g, "''")
-      // Blocking execSync: the MessageBox will stay on screen until the user clicks OK.
-      // This is intentional — we want the user to see the notification.
-      child_process.execSync(
-        `powershell.exe -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('${msg}', '${title}')"`,
-        { stdio: "inherit", windowsHide: false, timeout: 60000 }
-      )
-    } catch {
-      try { notifier.notify(options) } catch { /* ignore */ }
-    }
+    // Keep the dialog visible while the tray continues handling gestures, auth and replies.
+    const notice = child_process.execFile(resolvePowerShellExe(), ["-NoProfile", "-NonInteractive", "-Command",
+      "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($env:CMSPARK_NOTICE_TEXT,$env:CMSPARK_NOTICE_TITLE)"],
+    { windowsHide: true, timeout: 60_000, env: { ...process.env,
+      CMSPARK_NOTICE_TEXT: options.message || "", CMSPARK_NOTICE_TITLE: options.title || "CMspark Agent" } },
+    error => { if (error && !error.killed) { try { notifier.notify(options) } catch { /* ignore */ } } })
+    windowsNotices.add(notice)
+    notice.once("close", () => windowsNotices.delete(notice))
     return
   }
   try { notifier.notify(options) } catch { /* ignore */ }
@@ -200,6 +201,7 @@ let state: MenuBarState = {
 }
 
 let trayInstance: UnifiedTray | null = null
+let windowsMini: WindowsMini | undefined
 
 /**
  * P0a — accessor for server.ts to dispatch confirmation requests to the tray
@@ -1711,9 +1713,29 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
   }
 }
 
+async function runMiniAction(action: MiniAction, signal: AbortSignal): Promise<void> {
+  const client = companionClient
+  const current = client?.currentConnectionGuard()
+  if (!client || !current?.()) throw new Error("Companion 未连接，请在托盘中启动服务。")
+  const image = isMiniCapture(action) ? await captureMiniRegion(signal) : undefined
+  if (image === null || signal.aborted) return
+  if (client !== companionClient || !current()) throw new Error("Companion 连接已更改，请重新选择操作。")
+  await openMiniAction(client, action, image)
+}
+
 async function handleQuickAction(id: string): Promise<void> {
   if (!companionClient) {
     safeNotify({ title: "CMspark Agent", message: "Companion 未运行，无法执行操作", timeout: 3 })
+    return
+  }
+
+  if (id === "screenshot-todo") {
+    try {
+      const result = await companionClient.sendAppRequest("ui.open_sidepanel", { destination: "screenshot_todo" }, 8_000)
+      if (result?.type !== "ui.open_sidepanel.opened") throw new Error("workspace unavailable")
+    } catch {
+      safeNotify({ title: "截图录待办", message: "请打开 Chrome 并连接 CMspark 扩展，再从此处录入。", timeout: 5 })
+    }
     return
   }
 
@@ -1936,6 +1958,8 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       }
       break
     case "autostart": await toggleAutoStart(); break
+    case "mini-toggle": await windowsMini?.toggle(); break
+    case "mini-hotkeys": await windowsMini?.openHotkeySettings(); break
     case "quick-action":
       handleQuickAction(action.payload?.id || "").catch((err) => {
         console.error("[menu-bar] Quick action error:", err)
@@ -1964,6 +1988,8 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function cleanup(): void {
+  for (const notice of windowsNotices) notice.kill()
+  windowsNotices.clear()
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
@@ -2130,6 +2156,12 @@ export async function startMenuBarAgent(): Promise<void> {
 
   // Connect (non-blocking — data arrives via callbacks)
   companionClient.connect().catch(() => {})
+  if (process.platform === "win32" && activeBackend === "systray2") {
+    windowsMini = new WindowsMini(getConfigDir(), runMiniAction,
+      visible => trayInstance?.setMiniVisible?.(visible),
+      message => safeNotify({ title: "CMspark Mini", message, timeout: 5 }))
+    try { await windowsMini.start() } catch (error) { console.warn("[mini] Failed to start desktop orb:", error) }
+  }
   void pollUnattendedCruiseChip()
 
   // Second WS: overlay chat. Same origin; handshake surface=summoner (ACL).
@@ -2345,6 +2377,8 @@ async function runHudSpikeDualProcess(): Promise<void> {
 }
 
 export async function stopMenuBarAgent(): Promise<void> {
+  await windowsMini?.stop()
+  windowsMini = undefined
   if (trayInstance) {
     await trayInstance.stop()
     trayInstance = null

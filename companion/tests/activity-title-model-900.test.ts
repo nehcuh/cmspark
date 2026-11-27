@@ -38,7 +38,7 @@ test('reused and dedicated vision read only the calibrated title with separate c
     }) }),
   }, extractImage: async () => { bodyCalls++; return { transcript: '消息', entries: [] } } })
   try {
-    saveConfig({ vision: { ...original, base_url: 'http://127.0.0.1:8821', model_name: 'reused-fixture', protocol: 'openai', cache_ttl_seconds: 0 } })
+    saveConfig({ vision: { ...original, enabled: true, reuse_main_model: false, base_url: 'http://127.0.0.1:8821', model_name: 'reused-fixture', protocol: 'openai', cache_ttl_seconds: 0 } })
     const target = service.state().runtime.model_target_ids!.vision
     assert.equal((await configure(service, { ...scope, extraction_mode: 'vision', image_ai_enabled: true }, target)).ok, true)
     const scan = () => service.handle({ type: 'activity.scan' })
@@ -96,7 +96,9 @@ test('a pending title does not block new scans and revoking title consent discar
   const service = new ActivityService({ dataDir: dir, platform: 'darwin', now: () => now,
     readModelTitle: async () => new Promise(resolve => { reads++; finish = resolve }),
     recorder: { capture: async (config, signal) => ({ ...metadata, ...await scopeLocalFrame(config, app, 'owned', nextFrame(), signal, async () => localMatch ? profile.allowed_titles[0] : 'OCR错字') }) } })
+  const original = getConfig().vision!
   try {
+    saveConfig({ vision: { ...original, enabled: true } })
     const target = service.state().runtime.model_target_ids!.vision
     assert.equal((await configure(service, { ...scope, extraction_mode: 'vision', title_ai_enabled: true }, target)).ok, true)
     const first = service.scan()
@@ -118,5 +120,5 @@ test('a pending title does not block new scans and revoking title consent discar
     assert.equal((await configure(service, { title_ai_enabled: false })).ok, true)
     finish(profile.allowed_titles[0]); await pending
     assert.equal(service.state().sources.length, 3)
-  } finally { await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
+  } finally { saveConfig({ vision: original }); await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
 })

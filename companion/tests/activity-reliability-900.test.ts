@@ -238,3 +238,74 @@ test('retry after settings change queues behind a canceled OCR without letting t
     assert.equal(service.store.sourceMetadata(source.id).recognition?.status, 'saved')
   } finally { release(); await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
 })
+
+test('a legacy screenshot completion is refreshed once, then reused after restarting with the same model', async () => {
+  const dir = temp(), store = new ActivityStore(dir)
+  store.configure(0, { ocr_ai_enabled: true })
+  const source = store.addSource({ ...sourceInput, app_id: 'manual.screenshot', window_title: '', origin: 'manual_import',
+    recognition: { status: 'complete', completed_at: sourceInput.captured_at, candidates: 0 } }, png)!
+  const requests: string[] = []
+  const reopen = () => new ActivityService({ dataDir: dir, extract: async item => { requests.push(item.id); return [] } })
+  let service = reopen()
+  const intake = { type: 'activity.import', image_base64: png.toString('base64'), expected_model_target: 'ocr' }
+  try {
+    assert.equal((await service.handle(intake)).source_id, source.id)
+    await turn()
+    assert.deepEqual(requests, [source.id])
+    assert.equal(service.store.sourceMetadata(source.id).recognition?.status, 'complete')
+    await service.stop()
+    service = reopen()
+    assert.equal((await service.handle(intake)).source_id, source.id)
+    await turn()
+    assert.deepEqual(requests, [source.id])
+    assert.equal(service.state().sources.length, 1)
+  } finally { await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('desktop screenshot intake queues a specific source, retries a failed extraction and confirms editable fields', async () => {
+  const dir = temp()
+  const quote = '小陈整理报告，小林跟踪进度，发给小王。'
+  let calls = 0
+  const service = new ActivityService({ dataDir: dir, recorder: { capture: async () => null, ocrImage: async () => quote },
+    extract: async source => {
+      if (++calls === 1) throw new ActivityError('MODEL_FAILED', '测试模型暂时不可用')
+      return parseExtractedCandidates(JSON.stringify({ candidates: [
+        { title: '整理报告', owner: '小陈', tracker: '小林', feedback_to: '小王', quote },
+        { title: '交付报告', owner: '小陈', tracker: '无依据的人', quote },
+      ] }), source)
+    } })
+  try {
+    const intake = { type: 'activity.import', image_base64: png.toString('base64'), expected_model_target: 'ocr' }
+    assert.equal((await service.handle(intake)).ok, false)
+    assert.equal(service.state().sources.length, 0)
+    service.store.configure(0, { ocr_ai_enabled: true })
+    assert.equal((await service.handle({ ...intake, expected_model_target: 'f'.repeat(64) })).ok, false)
+    const reply = await service.handle(intake)
+    assert.equal(reply.ok, true)
+    const id = String(reply.source_id)
+    for (let n = 0; n < 20 && service.store.sourceMetadata(id).recognition?.status !== 'failed'; n++) await turn()
+    assert.equal(service.store.sourceMetadata(id).recognition?.status, 'failed')
+    await turn() // The next user request arrives after the failed job releases the queue.
+    await service.analyze(id)
+    const repeated = await service.handle(intake)
+    assert.equal(repeated.source_id, id)
+    const state = service.state()
+    assert.equal(calls, 2)
+    assert.equal(state.sources.length, 1)
+    assert.equal(state.todos.length, 0)
+    assert.equal(state.candidates.length, 2)
+    const draft = state.candidates.find(item => item.title === '整理报告')!
+    assert.equal(draft.tracker, '小林')
+    assert.equal(state.candidates.find(item => item.title === '交付报告')?.tracker, undefined)
+    const task = { title: '整理周报', owner: '小陈', tracker: '小李', due_at: '2026-11-30T10:00:00.000Z' }
+    const confirm = await service.handle({ type: 'todo.confirm', candidate_id: draft.id, expected_revision: draft.revision, task })
+    assert.equal(confirm.ok, true)
+    const saved = service.state().todos[0]
+    assert.equal(saved.evidence.source_id, id)
+    assert.equal(saved.feedback_to, '小王')
+    assert.equal(saved.tracker, task.tracker)
+    assert.equal(saved.due_at, task.due_at)
+    assert.equal((await service.handle({ type: 'todo.update', todo_id: saved.id, expected_revision: saved.revision, patch: { tracker: '' } })).ok, true)
+    assert.equal(service.state().todos[0].tracker, '')
+  } finally { await service.stop(); fs.rmSync(dir, { recursive: true, force: true }) }
+})

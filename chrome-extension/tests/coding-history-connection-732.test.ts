@@ -5,6 +5,7 @@ import fs from "node:fs"
 import path from "node:path"
 import vm from "node:vm"
 import ts from "typescript"
+import { createMiniRelay } from "../src/background/mini-actions"
 import { agentReducer, initialState, selectCodingSession, type AgentState } from "../src/sidepanel/store/agentStore"
 
 const repo = path.resolve(__dirname, "../../..")
@@ -50,7 +51,7 @@ function fixture(ending = "\n", flags: { open?: boolean; enabled?: boolean } = {
   const context = { dispatch, workspaceHintsRef: { current: { select() {}, observe() {}, view() { return null } } }, activeThreadRef: { current: "owner" }, workspaceHintSelectionRef: { current: 1 }, clearCodingOperationFeedback() {} }
   const route = compile(`export function consume(msg){${branch}}`, context).consume
   const producer = exact(background, n => ts.isFunctionDeclaration(n) && n.name?.text === "handleStateChange")
-  const emit = compile(`export ${producer}`, { updateBadge() {}, meetingVisualRelay: { disconnect() { visualDisconnects++ } }, cockpitNativeRelay: { disconnect() { nativeDisconnects++ } }, chrome: { runtime: { sendMessage(message: unknown) { route(message); return Promise.resolve() } } }, scheduleDisconnectNotification() {}, clearGraphRequests() {}, cancelDisconnectNotification() {}, clearDisconnectedNotification() {}, wsClient: { send() {} } }).handleStateChange
+  const emit = compile(`export ${producer}`, { updateBadge() {}, miniRelay: createMiniRelay(), meetingVisualRelay: { disconnect() { visualDisconnects++ } }, cockpitNativeRelay: { disconnect() { nativeDisconnects++ } }, chrome: { runtime: { sendMessage(message: unknown) { route(message); return Promise.resolve() } } }, scheduleDisconnectNotification() {}, clearGraphRequests() {}, cancelDisconnectNotification() {}, clearDisconnectedNotification() {}, wsClient: { send() {} } }).handleStateChange
   const render = () => compile(`export function install(){${effect}}`, { state, open: flags.open !== false, threadId: "owner", storeAcpEnabled: flags.enabled !== false, session: selectCodingSession(state), dispatch,
     crypto: { randomUUID: () => `connection-${++sequence}` }, chrome: { runtime: { lastError: undefined, sendMessage(message: unknown, done: () => void) { wire.push(message); done() } } },
     useEffect(fn: () => void, next: unknown[]) { if (!dependencies || next.some((value, i) => !Object.is(value, dependencies![i]))) { dependencies = next; fn() } },

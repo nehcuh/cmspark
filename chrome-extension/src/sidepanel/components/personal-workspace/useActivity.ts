@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityRequestError, requestActivity, type ActivitySnapshot } from './activity-request'
+import { ActivityRequestError, requestActivity, type ActivitySnapshot, type ActivityReply } from './activity-request'
 
 export type ActivityBulkAction = 'handling_done' | 'feedback_done' | 'dismiss'
 export type ActivityBulkItem = { kind: 'todo' | 'candidate'; id: string; revision: number; title: string }
@@ -62,7 +62,7 @@ export function useActivity(connected: boolean, connectionRevision: number) {
     const timer = setInterval(() => { if (document.visibilityState !== 'hidden') void refresh() }, refreshInterval)
     return () => clearInterval(timer)
   }, [connected, refresh, refreshInterval])
-  const mutate = useCallback(async (type: string, data: Record<string, unknown>, success: string) => {
+  const mutate = useCallback(async (type: string, data: Record<string, unknown>, success: string, onSaved?: (reply: ActivityReply) => void) => {
     const owner = peer.current
     if (!connected || !owner.connected || snapshotPeer.current !== owner || writing.current) {
       if (live.current && connected && (!owner.connected || snapshotPeer.current !== owner)) setError('连接已变化，请先刷新本机记录后再保存。')
@@ -73,7 +73,7 @@ export function useActivity(connected: boolean, connectionRevision: number) {
     try {
       const result = await requestActivity(type, data, abort.signal)
       if (!live.current || abort.signal.aborted || peer.current !== owner) return false
-      accept(result.state, owner); setNotice(success); return true
+      accept(result.state, owner); setNotice(success); onSaved?.(result); return true
     } catch (e) {
       if (live.current && !abort.signal.aborted && peer.current === owner) {
         if (e instanceof ActivityRequestError) accept(e.state, owner)

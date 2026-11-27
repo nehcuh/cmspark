@@ -80,6 +80,10 @@ import {
   type ArmState,
 } from "./cockpit-focus-policy"
 
+import { createMiniRelay, miniPagePath } from "./mini-actions"
+import { MINI_PRIVATE_PORT } from "../utils/mini-request"
+
+const miniRelay = createMiniRelay()
 const desktopBrowserPeer = createDesktopBrowserPeerHandler()
 let wsClient: WSClient
 const meetingVisualRelay = createMeetingVisualRelay()
@@ -325,6 +329,10 @@ function init() {
 
   // Long-lived ports keep the service worker alive while UI surfaces are open
   chrome.runtime.onConnect.addListener((port) => {
+    if (port.name === MINI_PRIVATE_PORT) {
+      miniRelay.attach(port, frame => wsClient?.getState() === "connected" && wsClient.send(frame))
+      return
+    }
     if (port.name === MEETING_VISUAL_PORT) { meetingVisualRelay.attach(port, chrome.runtime.id, wsClient); return }
     if (port.name === COCKPIT_NATIVE_PORT) { void cockpitNativeRelay.attach(port); return }
     if (port.name === "cmspark-sidepanel") {
@@ -371,6 +379,7 @@ function handleStateChange(state: "connected" | "connecting" | "disconnected") {
   chrome.runtime.sendMessage({ type: "thread.mutation.connection", state }).catch(() => {})
 
   if (state === "disconnected") {
+    miniRelay.disconnect()
     meetingVisualRelay.disconnect()
     cockpitNativeRelay.disconnect()
     scheduleDisconnectNotification()
@@ -409,6 +418,7 @@ const pendingLlmOneshot = new Map<
 >()
 
 async function handleCompanionMessage(msg: any) {
+  if (miniRelay.receive(msg)) return
   if (meetingVisualRelay.receive(msg)) return
   if (cockpitNativeRelay.receive(msg)) return
   if (msg.type === "desktop.browser.peer.cancel") {desktopBrowserPeer.cancel(msg);return}
@@ -469,7 +479,7 @@ async function handleCompanionMessage(msg: any) {
   if (msg.type === "ui.open_sidepanel") {
     // True result round-trip: companion awaits ui.open_sidepanel.result by id
     // (short timeout → honest failure in the overlay), so never swallow errors.
-    const reply = (ok: boolean, error?: string) => {
+    const reply = (ok: boolean, error?: string, meetingOpened = false) => {
       if (typeof msg.id !== "string" || !msg.id) return
       try {
         wsClient?.send({
@@ -477,12 +487,43 @@ async function handleCompanionMessage(msg: any) {
           id: msg.id,
           ok,
           ...(error ? { error } : {}),
+          ...(meetingOpened ? { meeting_opened: true } : {}),
+          ...(typeof msg.destination === "string" && msg.destination.startsWith("mini_") ? { destination: msg.destination } : {}),
         })
       } catch {
         /* ws gone — companion side times out and reports failure honestly */
       }
     }
     try {
+      const mini = miniPagePath(msg.destination, msg.ticket)
+      if (mini) {
+        const url = chrome.runtime.getURL(mini)
+        if (msg.destination === "mini_todo" || msg.destination === "mini_meeting") {
+          const tab = await chrome.tabs.create({ url, active: true })
+          await chrome.windows.update(tab.windowId, { focused: true })
+        } else {
+          await chrome.windows.create({ url, type: "popup", focused: true, width: 510, height: 680 })
+        }
+        reply(true, undefined, msg.destination === "mini_meeting")
+        return
+      }
+      if (typeof msg.destination === "string" && msg.destination.startsWith("mini_")) {
+        reply(false, "当前 Chrome 扩展不支持此 Mini 操作")
+        return
+      }
+      if (msg.destination === "screenshot_todo") {
+        const url = chrome.runtime.getURL("tabs/workspace.html?view=todos&capture=todo")
+        const [existing] = await chrome.tabs.query({ url })
+        if (existing?.id != null) {
+          await chrome.tabs.update(existing.id, { active: true, url: url + "#todos/capture/" + crypto.randomUUID() })
+          await chrome.windows.update(existing.windowId, { focused: true })
+        } else {
+          const tab = await chrome.tabs.create({ url, active: true })
+          await chrome.windows.update(tab.windowId, { focused: true })
+        }
+        reply(true)
+        return
+      }
       const wins = await chrome.windows.getAll({ windowTypes: ["normal"], populate: true })
       let windowId = pickSidePanelWindow(wins)
       if (windowId == null) {

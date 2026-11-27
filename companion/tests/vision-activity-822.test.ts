@@ -32,7 +32,7 @@ test('local Gemma extraction disables reasoning and a truncated response keeps i
     return new Response(JSON.stringify({ choices: [choice] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
   try {
-    saveConfig({ vision: { ...visionBefore, base_url: 'http://127.0.0.1:1234', model_name: 'google/gemma-4-12b-qat', protocol: 'openai', max_tokens: 1024 } })
+    saveConfig({ vision: { ...visionBefore, enabled: true, reuse_main_model: false, base_url: 'http://127.0.0.1:1234', model_name: 'google/gemma-4-12b-qat', protocol: 'openai', max_tokens: 1024 } })
     const configured = await service.handle({ type: 'activity.configure', expected_revision: 0,
       expected_model_target: service.state().runtime.model_target_ids?.vision,
       patch: { extraction_mode: 'vision', image_ai_enabled: true, interval_ms: 3000 },
@@ -172,6 +172,7 @@ test('image import goes directly to the selected extractor, binds consent, redac
 })
 
 test('authorized Qwen import skips OCR and cloud text paths; changing reused global target expires consent', async () => {
+  const original = getConfig().vision!
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-822-local-'))
   let calls = 0
   const service = new ActivityService({ dataDir: directory, recorder: { capture: async () => null }, extract: async () => assert.fail('cloud text path used'),
@@ -182,14 +183,14 @@ test('authorized Qwen import skips OCR and cloud text paths; changing reused glo
     assert.equal(reply.ok, true)
     reply = await service.handle({ type: 'activity.import', image_base64: PNG })
     assert.equal(reply.ok, true); assert.equal(calls, 1); assert.equal(service.state().candidates.length, 1)
+    saveConfig({ vision: { ...original, enabled: true, reuse_main_model: false } })
     assert.equal((await service.handle({ type: 'activity.configure', expected_revision: service.state().revision, expected_model_target: service.state().runtime.model_target_ids?.vision, patch: { extraction_mode: 'vision', image_ai_enabled: true } })).ok, true)
     const before = activityModelTarget(service.store.config()).id
-    const original = getConfig().vision!
-    saveConfig({ vision: { ...original, model_name: 'changed-after-image-consent' } })
+    saveConfig({ vision: { ...getConfig().vision!, model_name: 'changed-after-image-consent' } })
     assert.notEqual(activityModelTarget(service.store.config()).id, before)
     assert.equal(service.state().config.image_ai_enabled, false)
     assert.equal((await service.handle({ type: 'activity.analyze', source_id: service.state().sources[0].id })).ok, false)
-  } finally { await service.stop(); fs.rmSync(directory, { recursive: true, force: true }) }
+  } finally { saveConfig({ vision: original }); await service.stop(); fs.rmSync(directory, { recursive: true, force: true }) }
 })
 
 test('revoking image consent cancels the active result before transcript/candidate persistence', async () => {
@@ -239,7 +240,9 @@ test('production Qwen extraction uses only its local session and cleans up the t
 test('an open consent form cannot authorize a globally changed vision endpoint', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cmspark-822-stale-target-'))
   const service = new ActivityService({ dataDir: directory })
+  const original = getConfig().vision!
   try {
+    saveConfig({ vision: { ...original, enabled: true, reuse_main_model: false } })
     const state = service.state(), shownTarget = state.runtime.model_target_ids!.vision
     saveConfig({ vision: { ...getConfig().vision!, base_url: 'https://changed-with-form-open.example/v1' } })
     assert.equal(service.state().revision, state.revision, 'global config writes do not revise activity state')
@@ -247,7 +250,7 @@ test('an open consent form cannot authorize a globally changed vision endpoint',
     assert.equal(reply.ok, false); assert.equal(reply.error_code, 'MODEL_TARGET_CHANGED')
     assert.equal(service.state().config.image_ai_enabled, false)
     assert.equal((await service.handle({ type: 'activity.configure', expected_revision: state.revision, expected_model_target: service.state().runtime.model_target_ids!.vision, patch: { extraction_mode: 'vision', image_ai_enabled: true } })).ok, true)
-  } finally { await service.stop(); fs.rmSync(directory, { recursive: true, force: true }) }
+  } finally { saveConfig({ vision: original }); await service.stop(); fs.rmSync(directory, { recursive: true, force: true }) }
 })
 
 test('strict vision recognition distinguishes a provider timeout from an empty model reply', async () => {
