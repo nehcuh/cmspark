@@ -88,6 +88,7 @@ function deliveryFrom(response: any, fallback: Delivery): Delivery {
 export async function beginMeetingExternalImport(options: {
   request: MeetingAsrRequest
   configIdentity: string
+  lang?: string
   segments: readonly AudioSegmentWav[]
   requestTimeoutMs: number
   signal: AbortSignal
@@ -105,7 +106,7 @@ export async function beginMeetingExternalImport(options: {
     if (signal.aborted) return failure("aborted")
     const reply = await request({
       type: "meeting.asr.authorize", config_identity: options.configIdentity, privacy_ack_v1: true,
-      privacy_ack_meeting_asr_v1: true, segments,
+      privacy_ack_meeting_asr_v1: true, segments, ...(options.lang ? { lang: options.lang } : {}),
     })
     if (reply?.type !== "meeting.asr.authorized" || typeof reply.token !== "string") return failure(reply?.code ?? "external_authorization_required")
     token = reply.token

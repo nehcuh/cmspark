@@ -1,5 +1,5 @@
 # An interactive drag produces one PNG on stdout. Escape, right-click and focus loss produce no bytes.
-param([Parameter(Mandatory=$true)][int]$OwnerPid)
+param([Parameter(Mandatory=$true)][int]$OwnerPid, [ValidateSet(0,3,5,10)][int]$DelaySeconds = 0)
 $ErrorActionPreference = 'Stop'
 try {
   Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -111,7 +111,7 @@ public sealed class MiniRegionPicker : Form {
     base.Dispose(disposing);
   }
 
-  public static void Run(int ownerPid) {
+  public static void Run(int ownerPid, int delaySeconds) {
     var previous = SetThreadDpiAwarenessContext(new IntPtr(-4)); // PER_MONITOR_AWARE_V2
     if (previous == IntPtr.Zero) throw new InvalidOperationException("DPI_CONTEXT");
     try {
@@ -122,6 +122,8 @@ public sealed class MiniRegionPicker : Form {
         Rectangle r = form.selection;
         if (r.Width > 8192 || r.Height > 8192 || (long)r.Width * r.Height > 16777216) throw new InvalidOperationException("MINI_REGION_TOO_LARGE");
         form.Hide();
+        // Let the target application receive clicks and hover events before sampling the selected pixels.
+        if (delaySeconds > 0 && owner.WaitForExit(delaySeconds * 1000)) return;
         if (DwmFlush() != 0 || VirtualDesktop() != form.desktop) throw new InvalidOperationException("DESKTOP_CHANGED");
         using (var bitmap = new Bitmap(r.Width, r.Height, PixelFormat.Format24bppRgb))
         using (var encoded = new MemoryStream()) {
@@ -137,7 +139,7 @@ public sealed class MiniRegionPicker : Form {
   }
 }
 '@
-  [MiniRegionPicker]::Run($OwnerPid)
+  [MiniRegionPicker]::Run($OwnerPid, $DelaySeconds)
 } catch {
   $message = $_.Exception.GetBaseException().Message
   if ($message -eq 'MINI_REGION_TOO_LARGE') { [Console]::Error.WriteLine('MINI_REGION_TOO_LARGE') }

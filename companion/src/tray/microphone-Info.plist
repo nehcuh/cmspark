@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>com.cmspark.tray</string>
+  <key>NSMicrophoneUsageDescription</key><string>CMspark 使用麦克风录制并转写你开始的会议。</string>
+</dict></plist>

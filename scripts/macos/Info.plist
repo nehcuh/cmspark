@@ -27,6 +27,8 @@
     <true/>
     <key>LSUIElement</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>CMspark 使用麦克风录制并转写你开始的会议。</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>LSMinimumSystemVersion</key>

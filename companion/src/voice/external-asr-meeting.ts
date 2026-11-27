@@ -1,3 +1,4 @@
+import { recognitionLanguage, transcriptionText } from "./transcription-language"
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
 import { reduceExternalConfig, defaultVoiceExternal, type VoiceExternalConfig } from "./external-asr-config"
 import { canonicalExternalUrl } from "./external-asr-url"
@@ -17,6 +18,7 @@ export interface MeetingAsrConfig {
 type Segment = { bytes: number; sha256: string }
 type Delivery = "not_sent" | "unknown" | "sent"
 type Import = {
+  language?: string
   token: string
   identity: string
   segments: Segment[]
@@ -69,7 +71,7 @@ export function validMeetingAsrMessage(message: any): boolean {
         (message.mode === "local" || message.mode === "external") && validExternalPatch(message.external)
     case "meeting.asr.authorize":
       return validIdentity(message.config_identity) && message.privacy_ack_v1 === true &&
-        message.privacy_ack_meeting_asr_v1 === true && Array.isArray(message.segments) &&
+        message.privacy_ack_meeting_asr_v1 === true && (message.lang === undefined || typeof message.lang === "string" && /^[a-z]{2,8}(?:-[A-Za-z]{2,4})?$/.test(message.lang)) && Array.isArray(message.segments) &&
         message.segments.length > 0 && message.segments.length <= MAX_SEGMENTS &&
         message.segments.every(validSegment)
     case "meeting.asr.segment":
@@ -168,7 +170,7 @@ export function createMeetingExternalAsr(deps: Pick<ExternalTranscribeRequest, "
           if (wav.length > target.segmentMs * 32 + 44) return { ok: false, code: "external_too_large", message: "meeting ASR audio limit" } as const
           const result = await transcribeExternal({
             style: target.style, url: target.normalizedUrl, apiKey: config.external.apiKey, wav,
-            ...(target.style === "openai" ? { model: target.model } : {}), language,
+            ...(target.style === "openai" ? { model: target.model } : {}), language: recognitionLanguage(language),
             signal: controller.signal, timeoutMs: target.requestTimeoutMs,
             lookup: deps.lookup, fetchImpl: deps.fetchImpl, beforeDispatch: current,
           })
@@ -178,7 +180,7 @@ export function createMeetingExternalAsr(deps: Pick<ExternalTranscribeRequest, "
             return { ...result, message: "meeting ASR segment failed" }
           }
           const text = result.text.replace(/^[ \t]*(?:>>[ \t]*)?\[BLANK_AUDIO\][ \t]*\r?$/gm, "").trim()
-          return { ...result, text, modelId: target.model }
+          return { ...result, text: transcriptionText(text, language), modelId: target.model }
         },
       }
     },
@@ -207,7 +209,7 @@ export function createMeetingExternalAsr(deps: Pick<ExternalTranscribeRequest, "
       }
       return state()
     },
-    authorize(peer: string, expected: string, segments: Segment[]) {
+    authorize(peer: string, expected: string, segments: Segment[], language?: string) {
       const config = readConfig()
       if (identity(config) !== expected) return asrError("external_configuration_changed")
       if (config.mode !== "external" || !meetingTarget(config).ready) return asrError("external_unconfigured")
@@ -220,7 +222,7 @@ export function createMeetingExternalAsr(deps: Pick<ExternalTranscribeRequest, "
       if (imports.has(peer) || imports.size >= MAX_IMPORTS) return asrError("external_import_busy")
       const token = randomUUID()
       imports.set(peer, {
-        token, identity: expected, segments: segments.map(part => ({ bytes: part.bytes, sha256: part.sha256 })),
+        token, identity: expected, language, segments: segments.map(part => ({ bytes: part.bytes, sha256: part.sha256 })),
         next: 0, expires: now() + IDLE_MS,
       })
       return { type: "meeting.asr.authorized", v: 1, token } as const
@@ -250,7 +252,7 @@ export function createMeetingExternalAsr(deps: Pick<ExternalTranscribeRequest, "
         const result = await transcribeExternal({
           style: target.style, url: target.normalizedUrl, apiKey: config.external.apiKey, wav,
           ...(target.style === "openai" ? { model: target.model } : {}),
-          signal: current.controller.signal, timeoutMs: target.requestTimeoutMs,
+          language: recognitionLanguage(job.language), signal: current.controller.signal, timeoutMs: target.requestTimeoutMs,
           lookup: deps.lookup, fetchImpl: deps.fetchImpl,
           beforeDispatch: () => {
             configurationChanged = identity(readConfig()) !== job.identity
@@ -264,7 +266,7 @@ export function createMeetingExternalAsr(deps: Pick<ExternalTranscribeRequest, "
         if (!result.ok) return asrError(result.code, current.delivery)
         job.next++
         job.expires = now() + IDLE_MS
-        return { type: "meeting.asr.result", v: 1, index, text: result.text, delivery: current.delivery } as const
+        return { type: "meeting.asr.result", v: 1, index, text: transcriptionText(result.text, job.language), delivery: current.delivery } as const
       } catch {
         return asrError("external_unreachable", current.delivery)
       } finally {
@@ -280,7 +282,7 @@ export function handleMeetingAsrMessage(message: any, peer: string | undefined, 
   switch (message.type) {
     case "meeting.asr.get": return service.state()
     case "meeting.asr.set": return service.set(message.mode, message.expected_identity, message.external)
-    case "meeting.asr.authorize": return service.authorize(peer, message.config_identity, message.segments)
+    case "meeting.asr.authorize": return service.authorize(peer, message.config_identity, message.segments, message.lang)
     case "meeting.asr.segment": return service.segment(peer, message.token, message.index, message.data)
     case "meeting.asr.cancel": return service.cancel(peer, message.token)
     default: return asrError("external_invalid_request")

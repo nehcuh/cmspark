@@ -43,6 +43,8 @@ test("helper artifact names are pinned (exe + sha256 sidecar)", () => {
 
 test("mapSttLangToSapiCulture: zh→zh-CN, en→en-US, exact culture passes through", () => {
   assert.equal(mapSttLangToSapiCulture("zh"), "zh-CN")
+  assert.equal(mapSttLangToSapiCulture("zh-Hant"), "zh-TW")
+  assert.equal(mapSttLangToSapiCulture("zh-Hans"), "zh-CN")
   assert.equal(mapSttLangToSapiCulture("zh-TW"), "zh-CN")
   assert.equal(mapSttLangToSapiCulture("en"), "en-US")
   assert.equal(mapSttLangToSapiCulture("en-US"), "en-US")

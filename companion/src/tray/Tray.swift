@@ -27,6 +27,7 @@ import AppKit
 import Foundation
 import Carbon
 import AVFoundation
+import WebKit
 
 // ---------------------------------------------------------------------------
 // JSON helpers
@@ -144,7 +145,7 @@ private struct MiniOrbPosition: Codable {
 private final class MiniOrbButton: NSButton {
   var openMenu: (() -> Void)?
   var openFan: (() -> MiniActionFan?)?
-  var selectFanAction: ((String) -> Void)?
+  var held: (() -> Void)?
   var closedFan: (() -> Void)?
   private var fan: MiniActionFan?
   var visibleMenu: NSWindow? { fan }
@@ -159,12 +160,14 @@ private final class MiniOrbButton: NSButton {
 
   override func mouseDown(with event: NSEvent) {
     guard let window else { return }
+    if fan != nil { cancelGesture(); return }
     cancelGesture()
     startPointer = window.convertPoint(toScreen: event.locationInWindow)
     startOrigin = window.frame.origin
     let timer = Timer(timeInterval: 0.45, repeats: false) { [weak self] _ in
       guard let self else { return }
-      self.fan = self.openFan?()
+      self.cancelGesture()
+      self.held?()
     }
     press = timer
     RunLoop.main.add(timer, forMode: .common)
@@ -173,7 +176,6 @@ private final class MiniOrbButton: NSButton {
   override func mouseDragged(with event: NSEvent) {
     guard let startPointer, let window else { return }
     let point = window.convertPoint(toScreen: event.locationInWindow)
-    if let fan { _ = fan.aim(at: point); return }
     let dx = point.x - startPointer.x, dy = point.y - startPointer.y
     if !dragging && hypot(dx, dy) < 4 { return }
     dragging = true
@@ -183,17 +185,13 @@ private final class MiniOrbButton: NSButton {
 
   override func mouseUp(with event: NSEvent) {
     guard startPointer != nil else { return }
-    if let fan, let window {
-      let choice = fan.aim(at: window.convertPoint(toScreen: event.locationInWindow))
-      cancelGesture()
-      if let choice { selectFanAction?(choice) }
-      return
-    }
     let didDrag = dragging
     cancelGesture()
     if didDrag { finishedMove?() }
-    else { sendAction(action, to: target) }
+    else { showFan() }
   }
+
+  @objc func showFan() { if fan == nil { fan = openFan?() } }
 
   override func rightMouseDown(with event: NSEvent) { cancelGesture(); openMenu?() }
   override func accessibilityPerformShowMenu() -> Bool { openMenu?(); return true }
@@ -218,6 +216,7 @@ private final class DesktopMini: NSObject {
   private var panel: NSPanel?
   private var button: MiniOrbButton?
   private var activeMenu: NSMenu?
+  private var regionPicker: MiniRegionSelection?
   private var position: MiniOrbPosition?
 
   override init() {
@@ -243,6 +242,8 @@ private final class DesktopMini: NSObject {
 
   private func hidePanel() {
     activeMenu?.cancelTracking()
+    regionPicker?.close()
+    regionPicker = nil
     button?.cancelGesture()
     if panel?.isVisible == true {
       panel?.orderOut(nil)
@@ -273,21 +274,26 @@ private final class DesktopMini: NSObject {
     control.wantsLayer = true
     control.layer?.backgroundColor = NSColor(srgbRed: 0.09, green: 0.12, blue: 0.16, alpha: 1).cgColor
     control.layer?.cornerRadius = size.height / 2
-    control.toolTip = "CMspark Mini · 点按快速对话，拖动移动；长按展开扇形菜单，滑选后松手执行。右键查看更多操作"
+    control.toolTip = "CMspark Mini · 单击展开操作菜单，长按打开快速对话，拖动移动"
     control.setAccessibilityLabel("CMspark Mini")
     control.setAccessibilityHelp(control.toolTip)
-    control.target = self
-    control.action = #selector(openChat)
+    control.target = control
+    control.action = #selector(MiniOrbButton.showFan)
+    control.held = { [weak self] in self?.openChat() }
     control.openMenu = { [weak self] in self?.showActions() }
     control.openFan = { [weak self, weak orb, weak control] in
       guard let self, let orb, let screen = orb.screen, self.enabled else { return nil }
       let fan = MiniActionFan(orb: orb, screen: screen)
       fan.onCancel = { [weak control] in control?.cancelGesture() }
+      fan.onChoose = { [weak control, weak self] action in
+        control?.cancelGesture()
+        if action == "delay" { self?.showActions(delaysOnly: true) }
+        else { self?.emitAction(action) }
+      }
       fan.makeKeyAndOrderFront(nil)
       emitCompanionUiRect("mini", window: fan)
       return fan
     }
-    control.selectFanAction = { [weak self] in self?.emitAction($0) }
     control.closedFan = { [weak self] in self?.publishVisibleRect() }
     control.moved = { [weak self] origin, pointer in self?.move(to: origin, pointer: pointer) }
     control.finishedMove = { [weak self] in self?.savePosition() }
@@ -334,6 +340,10 @@ private final class DesktopMini: NSObject {
   }
 
   @objc private func screensChanged() {
+    if let picker = regionPicker {
+      picker.close(); regionPicker = nil
+      if enabled { setVisible(true) }
+    }
     guard panel?.isVisible == true else { return }
     button?.cancelGesture()
     restorePosition()
@@ -347,27 +357,50 @@ private final class DesktopMini: NSObject {
 
   private func emitAction(_ id: String) {
     guard enabled else { return }
-    if ["todo", "ask", "ocr", "capture"].contains(id) { hidePanel() }
+    let parts = id.split(separator: ":")
+    if let name = parts.first, ["todo", "ask", "ocr", "capture"].contains(String(name)) {
+      hidePanel()
+      if parts.count == 2, let seconds = Int(parts[1]), [3, 5, 10].contains(seconds) {
+        let picker = MiniRegionSelection()
+        regionPicker = picker
+        picker.show(seconds: seconds) { [weak self] rect in
+          guard let self else { return }
+          self.regionPicker?.close()
+          self.regionPicker = nil
+          guard self.enabled else { return }
+          guard let rect else { self.setVisible(true); return }
+          jsonLine(["type": "click", "action": "mini-action", "id": id + ":" + rect])
+        }
+        return
+      }
+    }
     jsonLine(["type": "click", "action": "mini-action", "id": id])
   }
 
-  private func showActions() {
+  private func showActions(delaysOnly: Bool = false) {
     guard let button, panel?.isVisible == true else { return }
     let menu = NSMenu()
-    func append(_ title: String, _ id: String) {
+    func append(_ parent: NSMenu, _ title: String, _ id: String) {
       let item = NSMenuItem(title: title, action: #selector(selectAction(_:)), keyEquivalent: "")
       item.representedObject = id
       item.target = self
-      menu.addItem(item)
+      parent.addItem(item)
     }
-    append("快速对话", "chat")
-    append("搜索资料", "search")
-    append("会议记录", "meeting")
-    menu.addItem(.separator())
-    append("截图录待办…", "todo")
-    append("询问图片…", "ask")
-    append("识别截图文字…", "ocr")
-    append("仅截图…", "capture")
+    let captures = [("截图录待办…", "todo"), ("询问图片…", "ask"), ("识别截图文字…", "ocr"), ("仅截图…", "capture")]
+    let delays = delaysOnly ? menu : NSMenu()
+    if !delaysOnly {
+      append(menu, "快速对话", "chat")
+      append(menu, "搜索资料", "search")
+      append(menu, "会议记录", "meeting")
+      menu.addItem(.separator())
+      for (title, id) in captures { append(menu, title, id) }
+      menu.addItem(withTitle: "延时截图", action: nil, keyEquivalent: "").submenu = delays
+    }
+    for seconds in [3, 5, 10] {
+      let choices = NSMenu()
+      delays.addItem(withTitle: "框选后 \(seconds) 秒", action: nil, keyEquivalent: "").submenu = choices
+      for (title, id) in captures { append(choices, title, "\(id):\(seconds)") }
+    }
     activeMenu = menu
     menu.popUp(positioning: nil, at: NSPoint(x: button.bounds.midX, y: button.bounds.minY - 4), in: button)
     activeMenu = nil
@@ -375,6 +408,84 @@ private final class DesktopMini: NSObject {
 }
 
 private let desktopMini = DesktopMini()
+
+/// The Mini owns the meeting window so reopening it keeps the microphone and document alive.
+private final class MiniMeetingWindow: NSObject, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
+  private var window: NSWindow?
+  private var page: WKWebView?
+  private var address: URL?
+  private var closing = false
+
+  func show(port: Int) {
+    guard (1...65535).contains(port), let url = URL(string: "http://127.0.0.1:\(port)/#meeting") else { return }
+    if window == nil {
+      let config = WKWebViewConfiguration()
+      config.websiteDataStore = .nonPersistent()
+      let view = WKWebView(frame: .zero, configuration: config)
+      view.navigationDelegate = self
+      view.uiDelegate = self
+      let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
+                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                           backing: .buffered, defer: false)
+      panel.title = "CMspark · 会议记录"
+      panel.minSize = NSSize(width: 360, height: 360)
+      panel.isReleasedWhenClosed = false
+      panel.delegate = self
+      panel.contentView = view
+      panel.center()
+      window = panel
+      page = view
+    }
+    if address != url {
+      address = url
+      page?.load(URLRequest(url: url))
+    } else {
+      page?.evaluateJavaScript("document.getElementById('meetingOpen')?.click()")
+    }
+    window?.deminiaturize(nil)
+    window?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+
+  func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+               decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    let url = action.request.url
+    let allowed = url?.scheme == "http" && url?.host == "127.0.0.1" && url?.port == address?.port && url?.path == "/"
+    decisionHandler(allowed && action.targetFrame?.isMainFrame == true ? .allow : .cancel)
+  }
+
+  @available(macOS 12.0, *)
+  func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+               initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+               decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+    let local = origin.protocol == "http" && origin.host == "127.0.0.1" && origin.port == address?.port
+    decisionHandler(local && frame.isMainFrame && type == .microphone ? .prompt : .deny)
+  }
+
+  func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+               initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+    guard frame.isMainFrame, let window else { completionHandler(nil); return }
+    let picker = NSOpenPanel()
+    picker.beginSheetModal(for: window) { response in completionHandler(response == .OK ? picker.urls : nil) }
+  }
+
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    guard !closing, let page else { return false }
+    closing = true
+    page.callAsyncJavaScript("return await window.finishMiniMeeting?.()", arguments: [:], in: nil, in: .page) { result in
+      self.closing = false
+      if case .success(let value) = result, (value as? Bool) == false { return }
+      sender.close()
+      self.page = nil
+      self.window = nil
+      self.address = nil
+    }
+    return false
+  }
+}
+
+private let miniMeetingWindow = MiniMeetingWindow()
+
 
 // MARK: - Menu tags
 
@@ -838,6 +949,9 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
     hudController.hide(reason: "cmd")
 
   // --- Summoner overlay (Task 9). Third lazy window. Zero Allow/Deny chrome. ---
+  case "mini.meeting.open":
+    if let port = json["port"] as? Int { miniMeetingWindow.show(port: port) }
+
   case "summoner.open":
     let threadId = (json["thread_id"] as? String) ?? ""
     summonerController.open(threadId: threadId)

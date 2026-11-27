@@ -554,8 +554,15 @@ export function summonerWebIsShowing(): boolean {
 export function requestSummonerWebClose(): boolean {
   overlayLaunchAt = 0
   overlayCloseRequested = true
-  if (sseClients.size === 0) return false
-  const line = `data: ${JSON.stringify({ type: "shell.close" })}\n\n`
+  return sendShellEvent("shell.close")
+}
+
+export function revealSummonerMeeting(): boolean {
+  return !overlayCloseRequested && sendShellEvent("shell.meeting")
+}
+
+function sendShellEvent(type: "shell.close" | "shell.meeting"): boolean {
+  const line = `data: ${JSON.stringify({ type })}\n\n`
   for (const res of sseClients) {
     try {
       res.write(line)
@@ -563,7 +570,7 @@ export function requestSummonerWebClose(): boolean {
       sseClients.delete(res)
     }
   }
-  return true
+  return sseClients.size > 0
 }
 
 export function hideSummonerWebShell(): void {
@@ -1142,7 +1149,7 @@ async function handleRequest(
       // Engine is read from trusted configuration, never promoted by a page claim.
       if (getConfig().voice?.sttEngine === "system") payload.engine = "system"
       if (typeof body.lang === "string" && body.lang.trim()) {
-        payload.lang = body.lang.startsWith("zh") ? "zh" : body.lang
+        payload.lang = body.lang
       } else {
         payload.lang = "zh"
       }
@@ -1497,6 +1504,28 @@ body{
 .meeting-actions button:focus-visible{outline:none;box-shadow:var(--focus)}
 .meeting-actions button:disabled{opacity:.45;cursor:not-allowed}
 #meetingRec{background:var(--indigo);color:#fff;font-weight:500;flex:1}
+#meetingMaterials,#meetingProgress{margin:8px 12px;color:var(--secondary);font-size:12px;flex-shrink:0}
+#meetingMaterials>summary,#meetingProgress>summary{cursor:pointer;padding:4px 0}
+#meetingMaterials .meeting-tools,#meetingMaterials #meetingReferenceSection{margin-inline:0;padding-inline:0}
+.meeting-desk.recording .meeting-tools,.meeting-desk.recording #meetingMaterials,.meeting-desk.recording #meetingOriginal{display:none}
+.meeting-desk .meeting-live{background:var(--paper);border-top:1px solid var(--line);border-radius:0}
+.meeting-live .empty-live{text-align:left;color:var(--faint)}
+#meetingViews{display:flex;gap:16px;padding:0 14px;border-bottom:1px solid var(--line)}
+#meetingChapters[hidden],#meetingChapterTab[hidden]{display:none}
+#meetingChapters{margin:8px 14px}
+#meetingChapters button{display:block;text-align:left;width:100%;border:0;border-bottom:1px solid var(--line);padding:12px 4px;background:transparent;font:inherit;color:var(--text);cursor:pointer}
+#meetingMinutes button[data-turn]{border:0;border-radius:4px;background:var(--indigo-soft);color:var(--indigo);cursor:pointer}
+.meeting-live p:focus{outline:2px solid var(--indigo);outline-offset:2px}
+#meetingViews[hidden],.read-chapters #meetingLive,.read-minutes #meetingLive,.meeting-desk:not(.read-minutes) #meetingMinutes{display:none}
+#meetingViews button{border:0;border-bottom:2px solid transparent;padding:8px 0;background:transparent;color:var(--faint);font:inherit;cursor:pointer}
+#meetingViews button[aria-pressed="true"]{border-color:var(--accent);color:var(--text);font-weight:600}
+.meeting-minutes header{padding:16px;background:var(--tint);border-radius:10px}
+.meeting-minutes header h2{margin:0;font:600 24px/1.45 Georgia,"Songti SC",serif}
+.meeting-minutes time{font-size:12px;color:var(--faint)}
+.meeting-live p small{display:block;margin-bottom:4px;color:var(--faint);font-variant-numeric:tabular-nums}
+.meeting-live p{font-size:15px;line-height:1.7;overflow-wrap:anywhere}
+.meeting-desk .meeting-minutes{max-height:none;background:var(--paper);padding:16px;line-height:1.75;overflow-wrap:anywhere}
+.meeting-minutes h3{padding-top:12px;border-top:1px solid var(--line)}
 .meeting-desk.recording #meetingRec{background:#dc2626;color:#fff}
 #meetingMinutesBtn{background:var(--indigo-soft);color:var(--indigo)}
 .log{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:20px 22px;display:flex;flex-direction:column;gap:16px}
@@ -1691,10 +1720,10 @@ ${QUICK_CHAT_CSS}
         <span class="brand-actions">
           <button type="button" id="historyOpen" aria-expanded="false" title="导航" aria-label="导航">${chatIcon("history")}</button>
           <button type="button" id="newChat" title="新对话">${chatIcon("compose")}新对话</button>
+          <button type="button" id="meetingOpen" title="会议记录" aria-label="会议记录">${chatIcon("notes")}</button>
           <button type="button" id="moreActions" aria-controls="quickActions" aria-expanded="false" title="更多" aria-label="更多">${chatIcon("more")}</button>
           <span id="quickActions" role="group" aria-label="更多操作" hidden>
             <button type="button" id="meetingStart" aria-pressed="false">${chatIcon("mic")}开始会议</button>
-            <button type="button" id="meetingOpen">${chatIcon("folder")}会议材料</button>
             <span class="menu-rule" aria-hidden="true"></span>
             <button type="button" id="operateOpen">${chatIcon("history")}打开浏览器侧栏</button>
             <button type="button" id="cruiseChip" class="cruise-chip" title="在侧栏调整执行档位">${chatIcon("controls")}<span>执行档位 · <span id="cruiseLabel">%%CRUISE_LABEL%%</span></span></button>
@@ -1791,21 +1820,23 @@ ${QUICK_CHAT_CSS}
     </div>
   <div class="meeting-desk" id="meetingDesk" hidden>
     <div class="meeting-head">
-      <strong>会议</strong>
+      <strong>会议记录</strong>
       <button type="button" class="meeting-back" id="meetingBack">返回对话</button>
     </div>
     <div class="meeting-status">
       <span class="meeting-dot" aria-hidden="true"></span>
       <span id="meetingHint">未录制</span>
       <span id="meetingVoiceMeta"></span>
+      <label>转写语言 <select id="meetingLanguage"></select></label>
     </div>
     <div class="meeting-tools">
       <button type="button" id="meetingNew">新会议</button>
       <button type="button" id="meetingRetry" hidden>重试保存 / 继续录制</button>
       <button type="button" id="meetingHistToggle" aria-pressed="false">历史会议</button>
-      <span class="meeting-diarize-hint">说话人标注请在侧栏会议面板使用</span>
+
     </div>
     <div class="meeting-hist" id="meetingHistList" hidden></div>
+    <details id="meetingMaterials"><summary>录音与参考材料</summary>
     <div class="meeting-tools">
       <button type="button" id="meetingAudioImport">导入录音</button>
       <input type="file" id="meetingAudioFile" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm" hidden>
@@ -1817,12 +1848,22 @@ ${QUICK_CHAT_CSS}
       <textarea id="meetingReferenceNotes" aria-label="参考笔记" maxlength="100000" placeholder="独立保存参考笔记，用于核对术语；原始转写保留。"></textarea>
       <button type="button" id="meetingReferenceSave">保存参考笔记</button>
     </details>
+    <small class="meeting-diarize-hint">说话人标注请在侧栏会议面板使用</small>
+    </details>
     <div id="meetingWorkflowStatus" role="status" aria-live="polite"></div>
+    <nav id="meetingViews" aria-label="会议内容" hidden>
+      <button type="button" id="meetingTranscriptTab" aria-pressed="true">转写</button>
+      <button type="button" id="meetingSummaryTab" aria-pressed="false">AI 纪要</button>
+      <button type="button" id="meetingChapterTab" aria-pressed="false" hidden>章节</button>
+    </nav>
+    <div id="meetingChapters" hidden></div>
     <div class="meeting-live" id="meetingLive" role="log" aria-live="polite">
-      <div class="empty-live" id="meetingEmpty">录音分段转写，首段需等待本机推理。原始识别文字会保留；AI 纪要草稿请核对。</div>
+      <div class="empty-live" id="meetingEmpty">开始录制后，发言会按顺序显示在这里。</div>
     </div>
+    <details id="meetingProgress" hidden><summary>转写进度</summary>
     <div class="meeting-partial" id="meetingQueue" role="status" aria-live="polite"></div>
     <div id="meetingSourceRange" role="status" aria-live="polite"></div>
+    </details>
     <div id="meetingPartial"></div>
     <div class="meeting-minutes" id="meetingMinutes" hidden></div>
     <details id="meetingOriginal" hidden><summary>原始语音识别存档</summary><pre id="meetingOriginalText"></pre></details>
@@ -1863,7 +1904,7 @@ try{
   function paintMeetingVoiceMeta(){
     var el=$("meetingVoiceMeta");
     if(!el) return;
-    var engine=voiceSettings.sttEngine==="local"?"本机":voiceSettings.sttEngine==="system"?"系统":"浏览器";
+    var engine=voiceSettings.sttEngine==="system"?"系统":"本机";
     el.textContent=engine+" · "+voiceSettings.localModelId;
   }
   function loadVoiceSettings(captureId){
@@ -2370,7 +2411,7 @@ try{
     recStartedAt=Date.now();
     recTimer=setInterval(function(){
       var hint=$("meetingHint");
-      if(hint && meetingId && sttLive) hint.textContent="录制中 "+fmtElapsed(Date.now()-recStartedAt);
+      if(hint && meetingId && (sttLive || meetingContinuous?.active)) hint.textContent="录制中 "+fmtElapsed(Date.now()-recStartedAt);
     },250);
   }
   function setRecordingUi(on){
@@ -2378,6 +2419,8 @@ try{
     var rec=$("meetingRec");
     var mins=$("meetingMinutesBtn");
     if(desk){
+      $("meetingProgress").hidden=!on && !$("meetingQueue").textContent && !$("meetingSourceRange").textContent;
+      if(on || $("meetingMinutes").hidden) selectMeetingView(false);
       if(on) desk.classList.add("recording");
       else desk.classList.remove("recording");
     }
@@ -2396,6 +2439,52 @@ try{
     }
     setMeetingUi(!!meetingId || on);
   }
+  function selectMeetingView(summary,chapters){
+    var available=!$("meetingMinutes").hidden;
+    $("meetingViews").hidden=!available;
+    var active=!!(available && summary);
+    var outline=!!(available && chapters && !$("meetingChapterTab").hidden);
+    $("meetingChapters").hidden=!outline;
+    $("meetingDesk").classList.toggle("read-chapters",outline);
+    $("meetingChapterTab").setAttribute("aria-pressed",String(outline));
+    $("meetingDesk").classList.toggle("read-minutes",active);
+    $("meetingTranscriptTab").setAttribute("aria-pressed",String(!active && !outline));
+    $("meetingSummaryTab").setAttribute("aria-pressed",String(active));
+  }
+  $("meetingTranscriptTab").onclick=function(){selectMeetingView(false)};
+  $("meetingSummaryTab").onclick=function(){selectMeetingView(true)};
+  $("meetingChapterTab").onclick=function(){selectMeetingView(false,true)};
+  function displayMeetingMinutes(md, title, generated, original){
+    var turns=original||meetingLines.slice();
+    function focusTurn(index){
+      selectMeetingView(false);
+      paintTranscript(turns);
+      var turn=$("meetingLive").querySelectorAll("p")[index];
+      if(turn){turn.tabIndex=-1;turn.focus()}
+    }
+    var list=$("meetingChapters");
+    list.replaceChildren();
+    CMsparkMeetingPcm.meetingChapters(md||"",turns).forEach(function(chapter){
+      var button=document.createElement("button");
+      button.type="button";button.textContent=CMsparkMeetingPcm.turnTime(chapter.time)+"　"+chapter.title;
+      button.onclick=function(){focusTurn(chapter.index)};list.appendChild(button);
+    });
+    $("meetingChapterTab").hidden=!list.childElementCount;
+    var box=$("meetingMinutes");box.hidden=!md;box.replaceChildren();
+    if(md){
+      var header=document.createElement("header"),heading=document.createElement("h2");
+      heading.textContent=title||"会议纪要";header.appendChild(heading);
+      if(generated && Number.isFinite(Date.parse(generated))){
+        var date=document.createElement("time");date.dateTime=generated;date.textContent=new Date(generated).toLocaleString();header.appendChild(date);
+      }
+      var body=document.createElement("div");body.innerHTML=renderMd(md);
+      body.querySelectorAll("h1,h2,h3,h4").forEach(function(h){if(h.textContent==="TL;DR")h.textContent="会议概览"});
+      CMsparkMeetingPcm.linkMeetingQuotes(body,turns);
+      body.onclick=function(event){var link=event.target.closest("button[data-turn]");if(link)focusTurn(Number(link.dataset.turn))};
+      box.append(header,body);
+    }
+    selectMeetingView(!!md);
+  }
   function showMeetingDesk(on){
     var d=$("meetingDesk");
     if(!d) return;
@@ -2406,7 +2495,7 @@ try{
       $("meetingBack").focus();
       paintMeetingVoiceMeta();
       var hint=$("meetingHint");
-      if(hint && !meetingId) hint.textContent="未录制";
+      if(hint && !meetingId && !lastMeetingId) hint.textContent="准备录制";
       var empty=$("meetingEmpty");
       var live=$("meetingLive");
       if(empty && live && !live.querySelector("p")) empty.hidden=false;
@@ -2415,7 +2504,7 @@ try{
       d.hidden=true;
       d.style.display="none";
       showMeetingHistory(false);
-      $("moreActions").focus();
+      $("meetingOpen").focus();
     }
   }
   function showMeetingHistory(on){
@@ -2466,13 +2555,13 @@ try{
     box.innerHTML="";
     meetingLines=[];
     if(!lines||!lines.length){
-      box.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">录音分段转写，首段需等待本机推理。原始识别文字会保留；AI 纪要草稿请核对。</div>";
+      box.innerHTML="<div class=\\"empty-live\\" id=\\"meetingEmpty\\">开始录制后，发言会按顺序显示在这里。</div>";
       return;
     }
     lines.forEach(function(l){
       var text=typeof l==="string"?l:(l&&l.text)||"";
       var sp=l&&typeof l.speaker==="string"?l.speaker:"";
-      if(text) appendMeetingLive(text, sp);
+      if(text) appendMeetingLive(text, sp, l.t0);
     });
   }
   function openPastMeeting(id){
@@ -2489,12 +2578,7 @@ try{
       showMeetingHistory(false);
       paintTranscript(m.transcript||[]);
       applyMeetingMaterials(m);
-      var mins=$("meetingMinutes");
-      var md=m.minutes&&(m.minutes.raw_md||m.minutes.md);
-      if(mins){
-        if(md){ mins.hidden=false; mins.innerHTML="<p>会议纪要 · AI 草稿，请核对</p>"+renderMd(md); }
-        else { mins.hidden=true; mins.innerHTML=""; }
-      }
+      displayMeetingMinutes(m.minutes&&(m.minutes.raw_md||m.minutes.md),m.title,m.minutes&&m.minutes.generated_at,m.original_transcript);
       var hint=$("meetingHint");
       if(hint) hint.textContent=(m.title||"会议")+" · "+(m.status||"历史");
       setRecordingUi(false);
@@ -2510,24 +2594,36 @@ try{
     var kPart=typeof k==="number"&&k>=1?" · K="+Math.floor(k):"";
     setStatus((method==="text_gap"?"已弱标说话人（按行交替 · 非声学）":"已标匿名发言人（实验 · 非身份识别）")+kPart);
   }
-  function appendMeetingLive(text, speaker){
+  function appendMeetingLive(text, speaker, time){
     var box=$("meetingLive");
     if(!box||!text) return;
     var empty=$("meetingEmpty");
     if(empty) empty.hidden=true;
     var p=document.createElement("p");
-    if(speaker){
-      p.innerHTML="<span class=\\"spk\\">"+esc(speaker)+"</span> "+esc(text);
-    } else {
-      p.textContent=text;
+    if(speaker || typeof time==="number"){
+      var label=document.createElement("small");
+      label.textContent=[speaker,typeof time==="number"?fmtElapsed(time*1000):""].filter(Boolean).join(" · ");
+      p.appendChild(label);
     }
+    p.appendChild(document.createTextNode(text));
     box.appendChild(p);
     box.scrollTop=box.scrollHeight;
-    meetingLines.push({text:text,speaker:speaker||""});
+    meetingLines.push({text:text,speaker:speaker||"",t0:time});
   }
-  function startMeetingCapture(){return beginContinuousMeeting()}
+  async function startMeetingCapture(){
+    if(meetingContinuous || meetingWorkBusy || meetingEnding)return;
+    if(!meetingAck || !voiceAck){requestMeetingConsent(startMeetingCapture);return}
+    if(!lastMeetingId){await createNewMeeting();if(!lastMeetingId)return}
+    return beginContinuousMeeting();
+  }
   ${MEETING_PCM_BROWSER_JS}
+  for (const [value,label] of CMsparkMeetingPcm.meetingLanguages) $("meetingLanguage").add(new Option(label,value));
   ${SUMMONER_MEETING_WORKFLOW_JS}
+  if(location.hash==="#meeting")showMeetingDesk(true);
+  window.finishMiniMeeting = async function(){
+    if(meetingWorkBusy || meetingEnding || (meetingContinuous && !meetingId)){meetingSay("请等待当前会议操作完成");return false}
+    try{await prepareMeetingSwitch();return true}catch(e){meetingProblem(e);return false}
+  };
   $("meetingStart").onclick=function(){
     if(!meetingAck){
       var sheet=$("meetingPrivacy");
@@ -2562,7 +2658,7 @@ try{
   $("meetingBack").onclick=function(){
     if(cancelMeetingMinutesConfirmation){cancelMeetingMinutesConfirmation();return}
     if(meetingWorkBusy)return;
-    endMeetingCapture().then(function(){showMeetingDesk(false)}).catch(meetingProblem);
+    showMeetingDesk(false);
   };
   $("cruiseChip").onclick=function(){ $("operateOpen").click(); };
   $("operateOpen").onclick=function(){
@@ -2852,6 +2948,9 @@ try{
         var updated=threads.find(function(item){return item.id===d.thread.id});
         if(updated){Object.assign(updated,d.thread);renderThreads()}
         return;
+      }
+      if(t==="shell.meeting"){
+        showMeetingDesk(true);window.focus();return;
       }
       if(t==="shell.close"){
         try{window.close()}catch(e){}

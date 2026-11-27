@@ -38,13 +38,15 @@ test("byte-exact full cap + tail and slow immutable worker; duplicate does not e
   const out: Buffer[] = []
   for (let s = q.take(); s; s = q.take()) {
     assert.equal(q.take(), null, "one infer/persist owner at a time")
+    assert.ok(s.wav.length <= 44 + 2 * C.segmentFrames)
+    assert.deepEqual(s.wav.subarray(44), reference.subarray(2 * (s.start - s.contextFrames), 2 * s.end))
     out.push(Buffer.from(s.pcm))
     assert.equal(q.residentFrames, C.capacityFrames - s.start, "infer alone does not free capacity")
     q.commit(s)
     assert.ok(s.pcm.every(n => n === 0))
   }
   assert.deepEqual(Buffer.concat(out), reference)
-  assert.equal(out.length, 8)
+  assert.equal(out.length, 9, "overlapped inference windows stay within the eight-second budget")
   assert.equal(q.complete, true)
   assert.equal(q.residentFrames, 0)
 })
@@ -92,4 +94,23 @@ test("first live window ends at a speech pause, preserves the complete tail and 
     q.commit(tail)
     assert.deepEqual(Buffer.concat(segments), source)
   }
+})
+
+test("later windows prefer a pause before a word crossing eight seconds", () => {
+  const source = Buffer.alloc(C.segmentFrames * 2)
+  for (let i = 0; i < C.segmentFrames; i++) {
+    if (i < 7 * C.rate || i >= 7.4 * C.rate) source.writeInt16LE(i % 2 ? -3000 : 3000, 2 * i)
+  }
+  const q = new MeetingPcmQueue()
+  while (q.receivedEnd < C.segmentFrames) {
+    const c = q.credits()[0] ?? q.reserve()[0]
+    q.append(c.credit_id, c.sample_offset, c.max_frames, source.subarray(c.sample_offset * 2, (c.sample_offset + c.max_frames) * 2))
+  }
+  const phrase = q.take()!
+  assert.equal(phrase.end, 7.4 * C.rate)
+  q.commit(phrase)
+  q.seal(C.segmentFrames)
+  const tail = q.take()!
+  assert.equal(tail.contextFrames, 0)
+  assert.deepEqual(tail.pcm, source.subarray(7.4 * C.rate * 2))
 })

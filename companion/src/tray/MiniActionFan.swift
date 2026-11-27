@@ -1,10 +1,11 @@
 import AppKit
 
-// The orb keeps the original mouse sequence. This transparent panel only draws
-// the targets and takes Escape while the user is holding the button.
+// A click opens the fan. Hover reveals the screenshot branch and a second click selects a leaf.
 final class MiniActionFan: NSPanel {
   private let canvas: MiniFanView
   var onCancel: (() -> Void)?
+  var onChoose: ((String) -> Void)?
+  private var outside: Any?
 
   init(orb: NSWindow, screen: NSScreen) {
     let work = screen.visibleFrame
@@ -21,12 +22,27 @@ final class MiniActionFan: NSPanel {
     isOpaque = false
     backgroundColor = .clear
     hasShadow = false
-    ignoresMouseEvents = true
+    acceptsMouseMovedEvents = true
     hidesOnDeactivate = false
     isReleasedWhenClosed = false
     level = orb.level
     collectionBehavior = orb.collectionBehavior
     contentView = canvas
+    canvas.clicked = { [weak self] hit in
+      if hit == "shot" { return }
+      if let hit { self?.onChoose?(hit) } else { self?.onCancel?() }
+    }
+    outside = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.onCancel?() }
+  }
+
+  override func close() {
+    if let outside { NSEvent.removeMonitor(outside); self.outside = nil }
+    super.close()
+  }
+
+  override func resignKey() {
+    super.resignKey()
+    onCancel?()
   }
 
   override var canBecomeKey: Bool { true }
@@ -36,9 +52,6 @@ final class MiniActionFan: NSPanel {
     super.sendEvent(event)
   }
 
-  func aim(at screenPoint: NSPoint) -> String? {
-    canvas.aim(at: convertPoint(fromScreen: screenPoint))
-  }
 }
 
 final class MiniFanView: NSView {
@@ -50,6 +63,7 @@ final class MiniFanView: NSView {
     let child: Bool
   }
   private let anchor: NSPoint
+  var clicked: ((String?) -> Void)?
   private var items: [Item] = []
   private var branchOpen = false
   private var hot: String?
@@ -86,13 +100,20 @@ final class MiniFanView: NSView {
     add("ask", "询问图片", point(234, 65), child: true)
     add("ocr", "识别文字", point(216, 122), child: true)
     add("capture", "仅截图", point(160, 180), child: true)
+    add("delay", "延时截图", point(254, 180), child: true)
   }
 
   required init?(coder: NSCoder) { fatalError("MiniFanView is created programmatically") }
 
   private var visibleItems: [Item] { items.filter { !$0.child || branchOpen } }
 
-  func aim(at p: NSPoint) -> String? {
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+  override func mouseMoved(with event: NSEvent) { _ = aim(at: convert(event.locationInWindow, from: nil)) }
+  override func mouseDown(with event: NSEvent) { _ = aim(at: convert(event.locationInWindow, from: nil)) }
+  override func mouseUp(with event: NSEvent) { clicked?(aim(at: convert(event.locationInWindow, from: nil))) }
+
+  private func aim(at p: NSPoint) -> String? {
     let center = hypot(p.x-anchor.x, p.y-anchor.y) <= 25
     let visible = visibleItems.reversed()
     let hit = center ? nil : visible.first { $0.chip.contains(p) } ?? visible.first { $0.slice.contains(p) }
@@ -102,7 +123,7 @@ final class MiniFanView: NSView {
       branchOpen = showChildren
       needsDisplay = true
     }
-    return hot == "shot" ? nil : hot
+    return hot
   }
 
   override func draw(_ dirtyRect: NSRect) {
@@ -128,6 +149,86 @@ final class MiniFanView: NSView {
       let label = item.label as NSString
       let size = label.size(withAttributes: style)
       label.draw(at: NSPoint(x: item.center.x-size.width/2, y: item.center.y-size.height/2), withAttributes: style)
+    }
+  }
+}
+
+// For a timed capture, ask only for coordinates. The tray reads the pixels later,
+// after these nonactivating windows are gone and the user can operate their app.
+final class MiniRegionSelection {
+  private var panels: [NSPanel] = []
+
+  func show(seconds: Int, completion: @escaping (String?) -> Void) {
+    let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+    for screen in NSScreen.screens {
+      let panel = RegionPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
+                              backing: .buffered, defer: false)
+      panel.title = "CMspark Mini 选区"
+      panel.level = .screenSaver
+      panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+      panel.isOpaque = false
+      panel.backgroundColor = .clear
+      panel.isReleasedWhenClosed = false
+      let view = RegionView(frame: NSRect(origin: .zero, size: screen.frame.size))
+      view.seconds = seconds
+      view.finish = { rect in
+        let box = rect.map { panel.convertToScreen($0).integral }
+        completion(box.map { "\(Int($0.minX)),\(Int(primaryTop - $0.maxY)),\(Int($0.width)),\(Int($0.height))" })
+      }
+      panel.contentView = view
+      panel.makeFirstResponder(view)
+      panels.append(panel)
+      panel.orderFrontRegardless()
+    }
+    let active = panels.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? panels.first
+    active?.makeKey()
+  }
+
+  func close() {
+    for panel in panels {
+      (panel.contentView as? RegionView)?.finish = nil
+      panel.close()
+    }
+    panels.removeAll()
+  }
+
+  private final class RegionPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+  }
+  private final class RegionView: NSView {
+    var seconds = 0
+    var finish: ((NSRect?) -> Void)?
+    private var start: NSPoint?
+    private var selection = NSRect.zero
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
+    override func cancelOperation(_ sender: Any?) { finish?(nil) }
+    override func rightMouseDown(with event: NSEvent) { finish?(nil) }
+    override func mouseDown(with event: NSEvent) { start = convert(event.locationInWindow, from: nil) }
+    override func mouseDragged(with event: NSEvent) {
+      guard let start else { return }
+      let p = convert(event.locationInWindow, from: nil)
+      selection = NSRect(x: min(start.x,p.x), y: min(start.y,p.y),
+                         width: abs(start.x-p.x), height: abs(start.y-p.y)).intersection(bounds)
+      needsDisplay = true
+    }
+    override func mouseUp(with event: NSEvent) {
+      mouseDragged(with: event)
+      if selection.width >= 2 && selection.height >= 2 { finish?(selection) }
+      start = nil
+    }
+    override func draw(_ dirty: NSRect) {
+      NSColor.black.withAlphaComponent(0.18).setFill()
+      bounds.fill()
+      if !selection.isEmpty {
+        NSColor.white.setStroke()
+        NSBezierPath(rect: selection).stroke()
+      }
+      let label = "框选后 \(seconds) 秒截图 · Esc 取消" as NSString
+      label.draw(at: NSPoint(x: 24, y: bounds.maxY - 64), withAttributes: [
+        .font: NSFont.systemFont(ofSize: 16, weight: .medium), .foregroundColor: NSColor.white,
+        .backgroundColor: NSColor.black.withAlphaComponent(0.72)])
     }
   }
 }

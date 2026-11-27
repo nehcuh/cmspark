@@ -6,7 +6,7 @@ export class MeetingPcmProtocolError extends Error {
   constructor() { super("queue_protocol_error") }
 }
 type Accepted = { end: number; hash: string; offset: number; frames: number }
-export type PcmSegment = { index: number; start: number; end: number; pcm: Buffer; wav: Buffer }
+export type PcmSegment = { index: number; start: number; end: number; contextFrames: number; pcm: Buffer; wav: Buffer }
 
 /** One bounded ring. Reservations, received/infer/persist-pending share its capacity.
  * No per-block history except eight reorder slots and sixteen hashes. */
@@ -49,6 +49,32 @@ export class MeetingPcmQueue {
     if (this.openingSpeech && block.end >= C.rate && this.openingQuietFrames >= pauseFrames) {
       this.openingPauseEnd = block.end
     }
+  }
+
+  private context = Buffer.alloc(0)
+
+  /** Scan the last two seconds once a full window is available. Prefer a pause
+   * near its end. Unbroken speech gets a short look-back in the next WAV. */
+  private speechBoundary(length: number): { length: number; carry: number } {
+    const block = C.blockFrames
+    const end = this.releasedEnd + length
+    const minimum = Math.max(Math.min(length, C.rate), length / 2)
+    let quiet = 0, lastPause = 0
+    for (let at = end - Math.min(length, 2 * C.rate); at <= end - block; at += block) {
+      let sum = 0, squares = 0
+      for (let i = 0; i < block; i++) {
+        const sample = this.ring.readInt16LE(((at + i) % C.capacityFrames) * C.sampleBytes)
+        sum += sample
+        squares += sample * sample
+      }
+      // Remove DC offset before comparing block energy.
+      const variance = squares / block - (sum / block) ** 2
+      quiet = variance < 128 ** 2 ? quiet + block : 0
+      if (quiet >= 3 * block && at + block - this.releasedEnd >= minimum) lastPause = at + block
+    }
+    if (lastPause) return { length: lastPause - this.releasedEnd, carry: 0 }
+    const carry = Math.min(C.rate * 0.8, Math.floor(this.segmentFrames / 5), this.segmentFrames - C.rate)
+    return { length, carry: Math.max(0, carry) }
   }
 
   get receivedEnd() { return this.contiguousEnd }
@@ -131,19 +157,25 @@ export class MeetingPcmQueue {
 
   take(): PcmSegment | null {
     if (this.disposed || this.inflight) return null
-    const target = this.nextSegmentIndex === 0 ? (this.openingPauseEnd ?? this.firstFrames) : this.segmentFrames
-    const length = Math.min(target, this.contiguousEnd - this.releasedEnd)
-    if (!length || (length < target && (this.targetEnd === null || this.contiguousEnd !== this.targetEnd))) return null
-    // The sole immutable worker allocation includes its WAV header. pcm is a
-    // view, not a second segment copy; the existing runner can consume wav as-is.
-    const wav = Buffer.alloc(44 + length * C.sampleBytes)
-    writePcmWavHeader(wav, length * C.sampleBytes)
-    const pcm = wav.subarray(44)
+    const target = this.nextSegmentIndex === 0 ? (this.openingPauseEnd ?? this.firstFrames) : this.segmentFrames - this.context.length / C.sampleBytes
+    const available = this.contiguousEnd - this.releasedEnd
+    const final = this.targetEnd !== null && this.contiguousEnd === this.targetEnd && available <= target
+    if (!available || (!final && available < target)) return null
+    const boundary = final || (this.nextSegmentIndex === 0 && this.openingPauseEnd !== null)
+      ? { length: Math.min(target, available), carry: 0 } : this.speechBoundary(target)
+    const { length, carry } = boundary
+    const contextFrames = this.context.length / C.sampleBytes
+    const wav = Buffer.alloc(44 + (contextFrames + length) * C.sampleBytes)
+    writePcmWavHeader(wav, wav.length - 44)
+    this.context.copy(wav, 44)
+    this.context.fill(0)
+    const pcm = wav.subarray(44 + contextFrames * C.sampleBytes)
     const index = (this.releasedEnd % C.capacityFrames) * C.sampleBytes
     const first = Math.min(pcm.length, this.ring.length - index)
     this.ring.copy(pcm, 0, index, index + first)
     if (first < pcm.length) this.ring.copy(pcm, first, 0, pcm.length - first)
-    this.inflight = { index: this.nextSegmentIndex++, start: this.releasedEnd, end: this.releasedEnd + length, pcm, wav }
+    this.context = Buffer.from(pcm.subarray(pcm.length - carry * C.sampleBytes))
+    this.inflight = { index: this.nextSegmentIndex++, start: this.releasedEnd, end: this.releasedEnd + length, contextFrames, pcm, wav }
     return this.inflight
   }
 
@@ -155,7 +187,7 @@ export class MeetingPcmQueue {
       this.ring.fill(0, pos, pos + frames * C.sampleBytes)
       n += frames
     }
-    segment.pcm.fill(0)
+    segment.wav.fill(0)
     this.releasedEnd = segment.end
     this.inflight = null
   }
@@ -167,6 +199,7 @@ export class MeetingPcmQueue {
   }
 
   dispose(): void {
+    this.context.fill(0)
     this.disposed = true
     this.ring.fill(0)
     // A runner owns the one immutable copy until it actually settles.

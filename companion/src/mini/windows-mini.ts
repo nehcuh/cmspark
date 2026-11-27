@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { resolvePowerShellExe, resolveWinScript } from "../host-use/win/powershell"
-import { isMiniAction, type MiniAction } from "./actions"
+import { parseMiniInvocation, type MiniAction, type MiniTiming } from "./actions"
 import { MiniChat } from "./chat"
 import { MiniProfileLock } from "./profile-lock"
 import { isMiniOrbHotkey, WindowsMiniHotkeys, type MiniHotkey } from "./windows-hotkeys"
@@ -23,7 +23,7 @@ export class WindowsMini {
   private stopped = false
 
   constructor(private readonly dir: string,
-    private readonly run: (action: MiniAction, signal: AbortSignal) => Promise<void>,
+    private readonly run: (action: MiniAction, signal: AbortSignal, timing?: MiniTiming) => Promise<void>,
     private readonly visible: (value: boolean) => void,
     private readonly notify: (message: string) => void) {
     this.profileLock = new MiniProfileLock(dir)
@@ -173,8 +173,8 @@ export class WindowsMini {
       }
       void this.reply(Buffer.from(data, "base64").toString("utf8"))
     } else if (line.startsWith("action:") && !this.action) {
-      const key = line.slice(7)
-      if (isMiniAction(key)) void this.perform(key)
+      const invocation = parseMiniInvocation(line.slice(7))
+      if (invocation && invocation.action !== "chat") void this.perform(invocation.action, invocation.timing)
     }
   }
 
@@ -190,10 +190,10 @@ export class WindowsMini {
     }
   }
 
-  private async perform(key: MiniAction): Promise<void> {
+  private async perform(key: MiniAction, timing?: MiniTiming): Promise<void> {
     const current = this.action = new AbortController()
     try {
-      await this.run(key, current.signal)
+      await this.run(key, current.signal, timing)
     } catch (error) {
       const detail = error instanceof Error ? error.message : ""
       if (!current.signal.aborted) {

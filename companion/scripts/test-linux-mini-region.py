@@ -19,7 +19,7 @@ def test_picker():
     import gi
     gi.require_version("Gtk", "3.0")
     gi.require_version("GdkPixbuf", "2.0")
-    from gi.repository import GdkPixbuf, Gio, GLib, Gtk
+    from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk
 
     helper = Path(__file__).resolve().parents[1] / "src/mini/linux-mini-region.py"
     image = Path(os.environ["CMSPARK_MINI_TEST_DIR"]) / "portal.png"
@@ -54,8 +54,15 @@ def test_picker():
     window.set_decorated(False)
     canvas = Gtk.DrawingArea()
 
+    clicked = [False]
+    canvas.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+    def reveal(*_):
+        clicked[0] = True
+        canvas.queue_draw()
+    canvas.connect("button-press-event", reveal)
     def draw(_widget, context):
-        context.set_source_rgb(*(v / 255 for v in green))
+        rgb = (180, 22, 44) if clicked[0] else green
+        context.set_source_rgb(*(v / 255 for v in rgb))
         context.paint()
     canvas.connect("draw", draw)
     window.add(canvas)
@@ -65,9 +72,9 @@ def test_picker():
     def run():
         nonlocal mode
         try:
-            for mode in ("x11-select", "x11-cancel", "portal-select", "portal-cancel"):
+            for mode in ("x11-select", "x11-cancel", "portal-select", "portal-cancel", "x11-delay"):
                 env = {**os.environ, "XDG_SESSION_TYPE": "wayland" if mode.startswith("portal") else "x11"}
-                with subprocess.Popen([sys.executable, helper], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env) as child:
+                with subprocess.Popen([sys.executable, helper, "3" if mode == "x11-delay" else "0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env) as child:
                     try:
                         if mode != "portal-cancel":
                             wid = subprocess.check_output(["xdotool", "search", "--sync", "--onlyvisible", "--name", "CMspark Mini"],
@@ -78,6 +85,8 @@ def test_picker():
                             else:
                                 subprocess.run(["xdotool", "mousemove", "--window", wid, "160", "140", "mousedown", "1",
                                                 "sleep", ".1", "mousemove", "--window", wid, "225", "180", "mouseup", "1"], check=True)
+                        if mode == "x11-delay":
+                            subprocess.run(["xdotool", "sleep", ".4", "mousemove", "50", "50", "click", "1"], check=True)
                         data, error = child.communicate(timeout=8)
                     finally:
                         if child.poll() is None:
@@ -93,7 +102,7 @@ def test_picker():
                     w, h = crop.get_width(), crop.get_height()
                     assert 20 <= w <= 95 and 15 <= h <= 65, (w, h)
                     offset = (h // 2) * crop.get_rowstride() + (w // 2) * crop.get_n_channels()
-                    assert bytes(crop.get_pixels()[offset:offset+3]) == bytes(green)
+                    assert bytes(crop.get_pixels()[offset:offset+3]) == bytes((180, 22, 44) if mode == "x11-delay" else green)
                 print("PASS", mode, flush=True)
         except Exception as exc:
             failures.append(exc)

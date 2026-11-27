@@ -14,6 +14,7 @@ import {
   summonerWebPageUrl,
   pushSummonerWebEvent,
   requestSummonerWebClose,
+  revealSummonerMeeting,
   summonerWebHasPage,
   summonerWebEventStatus,
   hideSummonerWebShell,
@@ -1144,9 +1145,12 @@ describe("summoner-web server", { concurrency: 1 }, () => {
       req.end()
       setTimeout(() => {
         assert.equal(summonerWebHasPage(), true)
+        assert.equal(revealSummonerMeeting(), true)
         assert.equal(requestSummonerWebClose(), true)
       }, 40)
     })
+    assert.match(buf, /shell\.meeting/)
+    assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("shell.meeting"), false)
     assert.match(buf, /shell\.close/)
     assert.equal(SUMMONER_WEB_EVENT_ALLOW.has("shell.close"), false)
   })

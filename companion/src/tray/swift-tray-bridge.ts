@@ -56,7 +56,7 @@ import {
 /** Build-time literal; never sourced from environment or a mutable sidecar at runtime. */
 declare const __CMSPARK_SWIFT_TRAY_SHA256__: string | undefined
 declare const __CMSPARK_PACKAGED_TRAY__: boolean | undefined
-// Non-bundled development retains the historic fixed pin. Production build
+// Non-bundled development uses its own fixed pin. Production build
 // integration must supply a pin from the controlled, signed tray build.
 /** Mac 菜单/热键「召唤器」= HTML Capture 卡（与侧栏弹出对话框同一出口）。 */
 const packagedTray = typeof __CMSPARK_PACKAGED_TRAY__ !== "undefined" && __CMSPARK_PACKAGED_TRAY__ === true
@@ -66,7 +66,7 @@ const packagedDigest = typeof buildTrayPin === "string" && buildTrayPin.startsWi
   ? buildTrayPin.slice(trayPinPrefix.length) : ""
 const SWIFT_TRAY_SHA256 = packagedTray
   ? (/^[0-9a-f]{64}$/.test(packagedDigest) ? packagedDigest : "INVALID_PACKAGED_TRAY_PIN")
-  : "523638554705e3801eecd035dbee0841db8d726129dfdf3eb02e0cd38f1c33dd"
+  : "daff7f4aeb4b111891d0be5690b95ec45b73d9f259d0de4966dee7b07002244a"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")
@@ -440,6 +440,10 @@ export class SwiftTrayAdapter implements UnifiedTray {
 
   sendSummoner(cmd: SummonerOutboundCmd): void {
     this.send(cmd)
+  }
+
+  openMiniMeeting(port: number): void {
+    this.send({ cmd: "mini.meeting.open", port })
   }
 
   openSummoner(threadId: string): void {

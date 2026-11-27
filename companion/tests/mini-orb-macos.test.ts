@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
+import { parseMiniInvocation } from "../src/mini/actions"
 import { promisify } from "node:util"
 
 const run = promisify(execFile)
@@ -27,7 +28,12 @@ test("macOS Mini gestures, native action menu, capture handoff and saved monitor
     const frames = (output: string) => output.split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line))
     const events = frames(stdout)
     assert.ok(events.some(e => e.action === "mini-toggle"))
-    assert.deepEqual(events.filter(e => e.action === "mini-action").map(e => e.id), ["chat", "todo", "chat", "search", "meeting", "ask", "ocr", "capture", "chat"])
+    const picks = events.filter(e => e.action === "mini-action").map(e => e.id)
+    const delayed = parseMiniInvocation(picks.pop())
+    assert.equal(delayed?.action, "capture")
+    assert.equal(delayed?.timing?.seconds, 3)
+    assert.match(delayed?.timing?.region ?? "", /^-?\d+,-?\d+,51,35$/)
+    assert.deepEqual(picks, ["chat", "todo", "chat", "search", "meeting", "ask", "ocr", "capture", "chat"])
     for (const id of ["todo", "ask", "ocr", "capture"]) {
       const previous = events[events.findIndex(e => e.id === id) - 1]
       assert.equal(previous.surface, "mini")

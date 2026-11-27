@@ -66,6 +66,9 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 page.get_by_test_id('meeting-start-capture').wait_for()
                 if not args.baseline:
                     page.wait_for_function('window.responses.some(m=>m.type==="meeting.asr.state")')
+            def select_view(label):
+                if not args.baseline:
+                    page.get_by_role('button', name=label, exact=True).click()
             def new_live_meeting(texts):
                 page.get_by_role('button',name='新建会议会话',exact=True).click()
                 page.wait_for_function('window.responses.some(m=>m.type==="meeting.created")')
@@ -86,6 +89,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 open_page()
                 raw = '讨论配森发布'
                 if use_audio_import:
+                    select_view("材料与设置")
                     page.locator('input[type=file][accept^="audio/"]').set_input_files({
                         'name':'synthetic.wav','mimeType':'audio/wav','buffer':wav_bytes(),
                     })
@@ -93,15 +97,18 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                     page.get_by_test_id('meeting-import-status').filter(has_text='音频导入完成').wait_for()
                 else:
                     transcript().fill(raw)
+                select_view("材料与设置")
                 page.get_by_test_id('meeting-reference-file').set_input_files({'name':'会议笔记.md','mimeType':'text/markdown','buffer':'项目技术栈：Python。'.encode()})
                 page.wait_for_function('document.querySelector("[data-testid=meeting-reference-input]").value.includes("Python")')
                 assert transcript().input_value() == raw
+                select_view("AI 纪要")
                 page.get_by_role('button',name='生成会议纪要',exact=True).click()
                 confirmation = page.get_by_role('region', name='确认纪要发送范围', exact=True)
                 confirmation.get_by_text('参考笔记', exact=False).first.wait_for()
                 confirmation.get_by_text('synthetic · https://unused.invalid/', exact=True).wait_for()
                 confirmation.get_by_role('button',name='取消，保留文字',exact=True).click()
                 assert not page.evaluate('window.sent.some(m=>m.type==="meeting.generate_minutes")')
+                select_view("AI 纪要")
                 page.get_by_role('button',name='生成会议纪要',exact=True).click()
                 confirmation.get_by_role('button',name='确认发送并生成',exact=True).click()
                 page.wait_for_function('window.responses.some(m=>m.type==="meeting.minutes_result")')
@@ -113,6 +120,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 assert transcript().input_value() == raw
                 if use_audio_import:
                     assert [line['text'] for line in result['meeting']['original_transcript']] == [raw]
+                    select_view("转写")
                     archive = page.get_by_test_id('meeting-original-transcript')
                     archive.locator('summary').click()
                     assert archive.locator('pre').inner_text() == raw
@@ -121,6 +129,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                         generated: window.sent.filter(m => m.type === 'meeting.generate_minutes').length,
                     })''')
                     assert counts == {'prepared': 2, 'generated': 1}
+                select_view("AI 纪要")
                 page.get_by_text('会议纪要 · AI 草稿',exact=True).wait_for()
                 corrected=page.get_by_test_id('meeting-corrected-transcript')
                 corrected.locator('summary').click()
@@ -128,17 +137,66 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 page.get_by_test_id('meeting-correction-evidence').locator('summary').click()
                 page.get_by_test_id('meeting-correction-evidence').scroll_into_view_if_needed()
                 page.screenshot(path=str(args.artifacts/'meeting-result-390.png'),full_page=True)
+                select_view("材料与设置")
                 page.get_by_test_id('meeting-materials').scroll_into_view_if_needed()
                 page.screenshot(path=str(args.artifacts/'meeting-390.png'),full_page=True)
                 page.set_viewport_size({'width':960,'height':900})
                 page.screenshot(path=str(args.artifacts/'meeting-960.png'),full_page=True)
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
                 page.get_by_test_id('meeting-reference-input').fill('项目技术栈：Python。新增议程待核对。')
+                select_view("AI 纪要")
                 page.get_by_test_id('meeting-minutes-stale').wait_for()
                 print('PASS reference import remains separate; cancellation gates generation; original survives correction', flush=True)
 
+            def verify_history_reader():
+                identifier = 'mtg_reader_sample'
+                turns = [
+                    {'speaker': '林悦', 't0': 8, 'text': '第一轮访谈已经完成，大家都希望会议纪要能直接定位到发言。'},
+                    {'speaker': '周澄', 't0': 94, 'text': '我们决定先给试用团队开放小窗口。'},
+                    {'speaker': '林悦', 't0': 207, 'text': '我周五整理反馈，再决定下一轮的范围。'},
+                ]
+                markdown = """### TL;DR
+- 访谈反馈集中在如何核对原文。〔会议纪要能直接定位到发言〕
+- 小窗口先向试用团队开放。〔先给试用团队开放小窗口〕
+### 决议
+- 首轮开放范围为试用团队。〔先给试用团队开放小窗口〕
+### 待办
+- [ ] 林悦周五整理反馈。〔我周五整理反馈〕
+### 风险 / 开放问题
+- 下一轮范围待确认。〔再决定下一轮的范围〕"""
+                def fetch_history(route):
+                    msg = route.request.post_data_json['message']
+                    if msg.get('type') != 'meeting.get' or msg.get('meeting_id') != identifier:
+                        route.continue_()
+                        return
+                    route.fulfill(json={'id': msg['id'], 'v': 1, 'type': 'meeting.get_result', 'meeting': {
+                        'id': identifier, 'title': '产品体验周会', 'status': 'ended',
+                        'original_transcript': turns, 'transcript': turns,
+                        'minutes': {'raw_md': markdown, 'generated_at': '2026-11-20T02:00:00Z'},
+                    }})
+                page.route('**/rpc', fetch_history)
+                try:
+                    page.set_viewport_size({'width': 760, 'height': 900})
+                    page.goto('about:blank')
+                    page.goto(f'http://127.0.0.1:{port}/#{identifier}')
+                    page.get_by_role('heading', name='产品体验周会').wait_for()
+                    doc = page.locator('article.meeting-document')
+                    doc.get_by_role('heading', name='会议概览').wait_for()
+                    assert doc.get_by_role('checkbox').count() == 1
+                    doc.screenshot(path=str(args.artifacts/'meeting-minutes-document.png'))
+                    doc.get_by_role('button', name='原文 03:27').first.click()
+                    assert page.locator('[data-turn-index="2"]').evaluate('e=>e===document.activeElement')
+                    select_view('章节')
+                    page.get_by_role('button', name='01:34 小窗口先向试用团队开放。').click()
+                    assert page.locator('[data-turn-index="1"]').evaluate('e=>e===document.activeElement')
+                    print('PASS saved minutes, topic timestamps, and source navigation', flush=True)
+                finally:
+                    page.unroute('**/rpc', fetch_history)
+
             if args.minutes_only:
                 verify_minutes(use_audio_import=True)
+                if not args.baseline:
+                    verify_history_reader()
                 assert not errors, errors
                 browser.close()
                 raise SystemExit(0)
@@ -154,6 +212,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 form.get_by_role('button', name='保存', exact=True).click()
                 page.get_by_test_id('meeting-asr-current').filter(has_text='fixture-whisper').wait_for()
                 source = {'name':'synthetic-long.wav','mimeType':'audio/wav','buffer':wav_bytes(92)}
+                select_view("材料与设置")
                 audio_input = page.locator('input[type=file][accept^="audio/"]')
                 audio_input.set_input_files(source)
                 approval = page.get_by_role('region', name='确认发送导入录音')
@@ -163,10 +222,12 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                     assert value in confirmation, confirmation
                 assert not page.evaluate('window.sent.some(m=>m.type==="meeting.asr.authorize"||m.type==="meeting.asr.segment")')
                 approval.get_by_role('button', name='取消', exact=True).click()
+                select_view("材料与设置")
                 page.get_by_test_id('meeting-import-status').filter(has_text='音频未发送').wait_for()
                 assert not page.evaluate('window.sent.some(m=>m.type==="meeting.asr.authorize"||m.type==="meeting.asr.segment")')
                 audio_input.set_input_files(source)
                 approval.get_by_role('button', name='确认发送并转写').click()
+                select_view("材料与设置")
                 page.get_by_test_id('meeting-import-status').filter(has_text='服务正在限流').wait_for()
                 assert '已完成 1/3 段' in page.get_by_test_id('meeting-import-status').inner_text()
                 assert '该段音频已发送' in page.get_by_test_id('meeting-import-status').inner_text()
@@ -189,6 +250,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
             if args.baseline:
                 # The historical negative control predates credit-based capture.
                 # Drive its actual PCM adapter and preserve the failing UI/frames.
+                select_view("材料与设置")
                 page.get_by_test_id('meeting-asr-refine').check()
                 page.get_by_test_id('meeting-start-capture').click()
                 page.wait_for_function('window.sent.some(m=>m.type==="voice.stt.start")')
@@ -202,6 +264,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                     raise
                 raise AssertionError('Expected the pinned pre-fix panel to miss the live raw final')
             new_live_meeting(['讨论配森发布'])
+            select_view("材料与设置")
             page.get_by_test_id('meeting-asr-refine').check()
             begin_live()
             wait_live_text('讨论配森发布')
@@ -253,6 +316,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 def release_gate(kind):
                     route, response, _ = held.pop(kind)
                     route.fulfill(response=response)
+                select_view("材料与设置")
                 page.get_by_test_id('meeting-mtg2-tools').locator('summary').click()
                 page.get_by_test_id('meeting-default-speaker').fill('张三')
                 assert page.get_by_label('结束时智能分段', exact=False).is_checked()
@@ -298,6 +362,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 print('PASS default stop-and-generate preserves >280-char sentence segmentation and speaker labels; seal/end/transcript/reference real receipts precede generation; immutable raw remains uncut', flush=True)
                 # A fresh meeting owns a fresh raw archive even before an idle
                 # updated push happens to arrive for that new owner.
+                select_view("转写")
                 archive = page.get_by_test_id('meeting-original-transcript')
                 archive.locator('summary').click()
                 assert raw in archive.locator('pre').inner_text()
@@ -343,12 +408,15 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 assert '失败后可恢复的识别文字' in transcript().input_value()
                 retained = transcript().input_value()
                 page.evaluate('window.failWrite=false')
+                select_view("转写")
                 page.get_by_role('button',name='保存转写',exact=True).click()
+                select_view("转写")
                 page.get_by_test_id('meeting-save-status').filter(has_text='已保存转写').wait_for()
                 recovered = page.evaluate('window.responses.findLast(m=>m.type==="meeting.updated").meeting')
                 assert '导入前已有文字' in '\n'.join(line['text'] for line in recovered['transcript'])
                 assert '失败后可恢复的识别文字' in '\n'.join(line['text'] for line in recovered['transcript'])
                 assert [line['text'] for line in recovered['original_transcript']] == ['失败后可恢复的识别文字']
+                select_view("转写")
                 original_archive = page.get_by_test_id('meeting-original-transcript')
                 original_archive.locator('summary').click()
                 assert original_archive.locator('pre').inner_text() == '失败后可恢复的识别文字'
@@ -370,6 +438,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                     const timer=window.setTimeout.bind(window);
                     window.setTimeout=(fn,ms,...rest)=>timer(fn,ms===10000?300:ms,...rest);
                 }""")
+                select_view("材料与设置")
                 audio_input=page.locator('input[type=file][accept^="audio/"]')
                 audio_input.set_input_files({'name':'two-windows.wav','mimeType':'audio/wav','buffer':wav_bytes(47)})
                 final('第一段提交成功')
@@ -378,7 +447,9 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 page.get_by_role('alert').filter(has_text='保存转写').wait_for()
                 expected=['第一段提交成功','第二段提交成功但回执丢失']
                 assert [line['text'] for line in page.evaluate('window.lostAppendAck.meeting.original_transcript')]==expected
+                select_view("转写")
                 page.get_by_role('button',name='保存转写',exact=True).click()
+                select_view("转写")
                 page.get_by_test_id('meeting-save-status').filter(has_text='已保存转写').wait_for()
                 recovered=page.evaluate('window.responses.findLast(m=>m.type==="meeting.updated").meeting')
                 assert [line['text'] for line in recovered['original_transcript']]==expected
@@ -407,7 +478,9 @@ with tempfile.TemporaryDirectory(prefix='cmspark-meeting-492-') as directory:
                 assert page.evaluate('window.lostCommit>0')
                 page.get_by_test_id('meeting-stop-capture').click()
                 page.wait_for_function('window.responses.some(m=>m.type==="meeting.ended")')
+                select_view("转写")
                 page.get_by_role('button',name='保存转写',exact=True).click()
+                select_view("转写")
                 page.get_by_test_id('meeting-save-status').filter(has_text='已保存转写').wait_for()
                 recovered=page.evaluate('window.responses.findLast(m=>m.type==="meeting.updated").meeting')
                 expected_raw=['第一段提交成功但回执丢失','第二段保留并按顺序补存']

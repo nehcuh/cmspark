@@ -8,7 +8,7 @@ import * as vm from "node:vm"
 import { buildSync } from "esbuild"
 
 // The historical, non-bundled development pin from swift-tray-bridge.ts.
-const developmentPin = "523638554705e3801eecd035dbee0841db8d726129dfdf3eb02e0cd38f1c33dd"
+const developmentPin = "daff7f4aeb4b111891d0be5690b95ec45b73d9f259d0de4966dee7b07002244a"
 const payload = Buffer.from("owned inert Swift tray bytes; never executed\n")
 const payloadPin = crypto.createHash("sha256").update(payload).digest("hex")
 const pinPrefix = "CMSPARK_SWIFT_TRAY_SHA256_V1:"
@@ -109,7 +109,7 @@ function compileActualBridge(root: string, define: Record<string, string>, outpu
   }
 }
 
-test("Swift tray build pin: default development module retains its historical pin", t => {
+test("Swift tray build pin: default development module uses the pinned development build", t => {
   const f = owned(t)
   const built = compileActualBridge(f.root, {})
   assert.equal(built.actual.getExpectedHash(), developmentPin)

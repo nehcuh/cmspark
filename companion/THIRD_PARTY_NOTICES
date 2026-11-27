@@ -1,6 +1,10 @@
 THIRD_PARTY_NOTICES — CMspark Agent
 ================================================================================
 
+Chinese transcript conversion: opencc-js 1.4.2 (MIT) and opencc-data dictionaries
+(Apache-2.0). The upstream copyright and license notices accompany the bundle
+under licenses/opencc-js/.
+
 Office compatibility runtime (#611)
 Package: @deepseek-ai/libreoffice-kit 0.1.5
 Source: https://github.com/deepseek-ai/dsh-libreoffice-kit

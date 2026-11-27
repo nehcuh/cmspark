@@ -27,7 +27,7 @@ import { DesktopMini, type DesktopMiniAction } from "./mini/desktop-mini"
 import { LinuxMiniHost } from "./mini/linux-mini"
 import { WindowsMini } from "./mini/windows-mini"
 import { captureMiniRegion } from "./mini/region-capture"
-import { isMiniAction, isMiniCapture, openMiniAction, type MiniAction } from "./mini/actions"
+import { parseMiniInvocation, type MiniTiming, isMiniCapture, openMiniAction, type MiniAction } from "./mini/actions"
 import { readPairingSecret, hasPaired } from "./tray/pairing"
 import { copyTextToClipboard } from "./tray/clipboard"
 import { OSASCRIPT_BIN } from "./process-path"
@@ -1716,11 +1716,15 @@ export function handleSummonerInbound(evt: SummonerInboundEvt): void {
   }
 }
 
-async function runMiniAction(action: MiniAction, signal: AbortSignal): Promise<void> {
+async function runMiniAction(action: MiniAction, signal: AbortSignal, timing?: MiniTiming): Promise<void> {
   const client = companionClient
   const current = client?.currentConnectionGuard()
   if (!client || !current?.()) throw new Error("Companion 未连接，请在托盘中启动服务。")
-  const image = isMiniCapture(action) ? await captureMiniRegion(signal) : undefined
+  if (action === "meeting") {
+    if (!signal.aborted) await openSummonerWebShell("", "meeting")
+    return
+  }
+  const image = isMiniCapture(action) ? await captureMiniRegion(signal, timing) : undefined
   if (image === null || signal.aborted) return
   if (client !== companionClient || !current()) throw new Error("Companion 连接已更改，请重新选择操作。")
   await openMiniAction(client, action, image)
@@ -1858,7 +1862,7 @@ function reportOverlayShellUnavailable(): void {
   })
 }
 
-async function openSummonerWebShell(threadId: string): Promise<void> {
+async function openSummonerWebShell(threadId: string, view?: "meeting"): Promise<void> {
   const client = summonerClient
   if (!client) {
     safeNotify({ title: "CMspark 快速对话", message: "请先从托盘启动 Companion，再打开快速对话", timeout: 5 })
@@ -1870,6 +1874,7 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
     const {
       startSummonerWebServer,
       summonerWebPageUrl,
+      revealSummonerMeeting,
       openLoopbackPage,
     } = require("./summoner-web") as typeof import("./summoner-web")
     const { port, token } = await startSummonerWebServer({
@@ -1894,11 +1899,17 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
         void handleSummonerClosed()
       },
     })
+    if (view === "meeting" && trayInstance?.openMiniMeeting) {
+      trayInstance.openMiniMeeting(port)
+      return
+    }
+    if (view === "meeting" && revealSummonerMeeting()) return
     let url = summonerWebPageUrl(port, token)
     if (threadId) {
       const join = url.includes("?") ? "&" : "?"
       url = url + join + "thread=" + encodeURIComponent(threadId)
     }
+    if (view === "meeting") url += "#meeting"
     const opened = await openLoopbackPage(url)
     if (!opened) {
       safeNotify({
@@ -1963,7 +1974,8 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
     case "mini-toggle": await (desktopMini ?? windowsMini)?.toggle(); break
     case "mini-action": {
       const id = action.payload?.id
-      if (id === "chat" || isMiniAction(id)) await desktopMini?.perform(id)
+      const invocation = typeof id === "string" ? parseMiniInvocation(id) : null
+      if (invocation) await desktopMini?.perform(invocation.action, invocation.timing)
       break
     }
     case "mini-hotkeys": await windowsMini?.openHotkeySettings(); break
@@ -2177,8 +2189,8 @@ export async function startMenuBarAgent(): Promise<void> {
     const mac = process.platform === "darwin"
     const host = mac ? {
       show: async () => menu(true), hide: () => menu(false), stop: async () => menu(false),
-    } : new LinuxMiniHost(dir, async id => { await desktopMini?.perform(id) }, message => desktopMini?.closed(message))
-    const run = (id: DesktopMiniAction, signal: AbortSignal) => id === "chat" ? openSummonerWebShell("") : runMiniAction(id, signal)
+    } : new LinuxMiniHost(dir, async (id, timing) => { await desktopMini?.perform(id, timing) }, message => desktopMini?.closed(message))
+    const run = (id: DesktopMiniAction, signal: AbortSignal, timing?: MiniTiming) => id === "chat" ? openSummonerWebShell("") : runMiniAction(id, signal, timing)
     desktopMini = new DesktopMini(dir, host, run, mac ? () => {} : menu,
       message => safeNotify({ title: "CMspark Mini", message, timeout: 5 }), mac ? () => menu(true) : undefined)
     // A missing GUI or a slow compositor must not delay the other tray connections.

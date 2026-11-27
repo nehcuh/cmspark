@@ -1,5 +1,5 @@
 # Exercise only a picker launched by this test Node process. No system-wide input is injected.
-param([int]$OwnerPid, [ValidateSet('select','cancel')][string]$Mode, [string]$Finished)
+param([int]$OwnerPid, [ValidateSet('select','cancel','delayed')][string]$Mode, [string]$Finished)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -TypeDefinition @'
@@ -32,12 +32,17 @@ $form.Location = New-Object Drawing.Point(($screen.Left + 100),($screen.Top + 15
 $form.TopMost = $true
 $form.ShowInTaskbar = $false
 $form.BackColor = [Drawing.Color]::FromArgb(25,89,171)
+$form.Add_MouseDown({
+  $form.BackColor = [Drawing.Color]::FromArgb(120,35,180)
+  $form.Refresh()
+})
 $stripe = New-Object Drawing.SolidBrush([Drawing.Color]::FromArgb(219,113,44))
 $form.Add_Paint({ param($sender,$e) $e.Graphics.FillRectangle($stripe,79,0,161,160) })
 $watch = [Diagnostics.Stopwatch]::StartNew()
 $clock = New-Object Windows.Forms.Timer
 $clock.Interval = 150
 $sent = $false
+$clicked = $false
 $failure = $null
 $form.Add_Shown({
   $form.Refresh()
@@ -55,7 +60,17 @@ $clock.Add_Tick({
   try {
     if ($watch.Elapsed.TotalSeconds -gt 30) { throw 'picker did not complete' }
     if (Test-Path -LiteralPath $Finished) { $form.Close(); return }
-    if ($sent) { return }
+    if ($sent) {
+      if ($Mode -eq 'delayed' -and -not $clicked) {
+        $spot = $form.PointToScreen([Drawing.Point]::new(70,60))
+        if ([MiniRegionDriver]::WindowFromPoint($spot) -eq $form.Handle) {
+          [MiniRegionDriver]::Mouse($form.Handle,$spot,0x201,1)
+          [MiniRegionDriver]::Mouse($form.Handle,$spot,0x202,0)
+          $script:clicked = $true
+        }
+      }
+      return
+    }
     $h = [MiniRegionDriver]::FindPicker()
     if ($h -eq [IntPtr]::Zero) { return }
     [uint32]$pickerPid = 0

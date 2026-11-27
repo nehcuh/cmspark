@@ -2,23 +2,34 @@ import { execFile } from "node:child_process"
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { linuxMiniScript } from "./linux-mini"
+import { setTimeout as wait } from "node:timers/promises"
 import { promisify } from "node:util"
 import { windowsPowerShellExePath } from "../acp/win-spawn"
 import { validatePng } from "../activity/image"
 import { resolveWinScript } from "../host-use/win/powershell"
+import type { MiniTiming } from "./actions"
+import { linuxMiniScript } from "./linux-mini"
 
 const run = promisify(execFile)
 const maxPngBytes = 6 * 1024 * 1024
 
 const tooLarge = "截图区域过大，请缩小范围（最多 8192 像素宽或高、1600 万像素、6 MiB）"
 
-async function captureMacRegion(signal?: AbortSignal): Promise<Buffer | null> {
+async function captureMacRegion(signal?: AbortSignal, timing?: MiniTiming): Promise<Buffer | null> {
+  if (timing) {
+    if (!timing.region) throw new Error("请先框选延时截图区域")
+    try {
+      await wait(timing.seconds * 1000, undefined, { signal })
+    } catch (error) {
+      if (signal?.aborted) return null
+      throw error
+    }
+  }
   const dir = await mkdtemp(join(tmpdir(), "cmspark-mini-"))
   const file = join(dir, "region.png")
   try {
     try {
-      await run("/usr/sbin/screencapture", ["-i", "-s", "-x", "-tpng", file], { signal })
+      await run("/usr/sbin/screencapture", [...(timing ? ["-R" + timing.region] : ["-i", "-s"]), "-x", "-tpng", file], { signal })
     } catch (error) {
       const e = error as { code?: number; stderr?: string }
       if (signal?.aborted || (e.code === 1 && !e.stderr?.trim())) return null
@@ -38,15 +49,15 @@ async function captureMacRegion(signal?: AbortSignal): Promise<Buffer | null> {
 }
 
 /** The Mini host hides its own window before opening the picker. Only an accepted crop leaves the helper. */
-export async function captureMiniRegion(signal?: AbortSignal): Promise<Buffer | null> {
+export async function captureMiniRegion(signal?: AbortSignal, timing?: MiniTiming): Promise<Buffer | null> {
   if (signal?.aborted) return null
-  if (process.platform === "darwin") return captureMacRegion(signal)
+  if (process.platform === "darwin") return captureMacRegion(signal, timing)
   if (process.platform !== "win32" && process.platform !== "linux") throw new Error("此系统不支持桌面框选")
   const linux = process.platform === "linux"
   try {
-    const { stdout } = await run(linux ? "/usr/bin/python3" : windowsPowerShellExePath(), linux ? [linuxMiniScript("linux-mini-region.py")] : [
+    const { stdout } = await run(linux ? "/usr/bin/python3" : windowsPowerShellExePath(), linux ? [linuxMiniScript("linux-mini-region.py"), String(timing?.seconds ?? 0)] : [
       "-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass",
-      "-File", resolveWinScript("mini-region.ps1"), "-OwnerPid", String(process.pid),
+      "-File", resolveWinScript("mini-region.ps1"), "-OwnerPid", String(process.pid), "-DelaySeconds", String(timing?.seconds ?? 0),
     ], { windowsHide: true, encoding: "buffer", maxBuffer: maxPngBytes, signal })
     if (signal?.aborted || !stdout.length) return null
     validatePng(stdout)
