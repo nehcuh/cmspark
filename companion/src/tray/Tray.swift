@@ -411,6 +411,7 @@ private let desktopMini = DesktopMini()
 
 /// The Mini owns the meeting window so reopening it keeps the microphone and document alive.
 private final class MiniMeetingWindow: NSObject, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
+  private let files = MiniMeetingFiles()
   private var window: NSWindow?
   private var page: WKWebView?
   private var address: URL?
@@ -421,12 +422,14 @@ private final class MiniMeetingWindow: NSObject, WKNavigationDelegate, WKUIDeleg
     if window == nil {
       let config = WKWebViewConfiguration()
       config.websiteDataStore = .nonPersistent()
+      files.install(on: config)
       let view = WKWebView(frame: .zero, configuration: config)
       view.navigationDelegate = self
       view.uiDelegate = self
       let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
                            styleMask: [.titled, .closable, .miniaturizable, .resizable],
                            backing: .buffered, defer: false)
+      files.page = view
       panel.title = "CMspark · 会议记录"
       panel.minSize = NSSize(width: 360, height: 360)
       panel.isReleasedWhenClosed = false
@@ -437,6 +440,8 @@ private final class MiniMeetingWindow: NSObject, WKNavigationDelegate, WKUIDeleg
       page = view
     }
     if address != url {
+      files.close()
+      files.port = port
       address = url
       page?.load(URLRequest(url: url))
     } else {
@@ -469,12 +474,15 @@ private final class MiniMeetingWindow: NSObject, WKNavigationDelegate, WKUIDeleg
     picker.beginSheetModal(for: window) { response in completionHandler(response == .OK ? picker.urls : nil) }
   }
 
+  func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { files.close() }
+
   func windowShouldClose(_ sender: NSWindow) -> Bool {
     guard !closing, let page else { return false }
     closing = true
     page.callAsyncJavaScript("return await window.finishMiniMeeting?.()", arguments: [:], in: nil, in: .page) { result in
       self.closing = false
       if case .success(let value) = result, (value as? Bool) == false { return }
+      self.files.close()
       sender.close()
       self.page = nil
       self.window = nil

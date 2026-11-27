@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
   <key>CFBundleIdentifier</key><string>com.cmspark.tray</string>
-  <key>NSMicrophoneUsageDescription</key><string>CMspark 使用麦克风录制并转写你开始的会议。</string>
+  <key>NSScreenCaptureUsageDescription</key>
+    <string>CMspark 录制你为视频会议选择的窗口或屏幕。</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>CMspark 录制并转写你选择的视频会议声音。</string>
+    <key>NSMicrophoneUsageDescription</key><string>CMspark 使用麦克风录制并转写你开始的会议。</string>
 </dict></plist>

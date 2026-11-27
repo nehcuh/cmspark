@@ -20,7 +20,7 @@ test("macOS Mini gestures, native action menu, capture handoff and saved monitor
     // Exercise the production menu/command handlers in AppKit with a controlled event stream.
     const tray = path.join(dir, "Tray.swift"), binary = path.join(dir, "test-orb")
     await writeFile(tray, source.replace(/^@main$/m, ""))
-    await run("swiftc", [tray, "src/tray/MiniActionFan.swift", "src/tray/SummonerOverlay.swift", "tests/fixtures/mini-orb-driver.swift",
+    await run("swiftc", [tray, "src/tray/MiniMeetingVideo.swift", "src/tray/MiniActionFan.swift", "src/tray/SummonerOverlay.swift", "tests/fixtures/mini-orb-driver.swift",
       "-o", binary, "-framework", "AppKit", "-framework", "AVFoundation", "-framework", "Carbon"])
     const opts = { env: { ...process.env, CMSPARK_DATA_DIR: dir }, timeout: 10_000 }
     const { stdout } = await run(binary, [], opts)

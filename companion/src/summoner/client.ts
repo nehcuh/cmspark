@@ -59,10 +59,10 @@ export const VOICE_PRIVACY_ACK_V2_CLAUSES: readonly string[] = [
   "此前的浏览器隐私确认（v1）不满足本机转写；使用本机转写须单独确认本说明。",
 ] as const
 
-/** Overlay HTML meeting privacy — lockstep with MeetingPanel five clauses. */
+/** Mini recording choices differ from the extension’s audio retention controls. */
 export const MEETING_PRIVACY_ACK_V1_CLAUSES: readonly string[] = [
   "会创建本地会话产物（转写 ± 可选音频）。",
-  "默认结束录制后删除会议目录下音频（当前 UI 不提供保留选项）。",
+  "小窗默认保存本地录音；视频会议另存所选画面和声音。文件随会议删除，可选择「仅转写」。",
   "生成纪要将把转写文本发给你已配置的 LLM。",
   "会议录音在本机转写；不会自动开始录音。",
   "多方录音法律合规由你负责。",

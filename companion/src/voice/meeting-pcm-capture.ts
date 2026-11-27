@@ -10,6 +10,7 @@ export type MeetingPcmCaptureDeps = {
   persist: (segment: PcmSegment, result: Extract<SttServiceResult, { ok: true }>) => boolean | void
   checkpoint: (status: CaptureStatus) => void
   send: (status: CaptureStatus) => void
+  recording?: { append(pcm: Buffer): void; close(): void }
   retired: () => void
   now?: () => number
 }
@@ -41,10 +42,13 @@ export class MeetingPcmCapture {
 
   constructor(readonly identity: CaptureIdentity, readonly peerId: string, private readonly deps: MeetingPcmCaptureDeps, readonly speaker?: string,
     readonly liveTarget?: string, segmentFrames: number = C.segmentFrames) {
-    this.queue = new MeetingPcmQueue(segmentFrames, liveTarget ? Math.min(C.blockFrames * 64, segmentFrames) : segmentFrames)
+    this.queue = new MeetingPcmQueue(segmentFrames, liveTarget ? Math.min(C.blockFrames * 64, segmentFrames) : segmentFrames,
+      deps.recording && (pcm => { try { deps.recording!.append(pcm) } catch { throw new Error("save_failed") } }))
     this.now = deps.now ?? Date.now
     this.timer = this.later(() => this.fail("startup_timeout"), C.startupMs)
   }
+
+  get savesRecording(): boolean { return !!this.deps.recording }
 
   owns(peer: string, captureId: string, epoch: number): boolean {
     return peer === this.peerId && captureId === this.identity.capture_id && epoch === this.identity.capture_epoch
@@ -82,8 +86,9 @@ export class MeetingPcmCapture {
       return ack
     } catch (error) {
       if (error instanceof Error && error.message === "stale_capture") throw error
-      this.fail("queue_protocol_error")
-      throw new Error("queue_protocol_error")
+      const code = error instanceof Error && error.message === "save_failed" ? "save_failed" : "queue_protocol_error"
+      this.fail(code)
+      throw new Error(code)
     }
   }
 
@@ -228,5 +233,5 @@ export class MeetingPcmCapture {
   private clearTimers() {
     for (const key of ["timer", "idle", "drain", "flush", "cleanup", "job"] as const) { if (this[key]) clearTimeout(this[key]!); this[key] = null }
   }
-  private retire() { this.clearTimers(); this.queue.retire(); this.acks.clear(); this.request = null; this.deps.retired() }
+  private retire() { this.clearTimers(); this.queue.retire(); this.acks.clear(); this.request = null; try { this.deps.recording?.close() } finally { this.deps.retired() } }
 }

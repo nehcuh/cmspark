@@ -5,6 +5,8 @@
  * chrome-extension:// and cmspark-tray://local. Tray dispatch uses the
  * existing summoner-stamped CompanionClient.
  */
+import { SUMMONER_MEETING_MEDIA_JS } from "./summoner/meeting-media"
+import { serveMeetingRecordings } from "./summoner/meeting-recording-http"
 import * as http from "http"
 import { once } from "node:events"
 import * as crypto from "crypto"
@@ -781,7 +783,7 @@ async function handleRequest(
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Content-Security-Policy":
-          `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'`,
+          `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; media-src 'self'; connect-src 'self'`,
       })
       let cruise = "每次确认"
       try {
@@ -1226,6 +1228,10 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/meeting/recordings" && (req.method === "GET" || req.method === "HEAD")) {
+      serveMeetingRecordings(req, res, query)
+      return
+    }
     if (pathOnly === "/api/meeting/reference/import" && req.method === "POST") {
       // 7MiB binary + base64 envelope stays below the existing 10MiB WS limit.
       const body = JSON.parse(await readBody(req, 10 * 1024 * 1024))
@@ -1428,6 +1434,12 @@ body{
   position:absolute;inset:0;z-index:7;margin:0;
   display:flex;flex-direction:column;background:var(--paper);color:var(--text);
 }
+#meetingRecordings{margin:4px 12px 8px;flex-shrink:0}
+#meetingRecordings h3{font-size:13px;margin:8px 0}
+#meetingRecordings details{padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
+#meetingRecordings summary{cursor:pointer}
+#meetingRecordings audio,#meetingRecordings video{display:block;width:100%;max-height:260px;margin:8px 0}
+#meetingRecordings button,#meetingRecordings a{color:var(--indigo);background:transparent;border:0;cursor:pointer;font:inherit}
 #meetingReferenceNotes{box-sizing:border-box;width:100%;min-height:84px;resize:vertical;border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
 #meetingReferenceSection,#meetingOriginal,#meetingEvidence{margin:8px 12px 0;font-size:12px;line-height:1.5;overflow-wrap:anywhere;flex-shrink:0}
 #meetingEvidence pre,#meetingOriginal pre{white-space:pre-wrap;font:inherit}
@@ -1834,6 +1846,7 @@ ${QUICK_CHAT_CSS}
       <span class="meeting-dot" aria-hidden="true"></span>
       <span id="meetingHint">未录制</span>
       <span id="meetingVoiceMeta"></span>
+      <label>保存 <select id="meetingRecordingMode"><option value="audio">录音（WAV）</option><option value="transcript">仅转写</option></select></label>
       <label>转写语言 <select id="meetingLanguage"></select></label>
     </div>
     <div class="meeting-tools">
@@ -1843,6 +1856,7 @@ ${QUICK_CHAT_CSS}
 
     </div>
     <div class="meeting-hist" id="meetingHistList" hidden></div>
+    <section id="meetingRecordings" aria-label="本地录制文件" hidden></section>
     <details id="meetingMaterials"><summary>录音与参考材料</summary>
     <div class="meeting-tools">
       <button type="button" id="meetingAudioImport">导入录音</button>
@@ -2579,6 +2593,7 @@ try{
       var m=d&&d.meeting;
       if(!m||!m.id){ setStatus("打不开这场会议"); return; }
       lastMeetingId=m.id;
+      loadRecordingFiles(m.id);
       meetingId="";
       meetingFeats=[];
       showMeetingHistory(false);
@@ -2623,7 +2638,9 @@ try{
     return beginContinuousMeeting();
   }
   ${MEETING_PCM_BROWSER_JS}
+  if(window.webkit?.messageHandlers?.meetingVideo)$("meetingRecordingMode").add(new Option("视频会议（MP4＋录音）","video"),1);
   for (const [value,label] of CMsparkMeetingPcm.meetingLanguages) $("meetingLanguage").add(new Option(label,value));
+  ${SUMMONER_MEETING_MEDIA_JS}
   ${SUMMONER_MEETING_WORKFLOW_JS}
   if(location.hash==="#meeting")showMeetingDesk(true);
   window.finishMiniMeeting = async function(){
