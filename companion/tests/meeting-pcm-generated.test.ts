@@ -42,6 +42,11 @@ test("Windows-style Git checkout preserves canonical capture bytes and still rej
     "chrome-extension/src/sidepanel/voice/meeting-continuous-capture.ts",
     "chrome-extension/src/sidepanel/voice/meeting-language.ts",
     "chrome-extension/src/sidepanel/voice/meeting-chapters.ts",
+    "chrome-extension/src/sidepanel/voice/desktop-meeting-media.ts",
+    "chrome-extension/src/sidepanel/voice/workbench-screen-capture.ts",
+    "chrome-extension/src/sidepanel/voice/workbench-capture-owner.ts",
+    "chrome-extension/src/sidepanel/voice/workbench-recording-store.ts",
+    "chrome-extension/src/sidepanel/voice/meeting-frame-sampler.ts",
     "companion/src/summoner/meeting-continuous-generated.ts",
   ]
   const fixtures = [...canonical, "companion/scripts/generate-meeting-capture.mjs", "chrome-extension/tsconfig.json"]
