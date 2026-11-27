@@ -136,11 +136,8 @@ test("tray companionClient opens overlay.shell.open; summonerClient does not", (
     fn,
     /openLoopbackPage\(summonerWebPageUrl\(port, token\) \+ "&thread=" \+ encodeURIComponent\(threadId\)\)/,
   )
-  const opened = fn.indexOf("openLoopbackPage")
-  const success = fn.indexOf("已在浏览器打开召唤器")
-  assert.ok(opened >= 0 && success > opened, "success notify must follow openLoopbackPage")
-  assert.match(fn, /if\s*\(\s*!/)
-  assert.match(fn, /打开召唤器失败/)
+  assert.match(fn, /await openLoopbackPage\(url\)/)
+  assert.match(fn, /无法打开快速对话/)
   assert.match(fn, /sendAppMessage\(\s*["']error["']/)
   assert.match(fn, /OVERLAY_SHELL_UNAVAILABLE/)
   assert.match(fn, /无法弹出对话框/)

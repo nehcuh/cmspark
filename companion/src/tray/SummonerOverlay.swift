@@ -1404,7 +1404,10 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
   private func chooseHotkey(_ combo: String) {
     guard summonerHotKeyCandidates.contains(where: { $0.combo == combo }) else { return }
     if summonerHotKeyStolen.contains(where: { $0.combo == combo }) { return }
-    _ = registerSummonerHotKey(combo: combo)
+    guard registerSummonerHotKey(combo: combo) else {
+      applyError(message: "此快捷键无法注册，请选择其他组合。", errorCode: nil)
+      return
+    }
     jsonLine(["type": "summoner.hotkey.chosen", "combo": combo])
     noteHotkeyConfigured()
   }
@@ -2425,11 +2428,11 @@ class SummonerController: NSObject, NSWindowDelegate, NSTextViewDelegate {
     pickerStack.spacing = 6
     pickerStack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
     pickerStack.translatesAutoresizingMaskIntoConstraints = false
-    let pickerTitle = NSTextField(labelWithString: "选一个召唤热键")
+    let pickerTitle = NSTextField(labelWithString: "选择工作台快捷键")
     pickerTitle.font = .systemFont(ofSize: 13, weight: .semibold)
     pickerTitle.textColor = SummonerTokens.text
     pickerStack.addArrangedSubview(pickerTitle)
-    let pickerHint = NSTextField(wrappingLabelWithString: "选完即关。菜单也可打开召唤器，不必等热键。")
+    let pickerHint = NSTextField(wrappingLabelWithString: "快捷键打开只读工作台。也可以从托盘菜单打开。")
     pickerHint.font = .systemFont(ofSize: 11)
     pickerHint.textColor = SummonerTokens.secondary
     pickerHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

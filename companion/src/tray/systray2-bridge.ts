@@ -213,6 +213,12 @@ export class SysTray2Adapter implements UnifiedTray {
       this.seqMap.push(mapping)
     }
 
+    push("快速对话", { type: "summoner" })
+    push("只读工作台…", { type: "desktop" })
+
+    items.push(SEP)
+    this.seqMap.push({ type: "status" })
+
     // Start / Stop / Restart
     push("启动 Companion", { type: "start" }, { enabled: !running })
     push("停止 Companion", { type: "stop" }, { enabled: running })
@@ -254,8 +260,6 @@ export class SysTray2Adapter implements UnifiedTray {
     push("打开日志目录", { type: "logs" })
     push("打开 Chrome", { type: "chrome" })
     push("显示配对码", { type: "show-pairing" })
-    push("对话浮窗（旧版）…", { type: "summoner" })
-    push("只读工作台…", { type: "desktop" })
     push("设置", { type: "settings" })
 
     items.push(SEP)

@@ -1,15 +1,16 @@
 """Actual summoner HTML script, synthetic HTTP responses; no installed Companion."""
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs
-import json,subprocess,tempfile
-from playwright.sync_api import sync_playwright
+import json, os, subprocess, tempfile
+from playwright.sync_api import sync_playwright, expect
 root=Path(__file__).resolve().parent.parent
-shots=Path('/private/tmp/cmspark-471-shots');shots.mkdir(exist_ok=True)
+shots=Path(tempfile.gettempdir())/'cmspark-471-shots';shots.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory() as out:
  subprocess.run(['node','scripts/render-web-surface-fixtures.cjs',out],cwd=root,check=True)
  html=(Path(out)/'capture.html').read_text().replace('%%CRUISE_LABEL%%','每次确认')
  with sync_playwright() as p:
-  b=p.chromium.launch(channel='chrome',headless=True);page=b.new_page(viewport={'width':390,'height':740});page.set_default_timeout(6000)
+  b=p.chromium.launch(channel=os.environ.get('CMSPARK_TEST_CHROME_CHANNEL','chrome'),headless=True);page=b.new_page(viewport={'width':390,'height':740});page.set_default_timeout(6000)
+  submissions=[]
   browser_status={'connected':False}
   thread={'id':'fixture-1','alias':'演示对话','user_tags':[],'topic_folder':None}
   metadata_ack={'valid':True}
@@ -28,13 +29,29 @@ with tempfile.TemporaryDirectory() as out:
      if metadata_ack['valid']:owner_thread.update(req.post_data_json)
      data={'type':'thread.updated','thread':owner_thread.copy()}
     else:data={'thread':thread,'messages':[],'run_status':'idle'}
+   elif path in ['/api/chat','/api/files']:
+    submissions.append(req.post_data_json)
+    data={'type':'accepted'}
    elif path=='/api/mcp':data={'servers':[]}
    elif path=='/api/browser-status':data=browser_status
    else:data={'ok':True}
    r.fulfill(content_type='application/json',body=json.dumps(data))
-  page.route('http://fixture.test/**',route);page.goto('http://fixture.test/')
+  page.route('http://127.0.0.1/**',route);page.goto('http://127.0.0.1/')
   text=page.get_by_role('textbox',name='发送到当前对话',exact=True);text.wait_for()
-  page.wait_for_timeout(200);assert not errors,errors
+  expect(text).to_be_focused()
+  more=page.get_by_role('button',name='更多',exact=True)
+  more.focus();page.keyboard.press('Enter')
+  expect(page.locator('#meetingStart')).to_be_focused()
+  page.keyboard.press('Escape');expect(more).to_be_focused()
+  expect(page.locator('#meetingStart')).to_be_hidden()
+  text.fill('置顶时保留草稿')
+  more.click();page.get_by_role('button',name='置顶显示').click()
+  page.wait_for_function("documentPictureInPicture.window?.document.activeElement?.id==='text'")
+  assert page.evaluate("documentPictureInPicture.window.document.querySelector('#text').value")=='置顶时保留草稿'
+  page.get_by_role('button',name='回到此窗口').click()
+  expect(text).to_be_focused();expect(text).to_have_value('置顶时保留草稿')
+  text.fill('')
+  assert not errors,errors
   page.get_by_role('button',name='新对话',exact=True).first.click()
   page.wait_for_function('document.querySelector("#empty strong")')
   assert page.locator('.mark').count()==0 and '山' not in page.locator('#empty').inner_text()
@@ -42,7 +59,7 @@ with tempfile.TemporaryDirectory() as out:
   page.get_by_role('button',name='导航',exact=True).click();assert page.locator('.hud.history .list').is_visible()
   page.get_by_role('button',name='完成',exact=True).click()
   assert page.locator('#historyOpen').evaluate('(el)=>el===document.activeElement')
-  for width,height in [(320,420),(360,420),(390,740),(760,740),(1000,800),(1440,900)]:
+  for width,height in [(320,420),(520,620),(360,420),(390,740),(760,740),(1000,800),(1440,900)]:
    page.set_viewport_size({'width':width,'height':height})
    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
    assert page.locator('.composer-actions button:visible').evaluate_all('(els)=>els.map(el=>el.id)')==['attachFile','mic','sendGo']
@@ -108,8 +125,40 @@ with tempfile.TemporaryDirectory() as out:
   page.set_viewport_size({'width':1000,'height':800});page.keyboard.press('Escape')
   assert page.locator('#newChat').evaluate('(el)=>el===document.activeElement')
   with page.expect_file_chooser():page.get_by_role('button',name='添加附件',exact=True).click()
-  text.fill('请整理变更材料');page.get_by_role('button',name='发送',exact=True).click()
-  page.wait_for_timeout(200);assert ('POST','/api/chat') in requests
+  def event(data):
+   page.evaluate("data=>window.fixtureEvents.onmessage({data:JSON.stringify(data)})",data)
+  event({'type':'thread.updated','thread':{'id':'fixture-1','alias':'周五评审'}})
+  expect(page.locator('#workspaceTitle')).to_have_text('周五评审')
+  # A markdown heading is ordinary text. IME confirmation and duplicate Enter cannot submit it twice.
+  text.fill('# 核对材料')
+  text.dispatch_event('keydown',{'key':'Enter','isComposing':True})
+  assert not submissions
+  text.press('Enter');text.press('Enter')
+  expect(page.locator('#status')).to_have_text('等待接收…')
+  assert len(submissions)==1 and submissions[-1]['message']=='# 核对材料'
+  first=submissions[-1]['submission_id']
+  event({'type':'chat.user','thread_id':'another','client_message_id':first})
+  expect(text).to_have_value('# 核对材料')
+  event({'type':'chat.error','thread_id':'fixture-1','id':first,'error':'model not found'})
+  expect(page.locator('#status')).to_have_text('model not found')
+  expect(text).to_have_value('# 核对材料')
+  text.press('Enter')
+  expect(page.locator('#status')).to_have_text('等待接收…')
+  text.fill('下一条草稿')
+  event({'type':'chat.user','thread_id':'fixture-1','client_message_id':submissions[-1]['submission_id']})
+  expect(text).to_have_value('下一条草稿')
+  event({'type':'chat.done','thread_id':'fixture-1'})
+  page.locator('#files').set_input_files({'name':'notes.txt','mimeType':'text/plain','buffer':b'notes'})
+  expect(page.locator('#fileNames')).to_have_text('notes.txt')
+  text.press('Enter')
+  expect(page.locator('#status')).to_have_text('等待接收…')
+  event({'type':'file.upload_error','thread_id':'fixture-1','id':submissions[-1]['submission_id'],'error':'附件未接收'})
+  expect(page.locator('#fileNames')).to_have_text('notes.txt')
+  text.press('Enter')
+  expect(page.locator('#status')).to_have_text('等待接收…')
+  event({'type':'file.uploaded','thread_id':'fixture-1','id':submissions[-1]['submission_id']})
+  expect(text).to_have_value('')
+  expect(page.locator('#fileSummary')).to_be_hidden()
   extra_threads.append({'id':'fixture-2','alias':'第二对话'})
   page.get_by_role('button',name='对话',exact=True).click()
   page.locator('#threads .item').filter(has_text='第二对话').wait_for()

@@ -127,6 +127,8 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     console.log("")
 
     let idx = 1
+    console.log(`[${idx++}] 快速对话`)
+    console.log(`[${idx++}] 只读工作台…`)
     console.log(`[${idx++}] 启动 Companion`)
     console.log(`[${idx++}] 停止 Companion`)
     console.log(`[${idx++}] 重启 Companion`)
@@ -145,8 +147,6 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     console.log(`[${idx++}] 打开日志目录`)
     console.log(`[${idx++}] 打开 Chrome`)
     console.log(`[${idx++}] 显示配对码`)
-    console.log(`[${idx++}] 对话浮窗（旧版）…`)
-    console.log(`[${idx++}] 只读工作台…`)
     console.log(`[${idx}] 退出（停止服务）`)
 
     console.log("")
@@ -156,8 +156,9 @@ export class ReadlineTrayAdapter implements UnifiedTray {
   private handleInput(choice: string): void {
     // Map choices — indices shift dynamically based on quick actions / threads
     let idx = 1
-    const fixedCount = 4 // start, stop, restart, status
 
+    if (this.parseInt(choice) === idx++) { this.emit("summoner"); this.pause(); return }
+    if (this.parseInt(choice) === idx++) { this.emit("desktop"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("start"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("stop"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("restart"); this.pause(); return }
@@ -185,8 +186,6 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     if (this.parseInt(choice) === idx++) { this.emit("logs"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("chrome"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("show-pairing"); this.pause(); return }
-    if (this.parseInt(choice) === idx++) { this.emit("summoner"); this.pause(); return }
-    if (this.parseInt(choice) === idx++) { this.emit("desktop"); this.pause(); return }
     if (this.parseInt(choice) === idx || choice === "q" || choice === "quit") {
       this.emit("quit")
       return

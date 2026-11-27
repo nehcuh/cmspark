@@ -156,6 +156,31 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   let menu = NSMenu()
   let running = currentStatus == .running
 
+  let summonerItem = NSMenuItem(title: "快速对话", action: action, keyEquivalent: "")
+  summonerItem.target = target
+  summonerItem.tag = MenuTag.summoner.rawValue
+  menu.addItem(summonerItem)
+
+  let desktopItem = NSMenuItem(title: "只读工作台…", action: action, keyEquivalent: "")
+  desktopItem.target = target
+  desktopItem.tag = MenuTag.desktop.rawValue
+  menu.addItem(desktopItem)
+
+  let hotkeys = NSMenu()
+  for candidate in summonerHotKeyCandidates {
+    let item = NSMenuItem(title: candidate.label, action: action, keyEquivalent: "")
+    item.target = target
+    item.tag = MenuTag.summonerHotkey.rawValue
+    item.representedObject = candidate.combo
+    item.state = activeWorkbenchHotkey == candidate.combo ? .on : .off
+    hotkeys.addItem(item)
+  }
+  let shortcutItem = NSMenuItem(title: "工作台快捷键", action: nil, keyEquivalent: "")
+  shortcutItem.submenu = hotkeys
+  menu.addItem(shortcutItem)
+
+  menu.addItem(NSMenuItem.separator())
+
   // -- Start / Stop / Restart --
   let startItem = NSMenuItem(title: "启动 Companion", action: action, keyEquivalent: "s")
   startItem.target = target
@@ -247,21 +272,6 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   pairingItem.target = target
   pairingItem.tag = MenuTag.pairing.rawValue
   menu.addItem(pairingItem)
-
-  let summonerItem = NSMenuItem(title: "对话浮窗（旧版）…", action: action, keyEquivalent: "")
-  summonerItem.target = target
-  summonerItem.tag = MenuTag.summoner.rawValue
-  menu.addItem(summonerItem)
-
-  let desktopItem = NSMenuItem(title: "只读工作台…", action: action, keyEquivalent: "")
-  desktopItem.target = target
-  desktopItem.tag = MenuTag.desktop.rawValue
-  menu.addItem(desktopItem)
-
-  let summonerHotkeyItem = NSMenuItem(title: "召唤器快捷键…", action: action, keyEquivalent: "")
-  summonerHotkeyItem.target = target
-  summonerHotkeyItem.tag = MenuTag.summonerHotkey.rawValue
-  menu.addItem(summonerHotkeyItem)
 
   let chromeItem = NSMenuItem(title: "打开 Chrome", action: action, keyEquivalent: "c")
   chromeItem.target = target
@@ -369,8 +379,16 @@ class TrayDelegate: NSObject {
     } else if tag == MenuTag.desktop.rawValue {
       jsonLine(["type": "click", "action": "desktop"])
     } else if tag == MenuTag.summonerHotkey.rawValue {
-      summonerController.open(threadId: "")
-      summonerController.showHotkeyPicker()
+      guard let combo = sender.representedObject as? String else { return }
+      if registerSummonerHotKey(combo: combo) {
+        jsonLine(["type": "summoner.hotkey.chosen", "combo": combo])
+        rebuildMenu()
+      } else {
+        let alert = NSAlert()
+        alert.messageText = "此快捷键无法注册"
+        alert.informativeText = "请从工作台快捷键菜单选择其他组合。"
+        alert.runModal()
+      }
     } else if tag == MenuTag.settings.rawValue {
       jsonLine(["type": "click", "action": "settings"])
     } else if tag == MenuTag.autostart.rawValue {
@@ -577,8 +595,10 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
 
   case "summoner.hotkey.set":
     let combo = (json["combo"] as? String) ?? ""
-    _ = registerSummonerHotKey(combo: combo)
-    summonerController.noteHotkeyConfigured()
+    if registerSummonerHotKey(combo: combo) {
+      summonerController.noteHotkeyConfigured()
+      delegate.rebuildMenu()
+    }
 
   case "summoner.dictate":
     let text = (json["text"] as? String) ?? ""
@@ -1420,6 +1440,7 @@ let summonerHotKeyStolenCopy =
 
 let kSummonerHotKeySignature: OSType = 0x434D5355 // 'CMSU'
 let kSummonerHotKeyId: UInt32 = 1
+var activeWorkbenchHotkey: String?
 var summonerHotKeyRef: EventHotKeyRef?
 var summonerHotKeyHandlerRef: EventHandlerRef?
 
@@ -1453,26 +1474,32 @@ func unregisterSummonerHotKey() {
   if let ref = summonerHotKeyRef {
     UnregisterEventHotKey(ref)
     summonerHotKeyRef = nil
+    activeWorkbenchHotkey = nil
   }
 }
 
 /// Best-effort Carbon registration. False = combo persisted but not armed.
 @discardableResult
 func registerSummonerHotKey(combo: String) -> Bool {
-  unregisterSummonerHotKey()
+  if activeWorkbenchHotkey == combo { return true }
   guard let cand = summonerHotKeyCandidates.first(where: { $0.combo == combo }) else {
     return false
   }
   let hotKeyID = EventHotKeyID(signature: kSummonerHotKeySignature, id: kSummonerHotKeyId)
+  var newRef: EventHotKeyRef?
   let status = RegisterEventHotKey(
     cand.keyCode,
     cand.mods,
     hotKeyID,
     GetApplicationEventTarget(),
     0,
-    &summonerHotKeyRef
+    &newRef
   )
-  return status == noErr
+  guard status == noErr else { return false }
+  unregisterSummonerHotKey()
+  summonerHotKeyRef = newRef
+  activeWorkbenchHotkey = combo
+  return true
 }
 
 func handleSummonerHotKeyPressed() {

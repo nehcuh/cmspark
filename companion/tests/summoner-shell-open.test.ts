@@ -9,9 +9,7 @@ import * as path from "node:path"
 import * as os from "node:os"
 import {
   isSummonerLoopbackUrl,
-  overlayWindowPosition,
   OVERLAY_WINDOW_SIZE,
-  parseFinderDesktopBounds,
   parseOverlayChromePids,
   planSummonerShellOpen,
   resolveSummonerBrowserPath,
@@ -91,36 +89,21 @@ test("planSummonerShellOpen uses --app window when browser path is known", () =>
   assert.ok(r.args.some((a) => a === `--window-size=${OVERLAY_WINDOW_SIZE.w},${OVERLAY_WINDOW_SIZE.h}`))
 })
 
-test("planSummonerShellOpen pins own profile + position so Chrome-already-running honors size", () => {
+test("planSummonerShellOpen pins own profile and lets the window manager choose the display", () => {
   const r = planSummonerShellOpen(LOOP, {
     platform: "linux",
     browserPath: "/usr/bin/google-chrome",
     userDataDir: "/tmp/cmspark-overlay-chrome",
-    windowPosition: { x: 200, y: 56 },
   })
   assert.equal("error" in r, false)
   if ("error" in r) return
   assert.equal(r.kind, "app-window")
   assert.ok(r.args.includes(`--app=${LOOP}`))
-  assert.ok(r.args.includes("--window-size=1040,760"))
-  assert.ok(r.args.includes("--window-position=200,56"))
+  assert.ok(r.args.includes("--window-size=520,620"))
+  assert.equal(r.args.some(a => a.startsWith("--window-position")), false)
   assert.ok(r.args.includes("--user-data-dir=/tmp/cmspark-overlay-chrome"))
   assert.ok(r.args.includes("--no-first-run"))
   assert.ok(r.args.includes("--no-default-browser-check"))
-})
-
-test("overlayWindowPosition centers inner card on the screen", () => {
-  const p = overlayWindowPosition(1440, 900)
-  assert.equal(p.x, 200)
-  assert.equal(p.y, 56)
-  const small = overlayWindowPosition(320, 400)
-  assert.equal(small.x, 0)
-  assert.equal(small.y, 0)
-})
-
-test("parseFinderDesktopBounds reads Finder desktop bounds", () => {
-  assert.deepEqual(parseFinderDesktopBounds("0, 0, 1512, 982"), { w: 1512, h: 982 })
-  assert.equal(parseFinderDesktopBounds("nope"), null)
 })
 
 test("parseOverlayChromePids matches only the overlay profile", () => {
@@ -153,8 +136,8 @@ test("planSummonerShellOpen falls back to system browser without chrome", () => 
   assert.equal("error" in win, false)
   if ("error" in win) return
   assert.equal(win.kind, "browser-tab")
-  assert.equal(win.command, "cmd.exe")
-  assert.deepEqual(win.args, ["/c", "start", "", LOOP])
+  assert.equal(win.command, "rundll32.exe")
+  assert.deepEqual(win.args, ["url.dll,FileProtocolHandler", LOOP])
   assert.equal(win.shell, undefined)
 })
 
@@ -176,14 +159,14 @@ test("openLoopbackPage uses the planner (not raw open only)", () => {
   assert.match(src, /var w=\$\{OVERLAY_WINDOW_SIZE\.w\},h=\$\{OVERLAY_WINDOW_SIZE\.h\}/)
 })
 
-test("openLoopbackPage spawns --app for loopback and skips evil URLs", () => {
+test("openLoopbackPage spawns --app for loopback and skips evil URLs", async () => {
   const calls: Array<{ command: string; args: string[]; shell?: boolean }> = []
   const spawn = (command: string, args: string[], opts: { shell?: boolean }) => {
     calls.push({ command, args, shell: opts.shell })
     return { unref() {} }
   }
   assert.equal(
-    openLoopbackPage("http://evil.example/?token=" + "ab".repeat(32), {
+    await openLoopbackPage("http://evil.example/?token=" + "ab".repeat(32), {
       platform: "linux",
       browserPath: "/usr/bin/google-chrome",
       spawn,
@@ -192,20 +175,19 @@ test("openLoopbackPage spawns --app for loopback and skips evil URLs", () => {
   )
   assert.equal(calls.length, 0)
   assert.equal(
-    openLoopbackPage(LOOP, {
+    await openLoopbackPage(LOOP, {
       platform: "linux",
       browserPath: "/usr/bin/google-chrome",
       spawn,
       userDataDir: "/tmp/cmspark-overlay-chrome-test",
-      screen: { w: 1440, h: 900 },
     }),
     true,
   )
   assert.equal(calls.length, 1)
   assert.equal(calls[0].command, "/usr/bin/google-chrome")
   assert.ok(calls[0].args.includes(`--app=${LOOP}`))
-  assert.ok(calls[0].args.includes("--window-size=1040,760"))
-  assert.ok(calls[0].args.includes("--window-position=200,56"))
+  assert.ok(calls[0].args.includes("--window-size=520,620"))
+  assert.equal(calls[0].args.some(a => a.startsWith("--window-position")), false)
   assert.ok(calls[0].args.includes("--user-data-dir=/tmp/cmspark-overlay-chrome-test"))
   assert.equal(calls[0].shell, undefined)
 })

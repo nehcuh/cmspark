@@ -39,6 +39,8 @@ membership. Project directory defaults, a global activity center, merged code/te
 workspace and native management remain future work. No copied Codex assets, mandatory
 external agent, blanket permission or automatic live-configuration migration.
 
+Quick Chat (#917) opens as a compact, chat-first window from the first tray item. The desktop workbench keeps its own entry and shortcut. Secondary meeting, browser and sizing commands share one disclosure. [Interaction design](docs/superpowers/specs/2026-11-27-tray-quick-chat.md).
+
 ## Personas and jobs
 Change managers assemble sourced requirements, versions, artifacts, architecture,
 runtime, code and test evidence. Developers continue across conversations and

@@ -172,7 +172,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /class="hud expanded"/)
     assert.match(r.body, /setExpanded\(true\)/)
     assert.doesNotMatch(r.body, /placeWindow\(false\);/)
-    assert.match(r.body, /var w=1040,h=760/)
+    assert.match(r.body, /var w=520,h=620/)
     assert.match(r.body, /id="empty"/)
     assert.doesNotMatch(r.body, /class="mark"/)
     assert.doesNotMatch(r.body, />山<\/div>/)
@@ -240,9 +240,9 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /if\(t==="chat\.token"\)\{/)
     assert.doesNotMatch(r.body, /t==="chat\.token"\|\|t==="chat\.done"/)
     assert.match(r.body, /t==="chat\.done"\|\|t==="chat\.aborted"\)\{[\s\S]{0,80}?clearStreamMsg\(\)/)
-    assert.match(r.body, /t==="error"\|\|t==="chat\.error"\)\{[\s\S]{0,80}?clearStreamMsg\(\)/)
+    assert.match(r.body, /t==="error"\|\|t==="chat\.error"\|\|t==="file\.upload_error"\)\{[\s\S]{0,80}?clearStreamMsg\(\)/)
     assert.match(r.body, /threadId && \(t==="chat\.done"\|\|t==="chat\.user"\|\|t==="file\.uploaded"\)/)
-    assert.match(r.body, /clearStreamMsg\(\);paintUser/)
+    assert.match(r.body, /composer\.receive\(d\)/)
     // Review fixes (2026-08-31): cross-thread token guard, poll must not wipe the
     // streaming bubble, thread switch clears it, recreated empty state keeps its id
     assert.match(r.body, /if\(t==="chat\.token"\)\{\s*if\(d\.thread_id&&threadId&&d\.thread_id!==threadId\) return;/)
@@ -254,15 +254,15 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.doesNotMatch(r.body, /grid-template-columns:var\(--rail\) var\(--list\)/)
     assert.match(r.body, /\.rail,\.list\{[^}]*display:none/)
     assert.match(r.body, /id="operateOpen"/)
-    assert.match(r.body, /打开浏览器并打开侧栏/)
+    assert.match(r.body, /打开浏览器侧栏/)
     assert.match(r.body, /\/api\/operate/)
     assert.match(r.body, /请点工具栏 C/)
     assert.doesNotMatch(r.body, /ui\.open_sidepanel/)
     assert.match(r.body, /id="meetingStart"/)
     assert.doesNotMatch(r.body, /要对这页做什么|当前页：|听写在侧栏|召唤器（实验）/)
     assert.match(r.body, /问 CMspark/)
-    assert.match(r.body, /附件和听写不用开浏览器/)
-    assert.match(r.body, /<title>CMspark</)
+    assert.match(r.body, /id="fileSummary"/)
+    assert.match(r.body, /<title>CMspark 快速对话</)
     assert.match(r.body, /\.hud\.expanded \.ghosts\{[^}]*display:none/)
     assert.match(r.body, /\.hud\.expanded \.hint\{[^}]*display:none/)
     assert.doesNotMatch(r.body, /max-width:720px/)
@@ -290,8 +290,8 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /我们不能替你打开侧栏。要盯着页面，请点工具栏的 CMspark。/)
     assert.match(r.body, /\/api\/attach/)
     assert.match(r.body, /id="attachSilent"|id="attachFront"/)
-    assert.match(r.body, /回车发送 · Shift\+Enter 排队/)
-    assert.match(r.body, /点击右上角 ⋮ 设置快捷键/)
+    assert.match(r.body, /Shift\+Enter 排队/)
+    assert.match(r.body, /id="sendHint"/)
     assert.match(r.body, /id="settings"/)
     assert.match(r.body, /快捷提问/)
     assert.match(r.body, /重命名/)
@@ -301,7 +301,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /\/api\/lease\/release/)
     assert.match(r.body, /EventSource/)
     assert.match(r.body, /\/api\/events/)
-    assert.match(r.body, /已提交/)
+    assert.match(r.body, /等待接收/)
     assert.match(r.body, /侧栏占用了输入/)
     assert.match(r.body, /data\.error_code/)
     assert.match(r.body, /statusFromEvent/)
@@ -311,7 +311,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.doesNotMatch(r.body, /\/api\/(?:approve|deny|confirmation\/respond)/)
     assert.match(r.body, /id="cruiseChip"/)
     assert.doesNotMatch(r.body, /%%CRUISE_LABEL%%/)
-    assert.match(r.body, /点此打开侧栏调整档位/)
+    assert.match(r.body, /在侧栏调整执行档位/)
     assert.match(r.body, /overlay\.cruise/)
     assert.match(r.body, /确认台/)
     assert.doesNotMatch(r.body, /confirmation_id/)
@@ -1353,7 +1353,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
       },
     })
     const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-a2-grace")
-    const opened = openLoopbackPage(`http://127.0.0.1:${port}/`, {
+    const opened = await openLoopbackPage(`http://127.0.0.1:${port}/`, {
       spawn: () => ({ unref() {} }),
       browserPath: "/usr/bin/true",
       userDataDir: tmp,
@@ -1395,7 +1395,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     __testSetOverlayLaunchGraceMs(60)
     try {
       const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-a2-grace-defer")
-      const opened = openLoopbackPage(`http://127.0.0.1:${port}/`, {
+      const opened = await openLoopbackPage(`http://127.0.0.1:${port}/`, {
         spawn: () => ({ unref() {} }),
         browserPath: "/usr/bin/true",
         userDataDir: tmp,
@@ -1626,7 +1626,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
   test("openLoopbackPage saves the spawned pid; win32 hide terminates it", async () => {
     let spawned: import("node:child_process").ChildProcess | undefined
     const tmp = path.join(path.resolve("/tmp"), "cmspark-overlay-win32-kill")
-    const opened = openLoopbackPage(`http://127.0.0.1:${port}/`, {
+    const opened = await openLoopbackPage(`http://127.0.0.1:${port}/`, {
       platform: "win32",
       browserPath: "C:\\fake\\chrome.exe",
       userDataDir: tmp,
@@ -1708,10 +1708,10 @@ test("systray2 and readline expose 召唤器 menu and openSummoner emits summone
   const readline = fs.readFileSync(srcFile("tray", "readline-tray.ts"), "utf8")
   const adapter = fs.readFileSync(srcFile("tray", "tray-adapter.ts"), "utf8")
   assert.match(adapter, /"summoner"/)
-  assert.match(systray, /对话浮窗（旧版）…/)
+  assert.match(systray, /快速对话/)
   assert.match(systray, /type:\s*"summoner"/)
   assert.match(systray, /openSummoner[\s\S]{0,400}type:\s*"summoner"/)
-  assert.match(readline, /对话浮窗（旧版）…/)
+  assert.match(readline, /快速对话/)
   assert.doesNotMatch(systray, /跨平台召唤窗开发中/)
 })
 
@@ -1749,7 +1749,7 @@ test("last SSE close defers onShellClosed behind a reconnect grace", () => {
 
 test("win32 hide kills the saved overlay pid instead of ps; kill is fault-tolerant", () => {
   const src = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
-  assert.match(src, /overlayShellPid = typeof child\.pid === "number" && child\.pid > 0 \? child\.pid : 0/)
+  assert.match(src, /plan\.kind === "app-window" && typeof child\.pid === "number" && child\.pid > 0 \? child\.pid : 0/)
   const killStart = src.indexOf("function killOverlayShellPid")
   assert.ok(killStart >= 0, "killOverlayShellPid missing")
   const kill = src.slice(killStart, killStart + 400)
@@ -1799,21 +1799,20 @@ test("HTML mcp.toggle does not ride tray companionClient", () => {
   assert.doesNotMatch(src, /type === "mcp\.toggle_server" && companionClient/)
 })
 
-test("W3 (F3b): send() clears the attachment input after a successful send", () => {
-  const html = fs.readFileSync(srcFile("summoner-web.ts"), "utf8")
-  const sendStart = html.indexOf("function send(mode){")
-  assert.ok(sendStart >= 0, "send(mode) missing")
-  const send = html.slice(sendStart, html.indexOf('$("send").onclick', sendStart))
-  // Reset happens only on the success branch (failure keeps the file for retry),
-  // after filesToPayload has consumed fileEl.files.
-  assert.match(send, /已提交/)
-  const okIdx = send.indexOf('setStatus("已提交")')
-  assert.ok(okIdx >= 0, "success branch missing")
-  const resetIdx = send.indexOf('fileEl.value=""')
-  assert.ok(resetIdx >= 0 && resetIdx < okIdx, "fileEl.value reset must precede 已提交 in the success branch")
-  // Failure path must NOT clear the input.
-  const failIdx = send.indexOf('setStatus(d.error||"发送失败")')
-  assert.ok(failIdx >= 0 && failIdx < resetIdx, "reset must come after the error early-return")
+test("quick chat receipts correlate chat, steering and file sends without accepting arbitrary RPC IDs", async () => {
+  const seen: Record<string, unknown>[] = []
+  const { port, token } = await startSummonerWebServer({ dispatch: async msg => { seen.push(msg); return { type: "accepted" } } })
+  try {
+    const id = "quick-8cff4381-2161-4823-a860-122fd5ba3e2c"
+    for (const [route, body] of [["chat", {message:"# 标题"}], ["chat", {mode:"steer",message:"继续"}], ["files", {files:[]}]] as const) {
+      await request({ method:"POST", port, path:"/api/"+route+"?token="+token, body:JSON.stringify({...body,thread_id:"t",submission_id:id}) })
+    }
+    assert.deepEqual(seen.map(m => [m.type,m.id,m.clientMessageId ?? m.client_message_id]), [
+      ["chat.create",id,id], ["chat.steer",id,id], ["file.upload",id,id],
+    ])
+    await request({method:"POST",port,path:"/api/chat?token="+token,body:JSON.stringify({thread_id:"t",message:"text",submission_id:"tray-1"})})
+    assert.equal(seen.at(-1)?.id, undefined)
+  } finally { stopSummonerWebServer() }
 })
 
 // Input is the actual production broadcast serializer's output, with deliberately

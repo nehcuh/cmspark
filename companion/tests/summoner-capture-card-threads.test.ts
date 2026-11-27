@@ -48,7 +48,7 @@ test("#243 ② 「新对话」清空到文字空态（newChat → newThread → 
   // 空线程渲染文字空态：无装饰标识 + 无任务标题 + 发送提示（不是工作台首页）
   assert.match(
     web,
-    /if\(!n\)\{[\s\S]{0,400}?empty\.id="empty";[\s\S]{0,300}?<strong>\$\{CHAT_SHELL_TITLE_NONE\}<\/strong>回车发送。/,
+    /if\(!n\)\{[\s\S]{0,400}?empty\.id="empty";[\s\S]{0,300}?<strong>\$\{CHAT_SHELL_TITLE_NONE\}<\/strong>/,
   )
   assert.equal(CHAT_SHELL_TITLE_NONE, "要我帮你做什么？")
 })
@@ -56,11 +56,11 @@ test("#243 ② 「新对话」清空到文字空态（newChat → newThread → 
 test("#243 ③ 「历史」盖住卡片列出会话：点选进入、重命名、移到回收站", () => {
   // #477 replaces full-card overlay with in-flow navigation; browser harness verifies Stop remains reachable.
   assert.match(web, /\$\("historyClose"\)\.onclick=closeNavigation;/)
-  assert.match(web, /function renderThreads\(filter\)\{[\s\S]{0,500}?listed\.forEach/)
+  assert.match(web, /function renderThreads\(filter\)\{[\s\S]{0,850}?listed\.forEach/)
 
   // 点选进入（selectThread 内含 showHistory(false)，选完收起盖层）
-  assert.match(web, /b\.onclick=function\(\)\{closeThreadMetadata\(\);selectThread\(t\.id\)\};/)
-  assert.match(web, /function selectThread\(id\)\{[\s\S]{0,200}?showHistory\(false\);/)
+  assert.match(web, /b\.onclick=function\(\)\{closeThreadMetadata\(\);selectThread\(t\.id\);\$\("text"\)\.focus\(\)\};/)
+  assert.match(web, /function selectThread\(id\)\{[\s\S]{0,350}?showHistory\(false\);/)
 
   // 重命名：prompt → PATCH alias（trim 后上送）→ refresh
   assert.match(web, /window\.prompt\("重命名", title\)/)

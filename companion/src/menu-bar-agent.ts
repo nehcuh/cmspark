@@ -1858,7 +1858,7 @@ function reportOverlayShellUnavailable(): void {
 async function openSummonerWebShell(threadId: string): Promise<void> {
   const client = summonerClient
   if (!client) {
-    safeNotify({ title: "CMspark 召唤器", message: "Companion 未连接，无法打开召唤器", timeout: 5 })
+    safeNotify({ title: "CMspark 快速对话", message: "请先从托盘启动 Companion，再打开快速对话", timeout: 5 })
     reportOverlayShellUnavailable()
     return
   }
@@ -1896,21 +1896,20 @@ async function openSummonerWebShell(threadId: string): Promise<void> {
       const join = url.includes("?") ? "&" : "?"
       url = url + join + "thread=" + encodeURIComponent(threadId)
     }
-    const opened = openLoopbackPage(url)
+    const opened = await openLoopbackPage(url)
     if (!opened) {
       safeNotify({
-        title: "CMspark 召唤器",
-        message: "打开召唤器失败: 无法打开召唤器页面",
+        title: "CMspark 快速对话",
+        message: "无法打开快速对话，请检查默认浏览器",
         timeout: 5,
       })
       reportOverlayShellUnavailable()
       return
     }
-    safeNotify({ title: "CMspark 召唤器", message: "已在浏览器打开召唤器（实验）", timeout: 3 })
   } catch (err: any) {
     safeNotify({
-      title: "CMspark 召唤器",
-      message: `打开召唤器失败: ${err?.message || err}`,
+      title: "CMspark 快速对话",
+      message: `无法打开快速对话： ${err?.message || err}`,
       timeout: 5,
     })
     reportOverlayShellUnavailable()
@@ -1966,13 +1965,7 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       })
       break
     case "recent-thread":
-      if (!companionClient) {
-        safeNotify({ title: "CMspark Agent", message: "Companion 未运行", timeout: 3 })
-      } else if (action.payload?.id) {
-        companionClient.openThread(action.payload.id)
-          .then(() => safeNotify({ title: "CMspark Agent", message: "已切换到对话 ✅", timeout: 3 }))
-          .catch((err: any) => safeNotify({ title: "CMspark Agent", message: `切换对话失败: ${err.message}`, timeout: 5 }))
-      }
+      if (action.payload?.id) await openSummonerWebShell(action.payload.id)
       break
     case "quit":
       // Product: 退出 tray = 停掉 Companion 守护进程及本 tray 进程（不再留下孤儿 node/exe）

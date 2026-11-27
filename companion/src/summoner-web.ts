@@ -6,6 +6,7 @@
  * existing summoner-stamped CompanionClient.
  */
 import * as http from "http"
+import { once } from "node:events"
 import * as crypto from "crypto"
 import * as child_process from "child_process"
 import * as fs from "fs"
@@ -13,9 +14,7 @@ import * as os from "os"
 import * as path from "path"
 import {
   closeOverlayChrome,
-  overlayWindowPosition,
   OVERLAY_WINDOW_SIZE,
-  parseFinderDesktopBounds,
   planSummonerShellOpen,
   resolveSummonerBrowserPath,
 } from "./summoner/shell-open"
@@ -44,6 +43,7 @@ import { currentOverlayCruiseChipLabel } from "./summoner/hydrate"
 import { MeetingPcmHttpBegin } from "./voice/meeting-pcm-http-begin"
 import { MEETING_PCM_BROWSER_JS } from "./summoner/meeting-continuous-generated"
 import { SUMMONER_MEETING_WORKFLOW_JS } from "./summoner/meeting-workflow"
+import { QUICK_CHAT_COMPOSER_JS } from "./summoner/quick-chat-composer"
 import { SUMMONER_DICTATION_JS } from "./summoner/voice-input"
 import { SUMMONER_THREAD_MANAGEMENT_JS } from "./summoner/thread-management"
 import { summonerThreadMetadata } from "./threads/metadata-patch"
@@ -270,6 +270,12 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
   })
 }
 
+// Only the web composer's namespaced IDs may travel through the shared tray socket.
+function submissionFields(value: unknown): { id?: string; clientMessageId?: string } {
+  if (typeof value !== "string" || !/^quick-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value)) return {}
+  return { id: value, clientMessageId: value }
+}
+
 async function dispatchAllowed(type: string, payload: Record<string, unknown>, meetingObservation?: unknown): Promise<unknown> {
   if (!SUMMONER_WEB_DISPATCH_ALLOW.has(type)) {
     throw Object.assign(new Error(`not allowed: ${type}`), { status: 403 })
@@ -388,12 +394,11 @@ export type OpenLoopbackPageDeps = {
   platform?: NodeJS.Platform
   browserPath?: string | null
   userDataDir?: string
-  screen?: { w: number; h: number }
   spawn?: (
     command: string,
     args: string[],
     options: { detached?: boolean; stdio?: "ignore"; windowsHide?: boolean; shell?: boolean },
-  ) => { unref: () => void; pid?: number }
+  ) => Pick<child_process.ChildProcess, "unref" | "pid"> | Promise<Pick<child_process.ChildProcess, "unref" | "pid">>
 }
 
 /** win32 has no ps(1); keep the spawned PID so hide can TerminateProcess it. */
@@ -578,25 +583,8 @@ export function hideSummonerWebShell(): void {
   scheduleOnShellClosed(OVERLAY_HIDE_FALLBACK_MS)
 }
 
-function probeScreen(platform: NodeJS.Platform): { w: number; h: number } {
-  if (platform === "darwin") {
-    try {
-      const raw = child_process.execFileSync(
-        "osascript",
-        ["-e", 'tell application "Finder" to get bounds of window of desktop'],
-        { encoding: "utf8", timeout: 2000 },
-      )
-      const parsed = parseFinderDesktopBounds(raw)
-      if (parsed) return parsed
-    } catch {
-      /* fallback */
-    }
-  }
-  return { w: 1440, h: 900 }
-}
-
-/** Returns false when the URL is rejected (no spawn). */
-export function openLoopbackPage(url: string, deps: OpenLoopbackPageDeps = {}): boolean {
+/** Resolves after the OS accepts the app launch or the default URL handler exits. */
+export async function openLoopbackPage(url: string, deps: OpenLoopbackPageDeps = {}): Promise<boolean> {
   const platform = deps.platform ?? process.platform
   const browserPath =
     deps.browserPath !== undefined ? deps.browserPath : resolveSummonerBrowserPath(platform)
@@ -606,28 +594,31 @@ export function openLoopbackPage(url: string, deps: OpenLoopbackPageDeps = {}): 
   } catch {
     /* Chrome can still create the profile dir */
   }
-  const screen = deps.screen || probeScreen(platform)
   const plan = planSummonerShellOpen(url, {
     platform,
     browserPath,
     userDataDir,
-    windowPosition: overlayWindowPosition(screen.w, screen.h),
   })
   if ("error" in plan) {
     console.error(`[summoner-web] ${plan.error}`)
     return false
   }
+  const spawn = deps.spawn ?? (async (cmd, args, opts) => {
+    const child = child_process.spawn(cmd, args, opts)
+    if (plan.kind === "browser-tab") {
+      const [code] = await once(child, "exit")
+      if (code !== 0) throw new Error("系统浏览器未能打开快速对话")
+    } else {
+      await once(child, "spawn")
+    }
+    return child
+  })
+  const child = await spawn(plan.command, plan.args, { detached: true, stdio: "ignore", windowsHide: true })
   overlayLaunchAt = Date.now()
   overlayCloseRequested = false
   clearOverlayShellCloseTimer()
-  const spawn = deps.spawn ?? ((cmd, args, opts) => child_process.spawn(cmd, args, opts))
-  const child = spawn(plan.command, plan.args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  })
   child.unref()
-  overlayShellPid = typeof child.pid === "number" && child.pid > 0 ? child.pid : 0
+  overlayShellPid = plan.kind === "app-window" && typeof child.pid === "number" && child.pid > 0 ? child.pid : 0
   overlayShellPlatform = platform
   return true
 }
@@ -673,7 +664,7 @@ export async function startSummonerWebServer(opts: {
   sessionToken = token
 
   autoCloseTimer = setInterval(() => {
-    if (Date.now() - lastAccessTime > 30 * 60 * 1000) {
+    if (!summonerWebHasPage() && Date.now() - lastAccessTime > 30 * 60 * 1000) {
       stopSummonerWebServer()
     }
   }, 60 * 1000)
@@ -984,8 +975,9 @@ async function handleRequest(
         return
       }
       const mode = body.mode === "steer" || body.mode === "enqueue" ? body.mode : "create"
+      const submission = submissionFields(body.submission_id)
       if (mode === "steer") {
-        jsonResponse(res, await dispatchAllowed("chat.steer", { thread_id, message }))
+        jsonResponse(res, await dispatchAllowed("chat.steer", { thread_id, message, ...(submission.id && { id: submission.id, client_message_id: submission.id }) }))
         return
       }
       jsonResponse(
@@ -993,6 +985,7 @@ async function handleRequest(
         await dispatchAllowed("chat.create", {
           thread_id,
           message,
+          ...submission,
           ...(mode === "enqueue" ? { enqueue: true } : {}),
         }),
       )
@@ -1006,7 +999,7 @@ async function handleRequest(
         jsonResponse(res, { type: "error", error: "thread_id and files required" }, 400)
         return
       }
-      const payload: Record<string, unknown> = { thread_id, files: body.files }
+      const payload: Record<string, unknown> = { thread_id, files: body.files, ...submissionFields(body.submission_id) }
       if (typeof body.message === "string" && body.message.trim()) payload.message = body.message
       jsonResponse(res, await dispatchAllowed("file.upload", payload))
       return
@@ -1347,7 +1340,7 @@ const SUMMONER_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CMspark</title>
+<title>CMspark 快速对话</title>
 <style>
 :root{
   --paper:#fff;--canvas:#f7f7f5;--rail-bg:#f7f7f5;--text:#171717;--secondary:#525252;
@@ -1584,11 +1577,6 @@ body{
 .privacy-sheet .cta-actions button{background:var(--indigo);color:#fff}
 .privacy-sheet p{font-size:12.5px;font-weight:600;color:var(--text)}
 #meetingVoiceSection{margin-bottom:8px}
-.capture-row{display:flex;gap:8px;padding:0 2px;flex-wrap:wrap;position:relative;z-index:1}
-#meetingStart,#meetingOpen,#operateOpen{
-  min-height:36px;padding:6px 12px;border-radius:8px;border:0;cursor:pointer;font:inherit;
-  background:var(--canvas);color:var(--text);
-}
 #meetingStart[aria-pressed="true"]{background:var(--indigo-soft);color:var(--indigo)}
 #mic[aria-pressed="true"]{background:var(--indigo-soft);color:var(--indigo)}
 .hud:not(.expanded) .ghosts{display:none}
@@ -1614,7 +1602,6 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .field:focus-within{box-shadow:0 0 0 2px rgba(79,70,229,.12);border-color:var(--indigo)}
 .composer-actions{display:flex;align-items:center;gap:6px}.composer-actions .icon-btn{width:36px;height:36px;color:var(--secondary)}
 #mic{margin-left:auto}#sendGo{border-radius:50%;background:#242424;color:#fff}
-.capture-row{padding:0 16px 12px;gap:8px}.capture-row button{background:transparent;border:1px solid var(--line);font-size:12px;color:var(--secondary)}
 @media(max-width:380px){.brand{flex-wrap:wrap;gap:4px;padding:10px 12px}.brand-actions{margin-left:auto}.brand-actions button{padding:6px}.log{padding:16px}.composer{padding:8px 12px}.empty strong{font-size:20px}}
 
 /* #477: a readable workspace; existing overlay privileges remain unchanged. */
@@ -1632,9 +1619,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .item.active{background:#eaeae7;color:var(--text)}.item strong{overflow-wrap:anywhere}.trow{flex-wrap:wrap}.trow .item{flex-basis:100%}.trow .icon-mini{height:32px;min-height:32px}
 #historyClose{display:none}.log{padding:32px 28px}.empty{margin:auto;max-width:440px;line-height:1.8;color:var(--secondary)}
 .empty strong{font-size:28px;color:var(--text);margin-bottom:8px}
-@media(min-width:760px){.hud{background:var(--rail-bg)}.capture-row{background:var(--paper)}.log{max-width:none;padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.composer,.capture-row,.status,.cta-box{margin-left:220px;max-width:none;width:calc(100% - 220px)}.composer{padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.cta-box,.status{width:calc(100% - 244px)}#historyOpen{display:none}}
+@media(min-width:760px){.hud{background:var(--rail-bg)}.log{max-width:none;padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.composer,.status,.cta-box{margin-left:220px;max-width:none;width:calc(100% - 220px)}.composer{padding-left:max(24px,calc((100vw - 1000px)/2));padding-right:max(24px,calc((100vw - 1000px)/2))}.cta-box,.status{width:calc(100% - 244px)}#historyOpen{display:none}}
 @media(max-width:759px){.brand{flex-wrap:wrap}.brand-actions{flex-wrap:wrap;min-width:0}.hud.expanded .body{flex-direction:column}.list{display:none}.hud.history .list{display:flex;width:100%;max-height:36vh;min-height:0;border-right:0;border-bottom:1px solid var(--line)}.rail{flex-direction:row;flex-wrap:wrap;flex-shrink:0;padding:6px}.rail-btn{width:auto;height:32px;padding:0 8px;font-size:12px}.rail-btn svg{display:none}.list-head{padding:4px 12px}.list-scroll{min-height:0}#historyClose{display:block}.log{padding:20px}.empty strong{font-size:22px}}
-@media(max-height:560px){.hud.history .list{max-height:28vh}.log{padding:12px}.empty{padding:8px}.empty strong{font-size:20px}.capture-row{padding-bottom:6px}.composer{padding-top:6px}}
+@media(max-height:560px){.hud.history .list{max-height:28vh}.log{padding:12px}.empty{padding:8px}.empty strong{font-size:20px}.composer{padding-top:6px}}
 
 .brand-id{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.brand-actions{flex:none}
 .workspace-tools{width:100%;min-width:0;flex:none;border-top:1px solid var(--line)}.workspace-tools[open]{max-height:24vh;overflow:auto}.workspace-tools summary{cursor:pointer;padding:10px;font-size:12px;color:var(--secondary)}.workspace-tools summary:focus-visible{outline:2px solid var(--indigo)}
@@ -1645,9 +1632,39 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 #threadMetadata{padding:12px 0;border-top:1px solid var(--line)}#threadMetadata label{display:block;margin-top:10px}
 #metadataTitle{display:block;overflow-wrap:anywhere}.metadata-actions{display:flex;gap:8px}.metadata-actions button{min-height:32px;border:1px solid var(--line);border-radius:8px;padding:4px 10px;background:var(--paper);font:inherit;color:var(--text)}
 #metadataError{color:#b91c1c;font-size:12px;overflow-wrap:anywhere}.thread-group-heading{font-size:12px;color:var(--secondary);padding:12px 10px 4px;overflow-wrap:anywhere}.trow .thread-classify{width:auto;min-width:40px;padding:0 6px;font:inherit;font-size:12px;color:var(--secondary)}
+/* Quick chat uses the same composer on small and expanded windows. */
+.brand-actions{align-items:center}
+#quickActions{position:absolute;top:46px;right:12px;z-index:6;display:grid;width:min(220px,calc(100% - 24px));margin:0;padding:5px;gap:1px;border:1px solid var(--line);border-radius:12px;background:var(--paper);box-shadow:var(--shadow);max-height:calc(100% - 58px);overflow:auto}
+#quickActions[hidden],#quickActions button[hidden],#fileSummary[hidden],#pinnedNotice[hidden]{display:none}
+#pinnedNotice{height:100%;display:grid;place-content:center;justify-items:center;gap:12px;color:var(--secondary)}
+#returnChat{border:1px solid var(--line);border-radius:8px;padding:8px 14px;background:var(--canvas);color:var(--text);font:inherit;cursor:pointer}
+#quickActions button{background:transparent;color:var(--text);font:inherit;font-weight:400;text-align:left;min-height:36px;border:0;padding:7px 12px;border-radius:7px}
+#quickActions button:hover,#quickActions button:focus-visible{background:var(--canvas)}
+#quickActions .cruise-chip{max-width:none;background:transparent!important;font-weight:400}
+#quickActions .cruise-chip::before{content:"执行档位 · "}
+#quickActions #windowMode{border-top:1px solid var(--line);border-radius:0}
+#moreActions[aria-expanded="true"]{background:var(--canvas)}
+.brand-id{display:block;font-weight:600}.brand-actions button{font:inherit;font-weight:500}
+#sendHint{font-size:11px;color:var(--faint)}#sendGo:disabled{background:var(--canvas);color:var(--faint);opacity:1;cursor:default}
+#fileSummary{display:flex;align-items:center;gap:6px;background:var(--canvas);color:var(--secondary);padding:4px 8px;border-radius:6px;font-size:12px}
+#fileNames{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#clearFiles{margin-left:auto;flex:none;border:0;background:transparent;color:var(--indigo);min-height:28px;cursor:pointer}
+.status{margin-bottom:6px;color:var(--secondary);background:var(--canvas);overflow-wrap:anywhere}
+@media(max-width:759px){
+  .hud{background:var(--paper)}.brand{flex-wrap:nowrap;gap:4px}.brand-actions{flex-wrap:nowrap}
+  .composer{padding:8px 14px 12px}.field{border-radius:16px}
+  .hud.history .list{max-height:48vh}.hud.history .list-scroll{overflow:auto}
+}
+@media(prefers-color-scheme:dark){
+  :root{color-scheme:dark;--paper:#202122;--canvas:#2d2e30;--rail-bg:#252628;--text:#f3f3ef;--secondary:#cecec9;--faint:#aeafa9;--line:rgba(255,255,255,.16);--indigo:#b1acff;--indigo-soft:#35334b}
+  .msg.user,.rail-btn[aria-current="true"],.item.active{background:var(--canvas);color:var(--text)}
+  #sendGo,#attachSilent,#openConfirm,.privacy-sheet .cta-actions button{background:var(--indigo);color:#181828}
+  .cta-box,.privacy-sheet{background:var(--canvas);color:var(--text)}
+}
 </style>
 </head>
 <body>
+<div id="pinnedNotice" hidden><p>对话已在置顶窗口打开</p><button type="button" id="returnChat">回到此窗口</button></div>
 <div class="hud expanded" id="hud">
   <div class="body">
     <aside class="list" aria-label="工作空间导航">
@@ -1697,18 +1714,24 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     </aside>
     <section class="main">
       <div class="brand">
-        <span class="brand-id" id="workspaceTitle">CMspark</span>
+        <span class="brand-id" id="workspaceTitle">快速对话</span>
         <span class="brand-actions">
-          <button type="button" id="cruiseChip" class="cruise-chip" title="点此打开侧栏调整档位">%%CRUISE_LABEL%%</button>
-          <button type="button" id="windowMode">紧凑窗口</button>
           <button type="button" id="historyOpen" aria-expanded="false">导航</button>
           <button type="button" id="newChat">新对话</button>
+          <button type="button" id="moreActions" aria-controls="quickActions" aria-expanded="false">更多</button>
+          <span id="quickActions" role="group" aria-label="更多操作" hidden>
+            <button type="button" id="meetingStart" aria-pressed="false">开始会议</button>
+            <button type="button" id="meetingOpen">会议材料</button>
+            <button type="button" id="operateOpen">打开浏览器侧栏</button>
+            <button type="button" id="cruiseChip" class="cruise-chip" title="在侧栏调整执行档位">%%CRUISE_LABEL%%</button>
+            <button type="button" id="pinChat" hidden>置顶显示</button>
+            <button type="button" id="windowMode">展开窗口</button>
+          </span>
         </span>
       </div>
-      <div class="log" id="log">
+      <div class="log" id="log" aria-label="对话记录">
         <div class="empty" id="empty">
           <strong>${CHAT_SHELL_TITLE_NONE}</strong>
-          回车发送。附件和听写不用开浏览器。
         </div>
       </div>
     </section>
@@ -1729,11 +1752,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     <div class="composer-row">
       <input type="file" id="files" multiple hidden>
       <div class="field">
-        <textarea id="text" rows="1" placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
+        <textarea id="text" rows="2" autofocus placeholder="问 CMspark…" aria-label="发送到当前对话"></textarea>
+        <div id="fileSummary" hidden><span id="fileNames"></span><button type="button" id="clearFiles">移除附件</button></div>
         <div class="composer-actions">
       <button type="button" class="icon-btn" id="attachFile" title="📎 添加附件" aria-label="添加附件">
         <svg viewBox="0 0 24 24"><path d="M8.2 12.8 14 7a2.8 2.8 0 0 1 4 4l-7.4 7.4a4 4 0 0 1-5.7-5.7l7.1-7.1"/></svg>
       </button>
+        <span id="sendHint" aria-hidden="true">Enter 发送</span>
         <button class="icon-btn" id="mic" type="button" title="听写" aria-label="听写" aria-pressed="false">
           <svg viewBox="0 0 24 24"><rect x="9" y="4" width="6" height="10" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V20"/></svg>
         </button>
@@ -1743,11 +1768,6 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
         </button>
         </div>
       </div>
-    </div>
-    <div class="capture-row">
-      <button type="button" id="meetingStart" aria-pressed="false">开始会议</button>
-      <button type="button" id="meetingOpen">会议材料</button>
-      <button type="button" id="operateOpen">打开浏览器并打开侧栏</button>
     </div>
     <div class="cta-box" id="ctaBox" hidden>
       <p id="ctaCopy">${SUMMONER_L0_CHROME_DOWN}</p>
@@ -1774,8 +1794,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     <button class="ghost" id="queue" type="button">排队</button>
     <button class="ghost" id="stop" type="button">停止</button>
   </div>
-  <div class="hint" id="hint">回车发送 · Shift+Enter 排队 · 点击右上角 ⋮ 设置快捷键</div>
-  <div class="status" id="status"></div>
+  <div class="status" id="status" role="status"></div>
     <div class="privacy-sheet" id="meetingPrivacy" hidden>
       <div id="meetingVoiceSection">
         <p>本机听写</p>
@@ -1848,6 +1867,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <script>
 try{
 (function(){
+  let document=window.document; // Follows the live controls when the user pins the window.
+  const chatSurface=document.getElementById("hud");
   var wanted=(location.search.match(/[?&]thread=([^&]+)/)||[])[1]||"";
   try{if(wanted) wanted=decodeURIComponent(wanted)}catch(e){}
   function url(path){return path}
@@ -1857,6 +1878,7 @@ try{
   api("/api/send-shortcut").then(function(d){
     var s=d&&d.send_shortcut;
     if(s==="Enter"||s==="Cmd+Enter"||s==="Ctrl+Enter") sendShortcut=s;
+    syncBusyUi();
   }).catch(function(){});
   var voiceSettings={sttEngine:"browser",localModelId:"medium",lang:"zh-CN"};
   function paintMeetingVoiceMeta(){
@@ -1915,13 +1937,11 @@ try{
   ${OVERLAY_RENDER_MD_JS}
   function placeWindow(compact){
     var w=${OVERLAY_WINDOW_SIZE.w},h=${OVERLAY_WINDOW_SIZE.h};
-    if(compact){w=360;h=420}
+    if(!compact){w=1040;h=760}
     var sw=screen.availWidth||screen.width||w;
     var sh=screen.availHeight||screen.height||h;
     w=Math.min(w,sw);h=Math.min(h,sh);
-    var x=Math.max(0, ((sw-w)/2)|0);
-    var y=Math.max(0, ((sh-h)/2)|0);
-    try{window.resizeTo(w,h);window.moveTo(x,y)}catch(e){}
+    try{window.resizeTo(w,h)}catch(e){}
   }
   function setExpanded(on){
     $("hud").classList.add("expanded");
@@ -2086,9 +2106,12 @@ try{
   }
   ${SUMMONER_THREAD_MANAGEMENT_JS}
   ${SUMMONER_PROJECT_JS}
+  function quickThreadTitle(t){
+    return t.alias||t.title||(t.first_user_preview||"").trim().slice(0,32)||(t.message_count?"未命名对话":"新对话");
+  }
   function renderThreads(filter){
     var selected=threads.find(function(t){return t.id===threadId});
-    $("workspaceTitle").textContent=selected?(selected.title||selected.alias||"新对话"):"CMspark";
+    $("workspaceTitle").textContent=selected?quickThreadTitle(selected):"快速对话";
     $("workspaceTitle").title=$("workspaceTitle").textContent;
     var q=(filter===undefined?$("threadSearch").value:filter||"").trim().toLocaleLowerCase();
     var box=$("threads");
@@ -2098,7 +2121,7 @@ try{
     listed.forEach(function(entry){
       var t=entry.thread;
       var projectFilter=$("projectFilter").value;if(projectFilter!=="*"&&(t.project_id||"")!==projectFilter)return;
-      var title=(t.title||t.alias||t.id||"").trim()||t.id;
+      var title=quickThreadTitle(t);
       var search=[title,t.alias,t.topic_folder].concat(t.user_tags||[],t.digest&&t.digest.tags||[]).join(" ").toLocaleLowerCase();
       if(q && search.indexOf(q)<0) return;
       if(view!=="recent"){
@@ -2112,7 +2135,7 @@ try{
       b.innerHTML="<strong>"+esc(title)+"</strong>";
       var details=[t.topic_folder?"分组 · "+t.topic_folder:"",(t.user_tags||[]).map(function(tag){return "#"+tag}).join(" ")].filter(Boolean).join(" · ");
       if(details){var meta=document.createElement("small");meta.textContent=details;b.appendChild(meta)}
-      b.onclick=function(){closeThreadMetadata();selectThread(t.id)};
+      b.onclick=function(){closeThreadMetadata();selectThread(t.id);$("text").focus()};
       var classify=document.createElement("button");classify.className="icon-mini thread-classify";classify.type="button";classify.dataset.threadId=t.id;classify.textContent="分类";classify.setAttribute("aria-label","分类 · "+title);classify.onclick=function(){openThreadMetadata(t,classify)};
       var rn=document.createElement("button");
       rn.className="icon-mini";
@@ -2188,25 +2211,29 @@ try{
       var empty=document.createElement("div");
       empty.className="empty";
       empty.id="empty";
-      empty.innerHTML="<strong>${CHAT_SHELL_TITLE_NONE}</strong>回车发送。附件和听写不用开浏览器。";
+      empty.innerHTML="<strong>${CHAT_SHELL_TITLE_NONE}</strong>";
       log.appendChild(empty);
     }
     log.scrollTop=log.scrollHeight;
   }
   function syncBusyUi(){
     $("stopGo").hidden=!busy;
-    $("hint").textContent=busy
-      ?"回车纠偏 · Shift+Enter 排队 · 忙时附件请等本轮结束 · 点击右上角 ⋮ 设置快捷键"
-      :"回车发送 · Shift+Enter 排队 · # 搜标题 · 点击右上角 ⋮ 设置快捷键";
+    var label=sendShortcut+(busy?" 追加指示":" 发送");
+    $("sendHint").textContent=label;
+    $("sendGo").title=busy?label+"；Shift+Enter 排队":label;
+    $("sendGo").setAttribute("aria-label",busy?"追加指示":"发送");
   }
   var selectionRevision=0;
   function selectThread(id){
     var revision=++selectionRevision;
+    var changed=id!==threadId;
     if(typeof summonerVoice!=="undefined" && summonerVoice) summonerVoice.cancel();
+    composer.select(id);
     threadId=id;
     clearStreamMsg();
     showHistory(false);
-    renderThreads($("text").value.charAt(0)==="#"?$("text").value.slice(1):"");
+    if(changed){busy=false;stopPoll();syncBusyUi();renderMsgs([])}
+    renderThreads();
     return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:id})})
       .then(function(d){
         if(revision!==selectionRevision || threadId!==id) return null;
@@ -2271,49 +2298,9 @@ try{
       return createThread();
     });
   }
-  function paintUser(text){
-    var empty=$("empty");
-    if(empty&&empty.parentNode) empty.parentNode.removeChild(empty);
-    var d=document.createElement("div");
-    d.className="msg user";
-    d.textContent=text;
-    $("log").appendChild(d);
-    $("log").scrollTop=$("log").scrollHeight;
-  }
-  function send(mode){
-    var text=$("text").value;
-    if(text.trim().charAt(0)==="#"){
-      renderThreads(text.trim().slice(1));
-      return;
-    }
-    var fileEl=$("files");
-    var hasFiles=fileEl.files&&fileEl.files.length;
-    if(!text.trim() && !hasFiles) return;
-    setStatus("发送中…");
-    ensureThread().then(function(){
-      if(!threadId){setStatus("没有当前对话");return}
-      if(hasFiles && (busy || mode==="steer" || mode==="enqueue")){
-        setStatus("忙时不能上传附件（run_active）");
-        return;
-      }
-      if(text.trim()){clearStreamMsg();paintUser(text.trim())}
-      $("text").value="";
-      return api("/api/lease",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(lease){
-        if(lease&&(lease.error||lease.type==="error")){setStatus(lease.error||"无法占用输入");return}
-        var go=hasFiles
-          ? filesToPayload(fileEl.files).then(function(files){
-              return api("/api/files",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,files:files,message:text})});
-            })
-          : api("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId,message:text,mode:mode|| (busy?"steer":"create")})});
-        return go;
-      });
-    }).then(function(d){
-      if(!d) return;
-      if(d.error||d.type==="error"){setStatus(d.error||"发送失败");return}
-      fileEl.value="";
-      setStatus("已提交");
-    }).catch(function(e){setStatus(String(e&&e.message||e))})
-  }
+  ${QUICK_CHAT_COMPOSER_JS}
+  var composer=createQuickChatComposer();
+  function send(mode){return composer.submit(mode)}
   $("send").onclick=function(){send(busy?"steer":"create")};
   $("sendGo").onclick=function(){send(busy?"steer":"create")};
   $("steer").onclick=function(){send("steer")};
@@ -2408,6 +2395,7 @@ try{
       d.hidden=false;
       d.removeAttribute("hidden");
       d.style.display="flex";
+      $("meetingBack").focus();
       paintMeetingVoiceMeta();
       var hint=$("meetingHint");
       if(hint && !meetingId) hint.textContent="未录制";
@@ -2419,6 +2407,7 @@ try{
       d.hidden=true;
       d.style.display="none";
       showMeetingHistory(false);
+      $("moreActions").focus();
     }
   }
   function showMeetingHistory(on){
@@ -2538,7 +2527,7 @@ try{
       if(!voiceAck){
         if(vsec) vsec.hidden=false;
       } else if(vsec) vsec.hidden=true;
-      if(sheet) sheet.hidden=false;
+      if(sheet){sheet.hidden=false;$("meetingPrivacyAck").focus()}
       return;
     }
     showMeetingDesk(true);
@@ -2585,13 +2574,75 @@ try{
     else hud.classList.remove("history");
     $("historyOpen").setAttribute("aria-expanded",String(on));
   }
-  var compactWindow=false;
-  $("windowMode").onclick=function(){compactWindow=!compactWindow;placeWindow(compactWindow);$("windowMode").textContent=compactWindow?"工作窗口":"紧凑窗口";setStatus("已请求调整窗口；如果当前宿主未响应，可手动调整窗口大小。")};
+  const actions=$("quickActions"), more=$("moreActions");
+  function showActions(open,restore){
+    actions.hidden=!open;
+    more.setAttribute("aria-expanded",String(open));
+    if(open) $("meetingStart").focus();
+    else if(restore) more.focus();
+  }
+  more.onclick=function(){showActions(actions.hidden,true)};
+  actions.addEventListener("click",function(e){
+    if(e.target.closest("button")) showActions(false,actions.contains(document.activeElement));
+  });
+  chatSurface.addEventListener("pointerdown",function(e){
+    if(!actions.hidden && !actions.contains(e.target) && !more.contains(e.target)) showActions(false,false);
+  });
+  chatSurface.addEventListener("focusin",function(e){
+    if(!actions.hidden && !actions.contains(e.target) && e.target!==more) showActions(false,false);
+  });
+  const wideWindow=window.matchMedia("(min-width:760px)");
+  function updateWindowMode(){$("windowMode").textContent=wideWindow.matches?"收为小窗":"展开窗口"}
+  wideWindow.addEventListener("change",updateWindowMode);
+  updateWindowMode();
+  $("windowMode").onclick=function(){
+    placeWindow(wideWindow.matches);
+    setStatus("如窗口大小未改变，可拖动窗口边缘调整。");
+  };
+  const pinButton=$("pinChat"), pinnedNotice=$("pinnedNotice");
+  if(window.documentPictureInPicture){
+    pinButton.hidden=false;
+    let pinnedWindow=null;
+    $("returnChat").onclick=function(){pinnedWindow?.close()};
+    pinButton.onclick=async function(){
+      if(pinnedWindow){window.focus();pinnedWindow.close();return}
+      pinButton.disabled=true;
+      try{
+        const pinned=await window.documentPictureInPicture.requestWindow({width:520,height:500});
+        pinnedWindow=pinned;
+        pinned.addEventListener("pagehide",function(){
+          document=window.document;
+          document.body.insertBefore(chatSurface,pinnedNotice);
+          pinnedNotice.hidden=true;
+          pinnedWindow=null;
+          pinButton.textContent="置顶显示";
+          $("windowMode").hidden=false;
+          $("text").focus();
+        },{once:true});
+        pinned.document.documentElement.lang=document.documentElement.lang;
+        pinned.document.title=document.title;
+        pinned.document.addEventListener("keydown",quickChatKeydown);
+        pinned.document.head.appendChild(document.querySelector("style").cloneNode(true));
+        pinned.document.body.appendChild(chatSurface);
+        document=pinned.document;
+        pinnedNotice.hidden=false;
+        pinButton.textContent="取消置顶";
+        $("windowMode").hidden=true;
+        $("text").focus();
+      }catch(error){
+        pinnedWindow?.close();
+        setStatus("当前宿主无法置顶，可以继续在此窗口对话。");
+      }finally{pinButton.disabled=false}
+    };
+  }
   $("historyOpen").onclick=function(){ showHistory(!$("hud").classList.contains("history")); };
   $("threadSearch").oninput=function(){renderThreads()};
   $("threadView").onchange=function(){renderThreads()};
-  document.addEventListener("keydown",function(e){if(e.key==="Escape" && $("hud").classList.contains("history")){closeNavigation()}});
-  function closeNavigation(){showHistory(false);(window.matchMedia("(min-width:760px)").matches?$("newChat"):$("historyOpen")).focus()}
+  document.addEventListener("keydown",quickChatKeydown);
+  function quickChatKeydown(e){if(e.key!=="Escape" || e.isComposing || e.keyCode===229) return;
+    if(!actions.hidden){e.preventDefault();showActions(false,true)}
+    else if($("hud").classList.contains("history")){closeNavigation()}}
+  function closeNavigation(){showHistory(false);(document.defaultView.matchMedia("(min-width:760px)").matches?$("newChat"):$("historyOpen")).focus()}
   $("historyClose").onclick=closeNavigation;
   $("newChat").onclick=function(){ $("newThread").click(); };
   $("newThreadBar").onclick=function(){$("newThread").click()};
@@ -2601,27 +2652,24 @@ try{
       var id=d.thread&&d.thread.id;
       if(!id){setStatus("新建失败");return}
       showHistory(false);
+      $("text").focus();
       return refresh().then(function(){return selectThread(id)});
     });
   };
   $("attachFile").addEventListener("click",function(){ $("files").click(); });
   $("text").addEventListener("keydown",function(e){
-    if(e.key!=="Enter" || e.isComposing || e.keyCode===229) return;
-    if(e.shiftKey && !e.metaKey && !e.ctrlKey){
+    if(e.key!=="Enter" || e.altKey || e.isComposing || e.keyCode===229) return;
+    if(e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey){
       if(busy){e.preventDefault();send("enqueue")}
       return;
     }
     var go=false;
-    if(sendShortcut==="Enter") go=!e.shiftKey && !e.metaKey && !e.ctrlKey;
+    if(sendShortcut==="Enter") go=!e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
     else if(sendShortcut==="Cmd+Enter") go=e.metaKey && !e.ctrlKey;
     else if(sendShortcut==="Ctrl+Enter") go=e.ctrlKey && !e.metaKey;
     if(!go) return;
     e.preventDefault();
     send(busy?"steer":"create");
-  });
-  $("text").addEventListener("input",function(){
-    var v=$("text").value;
-    if(v.trim().charAt(0)==="#") renderThreads(v.trim().slice(1));
   });
   function refresh(){
     return api("/api/threads").then(function(d){
@@ -2776,14 +2824,13 @@ try{
       LEASE_REV_MISMATCH:"侧栏占用了输入",
       LEASE_HOLDER_SURFACE_MISMATCH:"侧栏占用了输入",
       BROWSER_UNAVAILABLE:CHROME_DOWN.cdp,
-      settings_hint:"点击右上角 ⋮ 设置快捷键"
+      settings_hint:"发送快捷键可在侧栏设置中修改"
     };
     if(code==="BROWSER_UNAVAILABLE"||String(raw).indexOf("BROWSER_UNAVAILABLE")>=0){
       showChromeCta("cdp");
       return CHROME_DOWN.cdp;
     }
-    if(/model|binary/i.test(raw)) return STT_NEED_MODEL;
-    return labels[code]||d.error||d.message||"出错了";
+    return labels[code]||d.error||d.message||raw||"出错了";
   }
   try{
     var es=new EventSource(url("/api/events"));
@@ -2791,6 +2838,12 @@ try{
     es.onmessage=function(ev){
       var d; try{d=JSON.parse(ev.data)}catch(e){return}
       var t=d&&d.type;
+      composer.receive(d);
+      if(t==="thread.updated" && d.thread){
+        var updated=threads.find(function(item){return item.id===d.thread.id});
+        if(updated){Object.assign(updated,d.thread);renderThreads()}
+        return;
+      }
       if(t==="shell.close"){
         try{window.close()}catch(e){}
         return;
@@ -2801,7 +2854,7 @@ try{
         if(chip && lab){ chip.textContent=lab.slice(0,40); }
         return;
       }
-      if(t==="error"||t==="chat.error"){
+      if(t==="error"||t==="chat.error"||t==="file.upload_error"){
         if(d.thread_id&&threadId&&d.thread_id!==threadId) return;
         clearStreamMsg();
         setStatus(statusFromEvent(d));
@@ -2814,13 +2867,10 @@ try{
         return;
       }
       if(t==="chat.user"||t==="chat.steered"||t==="chat.enqueued"){
-        $("text").value="";
-        $("files").value="";
-        setStatus(t==="chat.enqueued"?"已排队": t==="chat.steered"?"已纠偏":"已发送");
+        if(!threadId || d.thread_id!==threadId) return;
         busy=t!=="chat.enqueued"?true:busy;
         syncBusyUi();
         startPoll();
-        return;
       }
       if(t==="meeting.capture.status"){meetingSttEvent(d);return}
       if(t.indexOf("voice.stt.")===0 && summonerVoice.onEvent(d)) return;
@@ -2858,7 +2908,11 @@ try{
         stopPoll();
       }
       if(threadId && (t==="chat.done"||t==="chat.user"||t==="file.uploaded")){
-        api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:threadId})}).then(function(x){renderMsgs(x.messages||[])});
+        var owner=threadId,revision=selectionRevision;
+        api("/api/thread",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread_id:owner})}).then(function(x){
+          if(owner===threadId && revision===selectionRevision && Array.isArray(x.messages) && !streamMsg) renderMsgs(x.messages);
+        }).catch(function(){});
+
       }
     };
   }catch(e){}
