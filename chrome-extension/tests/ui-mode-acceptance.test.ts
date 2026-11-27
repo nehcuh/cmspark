@@ -12,7 +12,7 @@ import {
   type ModeInput,
 } from "../src/sidepanel/mode/mode-controller"
 import { isCockpitTabUrl, COCKPIT_SESSION_KEY } from "../src/background/cockpit-window"
-import { tokens, riskLabel } from "../src/sidepanel/ui/tokens"
+import { tokens, workspacePalette, riskLabel } from "../src/sidepanel/ui/tokens"
 
 const base: ModeInput = {
   now: 1_000_000,
@@ -109,6 +109,6 @@ test("§8 residual: risk labels not color-only (text exists)", () => {
 })
 
 test("§8 residual: quiet-premium accent not Material blue", () => {
-  assert.equal(tokens.accent, "#4f46e5")
+  assert.equal(workspacePalette.accent[0], "#4f46e5")
   assert.ok(tokens.darkWarning)
 })

@@ -21,6 +21,7 @@ import { codingHandoffCopy } from "../coding-handoff/copy"
 
 import {
   IconList,
+  IconApps,
   IconCraft,
   IconDownload,
   IconNotebook,
@@ -40,6 +41,7 @@ import { disarmAllFlags, trustStatusChip, trustStatusChipShort } from "./autopil
 
 export function StatusRail({
   compact,
+  inConversation = true,
   onNewThread,
   onSelectHistory,
   connectionState,
@@ -53,6 +55,7 @@ export function StatusRail({
   canPopout,
 }: {
   compact: boolean
+  inConversation?: boolean
   onNewThread: () => void
   onSelectHistory: () => void
   connectionState: ConnectionState
@@ -104,6 +107,7 @@ export function StatusRail({
 
   useEffect(() => {
     if (!menuOpen) return
+    menuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')?.focus()
     const onDoc = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false)
@@ -231,26 +235,26 @@ export function StatusRail({
         ...(modeLine ? { boxShadow: `inset 0 -2px 0 ${modeLine}` } : null),
       }}
     >
-      <button type="button" className="cm-icon-button cm-navigation-toggle" aria-label="打开工作区导航" aria-haspopup="dialog" onClick={() => window.dispatchEvent(new Event("cmspark:toggle-navigation"))}><IconList size={16} /><span style={{ fontSize: 12 }}>导航</span></button>
-      {window.location.pathname !== "/tabs/workspace.html" && <button type="button" className="cm-icon-button cm-workbench-launch" aria-label="个人工作台" title="打开个人工作台" disabled={state.pendingSecurityConfirmations.length > 0 || ["running", "paused"].includes(state.computerTask?.status ?? "")} onClick={() => void openWorkbench("today")}><span className="cm-workbench-prefix">个人</span>工作台</button>}
-      {compact ? (
+      <button type="button" className="cm-icon-button cm-navigation-toggle" title="打开工作区导航" aria-label="打开工作区导航" aria-haspopup="dialog" onClick={() => window.dispatchEvent(new Event("cmspark:toggle-navigation"))}><IconList size={16} /><span style={{ fontSize: 12 }}>导航</span></button>
+      {inConversation ? <TaskRelationshipNav relationship={relationship} onNavigate={parentId => {
+        dispatch({ type: "SET_ACTIVE_THREAD", threadId: parentId })
+        chrome.runtime.sendMessage({ type: "thread.select", threadId: parentId })
+      }} /> : <div className="cm-task-title">个人工作台</div>}
+      {window.location.pathname !== "/tabs/workspace.html" && <button type="button" className="cm-icon-button cm-workbench-launch" aria-label="个人工作台" title="打开个人工作台" disabled={state.pendingSecurityConfirmations.length > 0 || ["running", "paused"].includes(state.computerTask?.status ?? "")} onClick={() => void openWorkbench("today")}><IconApps size={16} /><span className="cm-workbench-label">工作台</span></button>}
+      {inConversation && (compact ? (
         <button type="button" className="cm-icon-button cm-header-new" title="新对话" aria-label="新对话" onClick={onNewThread}>
           <IconNewChat size={19} />
         </button>
       ) : (
         <ModeBadge level={capabilityLevel} label={badgeLabel} pinned={pinned} onTogglePin={togglePin} whisper />
-      )}
+      ))}
       {/* Brand point (small CompanionMark) — #321 PR-3: resident, no longer hidden
           on cruise / disconnect. Decorative (CompanionMark stays aria-hidden). */}
       <div className="cm-rail-brand" style={railStyles.brand} title="CMspark" aria-label="CMspark">
         <CompanionMark size={16} />
       </div>
-      <TaskRelationshipNav relationship={relationship} onNavigate={parentId => {
-        dispatch({ type: "SET_ACTIVE_THREAD", threadId: parentId })
-        chrome.runtime.sendMessage({ type: "thread.select", threadId: parentId })
-      }} />
-      <div style={railStyles.cluster}>
-      <button
+      <div style={inConversation ? railStyles.cluster : {display: "none"}}>
+      {!compact && <button
         type="button"
         style={{
           ...railStyles.ghostBtn,
@@ -264,7 +268,7 @@ export function StatusRail({
         disabled={!canPopout}
       >
         <IconExternal size={16} />
-      </button>
+      </button>}
       <ThreadList onSelectHistory={onSelectHistory} />
       </div>
       {cruiseLabel && (
@@ -341,8 +345,9 @@ export function StatusRail({
           <span style={railStyles.connLabel}>{connLabel}</span>
         </span>
       )}
-      <ChatContextControls compact={compact} />
-      <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
+      {inConversation && <ChatContextControls compact={compact} />}
+      <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}
+        onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) closeMenu() }}>
         <button
           type="button"
           style={{
@@ -363,11 +368,31 @@ export function StatusRail({
           {nbState === "working" ? <IconSpinner size={15} /> : <IconMore size={15} />}
         </button>
         {menuOpen && (
-          <div style={railStyles.menu} role="menu">
+          <div style={railStyles.menu} role="menu" aria-label="更多工具与设置" onKeyDown={event => {
+            if (event.key === "Escape") {
+              event.preventDefault()
+              event.stopPropagation()
+              closeMenu()
+              menuRef.current?.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')?.focus()
+              return
+            }
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return
+            const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)'))
+            if (!items.length) return
+            event.preventDefault()
+            const current = items.indexOf(document.activeElement as HTMLButtonElement)
+            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length
+            items[next].focus()
+          }}>
             {/* #321 PR-3: grouped IA — 会话 / 能力 / 诊断 */}
+            {inConversation && <>
             <div role="presentation" style={railStyles.menuGroupLabel}>
               会话
             </div>
+            {compact && <button type="button" role="menuitem" style={railStyles.menuItem} disabled={!canPopout} onClick={() => {
+              closeMenu()
+              onPopout()
+            }}><IconExternal size={15} />弹出对话框</button>}
             <button
               type="button"
               role="menuitem"
@@ -438,6 +463,7 @@ export function StatusRail({
                   : "导出摘要"}
               </span>
             </button>
+            </>}
             <div role="presentation" style={railStyles.menuGroupLabel}>
               能力
             </div>
@@ -590,7 +616,7 @@ const railStyles: Record<string, CSSProperties> = {
     maxWidth: 56,
     padding: "2px 8px",
     borderRadius: tokens.radiusPill,
-    border: `1px solid ${tokens.danger}55`,
+    border: `1px solid ${tokens.dangerBorder}`,
     background: tokens.dangerSoft,
     color: tokens.danger,
     fontSize: 11,
@@ -637,6 +663,7 @@ const railStyles: Record<string, CSSProperties> = {
   // Phase 2b: shared popup density (lock-step with ThreadList)
   menu: {
     ...popupMenuStyles.menu,
+    maxHeight: "min(360px, calc(100dvh - 64px))",
     minWidth: 220, // keep rail menu slightly wider than card menus
     position: "absolute",
     right: 0,

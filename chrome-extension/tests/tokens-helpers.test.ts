@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
-  tokens,
+  tokens, workspacePalette,
   riskColor,
   riskColorDark,
   riskLabel,
@@ -14,7 +14,7 @@ import {
 } from "../src/sidepanel/ui/tokens"
 
 test("tokens accent is quiet-premium indigo not Material", () => {
-  assert.equal(tokens.accent, "#4f46e5")
+  assert.equal(workspacePalette.accent[0], "#4f46e5")
   const accent: string = tokens.accent
   const danger: string = tokens.danger
   assert.ok(accent !== "#4A90D9")
@@ -83,26 +83,26 @@ test("radius SoT is 6/8/12 (UIUX v2)", () => {
 
 test("semantic role hexes match companion canon tokens", () => {
   // surface.canvas / elevated (white companion)
-  assert.equal(tokens.bg, "#ffffff")
-  assert.equal(tokens.bgElevated, "#ffffff")
+  assert.equal(workspacePalette.bg[0], "#f8f8f4")
+  assert.equal(workspacePalette.bgElevated[0], "#ffffff")
   assert.equal(tokens.darkBg, "#171717")
   assert.equal(tokens.darkElevated, "#222222")
   // text
-  assert.equal(tokens.text, "#171717")
-  assert.equal(tokens.textSecondary, "#666666")
+  assert.equal(workspacePalette.text[0], "#202922")
+  assert.equal(workspacePalette.textSecondary[0], "#45534b")
   assert.equal(tokens.emptyTitle, 22)
   assert.equal(tokens.radiusComposer, 20)
   // borders are translucent rgba (not flat gray)
-  assert.ok(String(tokens.border).includes("rgba"))
+  assert.equal(workspacePalette.border[0], "#dadfd7")
   assert.ok(String(tokens.darkBorder).includes("rgba"))
   // status.live / warn / danger
-  assert.equal(tokens.success, "#059669")
-  assert.equal(tokens.warning, "#d97706")
-  assert.equal(tokens.danger, "#dc2626")
+  assert.equal(workspacePalette.success[0], "#059669")
+  assert.equal(workspacePalette.warning[0], "#d97706")
+  assert.equal(workspacePalette.danger[0], "#dc2626")
   assert.equal(tokens.darkLive, "#34d399")
   assert.equal(tokens.darkWarning, "#fbbf24")
   assert.equal(tokens.darkDanger, "#f87171")
-  assert.equal(tokens.accent, "#4f46e5")
+  assert.equal(workspacePalette.accent[0], "#4f46e5")
   assert.equal(tokens.darkAccent, "#818cf8")
   assert.ok(tokens.shadowFocus)
   assert.ok(tokens.shadowLg)
@@ -115,4 +115,27 @@ test("semantic role hexes match companion canon tokens", () => {
   assert.ok(tokens.dangerSurface.includes("220, 38, 38"))
   assert.ok(tokens.modeBrowserLine)
   assert.ok(tokens.modeComputerLine)
+})
+
+test("workspace text and controls clear 4.5:1 in both system themes", () => {
+  const luminance = (color: string) => {
+    const [r, g, b] = color.slice(1).match(/../g)!.map(channel => {
+      const value = parseInt(channel, 16) / 255
+      return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4
+    })
+    return .2126 * r + .7152 * g + .0722 * b
+  }
+  const pairs = [
+    ["text", "bg"], ["textSecondary", "bgMuted"], ["textMuted", "bgElevated"],
+    ["userBubbleInk", "userBubbleBg"], ["actionInk", "actionPrimary"],
+    ["accent", "bg"], ["warningText", "warningSoft"],
+  ] as const
+  for (const theme of [0, 1] as const) {
+    for (const [foreground, background] of pairs) {
+      const first = luminance(workspacePalette[foreground][theme])
+      const second = luminance(workspacePalette[background][theme])
+      assert.ok((Math.max(first, second) + .05) / (Math.min(first, second) + .05) >= 4.5,
+        `${foreground} on ${background}, theme ${theme}`)
+    }
+  }
 })

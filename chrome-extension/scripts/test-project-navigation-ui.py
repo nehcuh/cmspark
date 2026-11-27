@@ -7,12 +7,12 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 root = Path(__file__).resolve().parent.parent
 LIST_KEY = "cmspark.project.list.v1"
 THREAD_KEY = "cmspark.navigation.lastThreadId"
-shots = Path("/opt/cursor/artifacts")
+shots = Path(tempfile.gettempdir()) / "cmspark-project-navigation-shots"
 alpha = {"id": "11111111-1111-4111-8111-111111111111", "name": "Alpha", "created_at": "t", "updated_at": "t", "archived_at": None}
 empty_named = {"id": "22222222-2222-4222-8222-222222222222", "name": "空项目", "created_at": "t", "updated_at": "t", "archived_at": None}
 archived = {**alpha, "id": "33333333-3333-4333-8333-333333333333", "name": "旧项目", "archived_at": "t2"}
@@ -48,8 +48,15 @@ def launch(playwright, directory, storage, level="chat"):
     release_latest(page, LIST_KEY, storage)
     return browser, page
 
+def show_navigation(page):
+    nav = page.get_by_role("navigation", name="工作区")
+    if not nav.is_visible():
+        page.get_by_role("button", name="打开工作区导航").click()
+    return nav
+
 def open_projects(page):
-    summary = page.locator("summary").filter(has_text="项目").first
+    nav = show_navigation(page)
+    summary = nav.locator("summary").filter(has_text="项目").first
     summary.focus()
     page.keyboard.press("Enter")
 
@@ -99,12 +106,15 @@ def test_list(page):
 
 def test_layout(page):
     css = "".join(page.locator("style").all_inner_texts())
-    assert "28dvh" not in css
     assert "cm-navigation-disclosure" not in css
     assert page.locator(".cm-navigation-disclosure").count() == 0
     for width in (320, 400, 759):
         page.set_viewport_size({"width": width, "height": 800})
         page.wait_for_function("(value) => document.querySelector('[data-navigation-mode]').getAttribute('data-navigation-mode') === value", arg="layered")
+        show_navigation(page)
+        main = page.locator(".cm-workspace-main").bounding_box()
+        assert main and main["height"] > 400 and main["y"] + main["height"] <= 801
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     for width in (960, 1200):
         page.set_viewport_size({"width": width, "height": 800})
         page.wait_for_function("(value) => document.querySelector('[data-navigation-mode]').getAttribute('data-navigation-mode') === value", arg="resident")
@@ -127,9 +137,12 @@ def test_stale_startup(page):
 def test_breadcrumb(page):
     page.evaluate("""() => window.dispatchUI({type:'SET_THREADS', threads:[{id:'demo-0', alias:'笔记', project_id:'11111111-1111-4111-8111-111111111111', trashed_at:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}]})""")
     release_latest(page, THREAD_KEY, {THREAD_KEY: "demo-0"})
-    page.get_by_role("banner", name="会话位置").wait_for()
+    show_navigation(page)
+    details = page.get_by_role("banner", name="会话位置")
+    details.locator("summary").click()
+    details.wait_for()
     page.evaluate("() => window.dispatchUI({type:'SET_CONNECTION', state:'connecting'})")
-    assert "正在连接，归属整理已停用。" in page.locator("body").inner_text()
+    expect(details).to_contain_text("正在连接，归属整理已停用。")
     assert "连接断开，归属整理已停用。" not in page.locator("body").inner_text()
     assert "执行状态：离线" not in page.locator("body").inner_text()
     assert page.get_by_role("button", name="移入 Alpha", exact=True).is_disabled()
@@ -408,25 +421,29 @@ def test_tools(playwright, directory):
     page.set_viewport_size({"width": 759, "height": 800})
     page.evaluate("""() => window.dispatchUI({type:'SET_THREADS', threads:[{id:'demo-0', alias:'笔记', project_id:'11111111-1111-4111-8111-111111111111', trashed_at:null, created_at:'t', updated_at:'t', config_override:{}, tool_whitelist:null, pinned_tabs:[], active_skill_ids:[]}]})""")
     release_latest(page, THREAD_KEY, {THREAD_KEY: "demo-0"})
-    page.get_by_role("banner", name="会话位置").wait_for()
+    show_navigation(page)
+    details = page.get_by_role("banner", name="会话位置")
+    details.locator("summary").click()
+    details.wait_for()
     page.screenshot(path=str(shots / "project-nav-759-session.png"))
     page.set_viewport_size({"width": 960, "height": 800})
     nav = page.get_by_role("navigation", name="工作区")
-    nav.get_by_role("button", name="工具", exact=True).click()
+    expect(nav.locator("details.cm-nav-tools")).to_have_attribute("open", "")
     current = page.get_by_role("group", name="当前任务")
     assert current.get_by_role("button").all_inner_texts()[:3] == ["技能", "知识", "历史"]
     assert current.get_by_role("button", name="设置", exact=True).count() == 0
     page.screenshot(path=str(shots / "project-nav-960-tools.png"))
     assert nav.get_by_role("button", name="设置", exact=True).count() == 1
     css = "".join(page.locator("style").all_inner_texts())
-    assert "28dvh" not in css and "cm-navigation-disclosure" not in css
+    expect(page.locator(".cm-workspace-main")).to_be_visible() and "cm-navigation-disclosure" not in css
     assert page.locator(".cm-navigation-disclosure").count() == 0
     browser.close()
 
 def test_browser_tools(playwright, directory):
     browser, page = launch(playwright, directory, {}, level="browser")
     page.set_viewport_size({"width": 960, "height": 800})
-    page.get_by_role("navigation", name="工作区").get_by_role("button", name="工具", exact=True).click()
+    expect(page.locator("[data-navigation-mode]")).to_have_attribute("data-navigation-mode", "resident")
+    expect(page.get_by_role("navigation", name="工作区").locator("details.cm-nav-tools")).to_have_attribute("open", "")
     assert page.get_by_role("group", name="当前任务").get_by_role("button").all_inner_texts()[:2] == ["浏览器标签页", "技能"]
     assert page.get_by_role("navigation", name="工作区").get_by_role("button", name="设置", exact=True).count() == 1
     browser.close()

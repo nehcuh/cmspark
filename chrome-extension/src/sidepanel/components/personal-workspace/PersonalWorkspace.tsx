@@ -18,7 +18,7 @@ export function matchesActivityAppSearch(app: ActivityApp, query: string): boole
 const appWindowLabels = { visible: '有可见窗口', minimized: '窗口已最小化', hidden: '窗口已隐藏', none: '暂无窗口' }
 
 export type WorkspaceDestination = 'meeting' | 'recording' | 'translation' | 'transcribe' | 'today' | 'todos' | 'chat' | 'materials' | 'activity'
-export const WORKSPACE_DESTINATIONS: Array<{ id: WorkspaceDestination; label: string }> = [
+export const WORKSPACE_DESTINATIONS: Array<{ id: Exclude<WorkspaceDestination, "recording" | "translation" | "transcribe">; label: string }> = [
   { id: 'today', label: '今日' }, { id: 'todos', label: '待办' }, { id: 'chat', label: '对话' }, { id: 'meeting', label: '会议' }, { id: 'materials', label: '资料' }, { id: 'activity', label: '活动记录' },
 ]
 const reminderLabels: Record<PersonalTodo['reminder']['status'], string> = { none: '未设置提醒', scheduled: '已排程', attempting: '正在提交系统通知', submitted: '已提交系统通知（不代表已读）', failed: '提醒提交失败', unknown: '提醒结果未知，请核实' }
@@ -30,14 +30,14 @@ export function PersonalWorkspace({ destination, controller, connected, active, 
   const { snapshot, loading, busy, error, notice, refresh } = controller
   const title = WORKSPACE_DESTINATIONS.find(item => item.id === destination)!.label
   const descriptions = {
-    today: '先处理临期事项，再整理聊天中发现的新待办。来源、处理和反馈放在一起。',
-    todos: '把分散在聊天里的承诺和督办收在一处，保留谁提出、何时截止、向哪里反馈。',
-    materials: '继续使用已有资料与工具；会议、知识和执行记录仍归属于原来的对话。',
+    today: new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date()),
+    todos: '跟进已确认的事项，核对聊天中发现的待办。',
+    materials: '查找会议记录、知识与对话资料。',
     activity: '只采集你指定的前台应用可见内容。先核对范围，再明确开启。',
   }
   return <section className="cm-personal" aria-label={`${title}工作区`}>
-    <header className="cm-personal-head"><div><p className="cm-personal-eyebrow">个人工作台</p><h1>{title}</h1><p>{descriptions[destination]}</p></div>
-      <div className="cm-personal-actions"><span className="cm-personal-count">{connected ? '本机 Companion 已连接' : '本机服务未连接'}</span><button className="cm-p-button" type="button" disabled={!connected || loading || busy} onClick={() => void refresh()}>{loading ? '刷新中…' : '刷新'}</button></div>
+    <header className="cm-personal-head"><div><h1>{title}</h1><p>{descriptions[destination]}</p></div>
+      <div className="cm-personal-actions"><span className="cm-personal-count cm-connection-label" data-connected={connected}>{connected ? '本机 Companion 已连接' : '本机服务未连接'}</span><button className="cm-p-button" type="button" disabled={!connected || loading || busy} onClick={() => void refresh()}>{loading ? '刷新中…' : '刷新'}</button></div>
     </header>
     {actions}
     {!connected && <div className="cm-personal-banner" role="alert">Companion 未连接。当前信息可能过期；连接恢复后才能保存或接收提醒。</div>}
@@ -153,7 +153,7 @@ function TodoPanel({ today, controller, connected, active, navigationOwner, navi
         }} />
         {!isCandidate && <p className="cm-personal-fieldnote" style={{ marginTop: 16 }}>提醒：{reminderLabels[(selection as PersonalTodo).reminder.status]}{(selection as PersonalTodo).reminder.error ? ` · ${(selection as PersonalTodo).reminder.error}` : ''}。通知要求 Companion 持续运行，系统免打扰可能抑制通知。</p>}
         {isCandidate && <div className="cm-personal-save">{confirmDismiss === selection.id ? <><span className="cm-personal-fieldnote">忽略这条候选？不会删除来源记录。</span><button type="button" className="cm-p-button" disabled={busy || !connected} onClick={async () => { if (await mutate('todo.dismiss', { candidate_id: selection.id, expected_revision: selection.revision }, '候选已忽略。')) setSelected(null) }}>确认忽略</button><button type="button" className="cm-p-link" onClick={() => setConfirmDismiss(null)}>取消</button></> : <button type="button" className="cm-p-link" disabled={busy || !connected} onClick={() => setConfirmDismiss(selection.id)}>忽略候选</button>}</div>}
-      </div> : <aside className="cm-personal-detail"><p className="cm-personal-eyebrow">来源与反馈</p><h2>把每个交代留在原处</h2><p className="cm-personal-fieldnote">选择一条事项，核对是谁在哪个群提出、什么时候截止，以及处理后向哪里反馈。</p><p className="cm-personal-fieldnote" style={{ marginTop: 12 }}>处理完成与反馈完成分别保存。这里的个人待办独立于对话中的 Agent 执行记录。</p></aside>}
+      </div> : null}
     </div>
   </>
 }

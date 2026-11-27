@@ -5,11 +5,34 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 project = Path(__file__).resolve().parent.parent
-shots = Path('/private/tmp/cmspark-469-shots')
+shots = Path(tempfile.gettempdir()) / 'cmspark-workspace-shots'
 shots.mkdir(exist_ok=True)
+def show_nav(page):
+    nav = page.get_by_role('navigation', name='工作区', exact=True)
+    if not nav.is_visible():
+        page.get_by_role('button', name='打开工作区导航').click()
+    return nav
+
+def choose_thread(page):
+    recent = show_nav(page).get_by_role('region', name='最近对话')
+    disclosure = recent.get_by_role('button', name='最近对话', exact=True)
+    if disclosure.get_attribute('aria-expanded') != 'true':
+        disclosure.click()
+    row = recent.get_by_role('button', name='发布 v2.8', exact=False).first
+    row.focus()
+    page.keyboard.press('Enter')
+    expect(page.get_by_role('banner', name='状态栏')).to_have_attribute('data-active-thread-id', 'demo-0')
+
+def show_tools(page):
+    nav = show_nav(page)
+    summary = nav.locator('summary', has_text='资料与工具')
+    if not summary.locator('..').evaluate('el => el.open'):
+        summary.click()
+    return nav.get_by_role('group', name='当前任务')
+
 with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
     subprocess.run(['node', 'scripts/render-workspace-fixture.cjs', directory, '--cold-home'], cwd=project, check=True)
     with sync_playwright() as playwright:
@@ -21,11 +44,11 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         page.goto((Path(directory)/'index.html').as_uri())
         composer = page.get_by_role('textbox', name='消息内容', exact=True)
         composer.wait_for()
-        assert composer.is_disabled()
-        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).focus()
-        page.keyboard.press('Enter')
-        opened = page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first
-        opened.focus(); page.keyboard.press('Enter')
+        expect(composer).to_be_enabled()
+        composer.fill('尚未发送的草稿')
+        assert not page.evaluate('window.sent.some(m=>["thread.create","chat.create"].includes(m.type))')
+        composer.fill('')
+        choose_thread(page)
         page.wait_for_function('() => { const el = document.querySelector("textarea[aria-label=消息内容]"); return el && !el.disabled }')
         for width,height in [(1440,900),(800,700),(760,640),(759,640),(390,740),(320,480)]:
             page.set_viewport_size({'width':width,'height':height})
@@ -34,24 +57,23 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
             box = composer.bounding_box()
             assert box and box['width'] >= min(220,width-60), (width,box)
             assert box['y'] >= 0 and box['y']+box['height'] <= height, (width,box)
-            assert page.get_by_role('button',name='打开工作区导航',exact=True).is_visible() == (width<760)
+            assert page.get_by_role('button',name='打开工作区导航',exact=True).get_attribute('aria-expanded') == ('true' if width>=760 else 'false')
             if width in (1440,390,320):page.screenshot(path=str(shots/f'empty-{width}.png'))
         # New task preserves existing action, never sends an Agent message.
         page.get_by_role('button', name='新对话', exact=True).click()
         page.wait_for_function('window.sent.some(x=>x.type==="thread.create")')
         assert not page.evaluate('window.sent.some(x=>x.type==="chat.send" || x.type==="chat.create")')
-        page.get_by_role('button', name='返回', exact=True).click()
+        show_nav(page)
         page.get_by_role('navigation', name='工作区').get_by_role('button', name='设置', exact=True).click()
         settings=page.get_by_role('dialog', name='设置', exact=True)
         settings.wait_for()
         assert settings.is_visible()
         settings.get_by_role('button', name='关闭设置', exact=True).click()
-        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
-        page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
+        choose_thread(page)
         # Existing history is named and keyboard operable; Escape returns focus.
         history=page.get_by_role('button',name='对话管理（历史对话）',exact=True)
         history.click()
-        dialog=page.get_by_role('dialog',name='历史对话列表',exact=True)
+        dialog=page.get_by_role('dialog',name='对话管理',exact=True)
         dialog.wait_for()
         page.wait_for_function('document.activeElement?.getAttribute("aria-label")==="搜索线程"')
         row=dialog.get_by_role('button',name='打开 发布 v2.8',exact=False).first
@@ -62,8 +84,8 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         assert not dialog.is_visible()
         assert history.evaluate('(el)=>el===document.activeElement')
         # Context panel fits the short viewport; closes without losing composer.
-        page.get_by_role('button', name='返回', exact=True).click()
-        page.get_by_role('navigation', name='工作区').get_by_role('button', name='工具', exact=True).click()
+        show_nav(page)
+        show_tools(page)
         page.get_by_role('group', name='当前任务').get_by_role('button', name='知识', exact=True).click()
         context=page.get_by_test_id('context-panel-host')
         context.wait_for()
@@ -76,7 +98,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         history.click();dialog.wait_for();page.wait_for_timeout(100)
         dialog.get_by_title('更多',exact=True).click()
         menu=page.get_by_role('menu').last;menu.wait_for()
-        composer.focus();page.keyboard.press('Escape')
+        page.get_by_role('button',name='个人工作台',exact=True).focus();page.keyboard.press('Escape')
         assert menu.is_visible(), 'History must not consume Escape from another surface'
         menu.get_by_role('button').first.focus();page.keyboard.press('Escape')
         assert not menu.is_visible() and dialog.is_visible()
@@ -87,10 +109,9 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         messages=[{'id':'u1','thread_id':'demo-0','role':'user','content':'请核对支付服务 v2.8 的需求、代码与测试，整理变更材料。','created_at':'2026-09-07T10:00:00Z'},
           {'id':'a1','thread_id':'demo-0','role':'assistant','content':'已整理当前证据。\n\n### 需要补充的内容\n\n- 需求与开发任务已建立关联。\n- 测试对应提交仍待核对。\n\n'+'`https://devops.example.test/'+('long-path/'*25)+'`', 'created_at':'2026-09-07T10:01:00Z',
            'tool_calls':[{'id':'tc1','tool_name':'get_page_text','params':{},'status':'success','result':{'success':True,'data':{'content':'这是来自合成测试网页的实际展示文本。'*80}}}]}]
-        page.evaluate('(messages)=>window.dispatchUI({type:"SET_MESSAGES",messages})',messages)
         page.set_viewport_size({'width':1440,'height':900})
-        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
-        page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
+        choose_thread(page)
+        page.evaluate('(messages)=>window.dispatchUI({type:"SET_MESSAGES",messages})',messages)
         details=page.get_by_role('button',name='展开 get_page_text 详情',exact=True)
         details.focus();page.keyboard.press('Enter')
         assert page.get_by_role('button',name='收起 get_page_text 详情',exact=True).get_attribute('aria-expanded')=='true'
@@ -163,7 +184,7 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         page.evaluate('(messages)=>window.dispatchUI({type:"SET_MESSAGES",messages})',messages)
         # Confirmation queue is still rendered by the unchanged production gate.
         confirmation={'confirmation_id':'fixture-confirm','tool_name':'shell_exec','dangerous_apis':['shell'], 'code_preview':'git diff base..head','risk_level':'high','requested_at':'2026-09-07T10:00:00Z','timeout_ms':45000}
-        page.get_by_role('navigation', name='工作区').get_by_role('button', name='工具', exact=True).click()
+        show_tools(page)
         assert page.get_by_role('group', name='当前任务').is_visible()
         page.get_by_role('group', name='当前任务').get_by_role('button', name='知识', exact=True).click()
         page.evaluate('(request)=>window.dispatchUI({type:"ADD_SECURITY_CONFIRMATION",request})',confirmation)
@@ -177,11 +198,10 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
             box=button.bounding_box()
             assert box and 0 <= box['y'] and box['y']+box['height'] <= 480
             assert button.evaluate('(el)=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}')
-        page.get_by_role('button', name='返回', exact=True).click()
+        show_nav(page)
         for name in ['允许','拒绝','停止']:
             assert gate.get_by_role('button',name=name,exact=True).evaluate('(el)=>{const r=el.getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight && el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}')
-        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
-        page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
+        choose_thread(page)
         page.screenshot(path=str(shots/'confirmation-320.png'))
         assert not page.evaluate('window.sent.some(x=>x.type==="security.confirmation.response")')
         page.evaluate("window.dispatchUI({type:'REMOVE_SECURITY_CONFIRMATION',confirmationId:'fixture-confirm'});window.dispatchUI({type:'SET_THREAD_BUSY',threadId:'demo-0',busy:true})")
@@ -190,10 +210,9 @@ with tempfile.TemporaryDirectory(prefix='cmspark-workspace-') as directory:
         assert stop.bounding_box()['y']+stop.bounding_box()['height'] <= 480
         page.get_by_role('button',name='纠偏',exact=True).wait_for()
         page.get_by_role('button',name='排队',exact=True).wait_for()
-        page.get_by_role('button', name='返回', exact=True).click()
+        show_nav(page)
         assert stop.evaluate('(el)=>{const r=el.getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight && el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}')
-        page.get_by_role('navigation', name='工作区').get_by_role('button', name='最近对话', exact=True).click()
-        page.get_by_role('region', name='最近对话').get_by_role('button', name='发布 v2.8', exact=False).first.click()
+        choose_thread(page)
         page.screenshot(path=str(shots/'running-320.png'))
         page.evaluate("window.dispatchUI({type:'SET_THREAD_BUSY',threadId:'demo-0',busy:false});window.dispatchUI({type:'SET_CONNECTION',state:'disconnected'})")
         page.get_by_role('button',name='重新连接',exact=True).wait_for()

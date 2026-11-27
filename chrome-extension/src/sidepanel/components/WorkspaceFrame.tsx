@@ -7,7 +7,7 @@ import {
   threadRecency,
   workerBelongTitle,
 } from "../utils/thread-timeline"
-import { CompanionMark, IconChevronDown, IconNewChat, IconSettings } from "../ui/icons"
+import { CompanionMark, IconApps, IconChat, IconChevronDown, IconHistory, IconKnowledge, IconList, IconMic, IconNewChat, IconSettings } from "../ui/icons"
 import { CONTEXT_PANEL_TABS, useContextPanelHost } from "./ContextPanelHost"
 import { createBlankThread } from "./ThreadList"
 import { ProjectPanel } from "./ProjectPanel"
@@ -25,6 +25,8 @@ import { useActivity } from "./personal-workspace/useActivity"
 import { dueToday } from "./personal-workspace/activity-request"
 import { personalWorkspaceCSS } from "./personal-workspace/styles"
 
+const destinationIcons = { today: IconApps, todos: IconList, chat: IconChat, meeting: IconMic, materials: IconKnowledge, activity: IconHistory } as const
+
 const workbenchActions = [["meeting", "开始会议"], ["recording", "录屏"], ["transcribe", "实时转写"], ["translation", "翻译"]] as const
 function isWorkbenchPage(page: unknown): page is "today" | typeof workbenchActions[number][0] {
   return page === "today" || workbenchActions.some(([key]) => key === page)
@@ -34,7 +36,7 @@ function isWorkbenchPage(page: unknown): page is "today" | typeof workbenchActio
 export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays }: {
   children: ReactNode
   level?: CapabilityLevel
-  top?: (actions: { compact: boolean; onNewThread: () => void; onSelectHistory: () => void }) => ReactNode
+  top?: (actions: { compact: boolean; inConversation: boolean; onNewThread: () => void; onSelectHistory: () => void }) => ReactNode
   bottom?: ReactNode
   overlays?: ReactNode
 }) {
@@ -206,7 +208,7 @@ export function WorkspaceFrame({ children, level = "chat", top, bottom, overlays
   )
   const mode = wide ? "resident" : "layered"
   const shellClass = `cm-workspace cm-workspace-r3${full ? " cm-workspace-full" : ""}${wide ? "" : " cm-workspace-layered"}`
-  const header = top?.({ compact: !wide, onNewThread: newThread, onSelectHistory: () => {
+  const header = top?.({ compact: !wide, inConversation: !full || visibleView === "chat", onNewThread: newThread, onSelectHistory: () => {
     navigate("chat")
     afterNavigation()
     focusComposer()
@@ -297,7 +299,10 @@ function WorkspaceNavigation({ onNavigate, onClose, full, destination, onView, o
     <div className="cm-nav-brand"><CompanionMark size={24} /><strong>CMspark</strong>
       {onClose && <button type="button" className="cm-icon-button" aria-label="关闭导航" onClick={onClose}>×</button>}
     </div>
-    {full && <nav className="cm-workspace-destinations" aria-label="主要功能">{WORKSPACE_DESTINATIONS.map(item => <button type="button" className="cm-nav-item" key={item.id} aria-current={destination === item.id ? "page" : undefined} onClick={() => { onView(item.id); onNavigate() }}>{item.label}</button>)}</nav>}
+    {full && <nav className="cm-workspace-destinations" aria-label="主要功能">{WORKSPACE_DESTINATIONS.map(item => {
+      const Icon = destinationIcons[item.id]
+      return <button type="button" className="cm-nav-item" key={item.id} aria-current={destination === item.id ? "page" : undefined} onClick={() => { onView(item.id); onNavigate() }}><Icon size={16} />{item.label}</button>
+    })}</nav>}
     <button type="button" className="cm-nav-new" onClick={onNewThread}><IconNewChat size={17} />新对话</button>
     <ProjectPanel filter={projectFilter} onFilter={setProjectFilter} onSnapshot={onSnapshot}
       onOpenProject={id => { setProjectFilter(id); onOpenProject?.(id); setConversationsOpen(true) }} />

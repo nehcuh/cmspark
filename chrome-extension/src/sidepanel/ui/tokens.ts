@@ -1,32 +1,86 @@
 // Shared React palette. Root DESIGN.md owns the current workspace direction.
-// Neutral conversation surfaces; indigo links/focus; semantic risk colors.
+// Paper and ink surfaces, forest primary actions, indigo links and semantic risk colors.
+
+export const workspacePalette = {
+  bg: ["#f8f8f4", "#1b211f"],
+  bgElevated: ["#ffffff", "#252d29"],
+  bgMuted: ["#efefea", "#19201c"],
+  bgHover: ["#eeefea", "#2f3932"],
+  actionPrimary: ["#266249", "#a6d9b9"],
+  actionInk: ["#ffffff", "#17291d"],
+  navSelected: ["#e2eae1", "#314338"],
+  bgActive: ["#eef2ff", "#333449"],
+  border: ["#dadfd7", "#414c44"],
+  borderStrong: ["#bac6ba", "#64766a"],
+  text: ["#202922", "#eef2e9"],
+  textSecondary: ["#45534b", "#cad5cd"],
+  textMuted: ["#58665d", "#a6b6aa"],
+  accent: ["#4f46e5", "#bcbaff"],
+  accentSoft: ["#eef2ff", "#35354b"],
+  accentText: ["#3730a3", "#cecaff"],
+  accentHover: ["#4338ca", "#cdcaff"],
+  userBubbleBg: ["#e5efe6", "#2c4035"],
+  userBubbleInk: ["#202922", "#eef2e9"],
+  userBubbleBorder: ["#dce8dd", "#374f40"],
+  assistantBubbleText: ["#202922", "#eef2e9"],
+  sendDisabledBg: ["#e4e8e1", "#39453d"],
+  userBubbleText: ["#ffffff", "#17291d"],
+  success: ["#059669", "#83d5ae"],
+  warning: ["#d97706", "#e8b569"],
+  danger: ["#dc2626", "#ef9693"],
+  successSoft: ["#ecfdf5", "#263d31"],
+  warningSoft: ["#fffbeb", "#3b321f"],
+  warningText: ["#92400e", "#f8d69a"],
+  warningBorder: ["#fde68a", "#726044"],
+  dangerSoft: ["#fef2f2", "#452d2d"],
+  modeChatText: ["#334155", "#d0dae0"],
+  modeChatBg: ["#f1f5f9", "#333e44"],
+  modeBrowserBg: ["#eef2ff", "#36364c"],
+  modeBrowserText: ["#3730a3", "#cbc7ff"],
+  scrollbar: ["rgba(35,55,44,0.23)", "rgba(210,230,218,0.26)"],
+  scrollbarThumb: ["rgba(35,55,44,0.23)", "rgba(210,230,218,0.26)"],
+} as const
+
+function tone(role: keyof typeof workspacePalette): string {
+  return `var(--cm-${role}, ${workspacePalette[role][0]})`
+}
+
+// Style portals and the main frame together. Standalone extension entry points
+// that do not mount this sheet keep the light fallbacks.
+export const workspaceThemeCSS = `
+  :root { color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { color-scheme: dark; ${Object.entries(workspacePalette).map(([role, pair]) => `--cm-${role}:${pair[1]};`).join("\n")} }
+  }
+`
 
 export const tokens = {
   font:
     "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Helvetica Neue', sans-serif",
   fontMono: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
 
-  // Light companion canvas
-  bg: "#ffffff",
-  bgElevated: "#ffffff",
-  bgMuted: "#f7f7f5",
-  bgHover: "#eeeeec",
-  actionPrimary: "#242424",
-  navSelected: "#e9e9e6",
-  bgActive: "#eef2ff",
-  border: "rgba(23, 23, 23, 0.10)",
-  borderStrong: "rgba(23, 23, 23, 0.14)",
-  text: "#171717",
-  textSecondary: "#666666",
-  textMuted: "#767676",
+  // Workspace surfaces adapt to system appearance.
+  bg: tone("bg"),
+  bgElevated: tone("bgElevated"),
+  bgMuted: tone("bgMuted"),
+  bgHover: tone("bgHover"),
+  actionPrimary: tone("actionPrimary"),
+  actionInk: tone("actionInk"),
+  navSelected: tone("navSelected"),
+  bgActive: tone("bgActive"),
+  border: tone("border"),
+  borderStrong: tone("borderStrong"),
+  text: tone("text"),
+  textSecondary: tone("textSecondary"),
+  textMuted: tone("textMuted"),
   /** Empty-state hero only — not chrome. */
   emptyTitle: 22,
 
   // Indigo accent — links, focus and secondary highlighted controls
-  accent: "#4f46e5",
-  accentSoft: "#eef2ff",
-  accentText: "#3730a3",
-  accentHover: "#4338ca",
+  accent: tone("accent"),
+  accentSoft: tone("accentSoft"),
+  accentText: tone("accentText"),
+  accentHover: tone("accentHover"),
   /** Hairline indigo border on soft accent surfaces (status bubble). */
   accentBorderSoft: "rgba(79, 70, 229, 0.12)",
 
@@ -40,16 +94,16 @@ export const tokens = {
    */
   brandRed: "#d97757",
 
-  success: "#059669",
-  successSoft: "#ecfdf5",
-  warning: "#d97706",
-  warningSoft: "#fffbeb",
+  success: tone("success"),
+  successSoft: tone("successSoft"),
+  warning: tone("warning"),
+  warningSoft: tone("warningSoft"),
   /** Amber-200 border on warning surfaces (fakeEnd / compact banner). */
-  warningBorder: "#fde68a",
+  warningBorder: tone("warningBorder"),
   /** Amber-800 text on warningSoft surfaces. */
-  warningText: "#92400e",
-  danger: "#dc2626",
-  dangerSoft: "#fef2f2",
+  warningText: tone("warningText"),
+  danger: tone("danger"),
+  dangerSoft: tone("dangerSoft"),
   /** Soft confirm / FocusBand tint (G3; defined early for one SoT) */
   dangerSurface: "rgba(220, 38, 38, 0.08)",
   /** Danger border on light confirm surfaces (FocusBand confirm card). */
@@ -61,10 +115,10 @@ export const tokens = {
   dangerPulseFade: "rgba(220, 38, 38, 0)",
 
   // Mode chips (badge only — no full-rail fill on L0/L1)
-  modeChatBg: "#f1f5f9",
-  modeChatText: "#334155",
-  modeBrowserBg: "#eef2ff",
-  modeBrowserText: "#3730a3",
+  modeChatBg: tone("modeChatBg"),
+  modeChatText: tone("modeChatText"),
+  modeBrowserBg: tone("modeBrowserBg"),
+  modeBrowserText: tone("modeBrowserText"),
   modeComputerBg: "#052e16",
   modeComputerText: "#6ee7b7",
   /** 3–4px accent line under StatusRail when L1/L2 (not full tint fill) */
@@ -85,19 +139,19 @@ export const tokens = {
   darkWarningBg: "#422006",
   darkSuccess: "#34d399",
 
-  // Quiet neutral user bubble; assistant prose remains unboxed.
-  userBubbleBg: "#f3f3f1",
+  // Tint separates the user turn from open assistant prose.
+  userBubbleBg: tone("userBubbleBg"),
   /** User-bubble copy. Distinct from userBubbleText (on-accent/on-danger glyphs). */
-  userBubbleInk: "#171717",
-  userBubbleBorder: "rgba(23, 23, 23, 0.04)",
+  userBubbleInk: tone("userBubbleInk"),
+  userBubbleBorder: tone("userBubbleBorder"),
   /**
    * On-accent / on-danger glyph (send armed, filled buttons). Historical name
-   * `userBubbleText` kept so Settings/danger buttons do not silently go dark.
+   * The glyph and its filled background both respond to the active theme.
    * User bubble copy uses `userBubbleInk`.
    */
-  userBubbleText: "#ffffff",
-  assistantBubbleBg: "#ffffff",
-  assistantBubbleText: "#0f172a",
+  userBubbleText: tone("userBubbleText"),
+  assistantBubbleBg: "transparent",
+  assistantBubbleText: tone("assistantBubbleText"),
 
   // Motion (Phase 3 — tightened from 150/220)
   transitionFast: "120ms",
@@ -136,11 +190,11 @@ export const tokens = {
    * (canvas mute). FINAL-SYNTHESIS said "bgMuted"; PR-1 added this token for
    * the circular send and it remains the button-specific SoT.
    */
-  sendDisabledBg: "#e4e4e7",
+  sendDisabledBg: tone("sendDisabledBg"),
 
   /** Thin, quiet global scrollbar (App global css). */
-  scrollbar: "rgba(15, 23, 42, 0.18)",
-  scrollbarThumb: "rgba(15, 23, 42, 0.16)",
+  scrollbar: tone("scrollbar"),
+  scrollbarThumb: tone("scrollbarThumb"),
 
   /** Modal / drawer scrim */
   scrim: "rgba(15, 23, 42, 0.28)",
