@@ -40,8 +40,8 @@ class MiniOrb:
         self.button = Gtk.Button()
         self.button.set_name("mini-orb")
         self.button.set_size_request(SIZE, SIZE)
-        self.button.get_accessible().set_name("CMspark 快速对话")
-        self.button.set_tooltip_text("单击快速对话 · 拖动移动 · 长按或右键打开操作")
+        self.button.get_accessible().set_name("CMspark Mini 操作菜单")
+        self.button.set_tooltip_text("单击或右键打开操作 · 长按快速对话 · 拖动移动")
         self.button.set_image(self.icon(icon) if os.path.exists(icon) else Gtk.Image.new_from_icon_name("mail-message-new-symbolic", Gtk.IconSize.BUTTON))
         self.window.add(self.button)
         style = Gtk.CssProvider()
@@ -56,8 +56,22 @@ class MiniOrb:
         self.add_item(self.menu, "快速对话", "chat")
         capture = Gtk.MenuItem.new_with_label("截图")
         sub = Gtk.Menu()
-        for label, action in (("抽取待办", "todo"), ("询问图片", "ask"), ("OCR 识别", "ocr"), ("仅截图", "capture")):
+        captures = (("抽取待办", "todo"), ("询问图片", "ask"), ("OCR 识别", "ocr"), ("仅截图", "capture"))
+        for label, action in captures:
             self.add_item(sub, label, action)
+        delayed = Gtk.MenuItem.new_with_label("延时截图")
+        times = Gtk.Menu()
+        delayed.set_submenu(times)
+        sub.append(delayed)
+        wayland = not self.x11
+        for seconds in (3, 5, 10):
+            label = f"{seconds} 秒后调出系统截屏" if wayland else f"框选后 {seconds} 秒"
+            item = Gtk.MenuItem.new_with_label(label)
+            actions = Gtk.Menu()
+            item.set_submenu(actions)
+            times.append(item)
+            for title, action in captures:
+                self.add_item(actions, title, f"{action}:{seconds}")
         capture.set_submenu(sub)
         self.menu.append(capture)
         self.menu.append(Gtk.SeparatorMenuItem())
@@ -65,8 +79,6 @@ class MiniOrb:
         self.add_item(self.menu, "会议记录", "meeting")
         self.menu.attach_to_widget(self.button, None)
         self.menu.show_all()
-        self.menu.connect("button-release-event", self.menu_release)
-        self.long_menu = False
         self.start = None
         self.hold_timer = 0
         self.save_timer = 0
@@ -78,7 +90,7 @@ class MiniOrb:
         self.button.connect("button-press-event", self.press)
         self.button.connect("button-release-event", self.release)
         self.button.connect("motion-notify-event", self.motion)
-        self.button.connect("clicked", lambda *_: self.emit_action("chat"))
+        self.button.connect("clicked", lambda *_: self.popup())
         self.button.connect("popup-menu", lambda *_: self.popup())
         self.window.connect("map-event", self.mapped)
         self.window.connect("configure-event", self.configured)
@@ -98,23 +110,13 @@ class MiniOrb:
 
     def emit_action(self, action):
         self.cancel_press()
-        if action in ("todo", "ask", "ocr", "capture"):
+        if action.split(":", 1)[0] in ("todo", "ask", "ocr", "capture"):
             self.hide()
             self.window.get_display().sync()
         print("action:" + action, flush=True)
 
-    def menu_release(self, _menu, event):
-        if self.long_menu and event.button == 1:
-            self.long_menu = False
-            _, x, y, _ = self.window.get_window().get_device_position(event.get_device())
-            # Keep the menu open if a long press is released over the orb.
-            # Releasing over an item still activates the native menu item.
-            return 0 <= x < self.window.get_allocated_width() and 0 <= y < self.window.get_allocated_height()
-        return False
-
-    def popup(self, event=None, long_press=False):
+    def popup(self, event=None):
         self.cancel_press()
-        self.long_menu = long_press
         self.menu.popup_at_widget(self.button, Gdk.Gravity.NORTH_WEST, Gdk.Gravity.SOUTH_WEST, event)
         return True
 
@@ -131,11 +133,10 @@ class MiniOrb:
             return False
         self.cancel_press()
         self.start = (event.x_root, event.y_root)
-        trigger = event.copy()
 
         def hold():
             self.hold_timer = 0
-            self.popup(trigger, long_press=True)
+            self.emit_action("chat")
             return False
 
         self.hold_timer = GLib.timeout_add(450, hold)
@@ -154,7 +155,7 @@ class MiniOrb:
         if event.button != 1:
             return False
         if self.start:
-            self.emit_action("chat")
+            self.popup(event)
         return True
 
     def restore(self):

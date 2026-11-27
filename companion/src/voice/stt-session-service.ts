@@ -1,3 +1,4 @@
+import { recognitionLanguage, transcriptionLocale, transcriptionText } from "./transcription-language"
 // Path B M1 — STT session service: SttSessionCore + tmp + whisper-runner.
 // Peer-bound max-1 session; model path allowlist; injectable runner/binary/probe.
 
@@ -99,6 +100,7 @@ export type ProbeModelFn = (
 ) => { status: "ready" | "absent" | "incomplete"; error?: string }
 
 export type SttSessionServiceDeps = {
+  systemLocale?: string
   /** Companion data dir (…/.cmspark-agent or test temp). */
   dataDir: string
   now?: () => number
@@ -283,7 +285,7 @@ export class SttSessionService {
     this.clearTimersOnly()
     const ac = new AbortController()
     this.bound = {
-      lang: req.lang,
+      lang: transcriptionLocale(req.lang, this.deps.systemLocale),
       peerId,
       sessionId: req.sessionId,
       modelId: engine === "system" ? "" : (req.modelId as SttModelId),
@@ -394,7 +396,7 @@ export class SttSessionService {
         binaryPath: binRes.path,
         modelPath,
         audioPath,
-        lang: bound.lang ?? this.deps.lang ?? "zh",
+        lang: recognitionLanguage(bound.lang ?? this.deps.lang) ?? "zh",
         timeoutMs: STT_PARTIAL_INFER_MAX_MS,
         signal: pac.signal,
       })
@@ -407,7 +409,7 @@ export class SttSessionService {
       }
       return {
         ok: true,
-        text: result.text ?? "",
+        text: transcriptionText(result.text ?? "", bound.lang),
         ms: result.ms,
         modelId: bound.modelId,
       }
@@ -491,7 +493,7 @@ export class SttSessionService {
         const runSapi = this.deps.runSapi ?? runWinSapiTranscribe
         const result = await runSapi({
           wavPath: audioPath,
-          lang: bound.lang ?? this.deps.lang ?? "zh",
+          lang: transcriptionLocale(bound.lang ?? this.deps.lang) ?? "zh",
           timeoutMs: SAPI_HELPER_TIMEOUT_MS,
           signal: ac.signal,
         })
@@ -499,7 +501,7 @@ export class SttSessionService {
         sessionDir = undefined
         this.core.clearIfEnded()
         if (this.bound === bound) this.dropBound()
-        return { ok: true, text: result.text, modelId: "" }
+        return { ok: true, text: transcriptionText(result.text, bound.lang), modelId: "" }
       }
 
       const binRes = this.resolveBinary()
@@ -544,7 +546,7 @@ export class SttSessionService {
         binaryPath: binRes.path,
         modelPath,
         audioPath,
-        lang: bound.lang ?? this.deps.lang ?? "zh",
+        lang: recognitionLanguage(bound.lang ?? this.deps.lang) ?? "zh",
         timeoutMs,
         signal: ac.signal,
       })
@@ -568,7 +570,7 @@ export class SttSessionService {
 
       return {
         ok: true,
-        text: result.text ?? "",
+        text: transcriptionText(result.text ?? "", bound.lang),
         ms: result.ms,
         modelId,
       }

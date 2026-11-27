@@ -222,7 +222,7 @@ export async function handleMeetingMessage(
       if (existing.privacy.audio_retained) return err("queue_protocol_error", "continuous capture does not support retained audio")
       const speaker = typeof msg.speaker === "string" && msg.speaker.trim() ? msg.speaker.slice(0, 32) : undefined
       const wantsExternal = typeof msg.live_asr === "string" && msg.live_asr !== "local"
-      if (msg.live_asr !== undefined && !isChromeExtensionOrigin(ctx.origin)) return err("origin_denied", "workbench live ASR requires browser confirmation")
+      if (wantsExternal && !isChromeExtensionOrigin(ctx.origin)) return err("origin_denied", "workbench live ASR requires browser confirmation")
       const previous = service.getMeetingCapture()
       if (previous?.owns(ctx.peerId, msg.capture_id, existing.capture_epoch ?? 0) && previous.identity.meeting_id === id) {
         if (previous.identity.capture_epoch !== msg.expected_capture_epoch + 1) return err("stale_capture", "capture operation epoch changed")

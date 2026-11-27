@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { MiniProfileLock } from "./profile-lock"
-import { isMiniCapture, type MiniAction } from "./actions"
+import { isMiniCapture, type MiniAction, type MiniTiming } from "./actions"
 
 export type DesktopMiniAction = MiniAction | "chat"
 type Host = { show(): Promise<void>; hide(): void; stop(): Promise<void> }
@@ -16,7 +16,7 @@ export class DesktopMini {
   private changes = Promise.resolve()
 
   constructor(private readonly dir: string, private readonly host: Host,
-    private readonly run: (action: DesktopMiniAction, signal: AbortSignal) => Promise<void>,
+    private readonly run: (action: DesktopMiniAction, signal: AbortSignal, timing?: MiniTiming) => Promise<void>,
     private readonly menu: (visible: boolean) => void, private readonly notify: (text: string) => void,
     private readonly restoreAfterCapture?: () => void) {
     this.lock = new MiniProfileLock(dir)
@@ -61,10 +61,10 @@ export class DesktopMini {
     if (message && !this.stopped) this.notify(message)
   }
 
-  async perform(action: DesktopMiniAction): Promise<void> {
+  async perform(action: DesktopMiniAction, timing?: MiniTiming): Promise<void> {
     if (!this.visible || this.stopped || this.active) return
     const current = this.active = new AbortController()
-    try { await this.run(action, current.signal) }
+    try { await this.run(action, current.signal, timing) }
     catch (err) {
       if (!current.signal.aborted) this.notify(err instanceof Error ? err.message : "快速操作失败")
     } finally {

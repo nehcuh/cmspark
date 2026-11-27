@@ -2,6 +2,8 @@ import { MEETING_PCM as C, type CaptureIdentity, type CaptureStatus, type Captur
 import { MeetingPcmQueue, type PcmSegment } from "./meeting-pcm-queue"
 import type { SttServiceResult, SttStartRequest } from "./stt-session-service"
 
+import { trimMeetingOverlap } from "./meeting-overlap"
+
 export type MeetingPcmCaptureDeps = {
   run: (segment: PcmSegment, request: SttStartRequest) => Promise<SttServiceResult>
   abortRun: () => void
@@ -22,6 +24,7 @@ export class MeetingPcmCapture {
   private request: SttStartRequest | null = null
   private running = false
   private cancelled = false
+  private previousRecognition = ""
   private saved = 0
   private processed = 0
   private jobCount = 0
@@ -161,6 +164,13 @@ export class MeetingPcmCapture {
         // Cancellation cannot commit late ASR or release another owner's PCM.
         if (this.cancelled) { segment.wav.fill(0); break }
         if (!result.ok) { this.fail(result.code); segment.wav.fill(0); break }
+        const recognized = result.text ?? ""
+        if (segment.contextFrames && recognized) {
+          const remaining = trimMeetingOverlap(this.previousRecognition, recognized)
+          // A full new utterance may genuinely repeat the previous phrase.
+          result.text = remaining || (segment.end - segment.start > segment.contextFrames ? recognized : "")
+        }
+        this.previousRecognition = recognized
         this.processed = segment.end
         let savedText: boolean | void
         try { savedText = this.deps.persist(segment, result) } catch { this.fail("save_failed"); segment.wav.fill(0); break }

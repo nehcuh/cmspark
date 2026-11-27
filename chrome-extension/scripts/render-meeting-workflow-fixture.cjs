@@ -21,7 +21,7 @@ if(m.type==='voice.refine.request'&&!window.deferRefine)queueMicrotask(()=>windo
 return Promise.resolve({ok:true})}},storage:{local:{get:(k,cb)=>{const r={meeting_privacy_ack_v1:true};cb?.(r);return Promise.resolve(r)},set:(v,cb)=>{cb?.();return Promise.resolve()}},onChanged:event},tabs:{query:(q,cb)=>{cb?.([]);return Promise.resolve([])}}};
 function Harness(){const{dispatch}=useAgentStore();window.dispatchUI=dispatch;
 if(${process.argv.includes('--translation')}){const meetingId=location.hash.slice(1);return meetingId?<MeetingTranslation meetingId={meetingId}/>:<WorkbenchTranslation/>}
-return <>{${process.argv.includes('--external-asr')}&&<MeetingExternalAsrSettings/>}<MeetingPanel onClose={()=>{window.closed=true}} onSendToDraft={text=>window.draft=text}/></>}
+return <>{${process.argv.includes('--external-asr')}&&<MeetingExternalAsrSettings/>}<MeetingPanel meetingId={location.hash.slice(1)||undefined} purpose={location.hash?"meeting":undefined} onClose={()=>{window.closed=true}} onSendToDraft={text=>window.draft=text}/></>}
 createRoot(document.getElementById('root')).render(<AgentStoreProvider initialState={{...initialState,connectionState:'connected',activeThreadId:'thread-fixture',voicePrivacyAckV2:true,voiceRealtimeStreaming:true,voiceModel:{sttEngine:'local',localModelId:'medium',binary:{status:'ready'},models:{medium:{status:'ready'}}}}}><Harness/></AgentStoreProvider>);
 `;
 const capture = `export async function startPcmStreamCapture(opts){window.capture=opts;window.captureStops=0;return{backend:'scriptprocessor',stop:async()=>{window.captureStops++},abort:()=>{}}}`;

@@ -1,6 +1,9 @@
 import { MeetingPcmEncoder, type MeetingBlock, type MeetingCredit } from "./meeting-continuous-pcm"
 import { MEETING_PCM_WORKLET_JS } from "./meeting-pcm-worklet-generated"
 
+export { meetingChapters, linkMeetingQuotes, turnTime } from "./meeting-chapters"
+export { meetingLanguages } from "./meeting-language"
+
 export type MeetingCaptureOptions = {
   meetingId: string; captureId: string; epoch: number; modelId: string; engine?: "system" | "meeting-external"; lang?: string;
   request: (message: Record<string, unknown>) => Promise<any>;

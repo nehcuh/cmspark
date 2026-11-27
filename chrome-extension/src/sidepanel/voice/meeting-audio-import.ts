@@ -276,7 +276,7 @@ export function transcribeWavViaStt(opts: {
         format: "wav",
         sampleRate: LOCAL_STT_SAMPLE_RATE,
         channels: LOCAL_STT_CHANNELS,
-        lang: lang.startsWith("zh") ? "zh" : lang,
+        lang,
         maxMs,
         privacy_ack_v2: true,
       })

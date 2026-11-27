@@ -1,6 +1,14 @@
 # 版本与交付状态
 
-源码开发版本 **1.12.0（尚未正式发布）**。当前正式安装包见 [v1.11.0](https://github.com/nehcuh/cmspark/releases/tag/v1.11.0)。
+源码版本 **1.13.0**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
+
+## 1.13.0
+
+Mini 浮球的单击菜单、长按快聊和延时截图操作见[个人工作台指南](personal-workspace.md)。小窗会议、转写语言、纪要和章节见[会议记录指南](meeting-and-dictation-user-guide.md)。相关需求见 [#921](https://github.com/nehcuh/cmspark/issues/921) 和 [#922](https://github.com/nehcuh/cmspark/issues/922)。
+
+## 1.12.0 正式发布
+
+2026-11-27 发布，提供 macOS、Linux 和 Windows 的桌面 Mini 功能。[v1.12.0 安装包](https://github.com/nehcuh/cmspark/releases/tag/v1.12.0)
 
 ## 1.10.0 正式发布
 

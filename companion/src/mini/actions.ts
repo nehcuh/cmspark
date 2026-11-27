@@ -12,6 +12,17 @@ export function isMiniAction(key: string): key is MiniAction {
   return key === 'search' || key === 'meeting' || captureActions.some(action => action === key)
 }
 
+export type MiniTiming = { seconds: 3 | 5 | 10; region?: string }
+
+/** Native menu actions without a suffix keep their original immediate behavior.
+ * AppKit also supplies the rectangle selected before starting the countdown. */
+export function parseMiniInvocation(id: string): { action: MiniAction | "chat"; timing?: MiniTiming } | null {
+  if (id === 'chat' || isMiniAction(id)) return { action: id, timing: undefined }
+  const match = /^(todo|ask|ocr|capture):(3|5|10)(?::(-?\d+,-?\d+,[1-9]\d*,[1-9]\d*))?$/.exec(id)
+  if (!match) return null
+  return { action: match[1] as MiniCaptureAction, timing: { seconds: Number(match[2]) as MiniTiming['seconds'], region: match[3] } }
+}
+
 /** Capture actions carry the PNG from the completed region selection. */
 export async function openMiniAction(client: Pick<CompanionClient, 'sendAppRequest'>, action: MiniAction, png?: Buffer): Promise<void> {
   if (isMiniCapture(action) && !png?.length) throw new Error('未取得选区截图')

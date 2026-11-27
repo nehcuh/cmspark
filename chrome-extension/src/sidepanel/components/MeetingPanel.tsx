@@ -12,7 +12,9 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { meetingSourceRangeLabel, meetingCaptureErrorMessage, meetingCaptureStopLabel } from "../voice/meeting-continuous-pcm"
 import { createPanelMeetingCapture } from "../voice/meeting-panel-continuous"
-import { MeetingVisualReview, MinutesWithFrameLinks } from "./MeetingVisualReview"
+import { MeetingMinutesDocument, turnTime, type MeetingTurn } from "./MeetingMinutesDocument"
+import { meetingReaderStyles } from "./meeting-reader-styles"
+import { MeetingVisualReview } from "./MeetingVisualReview"
 import type { FrameCaptureStatus } from "../voice/meeting-frame-sampler"
 import type { FrameSource } from "../voice/meeting-visual-client"
 import { chooseDesktopMeetingInput } from "../voice/meeting-desktop-input"
@@ -51,6 +53,8 @@ import {
   requestMeetingSegmentRefine,
 } from "../voice/meeting-live-refine"
 import { VOICE_PRIVACY_ACK_V2_CLAUSES } from "../voice/privacy-copy"
+import { meetingChapters } from "../voice/meeting-chapters"
+import { meetingLanguages } from "../voice/meeting-language"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
 import { confirmMeetingClose, createMeetingPersistence, saveMeetingMaterials, type PreparedMinutes } from "../voice/meeting-close"
 
@@ -146,15 +150,26 @@ export function MeetingPanel(props: {
   const { state, dispatch } = useAgentStore()
   const [title, setTitle] = useState("")
   const [transcript, setTranscript] = useState("")
-  const [originalTranscript, setOriginalTranscript] = useState("")
+  const [turns, setTurns] = useState<MeetingTurn[]>([])
+  const originalTranscript = formatLinesFromMeeting(turns)
+  const [view, setView] = useState<"transcript" | "minutes" | "chapters" | "materials">("transcript")
+  const [readingOriginal, setReadingOriginal] = useState(true)
+  const [focusTurn, setFocusTurn] = useState<number | null>(null)
+  const transcriptList = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (focusTurn === null) return
+    transcriptList.current?.querySelector<HTMLElement>(`[data-turn-index="${focusTurn}"]`)?.focus()
+    setFocusTurn(null)
+  }, [focusTurn])
   const [minutesMd, setMinutesMd] = useState("")
   const [minutesDetails, setMinutesDetails] = useState<any>(null)
+  const chapters = minutesMd ? meetingChapters(minutesMd, turns) : []
   const [minutesStale, setMinutesStale] = useState(false)
   const [referenceNotes, setReferenceNotes] = useState("")
   const [referenceName, setReferenceName] = useState("")
   const [referenceStatus, setReferenceStatus] = useState("")
   const [liveTarget, setLiveTarget] = useState<ReturnType<typeof meetingAsrState>>(null)
-  const [liveLang, setLiveLang] = useState("zh")
+  const [liveLang, setLiveLang] = useState("system")
   const [inputSource, setInputSource] = useState<"microphone" | "desktop">("microphone")
   const [retainFrames, setRetainFrames] = useState(false)
   const [frameStatus, setFrameStatus] = useState<FrameCaptureStatus | null>(null)
@@ -328,6 +343,7 @@ export function MeetingPanel(props: {
   }, [companionConnected])
 
   const applySavedMeeting = (saved: any) => {
+    setView(saved.minutes?.raw_md ? "minutes" : "transcript"); setReadingOriginal(true)
     setDesktopMessage("")
     transcriptDirtyRef.current = false; referenceDirtyRef.current = false
     linePcmRef.current = []; setImportStatus(null); setReferenceStatus("")
@@ -337,7 +353,7 @@ export function MeetingPanel(props: {
     const text = formatLinesFromMeeting(saved.transcript || [])
     restoredMaterials.current = { text, notes: saved.reference_notes || "", template: templateMdRef.current }
     transcriptRef.current = text; setTranscript(text)
-    setOriginalTranscript(formatLinesFromMeeting(saved.original_transcript || []))
+    setTurns(saved.original_transcript || [])
     setReferenceNotes(saved.reference_notes || ""); setReferenceName(saved.reference_name || "")
     setMinutesMd(saved.minutes?.raw_md || ""); setMinutesDetails(saved.minutes || null)
     setMinutesStale(saved.minutes?.stale === true)
@@ -480,7 +496,7 @@ export function MeetingPanel(props: {
       liveTextRef.current.push(t)
       const sp = defaultSpeakerRef.current.trim().slice(0, 32)
       const display = sp ? `${sp}: ${t}` : t
-      if (source === "stt") setOriginalTranscript(previous => previous ? `${previous}\n\n${display}` : display)
+      if (source === "stt") setTurns(previous => [...previous, { text: t, speaker: sp }])
       setTranscript((prev) => {
         // Live STT: blank-line between segments = smart paragraph boundary
         const next = prev ? `${prev}\n\n${display}` : display
@@ -761,7 +777,7 @@ export function MeetingPanel(props: {
             transcriptDirtyRef.current = true
             commitLiveSegment(line.text, id, false)
           }
-          setOriginalTranscript(formatLinesFromMeeting(meeting.original_transcript || []))
+          setTurns(meeting.original_transcript || [])
           setCaptureSourceLabel(meetingSourceRangeLabel(meeting.capture_summary))
           setStatus(meeting.status || "")
           owner.synced = target
@@ -870,7 +886,7 @@ export function MeetingPanel(props: {
       if (msg.meeting?.id === meetingIdRef.current) setCaptureSourceLabel(meetingSourceRangeLabel(msg.meeting.capture_summary))
       if (msg.meeting?.id === meetingIdRef.current && Array.isArray(msg.meeting.original_transcript) &&
           phaseRef.current === "idle" && !persistenceRef.current.hasUnconfirmedWrites(msg.meeting.id)) {
-        setOriginalTranscript(formatLinesFromMeeting(msg.meeting.original_transcript))
+        setTurns(msg.meeting.original_transcript)
       }
       // This explicit Begin actor owns its q1 responses; late actors cannot retarget the panel.
       if (typeof msg.id === "string" && msg.id.startsWith("meeting-pcm-")) return
@@ -879,14 +895,14 @@ export function MeetingPanel(props: {
       if (typeof msg.id === "string" && msg.id.startsWith("meeting-rpc-") &&
           (msg.type === "meeting.updated" || msg.type === "meeting.error" || msg.type === "meeting.created")) return
       if (msg.type === "meeting.created" && msg.meeting) {
-        setOriginalTranscript(formatLinesFromMeeting(msg.meeting.original_transcript || []))
+        setTurns(msg.meeting.original_transcript || [])
         setMeetingId(msg.meeting.id)
         setTitle(msg.meeting.title || "")
         setStatus(msg.meeting.status || "draft")
         if (!savingTranscriptRef.current && !generatingRef.current) setBusy(false)
       }
       if (msg.type === "meeting.started" && msg.meeting) {
-        setOriginalTranscript(formatLinesFromMeeting(msg.meeting.original_transcript || []))
+        setTurns(msg.meeting.original_transcript || [])
         setMeetingId(msg.meeting.id)
         meetingIdRef.current = msg.meeting.id
         setTitle(msg.meeting.title || titleRef.current)
@@ -976,7 +992,7 @@ export function MeetingPanel(props: {
       if (msg.type === "meeting.minutes_result") {
         const request = minutesRequestRef.current
         if (!request || msg.id !== request.id) return
-        if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
+        if (msg.minutes?.raw_md) { setMinutesMd(msg.minutes.raw_md); setView("minutes") }
         setMinutesDetails(msg.minutes || null)
         setMinutesStale(msg.minutes?.stale === true || request.text !== transcriptRef.current || request.notes !== referenceNotesRef.current || request.template !== templateMdRef.current)
         if (msg.meeting?.id) {
@@ -1042,7 +1058,7 @@ export function MeetingPanel(props: {
       if (previousId) { applySavedMeeting(created); return }
       setMeetingId(created.id); meetingIdRef.current = created.id
       setTitle(created.title || ""); setStatus(created.status || "draft")
-      setOriginalTranscript(formatLinesFromMeeting(created.original_transcript || []))
+      setTurns(created.original_transcript || [])
       setCaptureSourceLabel(meetingSourceRangeLabel(created.capture_summary))
     }).catch(() => { if (mountedRef.current) setError("新会议创建未确认；未开始录制，请重试") })
       .finally(() => { if (mountedRef.current) setBusy(false) })
@@ -1064,6 +1080,7 @@ export function MeetingPanel(props: {
       return
     }
     if (!canStart) return
+    setView("transcript"); setReadingOriginal(true)
     if (!desktopInput && !localMedia.ok) {
       setError("当前环境无法访问麦克风")
       return
@@ -1495,7 +1512,7 @@ export function MeetingPanel(props: {
       if (external) {
         setImportStatus("核对本次发送的音频段…")
         const job = await beginMeetingExternalImport({
-          request: channel.request, configIdentity: target.configIdentity, segments: decoded.segments,
+          request: channel.request, configIdentity: target.configIdentity, segments: decoded.segments, lang: liveLang,
           requestTimeoutMs: target.requestTimeoutMs, signal: controller.signal,
         })
         if (job.ok === false) {
@@ -1770,7 +1787,7 @@ export function MeetingPanel(props: {
   return (
     <div
       data-testid="meeting-panel"
-      className={props.purpose ? "cm-workbench-meeting" : undefined}
+      className={props.purpose ? "meeting-workspace cm-workbench-meeting" : "meeting-workspace"}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -1783,6 +1800,7 @@ export function MeetingPanel(props: {
         fontSize: 13,
       }}
     >
+      <style>{meetingReaderStyles}</style>
       {loadingMeeting && <p role="status">正在打开会议记录…</p>}
       <fieldset disabled={closing || loadingMeeting} style={{ display: "contents" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1809,11 +1827,11 @@ export function MeetingPanel(props: {
           结束并收起
         </button>
       </div>
+      <nav className="meeting-views" aria-label="会议内容">
+        {([["transcript","转写"],["minutes","AI 纪要"],["chapters","章节"],["materials","材料与设置"]] as const).filter(([key]) => key !== "chapters" || chapters.length > 0 || view === key).map(([key,label]) =>
+          <button type="button" key={key} aria-pressed={view === key} onClick={() => setView(key)}>{label}</button>)}
+      </nav>
       {closing && <div role="status" aria-live="polite">正在保存最后一段转写，完成后收起…</div>}
-
-      <p style={{ margin: 0, color: tokens.textSecondary }}>
-        {props.purpose ? "选择麦克风或外部会议窗口，逐段查看转写。核对逐字稿后可以生成纪要。" : "开启麦克风或导入已有录音。核对逐字稿后即可生成会议纪要。"}
-      </p>
 
       {/* Live capture and local imports require voice_privacy_ack_v2.
           Previously only reachable via Settings → 启用本机转写 (easy to miss). */}
@@ -1899,8 +1917,9 @@ export function MeetingPanel(props: {
         </div>
       )}
 
+      <div hidden={(view === "minutes" || view === "chapters") && !capturing}>
       <label style={{ fontSize: 12 }}>
-        标题
+        会议名称
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -1919,42 +1938,6 @@ export function MeetingPanel(props: {
           }}
         />
       </label>
-
-      <details open={props.purpose ? undefined : true}><summary>录音导入与参考资料</summary>
-      <section aria-label="会议材料" data-testid="meeting-materials" style={{ border: `1px solid ${tokens.border}`, borderRadius: 8, padding: 10 }}>
-        <strong>会议材料</strong>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-          <button type="button" data-testid="meeting-import-audio" disabled={busy || capturing || !ack}
-            onClick={() => audioFileRef.current?.click()} style={btnStyle(false)}>导入录音</button>
-          <button type="button" disabled={busy || capturing} style={linkBtn}
-            onClick={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model-meeting-transcribe" })}>转写服务</button>
-          <button type="button" data-testid="meeting-import-reference" disabled={busy || capturing}
-            onClick={() => referenceFileRef.current?.click()} style={btnStyle(false)}>导入参考笔记</button>
-          {importDoneRef.current && !importApproval && <button type="button" data-testid="meeting-import-abort" onClick={() => {
-            importAbortRef.current = true; importControllerRef.current?.abort(); setImportStatus("正在中止导入…")
-          }} style={btnStyle(false)}>中止导入</button>}
-        </div>
-        <p style={{ fontSize: 11, color: tokens.textSecondary, margin: "8px 0" }}>支持浏览器可解码的 WAV、MP3、M4A、OGG，音频最多 200 MB、3 小时。录音追加到现有转写。参考笔记支持 Word（.docx）、Markdown、文本，单文件最多 7 MB；它不会替换转写，也不会作为会议发言。</p>
-        <label style={{ display: "block", fontSize: 12 }}>参考笔记（可直接输入）
-          <textarea data-testid="meeting-reference-input" aria-label="参考笔记" value={referenceNotes} maxLength={100_000}
-            disabled={busy} rows={3} placeholder="人名、术语、议程或自己的会议笔记。明确生成纪要时才作为参考发送给已配置的 LLM。"
-            onChange={event => { setReferenceNotes(event.target.value); referenceDirtyRef.current = true; setReferenceStatus("笔记已修改，生成或收起前会保存") }}
-            style={{ width: "100%", boxSizing: "border-box", marginTop: 5, padding: 8, borderRadius: 6,
-              border: `1px solid ${tokens.border}`, background: tokens.bg, color: tokens.text, fontFamily: "inherit", resize: "vertical" }} />
-        </label>
-        <div data-testid="meeting-reference-status" role="status" style={{ fontSize: 11, color: tokens.textSecondary }}>
-          {referenceName ? `来源：${referenceName} · ` : referenceNotes ? "来源：手动笔记 · " : ""}{referenceStatus}
-        </div>
-        {importApproval && <section aria-label="确认发送导入录音" style={{ marginTop: 8, fontSize: 12 }}>
-          <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{importApproval.copy}</p>
-          <button type="button" style={btnStyle(true)} onClick={() => importApproval.finish(true)}>确认发送并转写</button>{" "}
-          <button type="button" style={btnStyle(false)} onClick={() => importApproval.finish(false)}>取消</button>
-        </section>}
-        {importStatus && <div data-testid="meeting-import-status" role="status" style={{ fontSize: 11, marginTop: 6 }}>{importStatus}</div>}
-        <input ref={referenceFileRef} data-testid="meeting-reference-file" type="file" accept=".txt,.md,.docx" style={{ display: "none" }} onChange={event => {
-          const file = event.target.files?.[0] || null; event.target.value = ""; void onImportReferenceFile(file)
-        }} />
-      </section></details>
 
       <div
         data-testid="meeting-capture-bar"
@@ -2004,6 +1987,140 @@ export function MeetingPanel(props: {
         )}
       </div>
 
+      <div className="meeting-setup">
+        <button type="button" disabled={busy || capturing} onClick={createMeeting} style={btnStyle(false)}>
+          新建会议会话
+        </button>
+        {props.purpose && <label>采集来源 <select value={inputSource} disabled={capturing || busy} onChange={event => {
+          setPendingTarget(null); setDesktopMessage(""); setInputSource(event.target.value === "desktop" ? "desktop" : "microphone")
+        }}>
+          <option value="microphone">仅麦克风</option>
+          <option value="desktop">外部会议窗口或整个屏幕</option>
+        </select></label>}
+        {desktopInput && <label><input type="checkbox" checked={includeMicrophone} disabled={capturing || busy}
+          onChange={event => { setPendingTarget(null); setIncludeMicrophone(event.target.checked) }} /> 同时录制我的麦克风</label>}
+        {desktopInput && <label><input type="checkbox" checked={retainFrames} disabled={capturing || busy}
+          onChange={e => setRetainFrames(e.target.checked)} /> 保留画面要点（本机）</label>}
+        <label>转写语言 <select value={liveLang} disabled={capturing || busy} onChange={event => setLiveLang(event.target.value)}>
+          {meetingLanguages.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select></label>
+        {!capturing ? (
+          <button
+            type="button"
+            data-testid="meeting-start-capture"
+            disabled={busy || !ack || !companionConnected || (!props.purpose && !meetingId) || (externalLive ? !liveTarget?.ready : !state.voicePrivacyAckV2 || !localEngineReady || !localModelReady || !localBinaryReady)}
+            onClick={() => void startLiveCapture()}
+            style={btnStyle(true)}
+            title={
+              !ack || (!externalLive && !state.voicePrivacyAckV2)
+                ? "请先确认本机语音隐私与会议隐私说明"
+                : undefined
+            }
+          >
+            {desktopInput ? "准备桌面会议录制" : props.purpose === "transcribe" ? "开始转写" : "开始录制"}
+          </button>
+        ) : (
+          <>
+            {props.purpose !== "transcribe" && <button
+              type="button"
+              data-testid="meeting-stop-and-generate"
+              onClick={() => stopLiveCapture(true)}
+              style={btnStyle(true)}
+            >
+              结束并生成纪要
+            </button>}
+            <button
+              type="button"
+              data-testid="meeting-stop-capture"
+              onClick={() => stopLiveCapture(false)}
+              style={btnStyle(false)}
+            >
+              {props.purpose === "transcribe" ? "停止转写" : "仅结束录制"}
+            </button>
+            <button type="button" data-testid="meeting-cancel-unprocessed" onClick={() => { wantGenerateRef.current = false; setPhase("stopping"); adapterRef.current?.abort() }} style={btnStyle(false)}>
+              取消未处理音频
+            </button>
+          </>
+        )}
+
+      </div>
+
+      </div>
+      {desktopInput && <p>视频含所选声音，保存在工作台的「录屏」中。若窗口未提供声音，可选择整个屏幕并共享系统声音。系统声音也可能包含其他应用和通知。</p>}
+      {desktopMessage && <p role="status">{desktopMessage}</p>}
+      {capturing && desktopInput && retainFrames && <>
+        {frameStatus && <p role="status">已保存 {frameStatus.saved} 张
+          {frameStatus.lastTimeMs != null && ` · 最后一张 ${formatElapsed(frameStatus.lastTimeMs)}`}
+          {frameStatus.state === "limit" ? " · 已达本场留存上限" : frameStatus.state === "unavailable" ? " · 画面采样不可用" : ""}
+          {frameStatus.skippedBusy > 0 && ` · 写入期间跳过 ${frameStatus.skippedBusy} 次`}
+          {(frameStatus.encodeErrors + frameStatus.writeErrors + frameStatus.oversized + frameStatus.notReady + frameStatus.empty) > 0 &&
+            ` · 未就绪 ${frameStatus.notReady}，空帧 ${frameStatus.empty}，编码失败 ${frameStatus.encodeErrors}，写入失败 ${frameStatus.writeErrors}，超限 ${frameStatus.oversized}`}</p>}
+        <button type="button" disabled={capturePhase !== "recording" || frameStatus?.state !== "sampling"}
+          onClick={() => continuousRef.current?.actor.markFrame()}>标记当前画面</button>
+      </>}
+      {chooseDesktop && capturePhase === "starting" && <button type="button" style={btnStyle(true)} onClick={chooseDesktop}>选择窗口或整个屏幕</button>}
+      {pendingTarget && externalLive && <section aria-label="确认实时会议转写">
+        <p>将本次会议的{audioScope}按段发送到 {liveTarget?.normalizedUrl}，模型 {liveTarget?.model}。停止后处理已收音频，取消会停止后续发送。</p>
+        <button type="button" style={btnStyle(true)} onClick={() => void startLiveCapture(true)}>确认发送{audioScope}并开始</button>
+        <button type="button" style={linkBtn} onClick={() => setPendingTarget(null)}>取消</button>
+      </section>}
+      {captureBusy && <button type="button" style={linkBtn} onClick={focusWorkbenchCaptureOwner}>返回正在录制的工作台</button>}
+      {continuousStatus && <details><summary>{capturing ? "转写进度" : "录制详情"}</summary><div role="status" aria-live="polite" data-testid="meeting-queue-status" style={{ fontSize: 12, color: tokens.textSecondary }}>
+        {capturePhase === "recording" ? "采集中" : continuousStatus.phase === "finished" || continuousStatus.phase === "failed" ? "采集已停止" : "已停采，正在排空"}
+        {continuousStatus.inflight_segment !== null ? ` · 识别第${continuousStatus.inflight_segment + 1}段` : ""}
+        {` · 积压 ${Math.max(0, (continuousStatus.server_received_end - continuousStatus.committed_end) / 16000).toFixed(1)} 秒 · 已处理到 ${(continuousStatus.processed_end / 16000).toFixed(1)} 秒 · 原稿 ${continuousStatus.saved_text_segments} 段已保存`}
+        {continuousStatus.eta_seconds === null ? " · 预计延迟未知" : ` · 若现在停止，预计约 ${Math.ceil(continuousStatus.eta_seconds)} 秒排空`}
+        {continuousStatus.high_water ? " · 接近积压上限" : ""}
+        {continuousStatus.stop_reason && continuousStatus.stop_reason !== "user_stop" ? ` · 提前停采：${meetingCaptureStopLabel(continuousStatus.stop_reason)}` : ""}
+      </div></details>}
+
+      <div role="status" data-testid="meeting-source-range" style={{ fontSize: 11, color: tokens.textSecondary }}>{captureSourceLabel}</div>
+
+      {view === "chapters" && <section aria-label="会议章节">
+        {chapters.map(chapter => <button type="button" key={chapter.index} className="meeting-chapter" onClick={() => {
+          setView("transcript"); setReadingOriginal(true); setFocusTurn(chapter.index)
+        }}><time>{turnTime(chapter.time)}</time><span>{chapter.title}</span></button>)}
+      </section>}
+      <div hidden={view !== "materials"}>
+      {meetingId && props.active !== false && !capturing && !closing && !loadingMeeting && <MeetingVisualReview
+        key={meetingId + ":" + state.codingHistoryConnectionRevision} meetingId={meetingId} connected={companionConnected}
+        focus={frameFocus} openSettings={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model-meeting-visual" })}
+        onChange={() => { if (minutesMd) setMinutesStale(true); if (minutesConfirmation) cancelMinutesConfirmation() }} />}
+      <details open><summary>录音导入与参考资料</summary>
+      <section aria-label="会议材料" data-testid="meeting-materials" style={{ border: `1px solid ${tokens.border}`, borderRadius: 8, padding: 10 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+          <button type="button" data-testid="meeting-import-audio" disabled={busy || capturing || !ack}
+            onClick={() => audioFileRef.current?.click()} style={btnStyle(false)}>导入录音</button>
+          <button type="button" disabled={busy || capturing} style={linkBtn}
+            onClick={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model-meeting-transcribe" })}>转写服务</button>
+          <button type="button" data-testid="meeting-import-reference" disabled={busy || capturing}
+            onClick={() => referenceFileRef.current?.click()} style={btnStyle(false)}>导入参考笔记</button>
+          {importDoneRef.current && !importApproval && <button type="button" data-testid="meeting-import-abort" onClick={() => {
+            importAbortRef.current = true; importControllerRef.current?.abort(); setImportStatus("正在中止导入…")
+          }} style={btnStyle(false)}>中止导入</button>}
+        </div>
+        <p style={{ fontSize: 11, color: tokens.textSecondary, margin: "8px 0" }}>支持浏览器可解码的 WAV、MP3、M4A、OGG，音频最多 200 MB、3 小时。录音追加到现有转写。参考笔记支持 Word（.docx）、Markdown、文本，单文件最多 7 MB；它不会替换转写，也不会作为会议发言。</p>
+        <label style={{ display: "block", fontSize: 12 }}>参考笔记（可直接输入）
+          <textarea data-testid="meeting-reference-input" aria-label="参考笔记" value={referenceNotes} maxLength={100_000}
+            disabled={busy} rows={3} placeholder="人名、术语、议程或自己的会议笔记。明确生成纪要时才作为参考发送给已配置的 LLM。"
+            onChange={event => { setReferenceNotes(event.target.value); referenceDirtyRef.current = true; setReferenceStatus("笔记已修改，生成或收起前会保存") }}
+            style={{ width: "100%", boxSizing: "border-box", marginTop: 5, padding: 8, borderRadius: 6,
+              border: `1px solid ${tokens.border}`, background: tokens.bg, color: tokens.text, fontFamily: "inherit", resize: "vertical" }} />
+        </label>
+        <div data-testid="meeting-reference-status" role="status" style={{ fontSize: 11, color: tokens.textSecondary }}>
+          {referenceName ? `来源：${referenceName} · ` : referenceNotes ? "来源：手动笔记 · " : ""}{referenceStatus}
+        </div>
+        {importApproval && <section aria-label="确认发送导入录音" style={{ marginTop: 8, fontSize: 12 }}>
+          <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{importApproval.copy}</p>
+          <button type="button" style={btnStyle(true)} onClick={() => importApproval.finish(true)}>确认发送并转写</button>{" "}
+          <button type="button" style={btnStyle(false)} onClick={() => importApproval.finish(false)}>取消</button>
+        </section>}
+        {importStatus && <div data-testid="meeting-import-status" role="status" style={{ fontSize: 11, marginTop: 6 }}>{importStatus}</div>}
+        <input ref={referenceFileRef} data-testid="meeting-reference-file" type="file" accept=".txt,.md,.docx" style={{ display: "none" }} onChange={event => {
+          const file = event.target.files?.[0] || null; event.target.value = ""; void onImportReferenceFile(file)
+        }} />
+      </section></details>
+
       <div
         data-testid="meeting-live-options"
         style={{
@@ -2048,102 +2165,6 @@ export function MeetingPanel(props: {
           </span>
         )}
       </div>
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button type="button" disabled={busy || capturing} onClick={createMeeting} style={btnStyle(false)}>
-          新建会议会话
-        </button>
-        {props.purpose && <label>采集来源 <select value={inputSource} disabled={capturing || busy} onChange={event => {
-          setPendingTarget(null); setDesktopMessage(""); setInputSource(event.target.value === "desktop" ? "desktop" : "microphone")
-        }}>
-          <option value="microphone">仅麦克风</option>
-          <option value="desktop">外部会议窗口或整个屏幕</option>
-        </select></label>}
-        {desktopInput && <label><input type="checkbox" checked={includeMicrophone} disabled={capturing || busy}
-          onChange={event => { setPendingTarget(null); setIncludeMicrophone(event.target.checked) }} /> 同时录制我的麦克风</label>}
-        {desktopInput && <label><input type="checkbox" checked={retainFrames} disabled={capturing || busy}
-          onChange={e => setRetainFrames(e.target.checked)} /> 保留画面要点（本机）</label>}
-        <label>字幕语言 <select value={liveLang} disabled={capturing} onChange={event => setLiveLang(event.target.value)}>
-          <option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option>
-        </select></label>
-        {!capturing ? (
-          <button
-            type="button"
-            data-testid="meeting-start-capture"
-            disabled={busy || !ack || !companionConnected || (!props.purpose && !meetingId) || (externalLive ? !liveTarget?.ready : !state.voicePrivacyAckV2 || !localEngineReady || !localModelReady || !localBinaryReady)}
-            onClick={() => void startLiveCapture()}
-            style={btnStyle(true)}
-            title={
-              !ack || (!externalLive && !state.voicePrivacyAckV2)
-                ? "请先确认本机语音隐私与会议隐私说明"
-                : undefined
-            }
-          >
-            {desktopInput ? "准备桌面会议录制" : props.purpose === "transcribe" ? "开始转写" : "开始录制"}
-          </button>
-        ) : (
-          <>
-            {props.purpose !== "transcribe" && <button
-              type="button"
-              data-testid="meeting-stop-and-generate"
-              onClick={() => stopLiveCapture(true)}
-              style={btnStyle(true)}
-            >
-              结束并生成纪要
-            </button>}
-            <button
-              type="button"
-              data-testid="meeting-stop-capture"
-              onClick={() => stopLiveCapture(false)}
-              style={btnStyle(false)}
-            >
-              {props.purpose === "transcribe" ? "停止转写" : "仅结束录制"}
-            </button>
-            <button type="button" data-testid="meeting-cancel-unprocessed" onClick={() => { wantGenerateRef.current = false; setPhase("stopping"); adapterRef.current?.abort() }} style={btnStyle(false)}>
-              取消未处理音频
-            </button>
-          </>
-        )}
-        {meetingId && (
-          <span style={{ fontSize: 11, color: tokens.textSecondary, alignSelf: "center" }}>
-            id: {meetingId.slice(0, 12)}… · {status}
-          </span>
-        )}
-      </div>
-
-      {desktopInput && <p>视频含所选声音，保存在工作台的「录屏」中。若窗口未提供声音，可选择整个屏幕并共享系统声音。系统声音也可能包含其他应用和通知。</p>}
-      {desktopMessage && <p role="status">{desktopMessage}</p>}
-      {capturing && desktopInput && retainFrames && <>
-        {frameStatus && <p role="status">已保存 {frameStatus.saved} 张
-          {frameStatus.lastTimeMs != null && ` · 最后一张 ${formatElapsed(frameStatus.lastTimeMs)}`}
-          {frameStatus.state === "limit" ? " · 已达本场留存上限" : frameStatus.state === "unavailable" ? " · 画面采样不可用" : ""}
-          {frameStatus.skippedBusy > 0 && ` · 写入期间跳过 ${frameStatus.skippedBusy} 次`}
-          {(frameStatus.encodeErrors + frameStatus.writeErrors + frameStatus.oversized + frameStatus.notReady + frameStatus.empty) > 0 &&
-            ` · 未就绪 ${frameStatus.notReady}，空帧 ${frameStatus.empty}，编码失败 ${frameStatus.encodeErrors}，写入失败 ${frameStatus.writeErrors}，超限 ${frameStatus.oversized}`}</p>}
-        <button type="button" disabled={capturePhase !== "recording" || frameStatus?.state !== "sampling"}
-          onClick={() => continuousRef.current?.actor.markFrame()}>标记当前画面</button>
-      </>}
-      {meetingId && props.active !== false && !capturing && !closing && !loadingMeeting && <MeetingVisualReview
-        key={meetingId + ":" + state.codingHistoryConnectionRevision} meetingId={meetingId} connected={companionConnected}
-        focus={frameFocus} openSettings={() => dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model-meeting-visual" })}
-        onChange={() => { if (minutesMd) setMinutesStale(true); if (minutesConfirmation) cancelMinutesConfirmation() }} />}
-      {chooseDesktop && capturePhase === "starting" && <button type="button" style={btnStyle(true)} onClick={chooseDesktop}>选择窗口或整个屏幕</button>}
-      {pendingTarget && externalLive && <section aria-label="确认实时会议转写">
-        <p>将本次会议的{audioScope}按段发送到 {liveTarget?.normalizedUrl}，模型 {liveTarget?.model}。停止后处理已收音频，取消会停止后续发送。</p>
-        <button type="button" style={btnStyle(true)} onClick={() => void startLiveCapture(true)}>确认发送{audioScope}并开始</button>
-        <button type="button" style={linkBtn} onClick={() => setPendingTarget(null)}>取消</button>
-      </section>}
-      {captureBusy && <button type="button" style={linkBtn} onClick={focusWorkbenchCaptureOwner}>返回正在录制的工作台</button>}
-      {continuousStatus && <div role="status" aria-live="polite" data-testid="meeting-queue-status" style={{ fontSize: 12, color: tokens.textSecondary }}>
-        {capturePhase === "recording" ? "采集中" : continuousStatus.phase === "finished" || continuousStatus.phase === "failed" ? "采集已停止" : "已停采，正在排空"}
-        {continuousStatus.inflight_segment !== null ? ` · 识别第${continuousStatus.inflight_segment + 1}段` : ""}
-        {` · 积压 ${Math.max(0, (continuousStatus.server_received_end - continuousStatus.committed_end) / 16000).toFixed(1)} 秒 · 已处理到 ${(continuousStatus.processed_end / 16000).toFixed(1)} 秒 · 原稿 ${continuousStatus.saved_text_segments} 段已保存`}
-        {continuousStatus.eta_seconds === null ? " · 预计延迟未知" : ` · 若现在停止，预计约 ${Math.ceil(continuousStatus.eta_seconds)} 秒排空`}
-        {continuousStatus.high_water ? " · 接近积压上限" : ""}
-        {continuousStatus.stop_reason && continuousStatus.stop_reason !== "user_stop" ? ` · 提前停采：${meetingCaptureStopLabel(continuousStatus.stop_reason)}` : ""}
-      </div>}
-
-      <div role="status" data-testid="meeting-source-range" style={{ fontSize: 11, color: tokens.textSecondary }}>{captureSourceLabel}</div>
 
       {/* Mtg2: speaker + import */}
       <details
@@ -2301,74 +2322,6 @@ export function MeetingPanel(props: {
         </div>
       </details>
 
-      <label style={{ fontSize: 12, flex: 1, display: "flex", flexDirection: "column" }}>
-        转写 / 口述文字（可编辑稿 · 支持「说话人: 正文」）
-        <textarea
-          data-testid="meeting-transcript"
-          aria-label="转写编辑稿"
-          disabled={!!importDoneRef.current}
-          value={transcript}
-          onChange={(e) => {
-            transcriptDirtyRef.current = true
-            linePcmRef.current = []
-            setTranscript(e.target.value)
-          }}
-          placeholder="粘贴会议转写，或开始录制/上传后自动填入…&#10;张三: 第一段&#10;&#10;李四: 第二段"
-          rows={8}
-          style={{
-            marginTop: 4,
-            width: "100%",
-            flex: 1,
-            minHeight: 120,
-            padding: 8,
-            borderRadius: 6,
-            border: `1px solid ${tokens.border}`,
-            background: tokens.bg,
-            color: tokens.text,
-            resize: "vertical",
-            boxSizing: "border-box",
-            fontFamily: "inherit",
-            fontSize: 12,
-            lineHeight: 1.45,
-          }}
-        />
-        {capturing ? (
-          <div
-            data-testid="meeting-interim"
-            style={{
-              marginTop: 6,
-              padding: "8px 10px",
-              borderRadius: 8,
-              background: tokens.accentSoft,
-              border: `1px solid rgba(79, 70, 229, 0.16)`,
-              fontSize: 13,
-              color: tokens.accentText,
-              lineHeight: 1.45,
-              maxHeight: 96,
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {continuousRef.current
-              ? (capturePhase === "starting" ? "正在准备持续采集…" : capturePhase === "stopping" ? "已停止采集，正在依次识别并保存已收到的音频…" : "正在收音，识别完成后按段显示字幕") + (refinePending > 0 ? ` · AI 纠错中(${refinePending})` : "")
-              : meetingLiveInterimHint({ phase: capturePhase, interimText, nearRealtime, refinePending })}
-          </div>
-        ) : null}
-      </label>
-
-      {meetingId && props.purpose && <MeetingTranslation key={meetingId} meetingId={meetingId} />}
-      {originalTranscript && <details data-testid="meeting-original-transcript">
-        <summary>原始识别稿（不随编辑或 AI 校正更改）</summary>
-        <pre style={materialPre}>{originalTranscript}</pre>
-      </details>}
-
-      {liveCorrections.length > 0 && <details data-testid="meeting-live-corrections">
-        <summary>录制 AI 纠错建议 · {liveCorrections.length} 条（原文保留）</summary>
-        {liveCorrections.map((suggestion, index) => <div key={index} style={{ padding: 8, borderBottom: `1px solid ${tokens.border}` }}>
-          <div>原文：{suggestion.original}</div><div>建议：{suggestion.replacement}</div>
-        </div>)}
-      </details>}
-
       <details style={{ fontSize: 12 }}>
         <summary style={{ cursor: "pointer", color: tokens.textSecondary }}>
           纪要模板（可选）
@@ -2423,11 +2376,93 @@ export function MeetingPanel(props: {
         </button>
       </details>
 
+      </div>
+      <div hidden={view !== "transcript"}>
+      {turns.length > 0 && <button type="button" style={linkBtn} onClick={() => setReadingOriginal(!readingOriginal)}>
+        {readingOriginal ? "查看编辑稿" : "查看带时间的原始发言"}
+      </button>}
+      {(readingOriginal) && turns.length > 0 && <div ref={transcriptList} aria-label="原始发言">
+        {turns.map((turn, index) => <div className="meeting-turn" key={turn.segment_id ?? index} tabIndex={-1} data-turn-index={index}>
+          <small>{[turn.speaker, typeof turn.t0 === "number" ? turnTime(turn.t0) : ""].filter(Boolean).join(" · ")}</small><p>{turn.text}</p>
+        </div>)}
+      </div>}
+      <div hidden={(readingOriginal) && turns.length > 0}>
+      <label style={{ fontSize: 12, flex: 1, display: "flex", flexDirection: "column" }}>
+        转写编辑稿
+        <textarea
+          data-testid="meeting-transcript"
+          aria-label="转写编辑稿"
+          disabled={!!importDoneRef.current}
+          value={transcript}
+          onChange={(e) => {
+            transcriptDirtyRef.current = true
+            linePcmRef.current = []
+            setTranscript(e.target.value)
+          }}
+          placeholder="粘贴会议转写，或开始录制/上传后自动填入…&#10;张三: 第一段&#10;&#10;李四: 第二段"
+          rows={8}
+          style={{
+            marginTop: 4,
+            width: "100%",
+            flex: 1,
+            minHeight: 120,
+            padding: 8,
+            borderRadius: 6,
+            border: `1px solid ${tokens.border}`,
+            background: tokens.bg,
+            color: tokens.text,
+            resize: "vertical",
+            boxSizing: "border-box",
+            fontFamily: "inherit",
+            fontSize: 12,
+            lineHeight: 1.45,
+          }}
+        />
+        {capturing ? (
+          <div
+            data-testid="meeting-interim"
+            style={{
+              marginTop: 6,
+              padding: "8px 10px",
+              borderRadius: 8,
+              background: tokens.accentSoft,
+              border: `1px solid rgba(79, 70, 229, 0.16)`,
+              fontSize: 13,
+              color: tokens.accentText,
+              lineHeight: 1.45,
+              maxHeight: 96,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {continuousRef.current
+              ? (capturePhase === "starting" ? "正在准备持续采集…" : capturePhase === "stopping" ? "已停止采集，正在依次识别并保存已收到的音频…" : "正在收音，识别完成后按段显示字幕") + (refinePending > 0 ? ` · AI 纠错中(${refinePending})` : "")
+              : meetingLiveInterimHint({ phase: capturePhase, interimText, nearRealtime, refinePending })}
+          </div>
+        ) : null}
+      </label>
+
+      </div>
+      {meetingId && props.purpose && <MeetingTranslation key={meetingId} meetingId={meetingId} />}
+      {originalTranscript && <details data-testid="meeting-original-transcript">
+        <summary>原始识别稿（不随编辑或 AI 校正更改）</summary>
+        <pre style={materialPre}>{originalTranscript}</pre>
+      </details>}
+
+      {liveCorrections.length > 0 && <details data-testid="meeting-live-corrections">
+        <summary>录制 AI 纠错建议 · {liveCorrections.length} 条（原文保留）</summary>
+        {liveCorrections.map((suggestion, index) => <div key={index} style={{ padding: 8, borderBottom: `1px solid ${tokens.border}` }}>
+          <div>原文：{suggestion.original}</div><div>建议：{suggestion.replacement}</div>
+        </div>)}
+      </details>}
+
       <button type="button" disabled={busy || !ack || capturing || closing || !companionConnected || !transcript.trim()} onClick={saveTranscript} style={btnStyle(false)}>
         保存转写
       </button>
       <div role="status" aria-live="polite" data-testid="meeting-save-status">{status.startsWith("已保存") || status.startsWith("正在保存") ? status : ""}</div>
-      <button type="button" disabled={busy || !ack || capturing} onClick={generate} style={btnStyle(true)}>
+      </div>
+      {view === "minutes" && !minutesMd && <p>{transcript.trim() ? "逐字稿已就绪，可以生成会议纪要。" : "开始录制或导入逐字稿后，可以生成会议纪要。"}</p>}
+      <button type="button" hidden={view === "materials" || view === "chapters" || capturing || (view === "transcript" && !transcript.trim())} disabled={busy || !ack || capturing || (!transcript.trim() && !meetingId)} onClick={generate} style={btnStyle(true)}>
         {pendingGenerate ? "生成中…" : minutesConfirmation ? "等待确认…" : generatingRef.current ? "核对材料与接收方…" : "生成会议纪要"}
       </button>
       {minutesConfirmation && <section aria-label="确认纪要发送范围" style={{ display: "grid", gap: 6, padding: 8, border: `1px solid ${tokens.border}`, borderRadius: 6 }}>
@@ -2453,7 +2488,7 @@ export function MeetingPanel(props: {
         </div>
       )}
 
-      {minutesMd && (
+      {view === "minutes" && minutesMd && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <strong style={{ flex: 1, fontSize: 12 }}>会议纪要 · AI 草稿</strong>
@@ -2465,22 +2500,10 @@ export function MeetingPanel(props: {
               发送到对话草稿
             </button>
           </div>
-          <pre
-            style={{
-              margin: 0,
-              padding: 10,
-              borderRadius: 8,
-              border: `1px solid ${tokens.border}`,
-              background: tokens.bg,
-              fontSize: 11,
-              lineHeight: 1.45,
-              whiteSpace: "pre-wrap",
-              maxHeight: 280,
-              overflow: "auto",
-            }}
-          >
-            <MinutesWithFrameLinks text={minutesMd} sources={minutesDetails?.visual_sources} open={source => setFrameFocus(old => ({ source, serial: (old?.serial ?? 0) + 1 }))} />
-          </pre>
+          <MeetingMinutesDocument title={title} markdown={minutesMd} generated={minutesDetails?.generated_at}
+            sources={minutesDetails?.visual_sources} turns={turns}
+            onFrame={source => { setView("materials"); setFrameFocus(old => ({ source, serial: (old?.serial ?? 0) + 1 })) }}
+            onTurn={index => { setView("transcript"); setReadingOriginal(true); setFocusTurn(index) }} />
           {typeof minutesDetails?.corrected_transcript === "string" && <details data-testid="meeting-corrected-transcript">
             <summary>校正稿（独立于原始转写）</summary><pre style={materialPre}>{minutesDetails.corrected_transcript}</pre>
           </details>}

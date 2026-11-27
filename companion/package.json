@@ -1,6 +1,6 @@
 {
   "name": "cmspark-agent",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Local companion for CMspark Browser Agent — manages LLM calls, skills, threads, and operation history. Now with cross-platform system tray.",
   "bin": {
     "cmspark-agent": "./dist/index.js"
@@ -44,6 +44,7 @@
     "officeparser": "^7.2.3",
     "onnxruntime-node": "1.29.0",
     "openai": "6.0.0",
+    "opencc-js": "1.4.2",
     "pdf-parse": "^1.1.1",
     "pdfjs-dist": "^4.0.0",
     "pinyin-pro": "3.29.3",

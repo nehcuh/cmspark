@@ -23,6 +23,7 @@ const WIN_SAPI_UNPINNED_ENV = "CMSPARK_WIN_SAPI_UNPINNED"
 export function mapSttLangToSapiCulture(lang?: string): string {
   if (!lang) return "zh-CN"
   const lower = lang.toLowerCase()
+  if (lower === "zh-hant") return "zh-TW"
   if (lower.startsWith("zh")) return "zh-CN"
   if (lower.startsWith("en")) return "en-US"
   return lang

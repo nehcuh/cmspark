@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { getAppRoot, getAssetsDir } from "../paths"
-import { isMiniAction, isMiniCapture, type MiniAction } from "./actions"
+import { parseMiniInvocation, isMiniCapture, type MiniAction, type MiniTiming } from "./actions"
 
 type Action = MiniAction | "chat"
 
@@ -24,7 +24,7 @@ export class LinuxMiniHost {
   private waiting?: { resolve: () => void, reject: (error: Error) => void }
 
   constructor(private readonly dir: string,
-    private readonly onAction: (action: Action) => Promise<void>,
+    private readonly onAction: (action: Action, timing?: MiniTiming) => Promise<void>,
     private readonly onClosed: (message?: string) => void) {}
 
   show(): Promise<void> {
@@ -76,8 +76,8 @@ export class LinuxMiniHost {
         this.waiting = undefined
         this.showing = undefined
       } else if (line.startsWith("action:")) {
-        const id = line.slice(7)
-        if (id === "chat" || isMiniAction(id)) void this.dispatch(id, child)
+        const invocation = parseMiniInvocation(line.slice(7))
+        if (invocation) void this.dispatch(invocation.action, child, invocation.timing)
       }
     })
     child.once("close", () => {
@@ -92,11 +92,11 @@ export class LinuxMiniHost {
     })
   }
 
-  private async dispatch(action: Action, child: ChildProcessWithoutNullStreams): Promise<void> {
+  private async dispatch(action: Action, child: ChildProcessWithoutNullStreams, timing?: MiniTiming): Promise<void> {
     const restore = action !== "chat" && isMiniCapture(action)
     if (restore) this.mapped = false
     try {
-      await this.onAction(action)
+      await this.onAction(action, timing)
     } catch (error) {
       console.warn("[mini] Linux action failed:", error)
     } finally {

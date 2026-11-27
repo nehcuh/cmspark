@@ -148,14 +148,12 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             no_model()
             page.locator("#meetingBack").click()
 
-            # The start entry may open the materials desk; mic starts only on the explicit record button.
-            page.locator("#moreActions").click()
-            page.locator("#meetingStart").click()
-            if page.locator("#meetingPrivacyAck").is_visible():
-                page.locator("#meetingPrivacyAck").click()
+            # Prepare a meeting with reference notes before explicitly starting the microphone.
+            page.locator("#meetingOpen").click()
             expect(page.locator("#meetingDesk")).to_be_visible()
             page.locator("#meetingNew").click()
             wait_event(page,"meeting.create","ack")
+            page.locator("#meetingMaterials > summary").click()
             page.locator("#meetingReferenceSection > summary").click()
             page.locator("#meetingReferenceNotes").fill("Python 周四发布，负责人小王。")
             page.locator("#meetingReferenceSave").click()
@@ -173,8 +171,8 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             page.screenshot(path=str(ARTIFACTS / "native-live-390.png"), full_page=True)
             no_model()
             assert not events("meeting.end")
-            expect(page.locator("#meetingMinutesBtn")).to_be_disabled()
-            page.locator("#meetingRec").click()
+            expect(page.locator("#meetingMinutesBtn")).to_be_enabled()
+            page.locator("#meetingMinutesBtn").click()
             wait_event(page, "voice.stt.end", "held")
             no_model()
             assert not events("meeting.end"), "end ran before the real PCM seal"
@@ -184,7 +182,6 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             control(release="meeting.end")
             wait_event(page,"meeting.end","ack")
             no_model()
-            page.locator("#meetingMinutesBtn").click()
             confirm_minutes(page)
             generated = wait_event(page, "meeting.generate_minutes", "ack")
             assert generated["response"]["type"] == "meeting.minutes_result", generated
@@ -264,6 +261,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             control(failStt=False)
             print("PASS native failed audio import keeps prior materials", flush=True)
 
+            page.locator("#meetingTranscriptTab").click()
             layouts = []
             for width in [390, 960]:
                 page.set_viewport_size({"width": width, "height": 780})
@@ -350,6 +348,7 @@ with tempfile.TemporaryDirectory(prefix="cmspark-native-meeting-") as temporary:
             imported_page.goto(origin)
             imported_page.locator("#moreActions").click()
             imported_page.locator("#meetingOpen").click()
+            imported_page.locator("#meetingMaterials > summary").click()
             with imported_page.expect_file_chooser() as chooser:
                 imported_page.locator("#meetingReferenceImport").click()
             chooser.value.set_files({"name": "import-first.md", "mimeType": "text/markdown", "buffer": "Python 周四发布，负责人小王。".encode()})

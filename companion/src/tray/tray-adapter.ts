@@ -144,6 +144,7 @@ export interface UnifiedTray {
    * Non-Swift backends omit these — callers use optional chaining (no-op).
    */
   sendSummoner?(cmd: import("../summoner/protocol").SummonerOutboundCmd): void
+  openMiniMeeting?(port: number): void
   openSummoner?(threadId: string): void
   hydrateSummoner?(payload: import("../summoner/protocol").SummonerHydratePayload): void
   /** Swift overlay → Node. Non-Swift backends omit (callers use optional chaining). */

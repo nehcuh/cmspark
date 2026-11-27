@@ -25,10 +25,11 @@ async function until(predicate, description) {
 async function run() {
   const dir = mkdtempSync(join(tmpdir(), "cmspark-mini-"))
   const actions = []
-  let release
+  let release, delay
   const notices = []
-  const host = new LinuxMiniHost(dir, async id => {
+  const host = new LinuxMiniHost(dir, async (id, timing) => {
     actions.push(id)
+    delay = timing?.seconds
     if (id === "todo") {
       assert.equal(visible(), "", "orb should be unmapped before region capture")
       await new Promise(resolve => { release = resolve })
@@ -40,8 +41,9 @@ async function run() {
     const id = visible()
     assert.ok(id)
     const before = geometry(id)
-    xdo("mousemove", "--window", id, 20, 20, "click", "1")
-    await until(() => actions.at(-1) === "chat", "click must launch quick chat")
+    xdo("mousemove", "--window", id, 20, 20, "mousedown", "1")
+    await until(() => actions.at(-1) === "chat", "long press must launch quick chat")
+    xdo("mouseup", "1")
 
     xdo("mousemove", "--window", id, 20, 20, "mousedown", "1", "mousemove_relative", "--", -14, -14)
     await sleep(120)
@@ -53,12 +55,15 @@ async function run() {
     const moved = geometry(id)
     assert.equal(actions.length, 1, "drag must not submit a chat")
 
-    xdo("mousemove", "--window", id, 20, 20, "mousedown", "1")
-    await sleep(650)
-    xdo("mouseup", "1", "key", "Home", "Down", "Right", "Return")
-    await until(() => !!release, "long press and capture submenu must dispatch todo")
+    xdo("mousemove", "--window", id, 20, 20, "click", "1")
+    xdo("key", "Home", "Down", "Right", "Return")
+    await until(() => !!release, "click and capture submenu must dispatch todo")
     release()
     await until(visible, "orb did not restore after capture")
+    xdo("mousemove", "--window", id, 20, 20, "click", "1")
+    xdo("key", "Home", "Down", "Right", "End", "Right", "Home", "Right", "End", "Return")
+    await until(() => actions.at(-1) === "capture" && delay === 3, "delayed capture did not carry its selected time")
+    await until(visible, "orb did not restore after delayed capture")
     xdo("mousemove", "--window", id, 20, 20, "click", "3", "key", "End", "Return")
     await until(() => actions.at(-1) === "meeting", "context menu must launch meetings")
     host.hide()

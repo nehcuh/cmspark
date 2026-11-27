@@ -3,6 +3,7 @@ import math
 import os
 import signal
 import sys
+import time
 import uuid
 
 import gi
@@ -57,7 +58,7 @@ def portal_image():
         stream.close(None)
 
 
-def select_region(source):
+def select_region(source, delay=0):
     width, height = source.get_width(), source.get_height()
     screen = Gdk.Display.get_default().get_primary_monitor() or Gdk.Display.get_default().get_monitor(0)
     work = screen.get_workarea()
@@ -67,7 +68,8 @@ def select_region(source):
     window.set_position(Gtk.WindowPosition.CENTER)
     window.set_keep_above(True)
     body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-    body.add(Gtk.Label(label="拖动选择要使用的区域，按 Esc 取消"))
+    hint = f"框选后 {delay} 秒截图，按 Esc 取消选区" if delay else "拖动选择要使用的区域，按 Esc 取消"
+    body.add(Gtk.Label(label=hint))
     canvas = Gtk.DrawingArea()
     canvas.set_hexpand(True)
     canvas.set_vexpand(True)
@@ -123,7 +125,7 @@ def select_region(source):
             if w > 8192 or h > 8192 or w * h > 16777216:
                 result.append("MINI_REGION_TOO_LARGE")
             else:
-                result.append(source.new_subpixbuf(x, y, w, h))
+                result.append((x, y, w, h))
             window.destroy()
         canvas.queue_draw()
 
@@ -144,7 +146,13 @@ def select_region(source):
 def main():
     if not Gtk.init_check()[0]:
         raise RuntimeError("未检测到图形桌面")
-    if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("XDG_SESSION_TYPE") == "wayland":
+    delay = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+    if delay not in (0, 3, 5, 10):
+        raise ValueError("无效的截图延时")
+    wayland = bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("XDG_SESSION_TYPE") == "wayland")
+    if wayland:
+        # The compositor owns the snapshot. Request it once, after the delay.
+        time.sleep(delay)
         image = portal_image()
         if image is None:
             return
@@ -153,8 +161,16 @@ def main():
         image = Gdk.pixbuf_get_from_window(root, 0, 0, root.get_width(), root.get_height())
         if image is None:
             raise RuntimeError("无法读取当前显示器")
-    crop = select_region(image)
-    if crop:
+    rect = select_region(image, delay if not wayland else 0)
+    if rect:
+        if delay and not wayland:
+            Gdk.Display.get_default().sync()
+            time.sleep(delay)
+            size = image.get_width(), image.get_height()
+            image = Gdk.pixbuf_get_from_window(root, 0, 0, root.get_width(), root.get_height())
+            if image is None or (image.get_width(), image.get_height()) != size:
+                raise RuntimeError("显示区域已改变，请重新框选")
+        crop = image.new_subpixbuf(*rect)
         ok, data = crop.save_to_bufferv("png", [], [])
         if not ok or len(data) > 6 * 1024 * 1024:
             raise RuntimeError("MINI_REGION_TOO_LARGE")

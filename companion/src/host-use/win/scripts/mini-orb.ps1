@@ -86,17 +86,18 @@ public class OrbWindow : Window {
     [DllImport("shcore.dll")]
     static extern int GetDpiForMonitor(IntPtr monitor, int kind, out uint x, out uint y);
     const double OrbSize = 54, Radius = OrbSize / 2 + 3;
-    static readonly string[] Roots = { "chat", "shot", "search", "meeting" }, Leaves = { "todo", "ask", "ocr", "capture" };
+    static readonly string[] Roots = { "chat", "shot", "search", "meeting" }, Leaves = { "todo", "ask", "ocr", "capture", "delay" };
     static readonly string[] Names = { "快速对话", "截图",     "资料搜索", "会议记录", "截图抽取待办",
-                                       "截图询问", "截图 OCR", "仅截图" };
+                                       "截图询问", "截图 OCR", "仅截图", "延时截图" };
     static readonly string[] Labels = { "快速对话", "截图",  "资料搜索", "会议记录", "抽取待办",
-                                        "询问图片", "OCR 识别", "仅截图" };
-    static readonly string[] Glyphs = { "\uE8BD", "\uE722", "\uE721", "\uE787", "\uE8FD", "\uE9CE", "\uE8D2", "\uE7C5" };
-    static readonly string[] Keys = { "chat", "shot", "search", "meeting", "todo", "ask", "ocr", "capture" };
+                                        "询问图片", "OCR 识别", "仅截图", "延时截图" };
+    static readonly string[] Glyphs = { "\uE8BD", "\uE722", "\uE721", "\uE787", "\uE8FD", "\uE9CE", "\uE8D2", "\uE7C5", "\uE823" };
+    static readonly string[] Keys = { "chat", "shot", "search", "meeting", "todo", "ask", "ocr", "capture", "delay" };
     readonly Dictionary<string, Button> buttons = new Dictionary<string, Button>();
     readonly Dictionary<string, PathShape> slices = new Dictionary<string, PathShape>();
     readonly Dictionary<string, Point> centers = new Dictionary<string, Point>();
     readonly Canvas scene = new Canvas();
+    readonly ContextMenu delayMenu = new ContextMenu();
     readonly TextBlock branchLabel = new TextBlock();
     readonly OrbButton orb = new OrbButton();
     readonly DispatcherTimer hold = new DispatcherTimer();
@@ -115,7 +116,7 @@ public class OrbWindow : Window {
     IntPtr handle;
     Pixel anchor, press, pressAnchor;
     Point orbCenter;
-    bool menu, sub, down, moving, held, traveled, armed, layingOut;
+    bool menu, sub, down, moving, layingOut;
     string hot;
     double scale = 1;
     static readonly Dictionary<string, SolidColorBrush> palette = new Dictionary<string, SolidColorBrush>();
@@ -202,15 +203,15 @@ public class OrbWindow : Window {
         orb.Expanded = delegate {
             return menu;
         };
-        orb.ToolTip = "单击对话 · 长按或右键打开快捷操作 · 拖动移动";
+        orb.ToolTip = "单击或右键打开操作 · 长按快速对话 · 拖动移动";
         AutomationProperties.SetAutomationId(orb, "MiniOrb");
         AutomationProperties.SetName(orb, "CMspark Mini");
-        AutomationProperties.SetHelpText(orb, "Enter 快速对话，空格或菜单键打开操作，方向键选择，Esc 返回。");
+        AutomationProperties.SetHelpText(orb, "Enter、空格或菜单键打开操作，方向键选择，Esc 返回。");
         orb.Click += delegate {
             if (chatting)
                 CloseChat();
             else if (!menu)
-                RunAction("chat");
+                OpenMenu(true);
             else
                 CloseMenu();
         };
@@ -259,8 +260,10 @@ public class OrbWindow : Window {
             Highlight(key);
         };
         b.MouseEnter += delegate {
-            if (!down)
+            if (!down) {
+                if (key == "shot" && !sub) { sub = true; LayoutHost(); }
                 Highlight(key);
+            }
         };
         Panel.SetZIndex(b, 3);
         buttons[key] = b;
@@ -490,12 +493,24 @@ public class OrbWindow : Window {
         MakeNotice();
         for (int i = 0; i < Keys.Length; i++)
             MakeAction(i);
-        hold.Interval = TimeSpan.FromMilliseconds(330);
+        foreach (int seconds in new int[] { 3, 5, 10 }) {
+            var time = new MenuItem { Header = "框选后 " + seconds + " 秒" };
+            delayMenu.Items.Add(time);
+            foreach (string leaf in Leaves) {
+                if (leaf == "delay") continue;
+                string action = leaf;
+                int delay = seconds;
+                var item = new MenuItem { Header = Labels[Array.IndexOf(Keys, action)] };
+                item.Click += delegate { RunAction(action, delay); };
+                time.Items.Add(item);
+            }
+        }
+        hold.Interval = TimeSpan.FromMilliseconds(450);
         hold.Tick += delegate {
             hold.Stop();
             if (down && !moving) {
-                held = true;
-                OpenMenu(false);
+                ResetGesture();
+                OpenChat();
             }
         };
         PreviewMouseMove += OnMove;
@@ -508,7 +523,7 @@ public class OrbWindow : Window {
             }
         };
         Deactivated += delegate {
-            if (menu && !down)
+            if (menu && !down && !delayMenu.IsOpen)
                 CloseMenu();
         };
         SourceInitialized += delegate {
@@ -637,6 +652,7 @@ public class OrbWindow : Window {
                 SetCenter("ask", 234, 65, sx, sy, fx, fy);
                 SetCenter("ocr", 216, 122, sx, sy, fx, fy);
                 SetCenter("capture", 160, 180, sx, sy, fx, fy);
+                SetCenter("delay", 252, 180, sx, sy, fx, fy);
             }
             foreach (string k in Keys) {
                 bool root = Array.IndexOf(Roots, k) >= 0, shown = menu && (root || sub);
@@ -718,10 +734,13 @@ public class OrbWindow : Window {
             LayoutHost();
             if (!down)
                 buttons["todo"].Focus();
+        } else if (key == "delay") {
+            delayMenu.PlacementTarget = buttons["delay"];
+            delayMenu.IsOpen = true;
         } else
             RunAction(key);
     }
-    void RunAction(string key) {
+    void RunAction(string key, int seconds = 0) {
         if (key == "chat") {
             OpenChat();
             return;
@@ -729,38 +748,11 @@ public class OrbWindow : Window {
         CloseMenu();
         if (Array.IndexOf(Leaves, key) >= 0)
             Hide();
-        Emit("action:" + key);
+        Emit("action:" + key + (seconds == 0 ? "" : ":" + seconds));
     }
     static void Emit(string line) {
         Console.WriteLine(line);
         Console.Out.Flush();
-    }
-    string Hit(Point p) {
-        if (Dist(p, orbCenter) < Radius)
-            return null;
-        if (sub)
-            foreach (string k in Leaves) {
-                if (InsideButton(p, k))
-                    return k;
-            }
-        foreach (string k in Roots) {
-            if (InsideButton(p, k))
-                return k;
-        }
-        if (sub)
-            foreach (string k in Leaves) {
-                if (slices[k].Data.FillContains(p))
-                    return k;
-            }
-        foreach (string k in Roots) {
-            if (slices[k].Data.FillContains(p))
-                return k;
-        }
-        return null;
-    }
-    bool InsideButton(Point p, string k) {
-        return Math.Abs(p.X - centers[k].X) <= buttons[k].Width / 2 &&
-               Math.Abs(p.Y - centers[k].Y) <= buttons[k].Height / 2;
     }
     Point AtScreen(MouseEventArgs e) {
         return scene.PointToScreen(e.GetPosition(scene));
@@ -779,7 +771,7 @@ public class OrbWindow : Window {
         press = new Pixel(Px(p.X), Px(p.Y));
         pressAnchor = anchor;
         down = true;
-        moving = held = traveled = armed = false;
+        moving = false;
         orb.Focus();
         orb.BorderBrush = Ink("#91EDF2");
         orb.CaptureMouse();
@@ -787,32 +779,14 @@ public class OrbWindow : Window {
     }
     void ResetGesture() {
         hold.Stop();
-        down = moving = held = traveled = armed = false;
+        down = moving = false;
         orb.BorderBrush = rim;
         if (orb.IsMouseCaptured)
             orb.ReleaseMouseCapture();
     }
-    void Aim(Point p) {
-        if (Dist(p, orbCenter) > Radius + 3)
-            traveled = true;
-        string k = Hit(p);
-        bool closeBranch = (k != "shot" && Array.IndexOf(Roots, k) >= 0) ||
-                           (traveled && Dist(p, orbCenter) <= Radius);
-        if ((k == "shot" && !sub) || (sub && closeBranch)) {
-            sub = k == "shot";
-            LayoutHost();
-        }
-        armed = k != null;
-        if (k != hot)
-            Highlight(k);
-    }
     void OnMove(object sender, MouseEventArgs e) {
         if (!down)
             return;
-        if (held) {
-            Aim(e.GetPosition(scene));
-            return;
-        }
         Point p = AtScreen(e);
         int dx = Px(p.X) - press.X, dy = Px(p.Y) - press.Y;
         if (!moving && Math.Max(Math.Abs(dx), Math.Abs(dy)) < 6 * scale)
@@ -826,29 +800,10 @@ public class OrbWindow : Window {
         if (!down)
             return;
         e.Handled = true;
-        if (held)
-            Aim(e.GetPosition(scene));
-        bool drag = moving, radial = held, away = traveled;
-        string chosen = armed ? hot : null;
+        bool drag = moving;
         ResetGesture();
-        if (drag) {
-            SavePosition();
-            return;
-        }
-        if (!radial) {
-            RunAction("chat");
-            return;
-        }
-        if (chosen != null) {
-            Choose(chosen);
-            return;
-        }
-        if (away)
-            CloseMenu();
-        else {
-            Activate();
-            buttons["chat"].Focus();
-        }
+        if (drag) SavePosition();
+        else OpenMenu(true);
     }
     void OnKey(object s, KeyEventArgs e) {
         if (chatting) {

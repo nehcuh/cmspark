@@ -120,7 +120,7 @@ try{
     $startBounds=$orb.Current.BoundingRectangle
     Check ($window.Current.BoundingRectangle.Width -le ($startBounds.Width*1.2)) 'idle overlay covers surrounding desktop'
     $stage='quick chat'
-    Invoke-Control MiniOrb
+    Invoke-Control MiniOrb;Invoke-Control MiniChat
     Expect 'action:chat'
     $draft=Value MiniChatInput
     $message='请看 <资料> & "PNG"'
@@ -139,7 +139,7 @@ try{
     $draft.SetValue('取消');Invoke-Control MiniChatSend;Expect ('say:'+(B64 '取消'))
     Invoke-Control MiniChatClose;Expect 'chat-close'
     $child.StandardInput.WriteLine('reply:'+(B64 'STALE'))
-    Invoke-Control MiniOrb;Expect 'action:chat'
+    Invoke-Control MiniOrb;Invoke-Control MiniChat;Expect 'action:chat'
     Check (-not (Value MiniChatHistory).Current.Value.Contains('STALE')) 'cancelled turn displayed'
     Check ((Value MiniChatHistory).Current.Value.Contains($answer.Replace("`n","`r`n")) -or (Value MiniChatHistory).Current.Value.Contains($answer)) 'conversation lost on reopen'
     Invoke-Control MiniChatClose
@@ -179,45 +179,21 @@ try{
     $null=Poll {(Element MiniShot).Current.HasKeyboardFocus}
     Key 0x1b
     $null=Poll {(Element MiniOrb).Current.HasKeyboardFocus}
-    $stage='continuous native gesture'
+    $stage='physical click opens a persistent menu'
     $ball=Center MiniOrb
     Check ([MiniCheck]::SetCursorPos($ball.X,$ball.Y)) 'test cursor failed'
     [MiniCheck]::Press($hwnd);$pressed=$true
-    $shot=Center MiniShot
-    Glide $ball $shot
-    $ocr=Center MiniOcr
-    Glide $shot $ocr
     [MiniCheck]::Release($hwnd);$pressed=$false
-    Expect 'action:ocr'
-    Check (-not [MiniCheck]::IsWindowVisible($hwnd)) 'gesture starts capture before orb hides'
+    $null=Center MiniShot
+    Invoke-Control MiniShot
+    $null=Center MiniDelay
+    Invoke-Control MiniOcr;Expect 'action:ocr'
     Show-Orb
-    $stage='native reversal before release'
+    $stage='physical hold opens quick chat'
     $ball=Center MiniOrb
     Check ([MiniCheck]::SetCursorPos($ball.X,$ball.Y)) 'test cursor failed'
     [MiniCheck]::Press($hwnd);$pressed=$true
-    $shot=Center MiniShot
-    Glide $ball $shot
-    $null=Center MiniTodo
-    foreach($rootAction in @('MiniChat','MiniSearch')){
-        $other=Center $rootAction
-        Glide $shot $other
-        $null=Poll {
-            $leaf=Element MiniTodo
-            (-not $leaf) -or $leaf.Current.BoundingRectangle.IsEmpty
-        }
-        Glide $other $shot
-        $null=Center MiniTodo
-    }
-    Glide $shot $ball
-    [MiniCheck]::Release($hwnd);$pressed=$false
-    # The compact HWND bounds can be visible to UIA before Win32 hit-tests its new layered surface.
-    # Keep the pointer at the reversal point and wait for that pixel to belong to the orb.
-    $null=Poll {
-        ($window.Current.BoundingRectangle.Width -le $startBounds.Width*1.2) -and
-        [MiniCheck]::HitAt($hwnd,$ball.X,$ball.Y)
-    }
-    $stage='physical click opens quick chat'
-    [MiniCheck]::Press($hwnd);$pressed=$true
+    $null=Center MiniChatInput
     [MiniCheck]::Release($hwnd);$pressed=$false
     Expect 'action:chat'
     $null=Poll {(Element MiniChatInput).Current.HasKeyboardFocus}

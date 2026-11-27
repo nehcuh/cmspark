@@ -47,6 +47,7 @@ fi
 
 # Compile
 swiftc \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "${SCRIPT_DIR}/microphone-Info.plist" \
   -O -Xlinker -adhoc_codesign \
   -o "${OUTPUT_BIN}" \
   "${SCRIPT_DIR}/MiniActionFan.swift" \

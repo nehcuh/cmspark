@@ -604,6 +604,12 @@ if (Test-Path $NoticeSrc) {
     Fail "THIRD_PARTY_NOTICES missing in companion/ — MIT notice must ship with the package"
 }
 
+$OpenCcNotices = Join-Path $StagingDir "licenses/opencc-js"
+New-Item -ItemType Directory -Force -Path $OpenCcNotices | Out-Null
+foreach ($notice in @("LICENSE", "THIRD_PARTY_LICENSES.md")) {
+    Copy-Item -LiteralPath (Join-Path $CompanionDir "node_modules/opencc-js/$notice") -Destination $OpenCcNotices -ErrorAction Stop
+}
+
 # Launch / install scripts
 foreach ($f in @("install.bat", "uninstall.bat", "launch.bat", "launch-hidden.vbs", "README.txt")) {
     $src = "$CompanionDir\$f"

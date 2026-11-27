@@ -266,6 +266,8 @@ cp -r chrome-extension/build/chrome-mv3-prod "${STAGING}/chrome-extension"
 mkdir -p "${STAGING}/node_modules"
 node "${ROOT_DIR}/scripts/stage-office-runtime.mjs" --source "${ROOT_DIR}/companion" --destination "${STAGING}" --platform "${PLATFORM}"
 cp companion/THIRD_PARTY_NOTICES "${STAGING}/"
+mkdir -p "${STAGING}/licenses/opencc-js"
+cp companion/node_modules/opencc-js/{LICENSE,THIRD_PARTY_LICENSES.md} "${STAGING}/licenses/opencc-js/"
 for pkg in node-notifier systray2 onnxruntime-node; do
   if [ -d "companion/node_modules/${pkg}" ]; then
     cp -r "companion/node_modules/${pkg}" "${STAGING}/node_modules/"
