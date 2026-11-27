@@ -272,11 +272,13 @@ export function convertMessagesToAnthropic(messages: CanonicalChatMessage[], def
       const toolResults: AnthropicContentBlock[] = []
       while (i < messages.length && messages[i].role === "tool") {
         const t = messages[i] as Extract<CanonicalChatMessage, { role: "tool" }>
-        const loaded = deferredCatalog && searches.delete(t.tool_call_id) ? loadedMcpTools(t.content, deferredCatalog) : []
+        const isSearchResult = searches.delete(t.tool_call_id)
+        const loaded = isSearchResult ? loadedMcpTools(t.content, deferredCatalog ?? []) : []
         toolResults.push({
           type: "tool_result",
           tool_use_id: sanitizeToolCallId(t.tool_call_id),
-          content: loaded.length ? loaded.map(t => ({ type: "tool_reference", tool_name: t.function.name })) : t.content ?? "",
+          content: loaded.length ? loaded.map(t => ({ type: "tool_reference", tool_name: t.function.name }))
+            : isSearchResult ? "No matching MCP tools are available." : t.content ?? "",
         })
         i++
       }

@@ -65,7 +65,9 @@ test("Messages only produces references for paired local search results still in
   const blocks = body(history).messages.at(-1)!.content as any[]
   assert.deepEqual(blocks[0].content[0], { type: "tool_reference", tool_name: clock.function.name })
   const revoked = body(history, [builtin, mcpSearchTool]).messages.at(-1)!.content as any[]
-  assert.equal(typeof revoked[0].content, "string")
+  assert.equal(revoked[0].content, "No matching MCP tools are available.")
+  const disabled = body(history, [builtin]).messages.at(-1)!.content as any[]
+  assert.equal(disabled[0].content, revoked[0].content)
   const unrelated = [...history]
   unrelated[1] = { role: "assistant", tool_calls: [{ type: "function", id: "search-1", function: { name: builtin.function.name, arguments: "{}" } }] }
   const output = body(unrelated).messages.at(-1)!.content as any[]
