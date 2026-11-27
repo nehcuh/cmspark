@@ -35,6 +35,7 @@ import { superviseFleet, abortableDelay, FLEET_SUPERVISION_HINT, FLEET_WAIT_MS }
 import { armFleetFollowup, fleetCheckpoint, fleetWorkerStates } from "../orchestrator/fleet-continuity"
 import { multiAgentLlmLoopSnapshot, releaseMultiAgentLlmLoop, tryAcquireMultiAgentLlmLoop } from "../orchestrator/llm-loop-gate"
 import { effectiveContextWindow, getConfig, getConfigDir, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
+import { SEARCH_MCP, activeMcpSchemas, mcpSearchTool, searchMcpCatalog, supportsMcpSearch } from "./deferred-mcp"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
 import type { AppsConfig } from "../apps/types"
 import type { CompleteUsage } from "./provider"
@@ -999,7 +1000,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     if (tabId === undefined) return ""
     return `Current native task browser target tabId=${tabId}. Only get_page_text is supported by this selected target; list_tabs/evaluate/other browser actions are unavailable. Visibility selection is not tool approval.`
   }
+  let mcpSearchHint = ""
   const composeSystemPrompt = () => [
+    mcpSearchHint,
     basePrompt,
     runProgressHint,
     fleetDispatchHint,
@@ -1118,6 +1121,24 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     tools = tools.filter((t) => t.function.name !== EXECUTION_CONTRACT_PROPOSE_TOOL)
   }
   tools = filterToolsForSurface(tools, params.surface)
+  const deferredMcp = !!thread && !thread.parent_thread_id && supportsMcpSearch(config.protocol, config.base_url, config.model_name)
+    && tools.some(t => t.function.name.startsWith("mcp__"))
+  if (deferredMcp) {
+    tools.push(mcpSearchTool)
+    mcpSearchHint = "Use the tool search to discover MCP tools by server, function name, or task before calling them."
+  }
+  // A selection can be narrowed while a model is responding. Intersect live
+  // tools with the original surface/whitelist snapshot before advertising them.
+  function currentTools() {
+    if (!deferredMcp) return tools
+    const active = threadManager.get(threadId)
+    const selected = active?.mcp_selection_mode === "manual"
+      ? mcpManager.getAggregatedToolsForServers(new Set(active.active_mcp_server_ids ?? []))
+      : mcpManager.getAggregatedTools()
+    const names = new Set(selected.map(t => t.function.name))
+    return tools.filter(t => !t.function.name.startsWith("mcp__") ||
+      (!!active && !active.trashed_at && names.has(t.function.name) && threadManager.isToolAllowed(threadId, t.function.name)))
+  }
   const offeredToolNames = new Set(tools.map((t) => t.function.name))
   if (!offeredToolNames.has("fleet_suggest_propose") || !offeredToolNames.has("spawn_worker")) fleetDispatchHint = ""
   if (thread?.agent_role !== "worker" && offeredToolNames.has("collect_handback")) fleetSupervisionHint = FLEET_SUPERVISION_HINT
@@ -1146,6 +1167,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     configAtStart.vision.reuse_main_model !== false && overrideAtStart?.vision_enabled !== false && useNative
   const executeToolBeforeCatalog = executeTool
   executeTool = async (toolCallId, toolName, execParams, execSignal) => {
+    if (toolName === SEARCH_MCP && deferredMcp) return searchMcpCatalog(currentTools(), execParams?.query)
     const gated = gateUnofferedMcpTool(toolName, offeredToolNames)
     if (gated) return gated
     if (toolName === "lcu_js" || toolName === "lcu_js_reset") return { success: false, error: "DESKTOP_TOOL_RETIRED" }
@@ -1168,7 +1190,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     windowOverride?: number,
   ): Promise<boolean> {
     if (compactionSetting === "off") return false
-    const compact = applyContextBudget(messages, windowOverride ?? contextWindow, tools, {
+    const budgetTools = deferredMcp ? activeMcpSchemas(messages, currentTools()) : tools
+    const compact = applyContextBudget(messages, windowOverride ?? contextWindow, budgetTools, {
       phase,
       outputTokens: outputBudget.documented ? outputMaxTokens : undefined,
     })
@@ -1712,7 +1735,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       for await (const ev of streamChatWithRecovery(provider, {
         messages,
         promptCacheKey,
-        tools: tools as CanonicalToolDefinition[],
+        tools: currentTools() as CanonicalToolDefinition[],
         temperature: config.temperature,
         model: config.model_name,
         signal,

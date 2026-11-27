@@ -9,6 +9,7 @@
  * - reasoning_content dropped on wire (M7)
  */
 
+import { loadedMcpTools, SEARCH_MCP } from "../deferred-mcp"
 import { LLM_MAX_TOKENS_DEFAULT } from "../chat-output-policy"
 import type {
   CanonicalChatMessage,
@@ -19,6 +20,7 @@ import type {
 
 /** Anthropic tool definition on the wire. */
 export interface AnthropicTool {
+  defer_loading?: true
   name: string
   description: string
   input_schema: {
@@ -42,7 +44,7 @@ export type AnthropicContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
+  | { type: "tool_result"; tool_use_id: string; content: string | Array<{ type: "tool_reference"; tool_name: string }>; is_error?: boolean }
 
 export interface AnthropicMessage {
   role: "user" | "assistant"
@@ -207,10 +209,11 @@ function assistantContentFromMessage(
  * - Merges contiguous tool results into a single user message with tool_result blocks.
  * - Sanitizes tool ids consistently for tool_use / tool_result pairing.
  */
-export function convertMessagesToAnthropic(messages: CanonicalChatMessage[]): {
+export function convertMessagesToAnthropic(messages: CanonicalChatMessage[], deferredCatalog?: CanonicalToolDefinition[]): {
   system?: string
   messages: AnthropicMessage[]
 } {
+  const searches = new Set<string>()
   const systemParts: string[] = []
   const out: AnthropicMessage[] = []
 
@@ -249,6 +252,8 @@ export function convertMessagesToAnthropic(messages: CanonicalChatMessage[]): {
 
     if (msg.role === "assistant") {
       // reasoning_content intentionally dropped (M7)
+      searches.clear()
+      for (const call of msg.tool_calls ?? []) if (call.function.name === SEARCH_MCP) searches.add(call.id)
       let content = assistantContentFromMessage(msg.content, msg.tool_calls)
       const live = msg[liveAnthropicBlocks]
       if (live && msg.tool_calls?.length && Array.isArray(content)) {
@@ -267,10 +272,11 @@ export function convertMessagesToAnthropic(messages: CanonicalChatMessage[]): {
       const toolResults: AnthropicContentBlock[] = []
       while (i < messages.length && messages[i].role === "tool") {
         const t = messages[i] as Extract<CanonicalChatMessage, { role: "tool" }>
+        const loaded = deferredCatalog && searches.delete(t.tool_call_id) ? loadedMcpTools(t.content, deferredCatalog) : []
         toolResults.push({
           type: "tool_result",
           tool_use_id: sanitizeToolCallId(t.tool_call_id),
-          content: t.content ?? "",
+          content: loaded.length ? loaded.map(t => ({ type: "tool_reference", tool_name: t.function.name })) : t.content ?? "",
         })
         i++
       }
@@ -311,7 +317,8 @@ export function buildAnthropicRequestBody(opts: {
   maxTokens?: number
   maxTokenCeiling?: number
 }): AnthropicRequestBody {
-  const { system, messages } = convertMessagesToAnthropic(opts.messages)
+  const search = opts.tools?.some(t => t.function.name === SEARCH_MCP)
+  const { system, messages } = convertMessagesToAnthropic(opts.messages, search ? opts.tools : undefined)
   const body: AnthropicRequestBody = {
     model: opts.model,
     max_tokens: computeMaxTokens(opts.contextWindow, opts.maxTokens, opts.maxTokenCeiling),
@@ -321,7 +328,10 @@ export function buildAnthropicRequestBody(opts: {
   if (system !== undefined) body.system = system
   if (opts.temperature !== undefined) body.temperature = opts.temperature
   const tools = convertToolsToAnthropic(opts.tools)
-  if (tools) body.tools = tools
+  if (tools) {
+    if (search) for (const t of tools) if (t.name.startsWith("mcp__")) t.defer_loading = true
+    body.tools = tools
+  }
   return body
 }
 

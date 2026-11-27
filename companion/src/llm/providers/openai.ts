@@ -19,6 +19,7 @@ import type {
 import { throwIfLlmEndpointBlocked } from "../../security"
 import { isBenignStreamTailClose } from "../transport-error"
 import { cleanCompanionUserAgent } from "./headers"
+import { SEARCH_MCP, supportsMcpSearch } from "../deferred-mcp"
 import { streamOpenAIResponses } from "./openai-responses"
 import { reasoningParams, reasoningWireEffort } from "../reasoning-effort"
 import { LLM_MAX_TOKENS_DEFAULT } from "./anthropic-convert"
@@ -67,9 +68,10 @@ export class OpenAIProvider implements LlmProvider {
     const spec = providerModelLimits(this.config, model, params.reasoning_effort ?? this.config.reasoning_effort)
     const support = spec?.support ?? "unsupported"
     const effort = params.reasoning_effort ?? this.config.reasoning_effort
-    if (spec?.responsesForTools && params.tools?.length) {
+    const searchMcp = supportsMcpSearch(this.config.protocol, this.config.base_url, model) && params.tools?.some(t => t.function.name === SEARCH_MCP)
+    if ((spec?.responsesForTools || searchMcp) && params.tools?.length) {
       yield* streamOpenAIResponses(this.client, model, reasoningWireEffort(support, effort), { ...params,
-        max_tokens: params.max_tokens && Math.min(params.max_tokens, spec.output ?? Infinity) })
+        max_tokens: params.max_tokens && Math.min(params.max_tokens, spec?.output ?? Infinity) })
       return
     }
     const messages = toWireMessages(params.messages)
