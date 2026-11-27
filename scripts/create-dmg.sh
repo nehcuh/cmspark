@@ -185,7 +185,10 @@ for dev in $(hdiutil info | grep "/Volumes/CMspark" | awk '{print $1}' || true);
 done
 
 # Create writable sparse image from staging
-DMG_SIZE=$(( $(du -sm "${DMG_DIR}" | cut -f1) + 20 ))m
+# Count each hard link because copying the app to HFS+ can allocate each path
+# separately. Leave room for filesystem metadata and the Applications link.
+APP_SIZE_MB=$(/usr/bin/du -sml "${DMG_DIR}" | cut -f1)
+DMG_SIZE=$(( APP_SIZE_MB + APP_SIZE_MB / 4 + 128 ))m
 
 hdiutil create -size "${DMG_SIZE}" \
   -volname "CMspark" \
