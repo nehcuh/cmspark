@@ -71,13 +71,14 @@ test("video blocks belong to their capture and interrupted files retain the ackn
   }
   assert.equal(await post("open", 0, undefined, randomUUID()), 409)
   assert.equal(await post("open"), 200)
-  assert.equal(await post("append", 0, "first"), 200)
-  assert.equal(await post("append", 0, "first"), 409)
+  const first = "video data".repeat(16)
+  assert.equal(await post("append", 0, first), 200)
+  assert.equal(await post("append", 0, first), 409)
   assert.equal(await post("finish", 9), 409)
   assert.deepEqual(listMeetingRecordings(id, root), [])
   upload.close()
-  assert.equal(await post("append", 5, "late"), 409)
+  assert.equal(await post("append", first.length, "late"), 409)
   const name = capture + ".partial.webm"
   assert.equal(listMeetingRecordings(id, root)[0].name, name)
-  assert.equal(fs.readFileSync(path.join(recordingDirectory(id, root), name), "utf8"), "first")
+  assert.equal(fs.readFileSync(path.join(recordingDirectory(id, root), name), "utf8"), first)
 })

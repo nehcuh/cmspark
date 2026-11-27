@@ -363,6 +363,7 @@ function releaseFinishedOverlayCapture(status: ReturnType<typeof projectCaptureS
       owner.epoch !== status.capture_epoch || owner.meetingId !== status.meeting_id ||
       (status.phase !== "finished" && status.phase !== "failed")) return
   meetingHttpBegin.terminal(owner.captureId, observation)
+  meetingVideoUpload.stopMonitor()
   overlayContinuousCapture = null
 }
 

@@ -15,10 +15,21 @@ export class MeetingVideoUpload {
   private monitor?: ChildProcess
   constructor(private root?: string) {}
 
-  close() {
+  stopMonitor() {
     this.monitor?.kill()
     this.monitor = undefined
-    if (this.video) this.finish(this.video, true)
+  }
+
+  close() {
+    this.stopMonitor()
+    const video = this.video
+    if (!video) return
+    try { this.finish(video, true) }
+    catch (error) {
+      // Meeting deletion can race with the last page closing.
+      this.video = undefined
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("[Mini] 未能完成本地视频文件")
+    }
   }
 
   private finish(video: Video, partial: boolean) {
@@ -79,7 +90,7 @@ export class MeetingVideoUpload {
           fs.appendFileSync(video.file, Buffer.concat(chunks, length))
           video.bytes += length
         } else if (action === "finish" || action === "partial") {
-          if (String(video.bytes) !== query.get("offset")) { reply(409, { error: "视频长度尚未确认" }); return }
+          if (action === "finish" && String(video.bytes) !== query.get("offset")) { reply(409, { error: "视频长度尚未确认" }); return }
           this.finish(video, action === "partial")
         } else if (action === "discard") this.finish(video, true)
         else { reply(400, { error: "无效的视频操作" }); return }

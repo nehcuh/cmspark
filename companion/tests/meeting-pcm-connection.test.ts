@@ -149,6 +149,7 @@ function actualHttpRequests(client: CompanionClient, dispatch: ReturnType<typeof
   const functions = names.map(name => ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === name)!.getText(ast)).join("\n")
   const js = ts.transpileModule(functions + "\nmodule.exports = handleRequest", { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const context: any = { module: { exports: {} }, Map, Buffer, meetingHttpBegin: new (require("../src/voice/meeting-pcm-http-begin").MeetingPcmHttpBegin)(now), overlayContinuousCapture: null, JSON_BODY_MAX: 1024 * 1024,
+    meetingVideoUpload: new (require("../src/summoner/meeting-video-upload").MeetingVideoUpload)(),
     tokenOk: () => true, hostOk: () => true, originOk: () => true,
     forbidden(res: any) { res.value = { type: "error", code: "forbidden" } },
     jsonResponse(res: any, value: any) { res.value = value },
