@@ -20,7 +20,7 @@ import { MEETING_REFERENCE_MAX_CHARS, parseReferenceMinutes } from "./meeting-re
 import { estimateTokens } from "../file-chunker"
 import { isLoopbackVisionHost } from "../llm/vision-reuse-inherit"
 import { groundDefaultMinutes, groundDefaultVisualMinutes, groundVisualMinutes, visualMinutesMaterial, visualSourceList } from "./minutes-evidence"
-import type { MeetingVisualEvidence } from "./meeting-visual-store"
+import type { MeetingVisualEvidence } from "./meeting-visual-evidence"
 
 export type GenerateMinutesResult =
   | { ok: true; minutes: MeetingMinutes }

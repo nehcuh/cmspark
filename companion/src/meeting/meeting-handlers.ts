@@ -19,7 +19,8 @@ import type { LlmExtractConfig } from "../llm/llm-extract"
 import { displayModelEndpoint, resolveMeetingTextModel } from "../model-center"
 import { assertLlmEndpointUrlAllowed } from "../security"
 import { generateMeetingMinutes } from "./meeting-minutes"
-import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence } from "./meeting-visual-store"
+import { isSafeMeetingId } from "./meeting-paths"
+import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence } from "./meeting-visual-evidence"
 import { visualMinutesMaterial, visualSourceList } from "./minutes-evidence"
 import { createTranslationService } from "./meeting-translation"
 import { createMeetingVisualService } from "./meeting-visual-handlers"
@@ -46,7 +47,6 @@ import {
   meetingCaptureSourceNotice,
   MeetingTranscriptLimitError,
   MeetingTranscriptSegmentCollisionError,
-  isSafeMeetingId,
   startMeetingRecording,
   transcriptToText,
   type TranscriptLine,

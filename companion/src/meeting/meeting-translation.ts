@@ -3,7 +3,8 @@ import { getConfigSnapshot } from "../config"
 import { llmExtract } from "../llm/llm-extract"
 import { displayModelEndpoint, resolveMeetingTextModel } from "../model-center"
 import { assertLlmEndpointUrlAllowed } from "../security"
-import { isSafeMeetingId, loadMeeting, readMeetingTranslations, writeMeetingTranslations, type SavedTranslation } from "./meeting-store"
+import { isSafeMeetingId } from "./meeting-paths"
+import { loadMeeting, readMeetingTranslations, writeMeetingTranslations, type SavedTranslation } from "./meeting-store"
 
 const languages = new Set(["简体中文", "繁體中文", "English", "日本語", "한국어", "Français", "Deutsch", "Español"])
 const maxText = 16_000

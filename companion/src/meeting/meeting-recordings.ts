@@ -3,11 +3,11 @@ import * as path from "node:path"
 import { DATA_DIR } from "../config"
 import { isCaptureId } from "../voice/meeting-pcm-contract"
 import { writePcmWavHeader } from "../voice/pcm-wav"
-import { isSafeMeetingId } from "./meeting-store"
+import { isSafeMeetingId, meetingDir } from "./meeting-paths"
 
 export function recordingDirectory(meeting: string, root = DATA_DIR): string {
   if (!isSafeMeetingId(meeting)) throw new Error("Invalid meeting")
-  const dir = path.join(root, "meetings", meeting)
+  const dir = meetingDir(meeting, root)
   if (!fs.existsSync(path.join(dir, "meta.json"))) throw new Error("Meeting not found")
   return path.join(dir, "recordings")
 }

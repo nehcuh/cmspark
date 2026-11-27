@@ -7,9 +7,10 @@ import * as fs from "fs"
 import * as path from "path"
 import * as crypto from "crypto"
 import { DATA_DIR } from "../config"
+import { ensureMeetingsRoot, meetingDir, resolveMeetingDir } from "./meeting-paths"
 import { logger } from "../logger"
 import { MEETING_MINUTES_MAX_INPUT_CHARS } from "./minutes-prompt"
-import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence, type MeetingVisualEvidence } from "./meeting-visual-store"
+import { VISUAL_EVIDENCE_FILENAME, MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence, type MeetingVisualEvidence } from "./meeting-visual-evidence"
 import { visualMinutesMaterial, visualSourceList } from "./minutes-evidence"
 import type { CaptureStatus } from "../voice/meeting-pcm-contract"
 
@@ -139,38 +140,6 @@ function reconcileMinutesSource(session: MeetingSession, dataDir: string): boole
   return hasVisualMaterial
 }
 
-function meetingsRoot(dataDir = DATA_DIR): string {
-  return path.join(dataDir, "meetings")
-}
-
-function meetingDir(id: string, dataDir = DATA_DIR): string {
-  return path.join(meetingsRoot(dataDir), id)
-}
-
-/** Ensure id is a safe single path segment. */
-export function isSafeMeetingId(id: string): boolean {
-  return typeof id === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,63}$/.test(id)
-}
-
-export function ensureMeetingsRoot(dataDir = DATA_DIR): string {
-  const root = meetingsRoot(dataDir)
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 })
-  try {
-    fs.chmodSync(root, 0o700)
-  } catch {
-    /* windows */
-  }
-  return root
-}
-
-function resolveContained(id: string, dataDir = DATA_DIR): string | null {
-  if (!isSafeMeetingId(id)) return null
-  const root = path.resolve(ensureMeetingsRoot(dataDir))
-  const dir = path.resolve(meetingDir(id, dataDir))
-  if (dir !== root && !dir.startsWith(root + path.sep)) return null
-  return dir
-}
-
 export function writeJsonAtomic(filePath: string, data: unknown): void {
   const dir = path.dirname(filePath)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -210,7 +179,7 @@ export function watchMeetingDeletion(id: string, dataDir: string, callback: () =
 
 /** Remove the entire meeting, including its visual evidence, and retire any active extraction. */
 export function deleteMeeting(id: string, dataDir = DATA_DIR): boolean {
-  const dir = resolveContained(id, dataDir)
+  const dir = resolveMeetingDir(id, dataDir)
   if (!dir || !fs.existsSync(dir)) return false
   try {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -312,7 +281,7 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
       transcriptToText(session.original_transcript || []).length > MEETING_MINUTES_MAX_INPUT_CHARS) {
     throw new MeetingTranscriptLimitError()
   }
-  const dir = resolveContained(session.id, dataDir)
+  const dir = resolveMeetingDir(session.id, dataDir)
   if (!dir) throw new Error("invalid meeting id")
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   reconcileMinutesSource(session, dataDir)
@@ -345,7 +314,7 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
 export function beginMeetingCapture(id: string, captureId: string, expectedEpoch: number, dataDir = DATA_DIR, liveEngine?: "local" | "external"): MeetingSession | null {
   const s = loadMeeting(id, dataDir)
   if (!s || (s.capture_epoch ?? 0) !== expectedEpoch || s.status === "recording") return null
-  const dir = resolveContained(id, dataDir)
+  const dir = resolveMeetingDir(id, dataDir)
   if (!dir) return null
   const { transcript: _transcript, original_transcript: _original, reference_notes: _notes,
     reference_name: _name, minutes: _minutes, visual_evidence_unavailable: _visual, ...meta } = s
@@ -364,7 +333,7 @@ export function beginMeetingCapture(id: string, captureId: string, expectedEpoch
 export function checkpointMeetingCapture(status: CaptureStatus, dataDir = DATA_DIR): void {
   const s = loadMeeting(status.meeting_id, dataDir)
   if (!s || s.capture_epoch !== status.capture_epoch || s.capture_summary?.last_capture_id !== status.capture_id) throw new Error("stale_capture")
-  const dir = resolveContained(s.id, dataDir)!
+  const dir = resolveMeetingDir(s.id, dataDir)!
   const { transcript: _transcript, original_transcript: _original, reference_notes: _notes,
     reference_name: _name, minutes: _minutes, visual_evidence_unavailable: _visual, ...meta } = s
   const terminal = status.phase === "finished" || status.phase === "failed"
@@ -383,7 +352,7 @@ export function checkpointMeetingCapture(status: CaptureStatus, dataDir = DATA_D
 }
 
 export function loadMeeting(id: string, dataDir = DATA_DIR, cache?: "meeting-read" | "evidence-change"): MeetingSession | null {
-  const dir = resolveContained(id, dataDir)
+  const dir = resolveMeetingDir(id, dataDir)
   if (!dir || !fs.existsSync(path.join(dir, "meta.json"))) return null
   const meta = readJson<MeetingMeta>(path.join(dir, "meta.json"))
   if (!meta) return null
@@ -406,7 +375,7 @@ export function loadMeeting(id: string, dataDir = DATA_DIR, cache?: "meeting-rea
   const previouslyStale = minutes?.stale
   const hasVisualMaterial = reconcileMinutesSource(session, dataDir)
   if (cache && minutes && (minutes.stale !== previouslyStale || meta.status !== session.status) &&
-      (hasVisualMaterial || cache === "evidence-change" || fs.existsSync(path.join(dir, "visual-evidence.json")))) {
+      (hasVisualMaterial || cache === "evidence-change" || fs.existsSync(path.join(dir, VISUAL_EVIDENCE_FILENAME)))) {
     // The sidecar is authoritative. Retry interrupted cache writes without hiding the raw meeting.
     try {
       if (minutes.stale !== previouslyStale) writeJsonAtomic(path.join(dir, "minutes.json"), minutes)
@@ -423,7 +392,7 @@ export function listMeetings(dataDir = DATA_DIR): MeetingMeta[] {
     const meta = readJson<MeetingMeta>(path.join(root, name, "meta.json"))
     if (!meta?.id) continue
     // A previous cache update may have failed after the evidence file committed.
-    if (meta.status === "done" && fs.existsSync(path.join(root, name, "visual-evidence.json"))) {
+    if (meta.status === "done" && fs.existsSync(path.join(root, name, VISUAL_EVIDENCE_FILENAME))) {
       meta.status = loadMeeting(meta.id, dataDir, "meeting-read")?.status ?? meta.status
     }
     out.push(meta)
@@ -434,7 +403,7 @@ export function listMeetings(dataDir = DATA_DIR): MeetingMeta[] {
 
 /** Keep history's metadata-only list in sync when the independent evidence file changes. */
 export function refreshVisualMinutesStatus(id: string, dataDir = DATA_DIR): void {
-  const dir = resolveContained(id, dataDir)
+  const dir = resolveMeetingDir(id, dataDir)
   if (dir && fs.existsSync(path.join(dir, "minutes.json"))) loadMeeting(id, dataDir, "evidence-change")
 }
 
@@ -594,7 +563,7 @@ export function startMeetingRecording(
   }
   // Ensure audio/ exists only when retain requested (optional durable bucket).
   if (s.privacy.audio_retained) {
-    const dir = resolveContained(id, dataDir)
+    const dir = resolveMeetingDir(id, dataDir)
     if (dir) {
       try {
         fs.mkdirSync(path.join(dir, "audio"), { recursive: true, mode: 0o700 })
@@ -635,7 +604,7 @@ export function endMeetingRecording(
  * treat true as proof of residual content removal.
  */
 export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): boolean {
-  const dir = resolveContained(id, dataDir)
+  const dir = resolveMeetingDir(id, dataDir)
   if (!dir) return false
   const audio = path.join(dir, "audio")
   try {
@@ -655,7 +624,7 @@ export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): boolean {
 
 /** Test / diagnostics: path to meeting audio dir (contained). */
 export function meetingAudioDir(id: string, dataDir = DATA_DIR): string | null {
-  const dir = resolveContained(id, dataDir)
+  const dir = resolveMeetingDir(id, dataDir)
   if (!dir) return null
   return path.join(dir, "audio")
 }
@@ -710,14 +679,14 @@ export function transcriptToText(lines: TranscriptLine[]): string {
 export type SavedTranslation = { id: string; version: string; language: string; text: string; model: string }
 
 export function readMeetingTranslations(id: string, dataDir = DATA_DIR): SavedTranslation[] {
-  const dir = resolveContained(id, dataDir)
+  const dir = resolveMeetingDir(id, dataDir)
   const saved = dir && readJson<SavedTranslation[]>(path.join(dir, "translations.json"))
   return Array.isArray(saved) ? saved.filter(item => item && typeof item.id === "string" &&
     typeof item.version === "string" && typeof item.text === "string" && typeof item.language === "string") : []
 }
 
 export function writeMeetingTranslations(id: string, entries: SavedTranslation[], dataDir = DATA_DIR): void {
-  const dir = resolveContained(id, dataDir)
+  const dir = resolveMeetingDir(id, dataDir)
   if (!dir || !fs.existsSync(path.join(dir, "meta.json"))) throw new Error("meeting not found")
   writeJsonAtomic(path.join(dir, "translations.json"), entries)
 }

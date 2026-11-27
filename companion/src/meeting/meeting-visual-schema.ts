@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { isSafeMeetingId } from "./meeting-store"
+import { isSafeMeetingId } from "./meeting-paths"
 import { parseRasterDims } from "../llm/image-preview"
 import { sniffRasterImage } from "../llm/image-sniff"
 

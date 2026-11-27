@@ -1,4 +1,4 @@
-import type { MeetingVisualEvidence } from "./meeting-visual-store"
+import type { MeetingVisualEvidence } from "./meeting-visual-evidence"
 
 const sections = ["TL;DR", "决议", "待办", "风险 / 开放问题"] as const
 
