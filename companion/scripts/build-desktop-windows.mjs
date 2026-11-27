@@ -190,7 +190,7 @@ function toolchain() {
   const vcvarsArch = arm64 ? "arm64" : "x64"
   const captured = checked(path.join(system, "System32", "cmd.exe"), ["/d", "/v:off", "/s", "/c", `"call "${vcvars}" ${vcvarsArch} >nul && set"`], { windowsVerbatimArguments: true })
   const env = { ...process.env }
-  const allowed = new Set(["path", "include", "lib", "libpath", "vctoolsinstalldir", "windowssdkdir", "windowssdkversion", "ucrtversion", "universalcrtsdkdir"])
+  const allowed = new Set(["path", "include", "lib", "libpath", "vctoolsinstalldir", "vctoolsredistdir", "windowssdkdir", "windowssdkversion", "ucrtversion", "universalcrtsdkdir"])
   for (const line of captured.split(/\r?\n/)) {
     const i = line.indexOf("="); if (i <= 0) continue
     const key = line.slice(0, i)

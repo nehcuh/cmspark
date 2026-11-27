@@ -2,7 +2,7 @@
 // Updated by: bash companion/scripts/build-cmspark-whisper.sh --write-pins
 // ADR-023 L5: hash mismatch → Disable local STT (no silent PATH fallback).
 
-export type WhisperPinnedArch = "darwin-arm64" | "darwin-x64" | "win-x64" | "linux-x64"
+export type WhisperPinnedArch = "darwin-arm64" | "darwin-x64" | "win-x64" | "win-arm64" | "linux-x64" | "linux-arm64"
 
 /**
  * Expected SHA256 (lowercase hex) of the packaged binary for each arch.
@@ -21,7 +21,10 @@ export const WHISPER_BINARY_SHA256: Partial<Record<WhisperPinnedArch, string>> =
   // whisper.cpp v1.7.6 official whisper-bin-x64.zip → cmspark-whisper-win-x64.exe
   // Keep in lock-step with assets/whisper-binary.manifest.json (win-x64 extract primary).
   "win-x64": "b7c6dc2e999a80bc2d23cd4c76701211f392ae55d5cabdf0d45eb2ca4faf09af",
-  // "linux-x64": "<sha256 from --write-pins>",
+  // Official b5907 CPU release archives, verified against the binary manifest.
+  "linux-arm64": "33f12cea6be50d77133f34c065c5cbf8bd85af585c037d8f03011b9f365a532c",
+  "linux-x64": "83dc7b79be42a240583f83ee7f8ebfe7b5e06b527a8f217c18a1d4101d215dff",
+  "win-arm64": "b8e5a6f508956ee37e2c1f607e2b11879ef9124850b6cf5a14a0eb6565387eb7",
 }
 
 /** Return pin for arch key, or null if unset / invalid. */

@@ -487,34 +487,12 @@ case "${PLATFORM}" in
     node "${ROOT_DIR}/scripts/verify-windows-host-scripts.mjs" "${WIN_SCRIPTS_SRC}" "${STAGING}/host-scripts-win"
     node "${ROOT_DIR}/companion/scripts/build-computer-uia-no-focus.mjs" --stage "${STAGING}/host-scripts-win"
     # No ORT/tinyclick hard-gate — Qwen3-VL worker staged above for all platforms.
-    # Path B: cmspark-whisper (win-x64) + DLLs. Auto-fetch when missing unless AUTO_FETCH=0.
-    if [ ! -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ] && [ ! -f "companion/dist/bin/cmspark-whisper-win-x64" ]; then
-      if [ "${CMSPARK_WHISPER_AUTO_FETCH:-1}" != "0" ]; then
-        echo "  auto-fetching cmspark-whisper-win-x64 via manifest..."
-        (cd companion && node scripts/fetch-whisper-binary.mjs --arch win-x64 --dest dist/bin) || \
-          echo "WARNING: whisper auto-fetch failed — local STT may be disabled" >&2
-      fi
-    fi
-    if [ -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ]; then
-      mkdir -p "${STAGING}/bin"
-      cp "companion/dist/bin/cmspark-whisper-win-x64.exe" "${STAGING}/bin/"
-      # Official whisper.cpp Windows builds need sibling DLLs next to the CLI.
-      shopt -s nullglob
-      _dlls=(companion/dist/bin/*.dll)
-      if [ "${#_dlls[@]}" -gt 0 ]; then
-        cp companion/dist/bin/*.dll "${STAGING}/bin/"
-        echo "  staged bin/cmspark-whisper-win-x64.exe + ${#_dlls[@]} dlls (local STT)"
-      else
-        echo "  staged bin/cmspark-whisper-win-x64.exe (local STT; no sibling *.dll found)"
-      fi
-      shopt -u nullglob
-    elif [ -f "companion/dist/bin/cmspark-whisper-win-x64" ]; then
-      mkdir -p "${STAGING}/bin"
-      cp "companion/dist/bin/cmspark-whisper-win-x64" "${STAGING}/bin/cmspark-whisper-win-x64.exe"
-      echo "  staged bin/cmspark-whisper-win-x64.exe (local STT)"
-    else
-      echo "WARNING: companion/dist/bin/cmspark-whisper-win-x64(.exe) missing — local STT disabled in package" >&2
-    fi
+    whisper_arch="win-${PLATFORM#windows-}"
+    # Keep the existing Windows x64 cache, isolate the ARM64 DLLs.
+    whisper_cache="${CACHE_DIR}/whisper-${whisper_arch}"
+    if [ "${whisper_arch}" = "win-x64" ]; then whisper_cache="companion/dist/bin"; fi
+    node companion/scripts/fetch-whisper-binary.mjs --arch "${whisper_arch}" --dest "${whisper_cache}" --stage "${STAGING}/bin"
+    node companion/scripts/stage-windows-whisper-crt.mjs "${PLATFORM#windows-}" "${STAGING}/bin"
     ;;
   linux-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
@@ -535,12 +513,7 @@ case "${PLATFORM}" in
     chmod 0755 "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
     if [ "${PLATFORM}" = "linux-arm64" ]; then strip_ort_napi linux arm64; else strip_ort_napi linux x64; fi
     strip_ort_optional_providers
-    # cmspark-whisper-linux-x64 is intentionally NOT staged (#379): the
-    # runtime pin matrix has no linux-x64 entry (whisper-binary-pins.ts) and
-    # the download manifest has no linux URL, so production mode fail-closed
-    # rejects any unpinned binary — shipping it would be dead weight that
-    # falsely suggests local STT works on Linux. Revisit if a linux-x64 pin
-    # + manifest entry is ever added.
+    node companion/scripts/fetch-whisper-binary.mjs --arch "${PLATFORM}" --dest "${CACHE_DIR}/whisper-${PLATFORM}" --stage "${STAGING}/bin"
     ;;
 esac
 

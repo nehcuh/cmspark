@@ -24,6 +24,8 @@ test("resolveWhisperArch mapping", () => {
   assert.equal(resolveWhisperArch("darwin", "x64"), "darwin-x64")
   assert.equal(resolveWhisperArch("win32", "x64"), "win-x64")
   assert.equal(resolveWhisperArch("linux", "x64"), "linux-x64")
+  assert.equal(resolveWhisperArch("win32", "arm64"), "win-arm64")
+  assert.equal(resolveWhisperArch("linux", "arm64"), "linux-arm64")
   assert.equal(resolveWhisperArch("freebsd", "x64"), "unsupported")
 })
 
@@ -119,13 +121,10 @@ test("expectedWhisperSha256 rejects invalid / missing pins", () => {
 })
 
 test("whisperPinResolveOpts: missing pin → fail-closed (VOICE-02)", () => {
-  const o = whisperPinResolveOpts("linux-x64", {})
-  // linux-x64 may be unpinned on this machine; production refuses unpinned
-  if (expectedWhisperSha256("linux-x64") == null) {
-    assert.equal(o.allowUnpinned, false)
-    assert.equal(o.expectedSha256, null)
-    assert.equal(o.forceUnpinned, false)
-  }
+  const o = whisperPinResolveOpts("unsupported", {})
+  assert.equal(o.allowUnpinned, false)
+  assert.equal(o.expectedSha256, null)
+  assert.equal(o.forceUnpinned, false)
 })
 
 test("whisperPinResolveOpts: CMSPARK_WHISPER_UNPINNED=1 forces unpinned", () => {

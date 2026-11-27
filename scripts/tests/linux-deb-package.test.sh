@@ -87,7 +87,7 @@ for executable in \
   DEBIAN/postrm; do
   assert_executable "${EXTRACTED}/${executable}"
 done
-assert_contains "${EXTRACTED}/DEBIAN/control" 'Depends: libc6, libstdc++6, libgcc-s1, libappindicator3-1, libgtk-3-0, xclip | xsel'
+assert_contains "${EXTRACTED}/DEBIAN/control" 'Depends: libc6 (>= 2.34), libstdc++6, libgcc-s1, libgomp1, libappindicator3-1, libgtk-3-0, xclip | xsel'
 assert_contains "${EXTRACTED}/DEBIAN/control" 'Recommends: wl-clipboard'
 assert_contains "${EXTRACTED}/usr/share/applications/cmspark.desktop" 'Exec=/opt/cmspark/launch-desktop.sh'
 assert_contains "${EXTRACTED}/usr/lib/systemd/user/cmspark-companion.service" 'Wants=cmspark-tray.service'

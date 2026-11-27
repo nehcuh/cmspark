@@ -14,7 +14,7 @@
 import { createRequire } from "node:module"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { existsSync, mkdirSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync } from "node:fs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const companionRoot = path.resolve(__dirname, "..")
@@ -39,14 +39,15 @@ async function loadDownloadModule() {
 }
 
 function parseArgs(argv) {
-  const out = { arch: process.platform === "win32" ? "win-x64" : null, dest: null, force: false }
+  const out = { arch: null, dest: null, stage: null, force: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === "--arch" && argv[i + 1]) out.arch = argv[++i]
     else if (a === "--dest" && argv[i + 1]) out.dest = argv[++i]
+    else if (a === "--stage" && argv[i + 1]) out.stage = argv[++i]
     else if (a === "--force") out.force = true
     else if (a === "-h" || a === "--help") {
-      console.log(`Usage: node fetch-whisper-binary.mjs [--arch win-x64] [--dest DIR] [--force]`)
+      console.log(`Usage: node fetch-whisper-binary.mjs [--arch win-x64] [--dest DIR] [--stage DIR] [--force]`)
       process.exit(0)
     }
   }
@@ -61,30 +62,31 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  if (process.env.CMSPARK_WHISPER_AUTO_FETCH === "0") {
-    console.error("[fetch-whisper-binary] CMSPARK_WHISPER_AUTO_FETCH=0 — skip")
-    process.exit(2)
-  }
   const args = parseArgs(process.argv.slice(2))
   const { downloadWhisperBinary, probeWhisperBinaryInstall } = await loadDownloadModule()
   const { loadWhisperBinaryManifest } = require(
     path.join(companionRoot, "dist", "voice", "whisper-binary-manifest.js"),
   )
 
+  const manifest = loadWhisperBinaryManifest(path.join(companionRoot, "assets", "whisper-binary.manifest.json"))
+  const entry = manifest.binaries[args.arch]
+  if (!entry) throw new Error(`no Whisper binary manifest entry for ${args.arch}`)
+  function stageFiles() {
+    if (!args.stage) return
+    mkdirSync(args.stage, { recursive: true })
+    const names = entry.kind === "file" ? entry.files.map(f => f.name) : entry.extract.files.map(f => f.dest)
+    for (const name of names) copyFileSync(path.join(args.dest, name), path.join(args.stage, name))
+  }
+
   mkdirSync(args.dest, { recursive: true })
-  if (!args.force) {
-    try {
-      const manifest = loadWhisperBinaryManifest(
-        path.join(companionRoot, "assets", "whisper-binary.manifest.json"),
-      )
-      const probe = probeWhisperBinaryInstall(args.dest, args.arch, manifest)
-      if (probe.status === "ready") {
-        console.log(`[fetch-whisper-binary] already ready: ${probe.primaryPath}`)
-        process.exit(0)
-      }
-    } catch {
-      /* continue download */
-    }
+  if (!args.force && probeWhisperBinaryInstall(args.dest, args.arch, manifest).status === "ready") {
+    stageFiles()
+    console.log(`[fetch-whisper-binary] already ready: ${args.arch}`)
+    return
+  }
+  if (process.env.CMSPARK_WHISPER_AUTO_FETCH === "0") {
+    console.error("[fetch-whisper-binary] verified runtime missing and automatic download disabled")
+    process.exit(2)
   }
 
   console.log(`[fetch-whisper-binary] arch=${args.arch} dest=${args.dest}`)
@@ -101,6 +103,7 @@ async function main() {
       }
     },
   })
+  stageFiles()
   console.log("")
   console.log(`[fetch-whisper-binary] OK primary=${result.primaryPath}`)
   console.log(`[fetch-whisper-binary] version=${result.version}`)

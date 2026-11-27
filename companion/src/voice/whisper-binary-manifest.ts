@@ -47,7 +47,8 @@ const fileBinarySchema = z.object({
   files: z.array(fileEntrySchema).min(1),
 })
 
-const archEntrySchema = z.discriminatedUnion("kind", [zipBinarySchema, fileBinarySchema])
+const tarBinarySchema = zipBinarySchema.extend({ kind: z.literal("tar.gz") })
+const archEntrySchema = z.discriminatedUnion("kind", [zipBinarySchema, tarBinarySchema, fileBinarySchema])
 
 const manifestSchema = z.object({
   schemaVersion: z.literal(1),
@@ -136,7 +137,7 @@ export function getWhisperBinaryArchEntry(
 
 /** Primary executable basename for arch (cmspark-whisper-*). */
 export function primaryWhisperBinaryDest(arch: string, entry: WhisperBinaryArchEntry): string {
-  if (entry.kind === "zip") {
+  if (entry.kind !== "file") {
     const main = entry.extract.files.find((f) => f.dest.startsWith("cmspark-whisper-"))
     return main?.dest ?? entry.extract.files[0]!.dest
   }
@@ -146,7 +147,7 @@ export function primaryWhisperBinaryDest(arch: string, entry: WhisperBinaryArchE
 
 /** Expected SHA256 of primary exe (for pin alignment). */
 export function primaryWhisperBinarySha256(arch: string, entry: WhisperBinaryArchEntry): string {
-  if (entry.kind === "zip") {
+  if (entry.kind !== "file") {
     const main = entry.extract.files.find((f) => f.dest.startsWith("cmspark-whisper-"))
     return (main ?? entry.extract.files[0]!).sha256
   }

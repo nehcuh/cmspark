@@ -6,6 +6,10 @@
 
 Mini 浮球的单击菜单、长按快聊和延时截图操作见[个人工作台指南](personal-workspace.md)。小窗会议、转写语言、纪要和章节见[会议记录指南](meeting-and-dictation-user-guide.md)。相关需求见 [#921](https://github.com/nehcuh/cmspark/issues/921) 和 [#922](https://github.com/nehcuh/cmspark/issues/922)。
 
+小窗支持回放和导出会议录音，以及从选定窗口或屏幕录制的视频。[会议录制与文件](https://github.com/nehcuh/cmspark/issues/926)
+
+使用官方 DeepSeek Flash 的主对话支持按需加载已授权的 MCP 工具。适用范围和调用方式见 [MCP 指南](mcp.md)。
+
 ## 1.12.0 正式发布
 
 2026-11-27 发布，提供 macOS、Linux 和 Windows 的桌面 Mini 功能。[v1.12.0 安装包](https://github.com/nehcuh/cmspark/releases/tag/v1.12.0)

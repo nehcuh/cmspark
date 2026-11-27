@@ -147,7 +147,7 @@ export function probeWhisperBinaryInstall(
   }
 
   const files =
-    entry.kind === "zip"
+    entry.kind !== "file"
       ? entry.extract.files.map((f) => ({ name: f.dest, sha256: f.sha256, size: f.size }))
       : entry.files.map((f) => ({ name: f.name, sha256: f.sha256, size: f.size }))
 
@@ -220,7 +220,7 @@ export async function probeWhisperBinaryInstallAsync(
   if (!entry) return { status: "absent", message: `no binary manifest entry for ${arch}` }
   const primaryPath = path.join(destDir, primaryWhisperBinaryDest(arch, entry))
   try { await stat(primaryPath) } catch { return { status: "absent", message: "primary executable missing" } }
-  const files = entry.kind === "zip" ? entry.extract.files.map((f) => ({ name: f.dest, ...f })) : entry.files
+  const files = entry.kind !== "file" ? entry.extract.files.map((f) => ({ name: f.dest, ...f })) : entry.files
   let entries: string[]
   try { entries = await readdir(destDir) } catch { return { status: "incomplete", primaryPath, message: "cannot inspect runtime directory" } }
   const extra = unlistedGpuNativeFile(arch, entries, files.map((f) => f.name))
@@ -341,14 +341,15 @@ function checkInstallationAbort(signal?: AbortSignal): void {
   if (signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
 }
 
-async function extractZip(zipPath: string, outDir: string, signal?: AbortSignal): Promise<void> {
+async function extractArchive(archivePath: string, outDir: string, kind: "zip" | "tar.gz", signal?: AbortSignal): Promise<void> {
   checkInstallationAbort(signal)
   await mkdir(outDir, { recursive: true })
   // GNU tar cannot read ZIP. Windows/macOS ship libarchive tar; bind Windows
   // to its system helper so a Git GNU tar earlier on PATH cannot replace it.
-  const command = process.platform === "linux" ? "unzip" : process.platform === "win32"
+  const useUnzip = process.platform === "linux" && kind === "zip"
+  const command = useUnzip ? "unzip" : process.platform === "win32"
     ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "/usr/bin/tar"
-  const args = process.platform === "linux" ? ["-q", zipPath, "-d", outDir] : ["-xf", zipPath, "-C", outDir]
+  const args = useUnzip ? ["-q", archivePath, "-d", outDir] : ["-xf", archivePath, "-C", outDir]
   try {
     await new Promise<void>((resolve, reject) => {
       let resultError: Error | null = null
@@ -360,14 +361,14 @@ async function extractZip(zipPath: string, outDir: string, signal?: AbortSignal)
       child.once("close", (code, killedBy) => {
         if (resultError) reject(resultError)
         else if (code === 0) resolve()
-        else reject(new Error(`ZIP extractor exited ${code ?? killedBy ?? "unknown"}`))
+        else reject(new Error(`archive extractor exited ${code ?? killedBy ?? "unknown"}`))
       })
     })
   } catch (err) {
     checkInstallationAbort(signal)
     throw new WhisperBinaryDownloadError(
       "extract-failed",
-      `ZIP extract failed: ${err instanceof Error ? err.message : String(err)}`,
+      `archive extract failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
 }
@@ -403,14 +404,14 @@ function findExtractedFile(root: string, relativeSrc: string, stripPrefix: strin
   return null
 }
 
-async function installFromZip(
-  entry: Extract<WhisperBinaryArchEntry, { kind: "zip" }>,
+async function installFromArchive(
+  entry: Exclude<WhisperBinaryArchEntry, { kind: "file" }>,
   destDir: string,
   opts: WhisperBinaryDownloadOpts,
 ): Promise<string> {
   const tmpRoot = path.join(os.tmpdir(), `cmspark-whisper-bin-${process.pid}-${Date.now()}`)
   mkdirSync(tmpRoot, { recursive: true })
-  const zipPath = path.join(tmpRoot, "payload.zip")
+  const archivePath = path.join(tmpRoot, `payload.${entry.kind}`)
   const extractDir = path.join(tmpRoot, "extract")
   const staging = path.join(destDir, ".install-staging")
   let ownsStaging = false
@@ -423,23 +424,23 @@ async function installFromZip(
       : undefined)
     if (bundled) {
       if (opts.signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
-      await copyFile(bundled, zipPath)
-      if (statSync(zipPath).size !== entry.size) {
+      await copyFile(bundled, archivePath)
+      if (statSync(archivePath).size !== entry.size) {
         throw new WhisperBinaryDownloadError("size-mismatch", "bundled runtime archive size mismatch")
       }
-      if (await sha256File(zipPath) !== entry.sha256) {
+      if (await sha256File(archivePath) !== entry.sha256) {
         throw new WhisperBinaryDownloadError("hash-mismatch", "bundled runtime archive hash mismatch")
       }
       if (opts.signal?.aborted) throw new WhisperBinaryDownloadError("aborted", "installation aborted")
     } else {
-      await downloadToFile(entry.url, zipPath, entry.size, entry.sha256, {
+      await downloadToFile(entry.url, archivePath, entry.size, entry.sha256, {
         signal: opts.signal,
         onProgress: opts.onProgress,
         fetchImpl: opts.fetchImpl,
       })
     }
     opts.onProgress?.({ phase: "extract", receivedBytes: 0, totalBytes: entry.extract.files.length })
-    await extractZip(zipPath, extractDir, opts.signal)
+    await extractArchive(archivePath, extractDir, entry.kind, opts.signal)
 
     await mkdir(destDir, { recursive: true })
     rmSync(staging, { recursive: true, force: true })
@@ -458,7 +459,7 @@ async function installFromZip(
       checkInstallationAbort(opts.signal)
       const found = findExtractedFile(extractDir, f.src, entry.extract.stripPrefix || "")
       if (!found) {
-        throw new WhisperBinaryDownloadError("extract-failed", `zip missing ${f.src}`)
+        throw new WhisperBinaryDownloadError("extract-failed", `archive missing ${f.src}`)
       }
       const extracted = await stat(found)
       if (extracted.size !== f.size) {
@@ -872,8 +873,8 @@ export async function downloadWhisperBinary(
   }
 
   let primaryPath: string
-  if (entry.kind === "zip") {
-    primaryPath = await installFromZip(entry, destDir, opts)
+  if (entry.kind !== "file") {
+    primaryPath = await installFromArchive(entry, destDir, opts)
   } else {
     primaryPath = await installFromFiles(entry, destDir, opts)
   }

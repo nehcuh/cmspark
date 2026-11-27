@@ -74,7 +74,7 @@ export function verifyWhisperPin({ typescript: ts, root, metafile, bundle, repla
     if (!ts.isPropertyAssignment(property) || !ts.isStringLiteral(property.name) || !ts.isStringLiteral(property.initializer)) fail('PINS');
     const key = property.name.text;
     const value = property.initializer.text;
-    if (!['darwin-arm64', 'darwin-x64', 'win-x64', 'linux-x64'].includes(key)
+    if (!['darwin-arm64', 'darwin-x64', 'win-x64', 'win-arm64', 'linux-x64', 'linux-arm64'].includes(key)
         || Object.hasOwn(pins, key) || !/^[0-9a-f]{64}$/.test(value)) fail('PINS');
     pins[key] = value;
   }
