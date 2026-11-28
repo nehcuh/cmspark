@@ -22,7 +22,7 @@ CMspark 提供两条互补路径：
 1. **在线批量导入（推荐）**：Side Panel 打开 **NotebookLM 导入器**，把 URL / 链接 / RSS / YouTube / 当前对话等送进你账号下的 NotebookLM notebook。  
 2. **离线 Markdown**：把**当前页**抽成 `.md` 下载，你再手动拖入 NotebookLM。
 
-导入主要在 **扩展侧**完成（DOM / 页面脚本 + Background 编排），**不**依赖 Companion 调 LLM，也**不是**「再开一层 Agent」。你需要 **已在 Chrome 登录 Google / NotebookLM**。
+请先在 Chrome 登录 Google / NotebookLM。扩展在后台将来源逐项添加到所选笔记本，侧栏会显示每项的结果。
 
 ---
 
@@ -48,7 +48,7 @@ CMspark 提供两条互补路径：
 | Companion | **不是**在线导入的硬依赖；Agent 聊天可同时进行，但导入器不走 LLM 工具链 |
 | YouTube 播放列表 | 可选：自备 YouTube Data API key（导入器内可填写），用于展开 playlist |
 
-**安全注意：** 导入器会在你已登录的会话里操作 NotebookLM 页面（DOM 自动化 ≈ 加速版手动操作）。不要在不信任的共享浏览器会话中批量导入敏感 URL。
+导入器使用当前 Chrome 会话的 NotebookLM 账号。使用共享浏览器时，请先确认目标账号和笔记本。
 
 ---
 
@@ -64,12 +64,12 @@ CMspark 提供两条互补路径：
 
 公共步骤：
 
-1. **刷新 / 选择 notebook**（或创建新 notebook — DOM 流程，需页面可操作）。  
+1. **刷新 / 选择 notebook**，也可在导入器内创建并命名笔记本。
 2. 在对应 Tab 收集并勾选条目。  
 3. **开始导入** → Background 编排 `notebooklm.start_batch`，进度在面板显示。  
 4. 可 **取消** 进行中的 batch。
 
-失败常见原因：未登录、NotebookLM UI 改版导致选择器漂移、条目超限、网络超时。重试前确认 NotebookLM 标签页可手动打开同一 notebook。
+导入失败时，先确认当前账号能在 NotebookLM 打开目标笔记本，再查看该条目的错误信息。登录过期、来源配额已满或网络超时均可能导致失败。
 
 ---
 

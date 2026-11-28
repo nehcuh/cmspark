@@ -3,7 +3,7 @@
 // Runs in the background service worker. Responsibilities:
 //   1. Maintain batch state, persisted to chrome.storage.local AFTER EVERY ITEM
 //      (MV3 SW can die mid-batch — must be resumable).
-//   2. Find or open the NotebookLM tab; inject DOM-automation runners per item.
+//   2. Find or open the target NotebookLM tab and import each source via RPC.
 //   3. Throttle: random delay 500-1500ms between items + hard cap of 50 per batch.
 //   4. Retry failed items up to 2× with exponential backoff.
 //   5. Notify the side panel of progress after every item.
@@ -18,18 +18,8 @@
 // Anti-pattern: do NOT cache batch state in closure across awaits — SW may die and
 // the closure is lost. Always read/write via chrome.storage.local.
 
-// v1.3: DOM automation removed from main path. RPC-first architecture.
-// Imports kept commented for reference; if RPC ever needs DOM fallback, uncomment.
-// import { encodeSelectorsForRunner, importTextRunner, importUrlRunner } from "../notebooklm/dom-automation"
-import {
-  addSourceViaRpc,
-  addTextSourceViaRpc,
-  isYouTubeUrl,
-} from "../notebooklm/rpc-client"
+import { addSourceViaRpc, addTextSourceViaRpc } from "../notebooklm/rpc-client"
 import type { BatchState, ImportItem, ImportItemResult } from "../notebooklm/types"
-
-// Suppress unused-import warning during transition (isYouTubeUrl used in runOne)
-void isYouTubeUrl
 
 const STORAGE_KEY = "notebooklm_batch_state_v1"
 const MAX_BATCH = 50
@@ -165,20 +155,12 @@ function isRetryableError(error: string | undefined): boolean {
   return true
 }
 
-/** Run a single import. v1.3: RPC-first (definitive success), DOM fallback only
- *  if RPC fails with a non-recoverable error.
- *
- *  RPC architecture: batchexecute call inside NotebookLM tab. Response contains
- *  source ID on success → definitive. No more "dialog closed = success" false
- *  positives that plagued v1.1/v1.2.
- */
 async function runOne(item: ImportItem, notebookId?: string): Promise<{ ok: boolean; error?: string }> {
   const isUrl = !!item.url
   const isText = !!item.text
   if (!isUrl && !isText) return { ok: false, error: "Item has neither url nor text" }
   if (isUrl && isText) return { ok: false, error: "Item has both url and text" }
 
-  // RPC-first path
   if (!notebookId) {
     return { ok: false, error: "RPC path requires a target notebookId (no 'use currently-open notebook' supported yet)" }
   }
@@ -192,7 +174,6 @@ async function runOne(item: ImportItem, notebookId?: string): Promise<{ ok: bool
         ? { ok: true }
         : { ok: false, error: r.error || "RPC add source failed" }
     } else {
-      // Text import: title is the first 30 chars of text (NotebookLM uses title for display)
       const title = (item.text!.slice(0, 50).replace(/\n/g, " ").trim()) || "Imported text"
       const r = await addTextSourceViaRpc(notebookId, title, item.text!)
       return r.ok

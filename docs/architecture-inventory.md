@@ -61,7 +61,7 @@
 
 ### NotebookLM 页面执行
 
-创建笔记本的 runner 通过 `chrome.scripting.executeScript({func})` 传递，在目标页执行时只能使用自身携带的函数。导入流程的现行入口在 `background/notebooklm-import-orchestrator.ts`。删除旧页面 runner 前需确认是否继续支持直接页面 API 和对应夹具。
+下表八组基线重复来自已退役的三个表单操作流程，第 055 批已删除。创建和来源导入的请求由 `notebooklm/rpc-client.ts` 发出；`background/notebooklm-import-orchestrator.ts` 持有批次状态。开发用选择器探测脚本继续消费 `notebooklm/selectors.ts`。
 
 | 组 | 基线符号 | 源码位置（相对于对应包的 src） |
 | --- | --- | --- |

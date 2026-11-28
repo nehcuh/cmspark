@@ -52,7 +52,6 @@
     "src/notebooklm/types.ts",
     "src/notebooklm/selectors.ts",
     "src/notebooklm/notebook-api.ts",
-    "src/notebooklm/dom-automation.ts",
     "src/notebooklm/ai-chat-extractor.ts",
     "src/notebooklm/page-link-extractor.ts",
     "src/notebooklm/rss-parser.ts",

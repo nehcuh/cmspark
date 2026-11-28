@@ -24,7 +24,7 @@ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { buildSecurityConfirmationWsPayload } from "./security-confirmation-payload"
 import { handleNotebooklmExport } from "./notebooklm-handler"
 import { cancelBatch, getActiveBatch, resumeIfPending, startBatch } from "./notebooklm-import-orchestrator"
-import { createNotebook, listNotebooks } from "../notebooklm/notebook-api"
+import { listNotebooks } from "../notebooklm/notebook-api"
 import { createNotebookViaRpc } from "../notebooklm/rpc-client"
 import { suggestNotebookName } from "../notebooklm/notebook-name-suggester"
 import { extractAiChatRunner } from "../notebooklm/ai-chat-extractor"
@@ -1517,8 +1517,6 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           sendResponse({ ok: false, error: "Notebook name required" })
           return false
         }
-        // v1.3: RPC-first. The old DOM-automation createNotebook is unreliable
-        // (untitled notebooks, false positives). RPC returns definitive notebookId.
         createNotebookViaRpc(name)
           .then(sendResponse)
           .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
