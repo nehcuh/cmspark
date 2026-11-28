@@ -1,5 +1,6 @@
 // Knowledge sub-panel: browse global and site knowledge docs
 
+import { DOCUMENT_ACCEPT } from "../../shared/file-formats"
 import { useState, useRef, useEffect, useMemo } from "react"
 import { useSiteGroups } from "../hooks/useSiteGroups"
 import { useAgentStore } from "../store/agentStore"
@@ -1043,7 +1044,7 @@ export function KnowledgeSubPanel() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".md,.markdown,.doc,.docx,.pdf,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.txt,.csv,.html,.htm"
+          accept={DOCUMENT_ACCEPT}
           style={{ display: "none" }}
           onChange={(e) => {
             handleImportFiles(e.target.files)

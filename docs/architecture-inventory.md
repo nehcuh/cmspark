@@ -30,6 +30,8 @@
 
 第 063 批将基线第 15、29、39 组的内嵌图片解码、格式规范化和缩略图地址收归 `companion/src/image-data-url.ts`。后台 Worker 和侧栏使用同一生成副本。文件签名识别和浏览器画布压缩仍归各自执行端。第 064 批将独立附图的上传限额、格式提示及模型选择迁至 `llm/composer-image-policy.ts`。其中 6 MiB 约束整批文件，内嵌 URL 的同值上限只约束单个载荷。
 
+第 066 批合并第 55 组文档提示。聊天与知识选择器的文档清单从解析器的 `DOCUMENT_MIMES` 生成，聊天单独接受图片及交给服务端识别的 WPS 文件。
+
 | 组 | 基线符号 | 源码位置（相对于对应包的 src） |
 | --- | --- | --- |
 | 2 | `directProvider` | `Companion / llm/reasoning-effort.ts`、`扩展 / sidepanel/utils/reasoning-effort.ts` |

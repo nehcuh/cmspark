@@ -1,3 +1,4 @@
+import type { DocumentNotice } from "../file-formats"
 import { isFullAutonomyCruise, type CruiseSecurityFlags } from "../security-arm"
 // Thread manager — CRUD for conversation threads
 
@@ -294,7 +295,7 @@ interface Message {
   /** Image attachments (metadata only; bytes live in `threads/<id>.files/`). */
   attachments?: ImageAttachmentMeta[]
   /** Bounded document import notices; kept separate from model-facing content. */
-  files?: Array<{ filename: string; warning: string }>
+  files?: DocumentNotice[]
   /** Companion-attached knowledge ledger for this assistant turn (Wave 1). */
   retrieved_sources?: import("../skills/skill-engine").RetrievedSource[]
   /** Length-stop / truncated-tool-batch honesty (hydrate chip). */

@@ -29,8 +29,9 @@ import {
   visionRailOpen,
 } from "../src/sidepanel/utils/image-compose"
 
-test("Office format picker MIME fallback supports legacy and OpenDocument files", () => {
+test("document picker infers supported formats from a file with generic MIME", () => {
   const formats: Record<string, string> = {
+    markdown: "text/markdown",
     doc: "application/msword",
     xls: "application/vnd.ms-excel",
     ppt: "application/vnd.ms-powerpoint",

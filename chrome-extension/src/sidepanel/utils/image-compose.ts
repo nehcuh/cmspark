@@ -1,6 +1,7 @@
 // Composer image paste / drop / picker helpers.
 // Pure functions (plus optional canvas compress) — node:test, no React.
 
+import { DOCUMENT_ACCEPT, documentExtension, resolveDocumentMime } from "../../shared/file-formats"
 import { normalizeImageMime } from "../../shared/image-data-url"
 export { previewDataUrl } from "../../shared/image-data-url"
 
@@ -16,8 +17,7 @@ export {
 
 export const IMAGE_MAX_EDGE = 1568
 
-export const IMAGE_ACCEPT =
-  ".doc,.docx,.wps,.ppt,.pptx,.xls,.xlsx,.pdf,.odt,.ods,.odp,.rtf,.csv,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
+export const IMAGE_ACCEPT = `${DOCUMENT_ACCEPT},.wps,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp`
 
 /** Declared image/* that is not an allowlisted raster. */
 export function imageTypeRefuseReason(type: string): string | undefined {
@@ -91,48 +91,21 @@ export function classifyDrop(
   return { ok: true }
 }
 
-/** Guess MIME from basename. heic/heif/svg map to image/* so the allowlist can refuse. */
-export function mimeFromName(name: string): string {
-  const ext = name.split(".").pop()?.toLowerCase()
-  const mimeMap: Record<string, string> = {
-    doc: "application/msword",
-    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ppt: "application/vnd.ms-powerpoint",
-    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    xls: "application/vnd.ms-excel",
-    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    pdf: "application/pdf",
-    odt: "application/vnd.oasis.opendocument.text",
-    ods: "application/vnd.oasis.opendocument.spreadsheet",
-    odp: "application/vnd.oasis.opendocument.presentation",
-    rtf: "application/rtf",
-    csv: "text/csv",
-    md: "text/markdown",
-    txt: "text/plain",
-    html: "text/html",
-    htm: "text/html",
-    png: "image/png",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    gif: "image/gif",
-    webp: "image/webp",
-    heic: "image/heic",
-    heif: "image/heif",
-    svg: "image/svg+xml",
-  }
-  return mimeMap[ext || ""] || "application/octet-stream"
+// Include unsupported image extensions so the composer can show its format notice.
+const imageMimeByExtension: Readonly<Record<string, string>> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", heic: "image/heic", heif: "image/heif", svg: "image/svg+xml",
 }
 
-/** Normalize standard Office/PDF aliases registered by Linux WPS. */
+export function mimeFromName(name: string): string {
+  return mimeForIncomingFile(name, "")
+}
+
 export function mimeForIncomingFile(name: string, providedMime: string): string {
   // The Companion determines the document format from the actual .wps bytes.
   if (/\.wps$/i.test(name)) return "application/octet-stream"
-  const mime = String(providedMime || "").trim().toLowerCase().split(";")[0].trim()
-  const wpsFormat = mime.match(/^application\/wps-office\.(docx?|xlsx?|pptx?|pdf)$/)?.[1]
-  if (wpsFormat) return mimeFromName(`document.${wpsFormat}`)
-  return !mime || mime === "application/octet-stream" || mime === "binary/octet-stream"
-    ? mimeFromName(name)
-    : mime
+  const fallback = imageMimeByExtension[documentExtension(name)] || "application/octet-stream"
+  return resolveDocumentMime(name, providedMime, fallback)
 }
 
 /** Display name for a clipboard screenshot: `截图 YYYY-MM-DD HH:mm`. */
