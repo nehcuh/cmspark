@@ -1,7 +1,7 @@
 // Resolve the exact Companion instance without blocking its event loop. A PID
 // or process.uptime estimate cannot replace the kernel creation FILETIME.
 import { execFile, type ChildProcess } from "node:child_process"
-import { windowsPowerShellExePath } from "../acp/win-spawn"
+import { windowsPowerShellExePath } from "../process-path"
 import { logger } from "../logger"
 
 const PROBE_ERROR_CODES = new Set(["ABORT_ERR", "ENOENT", "EACCES", "EPERM", "ETIMEDOUT", "EINVAL", "ENOMEM", "EIO", "EPIPE",

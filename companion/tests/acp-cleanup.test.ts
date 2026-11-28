@@ -4,7 +4,8 @@ import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
 import cp = require("node:child_process")
-import { killAcpChild, windowsTaskkillPath } from "../src/acp/win-spawn"
+import { windowsTaskkillPath } from "../src/process-path"
+import { killAcpChild } from "../src/acp/win-spawn"
 import { JsonRpcStdioClient } from "../src/acp/jsonrpc-stdio"
 
 for (const mode of ["success", "error", "exit", "throw", "timeout"] as const) {

@@ -64,3 +64,7 @@
 ### 008 模型目录与输出预算
 
 `companion/src/llm/reasoning-effort.ts` 及 `chat-output-policy.ts` 是模型推理力度、目录和输出预算的编辑入口。在仓库根目录运行 `node companion/scripts/generate-model-policy.mjs` 可刷新扩展自带的两份派生代码；`--check` 在内容偏离时失败。保留两个 npm 工程现有的编译根目录、导出路径，以及直接读取浏览器源码的设置测试。独立扩展打包沿用仓库内已生成的文件，Companion 构建、测试与标准发布会检查同步。两个生产构建通过，23 项 Companion 用例与 12 项设置缓存控制通过。单独在仓库外目录验证了生成、漂移拒绝及混合 LF/CRLF 检出。
+
+### 009 Windows 系统程序的路径
+
+`process-path.ts` 持有 macOS 的 osascript 路径和 Windows 三个系统程序的绝对路径。ACP、Job 控制器、PTY 及 Mini 直接查询该模块，恢复、终止及原生命令的构造仍由各自的调用方负责。保持系统目录的环境变量优先级和已有 PATH 搜索规则。含 ACP/Job/PTY 的四模块循环消失，剩余四组含延后加载的环。204 项定向检查通过 193 项，其余 11 项按平台跳过。独立评审另执行了 #476 的七个源码 VM 用例。

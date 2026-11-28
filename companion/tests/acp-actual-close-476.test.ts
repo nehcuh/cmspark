@@ -8,6 +8,7 @@ import vm from "node:vm"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
 import ts from "typescript"
+import { windowsCmdExePath } from "../src/process-path"
 
 // Normal test output lives under .test-dist/tests; whole-CJS CPU execution
 // may retain the source tests filename. Probe only the two real source layouts.
@@ -81,6 +82,7 @@ function fixture(platform: "linux" | "win32", pid: number | null = 401) {
   }
   const helper = evaluate("acp/win-spawn.ts", {
     child_process: { spawn: allocate }, fs, path,
+    "../process-path": { windowsCmdExePath: () => windowsCmdExePath({}) },
     "../process/windows-job": job,
   }, { process: { platform, env: {}, execPath: "/inert/node", kill(target: number, signal: NodeJS.Signals) { groupKills.push({ pid: target, signal }) } },
     setTimeout: time.setTimeout, clearTimeout: time.clearTimeout })

@@ -3,7 +3,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import type { TestContext } from "node:test"
-import { windowsPowerShellExePath } from "../../src/acp/win-spawn"
+import { windowsPowerShellExePath } from "../../src/process-path"
 
 const childProcess: typeof import("node:child_process") = require("node:child_process")
 export const WINDOWS_JOB_PHASES = ["wrapper_entered", "before_add_type", "after_add_type", "before_run"] as const

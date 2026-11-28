@@ -35,7 +35,8 @@ import {
   __testSetOuterOpeners,
   type WinDetachedSpawnFn,
 } from "../src/acp/open-local-terminal"
-import { windowsCmdExePath, windowsPowerShellExePath, writeExclusiveUtf8 } from "../src/acp/win-spawn"
+import { windowsCmdExePath, windowsPowerShellExePath } from "../src/process-path"
+import { writeExclusiveUtf8 } from "../src/acp/win-spawn"
 import { getConfig } from "../src/config"
 
 // This fixed receipt is emitted only after the actual Desktop PS 5.1 Parser

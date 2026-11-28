@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events"
 import { createWindowsJobPhaseDiagnostics, observeWindowsJobPhases, quoteWindowsJobPhaseLiteral, WINDOWS_JOB_PHASES } from "./fixtures/windows-job-phase-diagnostics"
 import { spawnWindowsJob } from "../src/process/windows-job"
 import { windowsJobOwner } from "../src/process/windows-owner"
-import { windowsPowerShellExePath } from "../src/acp/win-spawn"
+import { windowsPowerShellExePath } from "../src/process-path"
 
 const cp: typeof import("node:child_process") = require("node:child_process")
 const shim = require("cross-spawn")

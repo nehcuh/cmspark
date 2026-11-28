@@ -10,6 +10,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "child_process"
 import * as fs from "fs"
 import * as path from "path"
+import { windowsCmdExePath } from "../process-path"
 
 export type AcpSpawnSpec = {
   command: string
@@ -349,33 +350,6 @@ export function spawnAcpChild(
   return child
 }
 
-function windowsSystemRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return env.SystemRoot || env.SYSTEMROOT || env.windir || "C:\\Windows"
-}
-
-/** Absolute System32\taskkill.exe (never PATH / hijack). */
-export function windowsTaskkillPath(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  return path.join(windowsSystemRoot(env), "System32", "taskkill.exe")
-}
-
-/** Absolute System32\cmd.exe (never ComSpec / bare cmd.exe / PATH). Missing file → spawn ENOENT. */
-export function windowsCmdExePath(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(windowsSystemRoot(env), "System32", "cmd.exe")
-}
-
-/** Absolute System32 Windows PowerShell (never bare powershell.exe / PATH). Missing file → spawn ENOENT. */
-export function windowsPowerShellExePath(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(
-    windowsSystemRoot(env),
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  )
-}
-
 /** Exclusive create (O_EXCL / `wx`) so a pre-planted TEMP file cannot be overwritten. */
 export function writeExclusiveUtf8(
   filePath: string,
@@ -417,8 +391,7 @@ export function killAcpChild(child: ChildProcess, signal: NodeJS.Signals = "SIGT
     }
     if (child.exitCode != null || child.signalCode != null || closingWindowsChildren.has(child)) return
     closingWindowsChildren.add(child)
-    // Loaded here because the shared cleanup helper uses this module's pinned
-    // System32 path. Later ACP escalation timers cannot repeat a naked PID kill.
+    // Later ACP escalation timers cannot repeat a naked PID kill.
     const { killWindowsPtyTree } = require("../pty/windows-tree") as typeof import("../pty/windows-tree")
     killWindowsPtyTree(pid, () => {
       if (child.exitCode == null && child.signalCode == null) child.kill()
