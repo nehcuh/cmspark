@@ -47,15 +47,13 @@ import {
 } from "./provider"
 import {
   applyContextBudget,
-  attachRollingSummaryToMessages,
-  attachHandoffNoticeToMessages,
+  shouldSummarizeCompaction,
   appendRecallHintToNotices,
   effectiveDroppedCount,
   estimateTokens,
   retainMidLoopRollingSummary,
 } from "./context-budget"
-import { generateRollingSummary, shouldRunM2 } from "./context-budget-m2"
-import { generateThreadHandoff, shouldRunH1 } from "./context-handoff-generator"
+import { summarizeDroppedContext, type CompactionSummary } from "./context-compaction-summary"
 import type { ThreadHandoff } from "./context-handoff"
 import {
   createToolResultMessage,
@@ -1236,14 +1234,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     if (!compact.compacted) return false
 
     messages = compact.messages
-    let mode: "m1" | "m2" | "h1" = "m1"
-    let summarySha: string | null = null
-    let summaryBytes = 0
-    let rollingSummary: string | undefined
-    let handoff: ThreadHandoff | null = null
-    let h1Error: string | undefined
-    let h1FallbackToM2 = false
-
     const prevMeta = (() => {
       try {
         return threadManager.get(threadId)?.runtime_context_budget
@@ -1252,89 +1242,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
     })()
 
-    // Wave B H1: structured handoff when m2 gate fires (pre_loop only via shouldRunH1).
-    if (shouldRunH1(compact, m2Enabled, phase) && !signal?.aborted) {
-      try {
-        const priorHandoff =
-          prevMeta?.handoff && typeof prevMeta.handoff === "object"
-            ? (prevMeta.handoff as ThreadHandoff)
-            : null
-        params.assertCurrentRun?.()
-        const h1 = await generateThreadHandoff({
-          droppedMessages: compact.droppedMessages,
-          priorHandoff,
-          config: params.config,
-          signal,
-          includeReasoning: true,
-        })
-        if (h1.ok) {
-          messages = attachHandoffNoticeToMessages(
-            messages,
-            compact.droppedCount,
-            h1.formatted,
-          )
-          mode = "h1"
-          handoff = h1.handoff
-          summarySha = h1.sha256
-          summaryBytes = h1.bytes
-          rollingSummary = h1.formatted
-        } else {
-          h1Error = h1.error
-          // Pi nit: only fall back to M2 on fast-fail (not timeout/abort)
-          if (!h1.slow && shouldRunM2(compact, m2Enabled, phase) && !signal?.aborted) {
-            try {
-              params.assertCurrentRun?.()
-              const m2 = await generateRollingSummary({
-                droppedMessages: compact.droppedMessages,
-                config: params.config,
-                signal,
-              })
-              if (m2.ok && m2.summary) {
-                messages = attachRollingSummaryToMessages(
-                  messages,
-                  compact.droppedCount,
-                  m2.summary,
-                )
-                mode = "m2"
-                summarySha = m2.summarySha256
-                summaryBytes = m2.summaryBytes
-                rollingSummary = m2.summary
-                h1FallbackToM2 = true
-              }
-            } catch {
-              /* keep M1 */
-            }
-          }
-        }
-      } catch (e: any) {
-        h1Error = e?.message || String(e)
-        /* cascade M2 on non-abort */
-        if (!signal?.aborted && shouldRunM2(compact, m2Enabled, phase)) {
-          try {
-            params.assertCurrentRun?.()
-            const m2 = await generateRollingSummary({
-              droppedMessages: compact.droppedMessages,
-              config: params.config,
-              signal,
-            })
-            if (m2.ok && m2.summary) {
-              messages = attachRollingSummaryToMessages(
-                messages,
-                compact.droppedCount,
-                m2.summary,
-              )
-              mode = "m2"
-              summarySha = m2.summarySha256
-              summaryBytes = m2.summaryBytes
-              rollingSummary = m2.summary
-              h1FallbackToM2 = true
-            }
-          } catch {
-            /* M1 */
-          }
-        }
-      }
-    }
+    const summary: CompactionSummary = shouldSummarizeCompaction(compact, m2Enabled, phase) && !signal?.aborted
+      ? await summarizeDroppedContext(compact, params.config, prevMeta?.handoff, signal, () => params.assertCurrentRun?.())
+      : { mode: "m1", messages }
 
     // S51 P0 / S52 N2 + Wave B: retain prior pre_loop H1/M2 on mid_loop **before** meta I/O.
     // mode "h1"|"m2" after re-attach = request carries prior notice (N7), not a new gen.
@@ -1344,25 +1254,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       typeof prevMeta?.dropped_count === "number" ? prevMeta.dropped_count : undefined,
     )
     const retained = retainMidLoopRollingSummary({
+      ...summary,
       phase,
-      mode,
-      messages,
       droppedCount: droppedForMeta,
-      rollingSummary,
-      summarySha: summarySha || undefined,
-      summaryBytes,
-      handoff,
-      handoffFormatted: rollingSummary,
+      handoffFormatted: summary.rollingSummary,
       prevMeta,
     })
     messages = retained.messages
-    mode = retained.mode
-    rollingSummary = retained.rollingSummary
-    summarySha = retained.summarySha || null
-    summaryBytes = retained.summaryBytes
-    if (retained.handoff && typeof retained.handoff === "object") {
-      handoff = retained.handoff as ThreadHandoff
-    }
+    const { mode, rollingSummary, summaryBytes } = retained
+    const summarySha = retained.summarySha || null
+    const handoff = retained.handoff && typeof retained.handoff === "object" ? retained.handoff as ThreadHandoff : null
     // Wave C: hint thread_recall only when tool is on the thread whitelist (or full surface)
     try {
       const allowRecall = threadManager.isToolAllowed(threadId, "thread_recall")
@@ -1411,8 +1312,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         tool_pairs_preserved: true,
         summary_bytes: summaryBytes,
         summary_sha256: summarySha,
-        ...(h1Error ? { h1_error: String(h1Error).slice(0, 120) } : {}),
-        ...(h1FallbackToM2 ? { h1_fallback_to_m2: true } : {}),
+        ...(summary.h1Error ? { h1_error: String(summary.h1Error).slice(0, 120) } : {}),
+        ...(summary.mode === "m2" ? { h1_fallback_to_m2: true } : {}),
       })
     } catch {
       /* non-fatal */

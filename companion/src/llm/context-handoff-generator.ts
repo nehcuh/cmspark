@@ -6,7 +6,6 @@ import { llmExtract, type LlmExtractConfig } from "./llm-extract"
 import {
   buildRedactedTranscript,
   shortSha256,
-  type CompactResult,
 } from "./context-budget"
 import type { CanonicalChatMessage } from "./provider"
 
@@ -156,14 +155,4 @@ export async function generateThreadHandoff(opts: {
   }
 }
 
-/** Re-export shouldRun gate: H1 uses same threshold as M2. */
-export function shouldRunH1(
-  compact: CompactResult,
-  m2Enabled: boolean,
-  phase: "pre_loop" | "mid_loop" = "pre_loop",
-): boolean {
-  if (m2Enabled !== true || !compact.compacted) return false
-  if (phase === "mid_loop") return false
-  const droppedTok = Math.max(0, compact.tokensBefore - compact.tokensAfter)
-  return compact.droppedMessages.length >= 3 || droppedTok >= 500
-}
+export { shouldSummarizeCompaction as shouldRunH1 } from "./context-budget"

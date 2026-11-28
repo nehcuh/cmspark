@@ -292,6 +292,16 @@ export type CompactResult = {
   shrunk?: boolean
 }
 
+/** Generate memory only for a pre-loop head drop large enough to summarize. */
+export function shouldSummarizeCompaction(
+  compact: CompactResult,
+  enabled: boolean,
+  phase: "pre_loop" | "mid_loop" = "pre_loop",
+): boolean {
+  if (enabled !== true || !compact.compacted || phase === "mid_loop") return false
+  return compact.droppedMessages.length >= 3 || compact.tokensBefore - compact.tokensAfter >= 500
+}
+
 function dropBlockAt(
   msgs: CanonicalChatMessage[],
   dropAt: number,
