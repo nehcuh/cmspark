@@ -1,4 +1,4 @@
-import { threadTags, aiThreadGroup } from "../sidepanel/utils/thread-management"
+import { aiThreadGroup } from "../sidepanel/utils/thread-management"
 // Full-page Obsidian-like thread graph.
 // Spec: docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
 // v1.1+: tag colors · hover labels · floating chrome · nit closeout
