@@ -1495,8 +1495,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // #578: 确认卡截断也持完整谓词（async 上下文可得；与执行闸同口径，评审 n2）
             let isActive: ((id: string) => boolean) | undefined
             if (parent && actingThreadId) {
-              const { buildIsThreadLlmActive } = await import("./companion-dispatch")
-              isActive = await buildIsThreadLlmActive()
+              isActive = (await import("../llm/active-runs")).isThreadRunActiveOrQueued
             }
             const slots =
               parent && actingThreadId

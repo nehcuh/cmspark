@@ -1,5 +1,5 @@
 import { retireComputerReadonlyThread } from "../computer/readonly-session"
-import { cancelDeferredLlmKick, releaseMultiAgentLlmLoop, setThreadRunActiveProbe } from "../orchestrator/llm-loop-gate"
+import { cancelDeferredLlmKick, isMultiAgentRunHeldOrQueued, releaseMultiAgentLlmLoop, setThreadRunActiveProbe } from "../orchestrator/llm-loop-gate"
 import { clearNextRun, dropSteer } from "./run-queues"
 
 const controllers = new Map<string, AbortController>()
@@ -13,6 +13,11 @@ export function isThreadRunActive(threadId: string): boolean {
 }
 
 setThreadRunActiveProbe(isThreadRunActive)
+
+/** A thread stays busy while its worker kick is waiting for capacity. */
+export function isThreadRunActiveOrQueued(threadId: string): boolean {
+  return isThreadRunActive(threadId) || isMultiAgentRunHeldOrQueued(threadId)
+}
 
 export function listLlmActiveThreadIds(): string[] {
   return [...controllers.keys()]

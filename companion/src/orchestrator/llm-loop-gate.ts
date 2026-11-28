@@ -3,7 +3,6 @@
 
 import { isMultiAgentThread, ORCHESTRATOR_CAPS } from "./constants"
 
-let activeMultiAgentLoops = 0
 const holders = new Set<string>() // thread ids currently holding a slot
 
 /**
@@ -36,16 +35,15 @@ function multiAgentLlmLoopGate(thread: unknown, threadId: string, acquire: boole
     return { ok: true }
   }
   const cap = ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops
-  if (activeMultiAgentLoops >= cap) {
+  if (holders.size >= cap) {
     return {
       ok: false,
-      error: `MULTI_AGENT_LLM_CAP: max_concurrent_multi_agent_llm_loops=${cap} reached (active=${activeMultiAgentLoops}). Wait for a worker to finish or cancel one.`,
-      active: activeMultiAgentLoops,
+      error: `MULTI_AGENT_LLM_CAP: max_concurrent_multi_agent_llm_loops=${cap} reached (active=${holders.size}). Wait for a worker to finish or cancel one.`,
+      active: holders.size,
       cap,
     }
   }
   if (acquire) {
-    activeMultiAgentLoops++
     holders.add(threadId)
   }
   return { ok: true }
@@ -63,7 +61,6 @@ export function canAcquireMultiAgentLlmLoop(thread: unknown, threadId: string): 
 export function releaseMultiAgentLlmLoop(threadId: string): void {
   if (!holders.has(threadId)) return
   holders.delete(threadId)
-  if (activeMultiAgentLoops > 0) activeMultiAgentLoops--
   drainDeferredLlmRuns()
 }
 
@@ -87,7 +84,7 @@ export function scheduleWhenLlmSlotAvailable(
     return {
       started: true,
       queued: false,
-      active: multiAgentLlmLoopSnapshot().active,
+      active: holders.size,
       cap: ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops,
     }
   }
@@ -104,7 +101,7 @@ export function scheduleWhenLlmSlotAvailable(
       return {
         started: false,
         queued: true,
-        active: multiAgentLlmLoopSnapshot().active,
+        active: holders.size,
         cap: ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops,
       }
     }
@@ -112,7 +109,7 @@ export function scheduleWhenLlmSlotAvailable(
     return {
       started: true,
       queued: false,
-      active: multiAgentLlmLoopSnapshot().active,
+      active: holders.size,
       cap: ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops,
     }
   }
@@ -129,6 +126,10 @@ export function scheduleWhenLlmSlotAvailable(
 
 export function pendingDeferredLlmKickCount(): number {
   return deferredKickQueue.length
+}
+
+export function isMultiAgentRunHeldOrQueued(threadId: string): boolean {
+  return holders.has(threadId) || deferredKickQueue.some(item => item.threadId === threadId)
 }
 
 /** F2: thread ids with a queued-but-not-started kick (in-flight for handback gating). */
@@ -203,7 +204,7 @@ export function multiAgentLlmLoopSnapshot(): {
   holders: string[]
 } {
   return {
-    active: activeMultiAgentLoops,
+    active: holders.size,
     cap: ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops,
     holders: [...holders],
   }
@@ -211,7 +212,6 @@ export function multiAgentLlmLoopSnapshot(): {
 
 /** Test helper */
 export function _resetMultiAgentLlmLoopsForTests(): void {
-  activeMultiAgentLoops = 0
   holders.clear()
   deferredKickQueue.length = 0
 }

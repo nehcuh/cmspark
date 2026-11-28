@@ -508,12 +508,7 @@ export async function spawnExpertTeam(opts: {
     }
   }
 
-  // #578: 执行闸持完整三源并集谓词（与 dispatch 同源；adapter.ts 从 orchestrator
-  // 侧 lazy dynamic import dispatch 是既有先例）。占名额满或创建预算耗尽都在
-  // upfront 截断/拒绝，循环内不会再撞 gate（min 双上限截断）。
-  const { buildIsThreadLlmActive } = await import("../tool/companion-dispatch")
-  const isThreadLlmActive = await buildIsThreadLlmActive()
-  const isActive = (id: string) => isThreadLlmActive(id)
+  const { isThreadRunActiveOrQueued: isActive } = await import("../llm/active-runs")
   // 评审 F3：归因需要 usage 原值——语义同 remainingWorkerSlots 的 min()，
   // 这里直接算一次，拒绝文案走 workerCapExhaustionMessage（含当前 N/M）。
   const capParent = opts.tm.get(opts.parentThreadId) as any

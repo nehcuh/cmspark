@@ -407,9 +407,9 @@ async function initServices() {
   const tm = threadManager
   const { reconcileFleetFollowup, reapReleasedWorkers } = await import("./orchestrator/fleet-continuity")
   const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("./board")
-  const { buildIsThreadLlmActive } = await import("./tool/companion-dispatch")
+  const { isThreadRunActiveOrQueued: active } = await import("./llm/active-runs")
   const { broadcastFleetSnapshotIfWorkers } = await import("./orchestrator/fleet")
-  const active = await buildIsThreadLlmActive()
+
   const send = (frame: unknown) => {
     for (const peer of getWsClients()) {
       const auth = getWsAuthState(peer)

@@ -1,7 +1,7 @@
 import { armDesktopMaximum, desktopMaximumStatus, hasDesktopMaximum, reviewDesktopMaximum, revokeDesktopMaximum } from "./computer/desktop-maximum"
 import {
   abortLlmLoopsForPanel, abortThreadChat, claimThreadRun, finishThreadRun,
-  isCurrentRunGeneration, isThreadRunActive, listLlmActiveThreadIds, ownsThreadRun, releaseRunController,
+  isCurrentRunGeneration, isThreadRunActive, isThreadRunActiveOrQueued, listLlmActiveThreadIds, ownsThreadRun, releaseRunController,
 } from "./llm/active-runs"
 export {
   __testSetLlmActiveForTests, __testSetLlmOwnerForTests, abortLlmLoopsForPanel, abortThreadChat,
@@ -1463,8 +1463,6 @@ async function dispatchMessage(
         try {
           const { onLoopRunFinished } = await import("./loop/loop-kernel")
           const { listWorkers } = await import("./orchestrator/spawn")
-          const { buildIsThreadLlmActive } = await import("./tool/companion-dispatch")
-          const isWorkerActive = await buildIsThreadLlmActive()
           onLoopRunFinished({
             threadManager: services.threadManager,
             threadId: rest.thread_id,
@@ -1474,7 +1472,7 @@ async function dispatchMessage(
               const t = services.threadManager.get(rest.thread_id)
               if (!t?.orchestrator_run_id) return false
               return listWorkers(services.threadManager, t.orchestrator_run_id).some(
-                (w: any) => w?.id && w.parent_thread_id === rest.thread_id && isWorkerActive(w.id),
+                (w: any) => w?.id && w.parent_thread_id === rest.thread_id && isThreadRunActiveOrQueued(w.id),
               )
             },
             sendToExtension: session.sendToExtension,

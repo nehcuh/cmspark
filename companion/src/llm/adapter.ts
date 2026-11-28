@@ -1569,9 +1569,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   // supervisor. Tool batches are fully paired before this can yield the slot.
   const superviseFleetResults = async (): Promise<"none" | "collected" | "stopped"> => {
     if (!fleetSupervisionHint) return "none"
-    const { buildIsThreadLlmActive } = await import("../tool/companion-dispatch")
+    const { isThreadRunActiveOrQueued: isActive } = await import("./active-runs")
     assertCurrentFleetRun()
-    const isActive = await buildIsThreadLlmActive()
+
     if (threadManager.get(threadId)?.orchestrator_run_id && fleetWaitDeadline === undefined) {
       fleetWaitDeadline = Date.now() + FLEET_WAIT_MS
     }
