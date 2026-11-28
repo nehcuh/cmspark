@@ -19,12 +19,20 @@ name: mini-passage-note
 title: 讲义
 description: 教学笔记
 type: domain_knowledge
+tags: [题库]
 ---
 ${'a'.repeat(KNOWLEDGE_BODY_WIRE_CAP + 32)}
 
 讲师提到量子计算的例子。
 `)
   assert.equal(knowledge.getKnowledge(note.id)?.body.includes(query), false)
+  const byTag = await request('search', { query: '题库' })
+  assert.ok('hits' in byTag && byTag.hits?.[0]?.snippet.includes('题库'))
+  const tagDetail = await request('read', { query: '题库', kind: 'knowledge', doc_id: note.id })
+  assert.ok('doc' in tagDetail && tagDetail.doc && 'matched_field' in tagDetail.doc)
+  assert.equal(tagDetail.doc.matched_field?.label, '标签')
+  assert.equal(tagDetail.doc.matched_field?.body, '题库')
+  assert.deepEqual(tagDetail.doc.matched_field?.highlight, { start: 0, length: 2 })
   const chat = threads.create('课堂讨论')
   const add = (role: 'user' | 'assistant' | 'system' | 'tool', content: string) =>
     threads.addMessage(chat.id, { thread_id: chat.id, role, content })
@@ -53,14 +61,23 @@ ${'a'.repeat(KNOWLEDGE_BODY_WIRE_CAP + 32)}
   }
   assert.equal((await request('read', { kind: 'message', thread_id: chat.id, message_id: hidden.id })).ok, false)
   for (let i = 0; i < 26; i++) add('user', '又一次讨论量子计算')
-  const first = await request('search', {}), rest = await request('search', { offset: 25 })
-  assert.ok('has_more' in first && first.has_more)
+  const first = await request('search', {})
+  assert.ok('anchor' in first && first.anchor && first.has_more)
+  const rest = await request('search', { offset: 25, anchor: first.anchor })
   assert.ok('has_more' in rest && !rest.has_more)
   assert.equal(first.hits.length, 25)
   assert.equal(rest.hits.length, 4)
   const keys = [...first.hits, ...rest.hits].map(h => h.message_id || h.id)
   assert.equal(new Set(keys).size, 29)
+  const late = threads.create('另一节课')
+  threads.addMessage(late.id, { thread_id: late.id, role: 'user', content: query })
+  const stale = await request('search', { offset: 25, anchor: first.anchor })
+  assert.ok('stale' in stale && stale.stale)
+  threads.trash(late.id)
+  const inFlight = request('search', {})
   threads.trash(chat.id)
+  const filtered = await inFlight
+  assert.ok('hits' in filtered && filtered.hits?.every(h => h.id !== chat.id))
   assert.equal((await request('read', { kind: 'message', thread_id: chat.id, message_id: reply.id })).ok, false)
   const after = await request('search', {})
   assert.ok('hits' in after && after.hits?.length === 1)

@@ -1,9 +1,11 @@
 export type MiniTarget = { id: string; label: string; unavailable?: string }
 export type MiniSearchHit = { kind: 'knowledge' | 'message'; id: string; title: string; snippet: string; folder?: string;
   message_id?: string; role?: 'user' | 'assistant'; created_at?: string }
-export type MiniDoc = { title: string; body: string; truncated?: boolean; highlight?: { start: number; length: number };
+type Highlight = { start: number; length: number }
+export type MiniDoc = { title: string; body: string; truncated?: boolean; highlight?: Highlight;
+  matched_field?: { label: string; body: string; highlight?: Highlight };
   role?: 'user' | 'assistant'; created_at?: string }
-type MiniReply = { ok: boolean; error?: string; target?: MiniTarget; image_base64?: string; text?: string; model?: string; hits?: MiniSearchHit[]; has_more?: boolean; doc?: MiniDoc }
+type MiniReply = { ok: boolean; error?: string; target?: MiniTarget; image_base64?: string; text?: string; model?: string; hits?: MiniSearchHit[]; has_more?: boolean; anchor?: string; stale?: boolean; doc?: MiniDoc }
 
 export const MINI_PRIVATE_PORT = 'cmspark-mini-private-request'
 

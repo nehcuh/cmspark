@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type Ref } from 'react'
 import { requestMini, type MiniDoc, type MiniSearchHit, type MiniTarget } from '../utils/mini-request'
 import '../styles/mini.css'
 
@@ -17,6 +17,12 @@ function hitKey(hit: MiniSearchHit) {
   return JSON.stringify([hit.kind, hit.id, hit.message_id])
 }
 
+function HighlightedText({ text, highlight, markRef }: { text: string; highlight?: MiniDoc['highlight']; markRef?: Ref<HTMLElement> }) {
+  if (!highlight) return <>{text}</>
+  const end = highlight.start + highlight.length
+  return <>{text.slice(0, highlight.start)}<mark ref={markRef}>{text.slice(highlight.start, end)}</mark>{text.slice(end)}</>
+}
+
 export default function MiniPage() {
   const [image, setImage] = useState('')
   const [target, setTarget] = useState<MiniTarget>()
@@ -25,7 +31,7 @@ export default function MiniPage() {
   const [turns, setTurns] = useState<{ question: string; answer: string; model: string }[]>([])
   const [hits, setHits] = useState<MiniSearchHit[]>()
   const [submittedQuery, setSubmittedQuery] = useState('')
-  const [nextOffset, setNextOffset] = useState<number>()
+  const [nextPage, setNextPage] = useState<{ offset: number; anchor: string }>()
   const matchRef = useRef<HTMLElement>(null)
   const returnToHit = useRef<string>()
   const [doc, setDoc] = useState<MiniDoc>()
@@ -66,26 +72,31 @@ export default function MiniPage() {
   }
 
   useEffect(() => {
-    if (doc?.highlight) matchRef.current?.scrollIntoView({ block: 'center' })
+    if (doc?.highlight || doc?.matched_field) matchRef.current?.scrollIntoView({ block: 'center' })
     else if (!doc && returnToHit.current) {
       document.getElementById(returnToHit.current)?.focus()
       returnToHit.current = undefined
     }
   }, [doc])
 
-  async function search(query: string, offset = 0) {
+  async function search(query: string, offset = 0, anchor?: string): Promise<void> {
     if (offset === 0) {
       returnToHit.current = undefined
       setDoc(undefined)
       setHits(undefined)
-      setNextOffset(undefined)
+      setNextPage(undefined)
     }
-    const result = await requestMini('search', { query, scope: 'passages', offset })
+    const result = await requestMini('search', { query, scope: 'passages', offset, anchor })
     if (!result.ok) throw new Error(result.error || '搜索失败，请重试')
     if (typeof result.has_more !== 'boolean') throw new Error('请更新本机 Companion 后搜索知识正文和历史对话')
+    if (offset && result.stale) {
+      await search(query)
+      setNotice('搜索结果有变化，已刷新列表。')
+      return
+    }
     const rows = result.hits || []
     setSubmittedQuery(query)
-    setNextOffset(result.has_more ? offset + rows.length : undefined)
+    setNextPage(result.has_more && result.anchor ? { offset: offset + rows.length, anchor: result.anchor } : undefined)
     setHits(previous => {
       if (!offset || !previous) return rows
       const combined = new Map(previous.map(hit => [hitKey(hit), hit]))
@@ -165,15 +176,12 @@ export default function MiniPage() {
     </article>)}</section>}
     {view === 'search' && (doc ? <article><button className="mini-back" onClick={() => setDoc(undefined)}>返回搜索结果</button>
       <small>{sourceLabel(doc)}</small><h2>{doc.title}</h2>
-      <div className="mini-prose">{doc.highlight ? <>
-        {doc.body.slice(0, doc.highlight.start)}
-        <mark ref={matchRef}>{doc.body.slice(doc.highlight.start, doc.highlight.start + doc.highlight.length)}</mark>
-        {doc.body.slice(doc.highlight.start + doc.highlight.length)}
-      </> : doc.body}</div>{doc.truncated && <small>当前显示部分原文。</small>}</article> :
+      {doc.matched_field && <p>{doc.matched_field.label} · <HighlightedText text={doc.matched_field.body} highlight={doc.matched_field.highlight} markRef={matchRef} /></p>}
+      <div className="mini-prose"><HighlightedText text={doc.body} highlight={doc.highlight} markRef={matchRef} /></div>{doc.truncated && <small>当前显示部分原文。</small>}</article> :
       hits && <section aria-label="搜索结果">{hits.length === 0 ? <p>知识库和历史对话里都没有找到“{submittedQuery}”。</p> : hits.map(hit =>
         <button key={hitKey(hit)} id={hitKey(hit)} className="mini-hit" disabled={busy} onClick={() => read(hit)}><small>{sourceLabel(hit)}</small><strong>{hit.title}</strong>
           {hit.snippet !== hit.title && <span>{hit.snippet}</span>}</button>)}
-        {nextOffset !== undefined && <button className="mini-more" disabled={busy} onClick={() => void run(() => search(submittedQuery, nextOffset))}>更多结果</button>}
+        {nextPage && <button className="mini-more" disabled={busy} onClick={() => void run(() => search(submittedQuery, nextPage.offset, nextPage.anchor))}>更多结果</button>}
       </section>)}
   </main>
 }

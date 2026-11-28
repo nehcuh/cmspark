@@ -57,7 +57,7 @@ export async function miniPanelRequest(request: Record<string, unknown>, session
         if (request.scope === 'passages') {
           if (!history) throw new Error('对话历史暂不可用')
           const offset = request.offset === undefined ? 0 : Number(request.offset)
-          const page = await searchMiniPassages(knowledge, history, query, offset)
+          const page = await searchMiniPassages(knowledge, history, query, offset, request.anchor)
           if (!session.isCurrentSession()) throw new Error('连接已切换，请重新搜索')
           return { ...reply, ok: true, ...page }
         }
