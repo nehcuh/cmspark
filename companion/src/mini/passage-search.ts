@@ -61,11 +61,11 @@ export async function searchMiniPassages(knowledge: Knowledge, history: MiniHist
     messages = messages.filter(hit => visible.has(hit.id))
   }
   const needed = offset + PAGE_SIZE + 1
-  for (const thread of threads) {
+  scan: for (const thread of threads) {
     // Yield between transcript files so a large history does not stall the Mini or daemon.
     await yieldToDaemon()
     const rows = history.getMessages(thread.id)
-    for (let i = rows.length - 1; i >= 0 && messages.length < needed; i--) {
+    for (let i = rows.length - 1; i >= 0; i--) {
       const m = rows[i]
       if ((m.role !== 'user' && m.role !== 'assistant') || !m.id || typeof m.content !== 'string' || !pattern.test(m.content)) continue
       const text = redactSecrets(m.content).text
@@ -74,10 +74,10 @@ export async function searchMiniPassages(knowledge: Knowledge, history: MiniHist
         kind: 'message', id: thread.id, message_id: m.id, title: redactSecrets(thread.alias || thread.id).text,
         role: m.role, created_at: m.created_at, snippet: excerpt(text, match, 70).body,
       })
-    }
-    if (messages.length >= needed) {
-      retainVisibleMessages()
-      if (messages.length >= needed) break
+      if (messages.length >= needed) {
+        retainVisibleMessages()
+        if (messages.length >= needed) break scan
+      }
     }
   }
 

@@ -86,3 +86,31 @@ ${'a'.repeat(KNOWLEDGE_BODY_WIRE_CAP + 32)}
   const denied = await miniPanelRequest({ op: 'search', scope: 'passages', query }, { ...panel, surface: 'tray' }, knowledge, threads)
   assert.equal(denied.ok, false)
 })
+
+test('removing earlier hits during a scan keeps the remaining matches in the current thread reachable', async () => {
+  await initDataDir()
+  const threads = new ThreadManager(), knowledge = new SkillEngine()
+  const query = '换页时仍可找到'
+  function createChat(title: string, count: number) {
+    const thread = threads.create(title)
+    for (let i = 0; i < count; i++) threads.addMessage(thread.id, { thread_id: thread.id, role: 'user', content: query })
+    return thread
+  }
+  const remaining = createChat('保留', 40), removed = createChat('移除', 25)
+  const history = {
+    list: () => threads.list(),
+    getMessages(id: string) {
+      if (id === removed.id) setImmediate(() => threads.trash(id))
+      return threads.getMessages(id)
+    },
+  }
+  const panel = { panelId: 'local', surface: 'panel', origin: 'chrome-extension://test', isCurrentSession: () => true }
+  const search = (payload = {}) => miniPanelRequest({ op: 'search', scope: 'passages', query, ...payload }, panel, knowledge, history)
+  const first = await search()
+  assert.ok('anchor' in first && first.anchor && first.has_more && first.hits.length === 25)
+  const rest = await search({ offset: 25, anchor: first.anchor })
+  assert.ok('has_more' in rest && !rest.has_more && rest.hits.length === 15)
+  const hits = [...first.hits, ...rest.hits]
+  assert.ok(hits.every(hit => hit.id === remaining.id))
+  assert.equal(new Set(hits.map(hit => hit.message_id)).size, 40)
+})
