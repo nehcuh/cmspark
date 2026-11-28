@@ -140,9 +140,10 @@ import ts from "typescript"
 const companionRoot = path.resolve(__dirname, "../.."), repoRoot = path.dirname(companionRoot)
 function extensionModule(name: string, chrome: any) {
   const cache = new Map<string, any>(), base = path.join(repoRoot, "chrome-extension/src/background")
+  const imageContract = path.resolve(base, "../shared/image-data-url.ts")
   const load = (file: string): any => {
     file = file.endsWith(".ts") ? file : file + ".ts"
-    if (!file.startsWith(base + path.sep)) throw Error("OWNED_EXTENSION_SOURCE_OUTSIDE")
+    if (!file.startsWith(base + path.sep) && file !== imageContract) throw Error("OWNED_EXTENSION_SOURCE_OUTSIDE")
     if (cache.has(file)) return cache.get(file).exports
     const mod = { exports: {} }; cache.set(file, mod)
     const source = fs.readFileSync(file, "utf8"), result = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } })

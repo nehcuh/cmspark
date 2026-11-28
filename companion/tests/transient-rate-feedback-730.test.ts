@@ -9,6 +9,7 @@ import vm from "node:vm"
 import crypto from "node:crypto"
 import ts from "typescript"
 import { readonlyComputerDraft } from "../src/computer/readonly-session"
+import { isFullAutonomyCruise } from "../src/security-arm"
 
 const root = path.resolve(__dirname, "../../src")
 function source(file: string) {
@@ -93,6 +94,7 @@ function fixture(count = 30, busy = false, policyOff = false) {
   }
   const admission = compile(admissionCode, {
     readonlyComputerDraft,
+    isFullAutonomyCruise,
     validateComputerDraft: draft.validateComputerDraft,
     ComputerError: types.ComputerError, os: { platform: () => "darwin" }, WebSocket: { OPEN: 1 },
     getConfig: () => config, getComputerTaskAbortRegistry: () => active,
