@@ -6,6 +6,7 @@
  * existing summoner-stamped CompanionClient.
  */
 import { readBody } from "./http-body"
+import { findAvailablePort, forbidden, hostOk, parseQuery } from "./loopback-http"
 import { SUMMONER_MEETING_MEDIA_JS } from "./summoner/meeting-media"
 import { MeetingVideoUpload } from "./summoner/meeting-video-upload"
 import { serveMeetingRecordings } from "./summoner/meeting-recording-http"
@@ -168,37 +169,6 @@ function defaultAttachChrome(opts?: { foreground?: boolean }): string {
   return attachChromeOnly(getChromeOpener(), opts)
 }
 
-async function findAvailablePort(startPort: number): Promise<number> {
-  for (let port = startPort; port < startPort + 10; port++) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const probe = http.createServer()
-        probe.on("error", reject)
-        probe.listen(port, "127.0.0.1", () => {
-          probe.close(() => resolve())
-        })
-      })
-      return port
-    } catch {
-      continue
-    }
-  }
-  throw new Error("No available port for summoner web server")
-}
-
-function parseQuery(qs: string): Map<string, string> {
-  const out = new Map<string, string>()
-  if (!qs) return out
-  for (const pair of qs.split("&")) {
-    if (!pair) continue
-    const eq = pair.indexOf("=")
-    const k = eq < 0 ? decodeURIComponent(pair) : decodeURIComponent(pair.slice(0, eq))
-    const v = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1))
-    out.set(k, v)
-  }
-  return out
-}
-
 function overlayCookieToken(req: http.IncomingMessage): string | undefined {
   const raw = String(req.headers.cookie || "")
   const m = raw.match(/(?:^|;\s*)cmspark_overlay=([0-9a-fA-F]{64})/)
@@ -214,11 +184,6 @@ function tokenOk(req: http.IncomingMessage, expected: string): boolean {
   const provided = overlayHeaderToken(req) || overlayCookieToken(req)
   if (!provided || provided.length !== expected.length) return false
   return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
-}
-
-function hostOk(req: http.IncomingMessage, port: number): boolean {
-  const host = (req.headers.host || "").toLowerCase()
-  return host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`
 }
 
 function originOk(req: http.IncomingMessage, port: number): boolean {
@@ -239,15 +204,6 @@ function corsAllowOrigin(req: http.IncomingMessage, port: number): string {
   if (origin.toLowerCase() === "null") return "null"
   if (origin && originOk(req, port)) return origin
   return `http://127.0.0.1:${port}`
-}
-
-function forbidden(res: http.ServerResponse, reason: string) {
-  if (res.headersSent) {
-    res.end()
-    return
-  }
-  res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" })
-  res.end(`Forbidden: ${reason}`)
 }
 
 function jsonResponse(res: http.ServerResponse, data: unknown, status = 200) {
@@ -647,7 +603,7 @@ export async function startSummonerWebServer(opts: {
     return { port: activePort, token: sessionToken }
   }
 
-  const port = await findAvailablePort(opts.preferredPort ?? 23403)
+  const port = await findAvailablePort(opts.preferredPort ?? 23403, "summoner web server")
   lastAccessTime = Date.now()
   const token = crypto.randomBytes(32).toString("hex")
 

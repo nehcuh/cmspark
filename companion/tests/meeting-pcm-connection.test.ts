@@ -1,4 +1,5 @@
 import { readBody } from "../src/http-body"
+import { parseQuery } from "../src/loopback-http"
 import { test } from "node:test"
 import * as assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
@@ -146,10 +147,10 @@ test("actual menu dispatch/client pending/backend handlers relay q1 receiving/ch
 function actualHttpRequests(client: CompanionClient, dispatch: ReturnType<typeof actualTrayDispatch>, now?: () => number) {
   const file = path.resolve("src/summoner-web.ts"), source = fs.readFileSync(file, "utf8")
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
-  const names = ["handleRequest", "dispatchMeetingPcmHttp", "releaseFinishedOverlayCapture", "parseQuery"]
+  const names = ["handleRequest", "dispatchMeetingPcmHttp", "releaseFinishedOverlayCapture"]
   const functions = names.map(name => ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === name)!.getText(ast)).join("\n")
   const js = ts.transpileModule(functions + "\nmodule.exports = handleRequest", { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
-  const context: any = { module: { exports: {} }, Map, Buffer, readBody, meetingHttpBegin: new (require("../src/voice/meeting-pcm-http-begin").MeetingPcmHttpBegin)(now), overlayContinuousCapture: null, JSON_BODY_MAX: 1024 * 1024,
+  const context: any = { module: { exports: {} }, Map, Buffer, readBody, parseQuery, meetingHttpBegin: new (require("../src/voice/meeting-pcm-http-begin").MeetingPcmHttpBegin)(now), overlayContinuousCapture: null, JSON_BODY_MAX: 1024 * 1024,
     meetingVideoUpload: new (require("../src/summoner/meeting-video-upload").MeetingVideoUpload)(),
     tokenOk: () => true, hostOk: () => true, originOk: () => true,
     forbidden(res: any) { res.value = { type: "error", code: "forbidden" } },

@@ -1,4 +1,5 @@
 import { readBody } from "./http-body"
+import { findAvailablePort, forbidden, hostOk, parseQuery } from "./loopback-http"
 import { probeVisionConnection } from "./llm/vision-pipeline"
 import settingsVisionScript from "./llm/settings-vision-script.generated.json"
 import { resolveNativeVision } from "./llm/likely-multimodal"
@@ -64,38 +65,11 @@ export function settingsWebLlmResponse(llm: Record<string, any>): Record<string,
   return result
 }
 
-async function findAvailablePort(startPort: number): Promise<number> {
-  for (let port = startPort; port < startPort + 10; port++) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const probe = http.createServer()
-        probe.on("error", reject)
-        probe.listen(port, "127.0.0.1", () => {
-          probe.close(() => resolve())
-        })
-      })
-      return port
-    } catch {
-      continue
-    }
-  }
-  throw new Error("No available port for settings server")
-}
-
 function jsonResponse(res: http.ServerResponse, data: any, status = 200) {
   if (!res.headersSent) {
     res.writeHead(status, { "Content-Type": "application/json" })
   }
   res.end(JSON.stringify(data))
-}
-
-function forbidden(res: http.ServerResponse, reason: string) {
-  if (res.headersSent) {
-    res.end()
-    return
-  }
-  res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" })
-  res.end(`Forbidden: ${reason}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +175,7 @@ export async function startSettingsServer(preferredPort = 23402): Promise<{ port
     return { port: activePort, token: sessionToken }
   }
 
-  const port = await findAvailablePort(preferredPort)
+  const port = await findAvailablePort(preferredPort, "settings server")
   lastAccessTime = Date.now()
   const token = crypto.randomBytes(32).toString("hex")
 
@@ -245,19 +219,6 @@ export function stopSettingsServer(): void {
 // Request handler
 // ---------------------------------------------------------------------------
 
-function parseQuery(qs: string): Map<string, string> {
-  const out = new Map<string, string>()
-  if (!qs) return out
-  for (const pair of qs.split("&")) {
-    if (!pair) continue
-    const eq = pair.indexOf("=")
-    const k = eq < 0 ? decodeURIComponent(pair) : decodeURIComponent(pair.slice(0, eq))
-    const v = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1))
-    out.set(k, v)
-  }
-  return out
-}
-
 function tokenOk(req: http.IncomingMessage, expected: string): boolean {
   const raw = req.url || ""
   const qIdx = raw.indexOf("?")
@@ -268,11 +229,6 @@ function tokenOk(req: http.IncomingMessage, expected: string): boolean {
   if (provided.length !== expected.length) return false
   // constant-time compare
   return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
-}
-
-function hostOk(req: http.IncomingMessage, port: number): boolean {
-  const host = (req.headers.host || "").toLowerCase()
-  return host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`
 }
 
 function originOk(req: http.IncomingMessage, port: number): boolean {
