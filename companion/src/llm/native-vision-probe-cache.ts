@@ -1,3 +1,5 @@
+import { likelyMultimodal } from "./reasoning-effort"
+
 /**
  * In-memory image-probe result from config.test.
  * Bound to {url, model} — never written to config.json.
@@ -57,4 +59,26 @@ export function lookupNativeVisionProbe(url: string, model: string): boolean | u
 
 export function clearNativeVisionProbe(): void {
   cache = null
+}
+
+export type NativeVisionMode = "auto" | "on" | "off"
+
+/**
+ * Composer attachments + screenshot rail: honor explicit override, else name
+ * keyed {url,model} probe, else name heuristic. Unkeyed `detected` is ignored.
+ */
+export function resolveNativeVision(opts: {
+  modelName?: string | null
+  baseUrl?: string | null
+  mode?: NativeVisionMode | boolean | null
+  /** Display/session probe bit — always ignored for routing (C1 lock-step with panel). */
+  detected?: boolean | null
+}): boolean {
+  const raw = opts.mode
+  const mode: NativeVisionMode =
+    raw === true || raw === "on" ? "on" : raw === false || raw === "off" ? "off" : "auto"
+  if (mode === "on") return true
+  if (mode === "off") return false
+  void opts.detected
+  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") ?? likelyMultimodal(opts.modelName, opts.baseUrl)
 }

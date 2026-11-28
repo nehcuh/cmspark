@@ -36,6 +36,16 @@ test("settings web keeps edits while saves and conflicts are in flight", async (
   pending[0].resolve({ config_revision: "epoch:1", llm: { model_name: "gpt-4o" }, vision: { enabled: true, protocol: "openai", base_url: "https://vision.invalid", model_name: "separate-vl" } })
   await flush()
   assert.equal(element("modelName").disabled, false)
+  // A draft can switch image capabilities by editing only the endpoint.
+  element("modelName").value = "glm-5.4"
+  element("baseUrl").value = "https://api.z.ai/api/coding/paas/v4"
+  element("baseUrl").oninput()
+  assert.equal(element("visionReuseMain").checked, true)
+  element("baseUrl").value = "https://relay.invalid/v1"
+  element("baseUrl").oninput()
+  assert.equal(element("visionReuseMain").checked, false)
+  element("modelName").value = "gpt-4o"
+  element("modelName").oninput()
   element("apiKey").value = "changed-main-owned-key"
   element("visionApiKey").value = "dedicated-vision-owned-key"
   element("protocol").value = "anthropic"

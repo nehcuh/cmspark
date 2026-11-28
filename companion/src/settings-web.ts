@@ -1,6 +1,7 @@
 import { readBody } from "./http-body"
 import { probeVisionConnection } from "./llm/vision-pipeline"
-import { likelyMultimodal, resolveNativeVision } from "./llm/likely-multimodal"
+import settingsVisionScript from "./llm/settings-vision-script.generated.json"
+import { resolveNativeVision } from "./llm/likely-multimodal"
 // Local Web settings server for CMspark Companion
 // Spawns a temporary HTTP server on 127.0.0.1, opens browser to settings page.
 //
@@ -781,12 +782,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     k=(k||"").trim();
     return !k||k==="***"||/^\\*+$/.test(k)||k.indexOf("****")>=0
   }
-  var mainSupportsVision=${likelyMultimodal.toString()};
+  ${settingsVisionScript.join("\n")}
   var mainNativeMode="auto",savedMainVision=null,visionReusePreference=true;
   function syncVisionReuseUi(){
     var on=visionEnabledEl.checked;
     var known=savedMainVision&&savedMainVision.url===baseUrlEl.value&&savedMainVision.model===modelNameEl.value;
-    var canReuse=mainNativeMode==="on"||(mainNativeMode!=="off"&&(known?savedMainVision.supported:mainSupportsVision(modelNameEl.value, baseUrlEl.value)));
+    var canReuse=mainNativeMode==="on"||(mainNativeMode!=="off"&&(known?savedMainVision.supported:settingsVision.likelyMultimodal(modelNameEl.value, baseUrlEl.value)));
     var reuse=$("visionReuseMain"),fields=$("visionIndependentFields"),bar=$("visionReuseBar"),hint=$("visionReuseHint");
     reuse.checked=canReuse&&visionReusePreference;
     reuse.disabled=!configLoaded||!canReuse||!on;
