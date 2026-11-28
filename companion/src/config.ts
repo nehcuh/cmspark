@@ -8,6 +8,7 @@ import { EventEmitter } from "events"
 import { isDeepStrictEqual } from "node:util"
 import { getBuiltinSkillsSrc } from "./paths"
 import { atomicWriteJSON } from "./io"
+import { DEFAULT_LOG_MAX_FILE_MB, DEFAULT_LOG_RETENTION_DAYS, pruneOldLogs } from "./log-rotation"
 import { validateWildcardPattern } from "./security/domain-patterns"
 import type { McpConfig, McpServerConfig } from "./mcp/types"
 import { defaultFilesystemServerConfig } from "./mcp/filesystem-home"
@@ -495,8 +496,8 @@ const defaultConfig: CompanionConfig = {
   trusted_domains: [],
   auto_approved_domains: [],
   history_retention_days: 30,
-  log_retention_days: 14,
-  log_max_file_mb: 10,
+  log_retention_days: DEFAULT_LOG_RETENTION_DAYS,
+  log_max_file_mb: DEFAULT_LOG_MAX_FILE_MB,
   thread_digest: {
     enabled: false,
     on_idle_hours: 24,
@@ -800,8 +801,7 @@ export async function initDataDir(): Promise<void> {
 
   // M8: prune stale log files after directories exist so retention never blocks startup.
   try {
-    const { pruneOldLogs } = await import("./log-rotation")
-    pruneOldLogs()
+    pruneOldLogs(root, getConfig().log_retention_days)
   } catch { /* best-effort */ }
 }
 

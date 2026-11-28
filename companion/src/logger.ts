@@ -2,7 +2,7 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import { getLogDir } from "./config"
+import { getConfig, getLogDir } from "./config"
 import { rotateLogFileIfNeeded } from "./log-rotation"
 
 export type LogLevel = "debug" | "info" | "warn" | "error"
@@ -120,7 +120,9 @@ export function logEvent(
   try {
     const filePath = getLogFilePath(now)
     fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 })
-    rotateLogFileIfNeeded(filePath)
+    try {
+      rotateLogFileIfNeeded(filePath, getConfig().log_max_file_mb)
+    } catch { /* A config read failure must still allow the event to be written. */ }
     const entry = {
       ts: now.toISOString(),
       level,
