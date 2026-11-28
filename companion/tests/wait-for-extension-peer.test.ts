@@ -11,6 +11,7 @@ import * as path from "node:path"
 import { WebSocket } from "ws"
 import {
   bindExtensionPeerPicker,
+  hasAuthenticatedExtensionPeer,
   bindOverlayConfirmPeerForTests,
   ensureExtensionPeerForOverlayConfirm,
   notifyExtensionPeerAuthenticated,
@@ -39,6 +40,19 @@ function sleep(ms: number): Promise<void> {
 
 afterEach(() => {
   resetExtensionPeerWaitersForTests()
+})
+
+test("passive peer status follows the current picker without attaching or waiting", () => {
+  let peer: WebSocket | null = null
+  bindExtensionPeerPicker(() => peer)
+  bindOverlayConfirmPeerForTests({ attach: () => assert.fail("status opened Chrome") })
+  assert.equal(hasAuthenticatedExtensionPeer(), false)
+  peer = fakeWs("extension")
+  assert.equal(hasAuthenticatedExtensionPeer(), true)
+  peer = null
+  assert.equal(hasAuthenticatedExtensionPeer(), false)
+  bindExtensionPeerPicker(() => { throw new Error("unavailable") })
+  assert.equal(hasAuthenticatedExtensionPeer(), false)
 })
 
 test("waitForExtensionPeer resolves when subscribe fires, not via timer poll", async () => {

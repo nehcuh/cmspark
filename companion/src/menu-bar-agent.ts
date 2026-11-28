@@ -22,6 +22,7 @@ import {
   QuickActionItem,
   RecentThreadItem,
 } from "./tray/tray-adapter"
+import { hasAuthenticatedExtensionPeer } from "./ws/extension-peer"
 import { CompanionClient } from "./tray/companion-client"
 import { DesktopMini, type DesktopMiniAction } from "./mini/desktop-mini"
 import { LinuxMiniHost } from "./mini/linux-mini"
@@ -655,16 +656,6 @@ function openChromeSidePanel(): void {
   }
 }
 
-/** Lazy require: lifecycle already imports this module; load-time import would cycle. */
-function summonerBrowserAttached(): boolean {
-  try {
-    const { pickAuthenticatedClientWs } = require("./ws/lifecycle") as typeof import("./ws/lifecycle")
-    return pickAuthenticatedClientWs() != null
-  } catch {
-    return false
-  }
-}
-
 function readSummonerCfg() {
   return getConfig().summoner ?? {}
 }
@@ -780,7 +771,7 @@ async function hydrateSummonerThread(id: string, sessionToken?: number): Promise
         buildSummonerHydratePayload({
           thread_id: tid,
           lines: hydratePlaintext(messages),
-          browser: summonerBrowserAttached() ? "attached" : "detached",
+          browser: hasAuthenticatedExtensionPeer() ? "attached" : "detached",
         }),
       )
     },
@@ -1170,7 +1161,7 @@ export async function handleSummonerSubmit(
         buildSummonerHydratePayload({
           thread_id: id,
           lines,
-          browser: summonerBrowserAttached() ? "attached" : "detached",
+          browser: hasAuthenticatedExtensionPeer() ? "attached" : "detached",
         }),
       )
     },
@@ -1496,7 +1487,7 @@ async function handleSummonerFiles(
           buildSummonerHydratePayload({
             thread_id: tid,
             lines: [],
-            browser: summonerBrowserAttached() ? "attached" : "detached",
+            browser: hasAuthenticatedExtensionPeer() ? "attached" : "detached",
           }),
         )
       }
@@ -1596,7 +1587,7 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
         buildSummonerHydratePayload({
           thread_id: created.id,
           lines: [],
-          browser: summonerBrowserAttached() ? "attached" : "detached",
+          browser: hasAuthenticatedExtensionPeer() ? "attached" : "detached",
         }),
       )
       return claimOverlayLeaseDetailed(client, created.id)
@@ -1894,7 +1885,7 @@ async function openSummonerWebShell(threadId: string, view?: "meeting"): Promise
         if (!companionClient) return Promise.reject(new Error("not connected"))
         return companionClient.sendAppRequest("ui.open_sidepanel", {}, 8_000)
       },
-      hasExtensionPeer: summonerBrowserAttached,
+      hasExtensionPeer: hasAuthenticatedExtensionPeer,
       onShellClosed: () => {
         void handleSummonerClosed()
       },
