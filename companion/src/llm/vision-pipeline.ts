@@ -171,7 +171,7 @@ export async function analyzeImage(
     options?.requireComplete, options?.disableReasoning, !!options?.consent, image.base64]))
 
   // Check cache
-  const cached = getCached(key, config.cache_ttl_seconds)
+  const cached = config.cache_ttl_seconds > 0 ? getCached(key, config.cache_ttl_seconds) : null
   if (cached) {
     return { description: cached.description, cached: true, model_used: cached.model_used, latency_ms: 0 }
   }
@@ -273,7 +273,7 @@ async function doAnalyze(
       throw new VisionOutputError(response.reasoning?.trim() || response.usage?.reasoning_tokens ? "reasoning_only" : "empty")
     }
 
-    setCache(cacheKey, description, config.model_name)
+    if (config.cache_ttl_seconds > 0) setCache(cacheKey, description, config.model_name)
     logger.info("vision.analyzed", { model: config.model_name, latency_ms: latencyMs, cached: false })
 
     return { description, cached: false, model_used: config.model_name, latency_ms: latencyMs }
