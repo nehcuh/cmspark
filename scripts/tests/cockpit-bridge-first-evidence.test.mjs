@@ -139,8 +139,8 @@ if (process.argv[2] === '--producer') {
     assert.equal(sites.sourceSHA256, createHash('sha256').update(controller.replaceAll('\r\n', '\n')).digest('hex'))
     coverage(controller.replaceAll('\r\n', '\n')); coverage(controller.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'))
     const shared = fs.readFileSync(new URL('../../companion/tests/fixtures/native-surface-650.ts', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
-    assert.equal(createHash('sha256').update(shared).digest('hex'), '15b13cd023e6b95f53327bc6d18d89c1d72704177cb825d61dd2f6a42e11aee7')
-    assert.equal(createHash('sha256').update(restoreObservation788(shared)).digest('hex'), 'bb4099db59ba888505c134f1771985712f0cb99f1a6f2bf56b86dff96b76e645')
+    assert.equal(createHash('sha256').update(shared).digest('hex'), '268c7213c3906e18479a401792371899791e46ee115147bfd4a032cac8572768')
+    assert.equal(createHash('sha256').update(restoreObservation788(shared)).digest('hex'), '64e93d8f9e79ee6586bbac4e903ca1715e6dcaafcd58b8b75df0096b6fca1229')
   })
   test('actual coverage rejects omitted wrappers, prearmed observation and surface completion', () => {
     for (const mutation of [controller.replace('await evidence.wait(', 'await omittedWait('), controller.replace('evidence.check(1,', 'omittedCheck(1,'), controller.replace('evidence.callback(', 'omittedCallback('), controller.replace('evidence.wait(36,', 'omittedWait(36,'), controller.replace('expectedNonce: preparedNonce', 'expectedNonce: undefined'), controller.replace('evidence.arm(', 'omittedArm('), controller.replace('finally { evidence.surface(2) }', 'finally { void 0 }')]) assert.throws(() => coverage(mutation))
