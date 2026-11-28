@@ -1,8 +1,14 @@
 # 版本与交付状态
 
-源码开发版本 **1.13.0（尚未正式发布）**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
+源码版本 **1.13.0（已于 2026-11-28 正式发布）**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
 
-## 1.13.0
+## 1.13.0 正式发布
+
+2026-11-28 15:00（北京时间）发布。标签 `v1.13.0` 指向主线提交 `96fa2637`。治理改动随小窗会议录制、跨平台转写及 MCP 工具按需加载一起交付。[正式安装包](https://github.com/nehcuh/cmspark/releases/tag/v1.13.0) · [合并记录](https://github.com/nehcuh/cmspark/pull/927)
+
+两条托管 Windows 检查均通过 WebView2 启动、表单确认和持久化验收。macOS、Windows 和 Linux 的 x64、ARM64 安装器均用随包 Whisper 完成音频转写。[主线 CI](https://github.com/nehcuh/cmspark/actions/runs/46115868251) · [正式构建](https://github.com/nehcuh/cmspark/actions/runs/46118075626) · [同标签安装器](https://github.com/nehcuh/cmspark/actions/runs/46118077950)
+
+19 项公开附件已逐件下载核对大小和 SHA-256，安装器总清单覆盖其余 18 项附件。[校验记录](https://github.com/nehcuh/cmspark/actions/runs/46119260791) · [SHA-256 清单](https://github.com/nehcuh/cmspark/releases/download/v1.13.0/SHA256SUMS-INSTALLERS.txt)
 
 Mini 浮球的单击菜单、长按快聊和延时截图操作见[个人工作台指南](personal-workspace.md)。小窗会议、转写语言、纪要和章节见[会议记录指南](meeting-and-dictation-user-guide.md)。相关需求见 [#921](https://github.com/nehcuh/cmspark/issues/921) 和 [#922](https://github.com/nehcuh/cmspark/issues/922)。
 
