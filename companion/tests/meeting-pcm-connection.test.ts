@@ -1,3 +1,5 @@
+import { readBody } from "../src/http-body"
+import { parseQuery } from "../src/loopback-http"
 import { test } from "node:test"
 import * as assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
@@ -37,6 +39,26 @@ function setup(backend: (message: any) => Promise<any>) {
   }
   return { client, sockets, connect }
 }
+
+test("simultaneous capability probes keep the same authenticated connection binding", async () => {
+  const replies: Array<(value: any) => void> = []
+  const { client, connect } = setup(msg => msg.type === "system.ping"
+    ? new Promise(resolve => replies.push(resolve))
+    : Promise.resolve(null))
+  try {
+    await connect()
+    const first = client.observeMeetingPcm()
+    const second = client.observeMeetingPcm()
+    assert.equal(replies.length, 2)
+    replies[0](meetingPcmPong())
+    assert.equal(await first, 1)
+    const binding = client.getMeetingPcmObservation()
+    assert.ok(binding)
+    replies[1](meetingPcmPong())
+    assert.equal(await second, 1)
+    assert.equal(client.getMeetingPcmObservation(), binding)
+  } finally { client.disconnect() }
+})
 function actualTrayDispatch(): (client: CompanionClient, message: any, observation?: unknown) => Promise<any> {
   const file = path.resolve("src/menu-bar-agent.ts"), source = fs.readFileSync(file, "utf8")
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
@@ -125,17 +147,18 @@ test("actual menu dispatch/client pending/backend handlers relay q1 receiving/ch
 function actualHttpRequests(client: CompanionClient, dispatch: ReturnType<typeof actualTrayDispatch>, now?: () => number) {
   const file = path.resolve("src/summoner-web.ts"), source = fs.readFileSync(file, "utf8")
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
-  const names = ["handleRequest", "dispatchMeetingPcmHttp", "readBody", "parseQuery"]
+  const names = ["handleRequest", "dispatchMeetingPcmHttp", "releaseFinishedOverlayCapture"]
   const functions = names.map(name => ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === name)!.getText(ast)).join("\n")
   const js = ts.transpileModule(functions + "\nmodule.exports = handleRequest", { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
-  const context: any = { module: { exports: {} }, Map, Buffer, meetingHttpBegin: new (require("../src/voice/meeting-pcm-http-begin").MeetingPcmHttpBegin)(now), overlayContinuousCapture: null, JSON_BODY_MAX: 1024 * 1024,
+  const context: any = { module: { exports: {} }, Map, Buffer, readBody, parseQuery, meetingHttpBegin: new (require("../src/voice/meeting-pcm-http-begin").MeetingPcmHttpBegin)(now), overlayContinuousCapture: null, JSON_BODY_MAX: 1024 * 1024,
+    meetingVideoUpload: new (require("../src/summoner/meeting-video-upload").MeetingVideoUpload)(),
     tokenOk: () => true, hostOk: () => true, originOk: () => true,
     forbidden(res: any) { res.value = { type: "error", code: "forbidden" } },
     jsonResponse(res: any, value: any) { res.value = value },
     getConfig: () => ({ voice: { sttEngine: "local", localModelId: "medium" } }),
     activeMeetingPcmConnection: () => client.getMeetingPcmObservation(), activeObserveMeetingPcm: () => client.observeMeetingPcm(),
     dispatchAllowed: (type: string, params: any, observation: any) => dispatch(client, { ...params, type }, observation),
-    validMeetingPcmMessage: require("../src/voice/meeting-pcm-schema").validMeetingPcmMessage,
+    validMeetingPcmMessage: require("../src/voice/meeting-pcm-schema").validMeetingPcmMessage, projectCaptureStatus,
   }
   vm.runInNewContext(js, context)
   const request = async (url: string, body?: any, beforeBody?: () => Promise<void>) => {
@@ -211,6 +234,13 @@ test("actual HTTP single Begin expires without renewal; different id conflicts a
     assert.equal((await http(`/api/voice-settings?capture_id=${nextId}`)).meeting_pcm_contract, 1)
     http.context.meetingHttpBegin.terminal(secondId, client.getMeetingPcmObservation())
     assert.ok(http.context.meetingHttpBegin.binding(nextId, client.getMeetingPcmObservation(), client.getMeetingPcmObservation()), "late old terminal cannot clear next Begin")
+    const retry = await http("/api/meeting/start", { ...start(nextId), expected_capture_epoch: 1 })
+    assert.equal(retry.type, "meeting.started")
+    const denied = await http("/api/stt/abort", { ...common, sessionId: nextId, capture_epoch: 2 })
+    assert.equal(denied.completion.outcome, "cancelled")
+    assert.equal(http.context.overlayContinuousCapture, null)
+    assert.equal((await http(`/api/voice-settings?capture_id=${captureId}`)).meeting_pcm_contract, 1,
+      "microphone denial before receiving must allow an immediate explicit retry without an SSE terminal")
     http.context.meetingHttpBegin.reset()
   } finally { client.disconnect(); service.forceAbort(); deleteMeeting(meeting.id) }
 })

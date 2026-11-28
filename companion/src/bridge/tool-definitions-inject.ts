@@ -2,7 +2,7 @@
 // is present without re-serializing the full catalog array in a single edit.
 // #au4dch also injects downloads_find; S40 injects skill_install.
 import { BROWSER_DOWNLOAD_TOOL, DOWNLOADS_FIND_TOOL } from "./_browser_download_tool_snippet"
-import { SKILL_INSTALL_TOOL } from "../skills/skill-install"
+import { SKILL_INSTALL_TOOL } from "../skills/tool-definitions"
 import { BUSINESS_DRAFT_TOOL_DEFINITIONS } from "../business-evidence/tool-definitions"
 import { CODE_REVIEW_TOOL_DEFINITIONS } from "../code-review/tool-definitions"
 

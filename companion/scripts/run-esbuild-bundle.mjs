@@ -45,10 +45,12 @@ if (packageTray.length) {
   if (config.error) throw new Error("TRAY_TSCONFIG_INVALID")
   const parsed = typescript.parseJsonConfigFileContent(config.config, typescript.sys, companionRoot)
   if (parsed.errors.length) throw new Error("TRAY_TSCONFIG_INVALID")
-  const sourceFile = path.join(companionRoot, "src", "tray", "swift-tray-bridge.ts")
-  const compiledFile = path.join(companionRoot, "dist", "tray", "swift-tray-bridge.js")
-  assertFreshTraySource({ typescript, source: readFileSync(sourceFile, "utf8"),
-    compiled: readFileSync(compiledFile, "utf8"), compilerOptions: parsed.options, fileName: sourceFile })
+  for (const module of ["tray/swift-tray-bridge", "binary-fingerprint"]) {
+    const sourceFile = path.join(companionRoot, "src", module + ".ts")
+    const compiledFile = path.join(companionRoot, "dist", module + ".js")
+    assertFreshTraySource({ typescript, source: readFileSync(sourceFile, "utf8"),
+      compiled: readFileSync(compiledFile, "utf8"), compilerOptions: parsed.options, fileName: sourceFile })
+  }
 }
 const staging = path.resolve(companionRoot, "..", "dist-package", `cmspark-macos-${trayArch}`)
 const trayPath = verifyStaging ? path.join(staging, "cmspark-tray") : path.join(companionRoot, "dist", "cmspark-tray")

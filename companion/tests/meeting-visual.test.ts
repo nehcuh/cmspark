@@ -241,6 +241,7 @@ test("committed visual additions and removals retain success when a later minute
   const p = await f.call("prepare",{frames:f.frames.slice(0,1)})
   const result = await f.call("execute",{consent_token:p.consent_token,frames:f.images.slice(0,1)})
   assert.equal(failures,1)
+  assert.deepEqual(readdirSync(join(f.dir, "meetings", f.id)).filter(name => name.includes(".tmp")), [])
   assert.deepEqual(result.completed,[f.frames[0].frameId])
   const evidence = (await f.call("list")).evidence
   assert.equal(evidence.length,1)

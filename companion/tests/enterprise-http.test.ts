@@ -39,12 +39,12 @@ test("actual loopback HTTP uses concrete grant-only versioned contract, no-store
   } finally { api.close(); await new Promise<void>(resolve => server.close(() => resolve())) }
 })
 
-test("production shutdown closes lazy writer and permanently fences late HTTP admission", async () => {
+test("cold HTTP service observes late browser binding and shutdown fences subsequent admission", async () => {
   resetEnterpriseHttpForTests()
   const instance = registerEnterpriseInstance("http-test-profile", "user-a")
   const key = generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }).toString()
-  const grant = issueOutboundGrant({ caller_id: "itcra", label: "shutdown", enterprise_policy: { ...instance, revision: "r1", expires_at: new Date(Date.now() + 60_000).toISOString(), authority_public_key: key,
-    tools: ["navigate"], navigation: [{ origin: "https://business.test", path: "/app" }], evidence: [], login: [], ready: [{ selector: "#ready" }], login_markers: [{ selector: "#login" }], actions: [] } })
+  const grant = issueOutboundGrant({ caller_id: "itcra", label: "shutdown", profile: "outbound_l1_interact", enterprise_policy: { ...instance, revision: "r1", expires_at: new Date(Date.now() + 60_000).toISOString(), authority_public_key: key,
+    tools: ["create_tab"], navigation: [{ origin: "https://business.test", path: "/app" }], evidence: [], login: [], ready: [{ selector: "#ready" }], login_markers: [{ selector: "#login" }], actions: [] } })
   const lock = join(getConfigDir(), "enterprise-browser-state.json.lock")
   closeEnterpriseHttp(); assert.equal(existsSync(lock), false)
   resetEnterpriseHttpForTests()
@@ -54,6 +54,36 @@ test("production shutdown closes lazy writer and permanently fences late HTTP ad
   const request = () => fetch(url, { headers: { Authorization: "Bearer " + grant.token } })
   try {
     assert.equal((await request()).status, 200); assert.equal(existsSync(lock), true)
+    const open = async (key: string) => {
+      const response = await fetch(url.replace("/capabilities?subject=user-a", "/sessions"), {
+        method: "POST", headers: { Authorization: "Bearer " + grant.token, "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: "user-a", change_id: "change", request_key: key, url: "https://business.test/app" }),
+      })
+      return [response.status, (await response.json() as { error_code: string }).error_code]
+    }
+    assert.deepEqual(await open("cold"), [503, "ENTERPRISE_UNAVAILABLE"])
+    assert.equal(require.cache[require.resolve("../src/ws/lifecycle")], undefined)
+    const life = await import("../src/ws/lifecycle")
+    const { WebSocket } = await import("ws")
+    // The bound probe reports an incompatible browser. No tab is created.
+    const calls: string[] = []
+    type Lifecycle = Parameters<typeof life.bindWsLifecycle>[0]
+    const deps: Partial<Lifecycle> = { createToolExecutor: () => async (_id, tool) => {
+      calls.push(tool)
+      return { success: true, data: {} }
+    } }
+    life.bindWsLifecycle(deps as Lifecycle)
+    const peer = { readyState: WebSocket.OPEN } as import("ws").WebSocket
+    life.seedExtensionWsAuthForTests(peer)
+    life.getWsClients().add(peer)
+    try {
+      assert.deepEqual(await open("bound"), [409, "ENTERPRISE_BRIDGE_INCOMPATIBLE"])
+      assert.deepEqual(calls, ["list_tabs"])
+    } finally {
+      life.getWsClients().delete(peer)
+      life.ensureOutboundToolRunnerWired()
+    }
+    assert.deepEqual(await open("disconnected"), [503, "ENTERPRISE_UNAVAILABLE"])
     closeEnterpriseHttp(); assert.equal(existsSync(lock), false)
     for (let i = 0; i < 3; i++) { const denied = await request(); assert.equal(denied.status, 503); assert.equal((await denied.json() as any).error_code, "SERVICE_SHUTTING_DOWN"); assert.equal(existsSync(lock), false) }
     resetEnterpriseHttpForTests(); assert.equal((await request()).status, 200); assert.equal(existsSync(lock), true)

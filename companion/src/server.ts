@@ -19,12 +19,12 @@ import { desktopFrameInspector } from "./computer/main-model-vision"
 import { bindChatEvidenceScope } from "./business-evidence/chat-scope"
 import { setOutboundContextEngine } from "./outbound-mcp/companion-http"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
-import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
+import { gcExpiredMeetingAudio, reconcileStaleRecordings } from "./meeting/meeting-store"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { SecurityConfirmationManager } from "./security-confirmation"
-import { getTrayInstance } from "./menu-bar-agent"
+import { securityConfirmations } from "./security/companion-confirmations"
+export { securityConfirmations } from "./security/companion-confirmations"
 import { logger } from "./logger"
 import { getMcpConfirmCache, isMcpNamespaced } from "./mcp"
 import {
@@ -194,26 +194,6 @@ void import("./orchestrator/tab-lease")
 // tabUrlCache → ws/tab-url-cache.ts (day dual-review nit: colocation)
 // applyTabNavigated / getCachedTabUrl / refreshTabUrlCache re-exported above.
 
-// Exported for integration tests (audit item 2 / 12) so tests can drive
-// securityConfirmations.respond(...) when simulating user approval/denial.
-export const securityConfirmations = new SecurityConfirmationManager()
-
-// N5 (P3a HUD spike): when a confirm becomes terminal, fan-out to tray popover
-// + HUD so multi-surface UI clears. WS origin already gets resolved via pending.send.
-// Spike scope = HUD + tray only; multi-client WS fan-out deferred (dual-review P4).
-// Wire ownership: server owns the manager singleton — do not construct a second manager.
-securityConfirmations.setOnTerminal(({ confirmationId, reason }) => {
-  try {
-    const tray = getTrayInstance()
-    if (!tray) return
-    tray.cancelConfirm(confirmationId)
-    tray.cancelHudConfirm?.(confirmationId)
-    tray.notifyHudConfirmResolved?.(confirmationId, reason)
-  } catch {
-    /* never break confirm resolve path */
-  }
-})
-
 // Per-connection MCP session IDs (randomUUID from createToolExecutor) keyed by
 // the WebSocket they belong to. Used by ws.on("close") to clear the
 // McpConfirmCache for that session — without this, stale first-use approvals
@@ -340,6 +320,12 @@ function logToolFinish(toolCallId: string, toolName: string, startedAt: number, 
 
 async function initServices() {
   await initDataDir()
+  // Only the server holding the daemon lock can declare a previous capture interrupted.
+  try {
+    reconcileStaleRecordings(getConfigDir())
+  } catch (error) {
+    logger.warn("meeting.recording_reconcile_boot_failed", { error: String(error) })
+  }
   threadManager = new ThreadManager()
   skillEngine = new SkillEngine(getConfig().llm)
   setOutboundContextEngine(skillEngine)
@@ -401,9 +387,9 @@ async function initServices() {
   const tm = threadManager
   const { reconcileFleetFollowup, reapReleasedWorkers } = await import("./orchestrator/fleet-continuity")
   const { collectWorkerHandback, resolveToolCallFromThreadMessages } = await import("./board")
-  const { buildIsThreadLlmActive } = await import("./tool/companion-dispatch")
+  const { isThreadRunActiveOrQueued: active } = await import("./llm/active-runs")
   const { broadcastFleetSnapshotIfWorkers } = await import("./orchestrator/fleet")
-  const active = await buildIsThreadLlmActive()
+
   const send = (frame: unknown) => {
     for (const peer of getWsClients()) {
       const auth = getWsAuthState(peer)
@@ -936,7 +922,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
               // F1: synchronous require — an `await import` gap let a user
               // chat.create install its controller first, and the old
               // install-reuse then double-ran the worker on one signal.
-              const { installKickAbortController, releaseKickAbortController } = require("./message-router") as typeof import("./message-router")
+              const { installKickAbortController, releaseRunController } = require("./llm/active-runs") as typeof import("./llm/active-runs")
               const controller = installKickAbortController(threadId)
               if (!controller) {
                 // Another run owns the thread (user manually chatting this
@@ -971,7 +957,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
                   error: e?.message || String(e),
                 })
               } finally {
-                releaseKickAbortController(threadId, controller)
+                releaseRunController(threadId, controller)
               }
             })
           },

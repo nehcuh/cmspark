@@ -1,5 +1,5 @@
 import { spawn } from "child_process"
-import { windowsTaskkillPath } from "../acp/win-spawn"
+import { windowsTaskkillPath } from "../process-path"
 
 /** Keep the root alive until taskkill has enumerated its children. Killing the
  * ConPTY handle first can orphan them before /T walks the process tree. */

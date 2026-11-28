@@ -1,14 +1,13 @@
 import { createHash, randomUUID } from "node:crypto"
 import { DATA_DIR, getConfigSnapshot, type VisionConfig } from "../config"
 import { createProvider, type CompleteResult } from "../llm/provider"
-import { resolveVisionLlmConfig } from "../llm/vision-pipeline"
+import { resolveVisionLlmConfig } from "../llm/vision-config"
 import { displayModelEndpoint, resolveMeetingVisualModel } from "../model-center"
 import { loadMeeting, watchMeetingDeletion, type MeetingSession } from "./meeting-store"
 import { matchesVisualImage, validVisualMessage, type MeetingVisualFrame } from "./meeting-visual-schema"
-import {
-  MeetingVisualEvidenceUnavailableError, quarantineUnreadableMeetingEvidence, readMeetingVisualEvidence,
-  removeMeetingVisualEvidence, sameVisualFrame, validVisualFacts, writeMeetingVisualEvidence, type VisualFacts,
-} from "./meeting-visual-store"
+import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence,
+  sameVisualFrame, validVisualFacts, type VisualFacts } from "./meeting-visual-evidence"
+import { quarantineUnreadableMeetingEvidence, removeMeetingVisualEvidence, writeMeetingVisualEvidence } from "./meeting-visual-store"
 
 type Target = { vision: VisionConfig; profileId: string; profileName: string; revision: string }
 type PreparedFrame = MeetingVisualFrame & { nearbyTranscript: string }

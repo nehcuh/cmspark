@@ -5,7 +5,7 @@
 
 import { getConfig } from "../config"
 import { logger } from "../logger"
-import { isChromeExtensionOrigin } from "./stt-handlers"
+import { isChromeExtensionWsOrigin } from "../ws/handshake-surface"
 import { runAsrRefine, type RunAsrRefineResult } from "./asr-refiner"
 import type { LlmExtractConfig } from "../llm/llm-extract"
 
@@ -93,7 +93,7 @@ export async function handleVoiceRefineMessage(
   const sessionId = typeof msg?.sessionId === "string" ? msg.sessionId : ""
   const refineGen = typeof msg?.refineGen === "number" ? msg.refineGen : -1
 
-  const originOk = (deps.isExtensionOrigin ?? isChromeExtensionOrigin)(ctx.origin)
+  const originOk = (deps.isExtensionOrigin ?? isChromeExtensionWsOrigin)(ctx.origin)
   if (!originOk) {
     logger.warn("voice.refine.refused", {
       type: typeof type === "string" ? type : undefined,

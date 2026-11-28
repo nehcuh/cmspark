@@ -16,7 +16,7 @@ import {
   cookieTrustBlockedPayload,
 } from "../security"
 import type { SecurityConfirmationManager } from "../security-confirmation"
-import { isFullAutonomyCruise } from "./l2-admission"
+import { isFullAutonomyCruise } from "../security-arm"
 import {
   parseLocalFileUrl,
   assertFileOpenOfferable,

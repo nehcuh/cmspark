@@ -746,7 +746,7 @@ describe("summoner-web server", { concurrency: 1 }, () => {
     assert.match(r.body, /id="meetingPrivacy"/)
     assert.match(r.body, /id="meetingPrivacy"[^>]*\bhidden\b/)
     assert.match(r.body, /会创建本地会话产物/)
-    assert.match(r.body, /默认结束录制后删除会议目录下音频/)
+    assert.match(r.body, /小窗默认保存本地录音.*仅转写/)
     assert.match(r.body, /生成纪要将把转写文本发给你已配置的 LLM/)
     assert.match(r.body, /会议录音在本机转写；不会自动开始录音。/)
     assert.match(r.body, /多方录音法律合规由你负责/)

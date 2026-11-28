@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Test-only. Always allocate a fresh display and notification bus before entering.
 set -euo pipefail
+if [ "${1:-}" = '--owned-window' ]; then
+  # Mapping Tk during Openbox startup can leave a 1x1 unmanaged window.
+  # The Node caller already started its 10s receipt deadline for this PID.
+  while true; do
+    check=$(LC_ALL=C /usr/bin/xprop -root _NET_SUPPORTING_WM_CHECK)
+    if [[ $check =~ window[[:space:]]id[[:space:]]#[[:space:]](0x[[:xdigit:]]+) ]]; then
+      support=${BASH_REMATCH[1]}
+      if [[ $(LC_ALL=C /usr/bin/xprop -id "$support" _NET_SUPPORTING_WM_CHECK) == "$check" ]]; then break; fi
+    fi
+    sleep 0.025
+  done
+  exec /usr/bin/python3 "$(dirname "$0")/../tests/fixtures/activity-linux-758.py" "$2"
+fi
 if [ "${1:-}" != '--owned-x11' ]; then
   node --max-old-space-size=3072 scripts/tests/activity-linux-apps-observation-758.cpu.mjs
   exec dbus-run-session -- xvfb-run -a -s '-screen 0 1280x900x24 -nolisten tcp' bash "$0" --owned-x11

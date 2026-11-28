@@ -1,6 +1,7 @@
 // Config / settings family WS handlers (C10-C mechanical extract from message-router).
 // Zero behavior change — cases config.* + settings.* only.
 
+import { hasPrototypePollutionKey, isPrototypePollutionKey } from "../../security/object-keys"
 import { getConfig, getConfigSnapshot, getCommittedConfigRevision, saveConfig, saveConfigWithReceipt, isMaskedApiKey, type VisionConfig } from "../../config"
 import { isReasoningEffort } from "../../llm/reasoning-effort"
 import { isChatOutputLimit } from "../../llm/output-budget"
@@ -25,23 +26,12 @@ import { isModelCenterAction, readModelCenter, saveModelCenter } from "../../mod
 import { isChromeExtensionWsOrigin } from "../../ws/handshake-surface"
 import type { WorkspaceSession } from "./personal-workspace"
 
+export { hasPrototypePollutionKey } from "../../security/object-keys"
+
 const MODEL_CENTER_ERRORS = new Set([
   "CONFIG_REVISION_CONFLICT", "INVALID_MODEL_CENTER_ACTION", "MODEL_PROFILE_NOT_FOUND", "MODEL_PROFILE_NAME_IN_USE",
   "MODEL_PROFILE_LIMIT", "MODEL_PROFILE_IN_USE", "MODEL_NOT_CONFIGURED", "MODEL_ENDPOINT_INVALID",
 ])
-
-
-const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"])
-
-export function hasPrototypePollutionKey(obj: any): boolean {
-  if (!obj || typeof obj !== "object") return false
-  for (const key of Object.keys(obj)) {
-    if (PROTOTYPE_POLLUTION_KEYS.has(key)) return true
-    const val = obj[key]
-    if (typeof val === "object" && hasPrototypePollutionKey(val)) return true
-  }
-  return false
-}
 
 export function handlePairedModelCenterMessage(type: string, rest: any, session?: WorkspaceSession): Promise<any> {
   if (session?.surface !== "panel" || !isChromeExtensionWsOrigin(session.origin) || !session.panelId || session.isCurrentSession?.() !== true) {
@@ -53,7 +43,7 @@ export function handlePairedModelCenterMessage(type: string, rest: any, session?
 function sanitizeConfig(obj: Record<string, any>): Record<string, any> {
   const result = Object.create(null)
   for (const key of Object.keys(obj)) {
-    if (PROTOTYPE_POLLUTION_KEYS.has(key)) continue
+    if (isPrototypePollutionKey(key)) continue
     const val = obj[key]
     if (val !== null && typeof val === "object" && !Array.isArray(val)) {
       result[key] = sanitizeConfig(val)

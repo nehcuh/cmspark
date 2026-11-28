@@ -7,7 +7,7 @@ import * as readline from "readline"
 import * as child_process from "child_process"
 import * as path from "path"
 import * as fs from "fs"
-import * as crypto from "crypto"
+import { readBinaryFingerprint, statInodeDev } from "../binary-fingerprint"
 
 import {
   UnifiedTray,
@@ -108,46 +108,17 @@ interface IntegrityCheck {
  * spawn + post-spawn re-stat.
  */
 export function checkIntegrity(binPath: string): IntegrityCheck {
-  let fd: number | null = null
   try {
-    const realpath = fs.realpathSync(binPath)
-    fd = fs.openSync(realpath, "r")
-    const stat = fs.fstatSync(fd)
-    const hash = crypto.createHash("sha256")
-    const BUF = Buffer.alloc(64 * 1024)
-    while (true) {
-      const n = fs.readSync(fd, BUF, 0, BUF.length, null)
-      if (n === 0) break
-      hash.update(BUF.slice(0, n))
-    }
-    const digest = hash.digest("hex")
-    return {
-      ok: digest === SWIFT_TRAY_SHA256,
-      inode: stat.ino,
-      dev: stat.dev,
-      realpath,
-    }
+    const { digest, inode, dev, realpath } = readBinaryFingerprint(binPath)
+    return { ok: digest === SWIFT_TRAY_SHA256, inode, dev, realpath }
   } catch {
     return { ok: false, inode: -1, dev: -1, realpath: "" }
-  } finally {
-    if (fd !== null) {
-      try { fs.closeSync(fd) } catch { /* ignore */ }
-    }
   }
 }
 
 /** Exported for unit testing (A5 — Grok round 2). */
 export function getExpectedHash(): string {
   return SWIFT_TRAY_SHA256
-}
-
-function statInodeDev(p: string): { inode: number; dev: number } | null {
-  try {
-    const s = fs.statSync(p)
-    return { inode: s.ino, dev: s.dev }
-  } catch {
-    return null
-  }
 }
 
 // ---------------------------------------------------------------------------

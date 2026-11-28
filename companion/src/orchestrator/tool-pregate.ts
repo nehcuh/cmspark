@@ -8,7 +8,7 @@
 // MCP → mcp/dispatch.ts.
 
 import { logger } from "../logger"
-import { TAB_LEASE_TOOLS, TAB_MUTATION_LEASE_TOOLS } from "./constants"
+import { isMultiAgentThread, TAB_LEASE_TOOLS, TAB_MUTATION_LEASE_TOOLS } from "./constants"
 import {
   anyTabLeaseHeld,
   acquireOrRenewTabLease,
@@ -16,7 +16,6 @@ import {
   releaseMutationHold,
   sweepExpired,
 } from "./tab-lease"
-import { isMultiAgentThread } from "./spawn"
 import {
   isPlanReadonlyAllowed,
   planReadonlyBlockedResult,

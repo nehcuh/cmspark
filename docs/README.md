@@ -46,6 +46,7 @@
 | 文档 | 说明 |
 |------|------|
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
+| [架构治理工作记录](architecture-governance.md) | 模块所有权、依赖图命令、迁移记录与待核对边界 |
 | [enterprise-architecture.md](enterprise-architecture.md) | 企业上下文、证据/核对、Mission 和可选 MCP 的职责边界；[历史发布验收台账](audit/0.7.0-20260907/release-acceptance.md) |
 | **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
 | [GOAL.md](GOAL.md) | 项目目标与阶段（当前版本见包清单；扩展目标带轴标注） |

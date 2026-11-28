@@ -618,6 +618,7 @@ test("a streamed context limit preserves partial text and tool history without e
   assert.equal(done.generation_limit, "context_window")
   const saved = params.threadManager.getMessages(params.threadId).find(m => m.id === done.message_id)
   assert.equal(saved?.content, "保留正文")
+  assert.equal(done.content, saved?.content)
   assert.equal(saved?.incomplete_tools, true)
 })
 
@@ -659,6 +660,9 @@ test("abort empty content + reasoning persists one assistant via draft helper (T
   assert.equal(assistants.length, 1, "one assistant row via persistAssistantDraft")
   assert.equal((assistants[0].content || "").trim(), "")
   assert.equal(assistants[0].reasoning_content, "思考过程……")
+  const done = params.getSentMessages().find(m => m.type === "chat.done")
+  assert.equal(done?.content, "")
+  assert.equal(done?.message_id, assistants[0].id)
 })
 
 test("chat.done carries truncated:true on pure-text length stop", async () => {
@@ -670,6 +674,7 @@ test("chat.done carries truncated:true on pure-text length stop", async () => {
   const done = params.getSentMessages().find((m) => m.type === "chat.done")
   assert.ok(done)
   assert.equal(done.truncated, true)
+  assert.equal(done.content, "被截断的长回答")
 })
 
 test("chat.done omits truncated on normal stop", async () => {

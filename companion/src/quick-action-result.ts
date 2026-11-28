@@ -4,6 +4,7 @@
 import * as http from "http"
 import * as fs from "fs"
 import * as path from "path"
+import { findAvailablePort } from "./loopback-http"
 import { getConfigDir } from "./config"
 
 // ---------------------------------------------------------------------------
@@ -48,27 +49,13 @@ let activePort: number | null = null
 let lastAccessTime = Date.now()
 let autoCloseTimer: ReturnType<typeof setInterval> | null = null
 
-async function findAvailablePort(startPort: number): Promise<number> {
-  for (let port = startPort; port < startPort + 10; port++) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const probe = http.createServer()
-        probe.on("error", reject)
-        probe.listen(port, "127.0.0.1", () => { probe.close(() => resolve()) })
-      })
-      return port
-    } catch { continue }
-  }
-  throw new Error("No available port for result server")
-}
-
 export async function startResultServer(preferredPort = 23403): Promise<number> {
   if (activeServer && activePort) {
     lastAccessTime = Date.now()
     return activePort
   }
 
-  const port = await findAvailablePort(preferredPort)
+  const port = await findAvailablePort(preferredPort, "result server")
   lastAccessTime = Date.now()
 
   const server = http.createServer((req, res) => {

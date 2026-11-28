@@ -35,6 +35,7 @@ import { superviseFleet, abortableDelay, FLEET_SUPERVISION_HINT, FLEET_WAIT_MS }
 import { armFleetFollowup, fleetCheckpoint, fleetWorkerStates } from "../orchestrator/fleet-continuity"
 import { multiAgentLlmLoopSnapshot, releaseMultiAgentLlmLoop, tryAcquireMultiAgentLlmLoop } from "../orchestrator/llm-loop-gate"
 import { effectiveContextWindow, getConfig, getConfigDir, CONTEXT_WINDOW_TINY, type LlmConfig } from "../config"
+import { SEARCH_MCP, activeMcpSchemas, mcpSearchTool, searchMcpCatalog, supportsMcpSearch } from "./deferred-mcp"
 import { getMcpManager, gateUnofferedMcpTool } from "../mcp"
 import type { AppsConfig } from "../apps/types"
 import type { CompleteUsage } from "./provider"
@@ -46,19 +47,14 @@ import {
 } from "./provider"
 import {
   applyContextBudget,
-  attachRollingSummaryToMessages,
-  attachHandoffNoticeToMessages,
+  shouldSummarizeCompaction,
   appendRecallHintToNotices,
   effectiveDroppedCount,
   estimateTokens,
   retainMidLoopRollingSummary,
 } from "./context-budget"
-import { generateRollingSummary, shouldRunM2 } from "./context-budget-m2"
-import {
-  generateThreadHandoff,
-  shouldRunH1,
-  type ThreadHandoff,
-} from "./context-handoff"
+import { summarizeDroppedContext, type CompactionSummary } from "./context-compaction-summary"
+import type { ThreadHandoff } from "./context-handoff"
 import {
   createToolResultMessage,
   persistHealedToolRows,
@@ -999,7 +995,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     if (tabId === undefined) return ""
     return `Current native task browser target tabId=${tabId}. Only get_page_text is supported by this selected target; list_tabs/evaluate/other browser actions are unavailable. Visibility selection is not tool approval.`
   }
+  let mcpSearchHint = ""
   const composeSystemPrompt = () => [
+    mcpSearchHint,
     basePrompt,
     runProgressHint,
     fleetDispatchHint,
@@ -1118,6 +1116,30 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     tools = tools.filter((t) => t.function.name !== EXECUTION_CONTRACT_PROPOSE_TOOL)
   }
   tools = filterToolsForSurface(tools, params.surface)
+  const discoverySupported = !!thread && !thread.parent_thread_id && supportsMcpSearch(config.protocol, config.base_url, config.model_name)
+  const planReadonly = () => resolveEffectiveExecutionPolicy(threadId, id => threadManager.get(id)) === "plan_readonly"
+  if (discoverySupported && planReadonly()) tools = tools.filter(t => !t.function.name.startsWith("mcp__"))
+  const deferredMcp = discoverySupported && tools.some(t => t.function.name.startsWith("mcp__"))
+  if (deferredMcp) {
+    tools.push(mcpSearchTool)
+    mcpSearchHint = "Use the tool search to discover MCP tools by server, function name, or task before calling them."
+  }
+  // A selection can be narrowed while a model is responding. Intersect live
+  // tools with the original surface/whitelist snapshot before advertising them.
+  function currentTools() {
+    if (!deferredMcp) return tools
+    const active = threadManager.get(threadId)
+    const selected = !active || active.trashed_at || planReadonly() ? [] : active.mcp_selection_mode === "manual"
+      ? mcpManager.getAggregatedToolsForServers(new Set(active.active_mcp_server_ids ?? []))
+      : mcpManager.getAggregatedTools()
+    const live = new Map(selected.map(t => [t.function.name, t]))
+    return tools.flatMap(t => {
+      const name = t.function.name
+      if (!name.startsWith("mcp__")) return [t]
+      const definition = live.get(name)
+      return definition && threadManager.isToolAllowed(threadId, name) ? [definition] : []
+    })
+  }
   const offeredToolNames = new Set(tools.map((t) => t.function.name))
   if (!offeredToolNames.has("fleet_suggest_propose") || !offeredToolNames.has("spawn_worker")) fleetDispatchHint = ""
   if (thread?.agent_role !== "worker" && offeredToolNames.has("collect_handback")) fleetSupervisionHint = FLEET_SUPERVISION_HINT
@@ -1146,7 +1168,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     configAtStart.vision.reuse_main_model !== false && overrideAtStart?.vision_enabled !== false && useNative
   const executeToolBeforeCatalog = executeTool
   executeTool = async (toolCallId, toolName, execParams, execSignal) => {
-    const gated = gateUnofferedMcpTool(toolName, offeredToolNames)
+    if (toolName === SEARCH_MCP && deferredMcp) return searchMcpCatalog(currentTools(), execParams?.query)
+    const allowed = deferredMcp && toolName.startsWith("mcp__") ? new Set(currentTools().map(t => t.function.name)) : offeredToolNames
+    const gated = gateUnofferedMcpTool(toolName, allowed)
     if (gated) return gated
     if (toolName === "lcu_js" || toolName === "lcu_js_reset") return { success: false, error: "DESKTOP_TOOL_RETIRED" }
     const desktopVision = toolName === "host_computer" && offeredToolNames.has(toolName) && desktopVisionCurrent()
@@ -1168,7 +1192,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     windowOverride?: number,
   ): Promise<boolean> {
     if (compactionSetting === "off") return false
-    const compact = applyContextBudget(messages, windowOverride ?? contextWindow, tools, {
+    const budgetTools = deferredMcp ? activeMcpSchemas(messages, currentTools()) : tools
+    const compact = applyContextBudget(messages, windowOverride ?? contextWindow, budgetTools, {
       phase,
       outputTokens: outputBudget.documented ? outputMaxTokens : undefined,
     })
@@ -1209,14 +1234,6 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
     if (!compact.compacted) return false
 
     messages = compact.messages
-    let mode: "m1" | "m2" | "h1" = "m1"
-    let summarySha: string | null = null
-    let summaryBytes = 0
-    let rollingSummary: string | undefined
-    let handoff: ThreadHandoff | null = null
-    let h1Error: string | undefined
-    let h1FallbackToM2 = false
-
     const prevMeta = (() => {
       try {
         return threadManager.get(threadId)?.runtime_context_budget
@@ -1225,89 +1242,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       }
     })()
 
-    // Wave B H1: structured handoff when m2 gate fires (pre_loop only via shouldRunH1).
-    if (shouldRunH1(compact, m2Enabled, phase) && !signal?.aborted) {
-      try {
-        const priorHandoff =
-          prevMeta?.handoff && typeof prevMeta.handoff === "object"
-            ? (prevMeta.handoff as ThreadHandoff)
-            : null
-        params.assertCurrentRun?.()
-        const h1 = await generateThreadHandoff({
-          droppedMessages: compact.droppedMessages,
-          priorHandoff,
-          config: params.config,
-          signal,
-          includeReasoning: true,
-        })
-        if (h1.ok) {
-          messages = attachHandoffNoticeToMessages(
-            messages,
-            compact.droppedCount,
-            h1.formatted,
-          )
-          mode = "h1"
-          handoff = h1.handoff
-          summarySha = h1.sha256
-          summaryBytes = h1.bytes
-          rollingSummary = h1.formatted
-        } else {
-          h1Error = h1.error
-          // Pi nit: only fall back to M2 on fast-fail (not timeout/abort)
-          if (!h1.slow && shouldRunM2(compact, m2Enabled, phase) && !signal?.aborted) {
-            try {
-              params.assertCurrentRun?.()
-              const m2 = await generateRollingSummary({
-                droppedMessages: compact.droppedMessages,
-                config: params.config,
-                signal,
-              })
-              if (m2.ok && m2.summary) {
-                messages = attachRollingSummaryToMessages(
-                  messages,
-                  compact.droppedCount,
-                  m2.summary,
-                )
-                mode = "m2"
-                summarySha = m2.summarySha256
-                summaryBytes = m2.summaryBytes
-                rollingSummary = m2.summary
-                h1FallbackToM2 = true
-              }
-            } catch {
-              /* keep M1 */
-            }
-          }
-        }
-      } catch (e: any) {
-        h1Error = e?.message || String(e)
-        /* cascade M2 on non-abort */
-        if (!signal?.aborted && shouldRunM2(compact, m2Enabled, phase)) {
-          try {
-            params.assertCurrentRun?.()
-            const m2 = await generateRollingSummary({
-              droppedMessages: compact.droppedMessages,
-              config: params.config,
-              signal,
-            })
-            if (m2.ok && m2.summary) {
-              messages = attachRollingSummaryToMessages(
-                messages,
-                compact.droppedCount,
-                m2.summary,
-              )
-              mode = "m2"
-              summarySha = m2.summarySha256
-              summaryBytes = m2.summaryBytes
-              rollingSummary = m2.summary
-              h1FallbackToM2 = true
-            }
-          } catch {
-            /* M1 */
-          }
-        }
-      }
-    }
+    const summary: CompactionSummary = shouldSummarizeCompaction(compact, m2Enabled, phase) && !signal?.aborted
+      ? await summarizeDroppedContext(compact, params.config, prevMeta?.handoff, signal, () => params.assertCurrentRun?.())
+      : { mode: "m1", messages }
 
     // S51 P0 / S52 N2 + Wave B: retain prior pre_loop H1/M2 on mid_loop **before** meta I/O.
     // mode "h1"|"m2" after re-attach = request carries prior notice (N7), not a new gen.
@@ -1317,25 +1254,16 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
       typeof prevMeta?.dropped_count === "number" ? prevMeta.dropped_count : undefined,
     )
     const retained = retainMidLoopRollingSummary({
+      ...summary,
       phase,
-      mode,
-      messages,
       droppedCount: droppedForMeta,
-      rollingSummary,
-      summarySha: summarySha || undefined,
-      summaryBytes,
-      handoff,
-      handoffFormatted: rollingSummary,
+      handoffFormatted: summary.rollingSummary,
       prevMeta,
     })
     messages = retained.messages
-    mode = retained.mode
-    rollingSummary = retained.rollingSummary
-    summarySha = retained.summarySha || null
-    summaryBytes = retained.summaryBytes
-    if (retained.handoff && typeof retained.handoff === "object") {
-      handoff = retained.handoff as ThreadHandoff
-    }
+    const { mode, rollingSummary, summaryBytes } = retained
+    const summarySha = retained.summarySha || null
+    const handoff = retained.handoff && typeof retained.handoff === "object" ? retained.handoff as ThreadHandoff : null
     // Wave C: hint thread_recall only when tool is on the thread whitelist (or full surface)
     try {
       const allowRecall = threadManager.isToolAllowed(threadId, "thread_recall")
@@ -1384,8 +1312,8 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         tool_pairs_preserved: true,
         summary_bytes: summaryBytes,
         summary_sha256: summarySha,
-        ...(h1Error ? { h1_error: String(h1Error).slice(0, 120) } : {}),
-        ...(h1FallbackToM2 ? { h1_fallback_to_m2: true } : {}),
+        ...(summary.h1Error ? { h1_error: String(summary.h1Error).slice(0, 120) } : {}),
+        ...(summary.mode === "m2" ? { h1_fallback_to_m2: true } : {}),
       })
     } catch {
       /* non-fatal */
@@ -1542,9 +1470,9 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
   // supervisor. Tool batches are fully paired before this can yield the slot.
   const superviseFleetResults = async (): Promise<"none" | "collected" | "stopped"> => {
     if (!fleetSupervisionHint) return "none"
-    const { buildIsThreadLlmActive } = await import("../tool/companion-dispatch")
+    const { isThreadRunActiveOrQueued: isActive } = await import("./active-runs")
     assertCurrentFleetRun()
-    const isActive = await buildIsThreadLlmActive()
+
     if (threadManager.get(threadId)?.orchestrator_run_id && fleetWaitDeadline === undefined) {
       fleetWaitDeadline = Date.now() + FLEET_WAIT_MS
     }
@@ -1717,7 +1645,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
         model: config.model_name,
         signal,
         max_tokens: outputMaxTokens,
-      }, config)) {
+      }, config, deferredMcp ? currentTools : undefined)) {
         params.assertCurrentRun?.()
         if (ev.type === "reasoning_reset") {
           recoveringReasoning = true
@@ -1847,6 +1775,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           type: "chat.done",
           thread_id: threadId,
           message_id: savedTruncated.id,
+          content: savedTruncated.content,
           truncated: true,
           incomplete_tools: true,
           finish_reason: finishReason,
@@ -1965,7 +1894,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           // Length-stop with no tool_call deltas = pure-text truncation. The reply
           // is kept as-is but flagged (optional, backward-compatible) so the UI can
           // hint the answer was cut off instead of looking complete.
-          ...(generationLimit ? { truncated: true, generation_limit: generationLimit, finish_reason: finishReason } : {}),
+          ...(generationLimit ? { content: savedAssistant.content, truncated: true, generation_limit: generationLimit, finish_reason: finishReason } : {}),
         })
         if (generationLimit) {
           runStats.terminal = "error"
@@ -2101,7 +2030,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           let resolvedTabId = params.tabId
           if (resolvedTabId == null) {
             try {
-              const { TAB_LEASE_TOOLS, isMultiAgentThread } = await import("../orchestrator")
+              const { TAB_LEASE_TOOLS, isMultiAgentThread } = await import("../orchestrator/constants")
               const th = threadManager.get(threadId)
               const multi = isMultiAgentThread(th as any)
               if (!multi && !TAB_LEASE_TOOLS.has(toolName)) {
@@ -2774,16 +2703,18 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           const abortedCalls: StreamToolCall[] = toolCalls.filter(
             (tc): tc is StreamToolCall => tc != null,
           )
-          savedAssistantId = persistAssistantDraft({
+          const partial = persistAssistantDraft({
             content: assistantContent,
             reasoning: reasoningContent,
             tool_calls: abortedCalls,
             finish_reason: finishReason || "aborted",
-          }).id
+          })
+          savedAssistantId = partial.id
           sendToExtension({
             type: "chat.done",
             thread_id: threadId,
-            message_id: savedAssistantId,
+            message_id: partial.id,
+            content: partial.content,
             finish_reason: finishReason || "aborted",
             ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
           })
@@ -2800,7 +2731,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             incomplete_tools: incomplete, finish_reason: "interrupted", retrieved_sources: retrievedSources, knowledge_routing: knowledgeRoutingWire })
           if (incomplete) persistInterruptedRemainder(partial.id, "interrupted")
           sendToExtension({ type: "chat.done", thread_id: threadId, message_id: partial.id,
-            finish_reason: "interrupted", incomplete_tools: incomplete, reasoning_content: reasoningContent })
+            content: partial.content, finish_reason: "interrupted", incomplete_tools: incomplete, reasoning_content: reasoningContent })
         }
         sendToExtension({ type: "chat.error", thread_id: threadId,
           error: e instanceof ReasoningRecoveryError ? e.message : "重新请求模型时失败，本轮已停止。" })
@@ -2840,6 +2771,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             type: "chat.done",
             thread_id: threadId,
             message_id: savedAssistantId,
+            content: saved.content,
             truncated: true,
             ...(incomplete ? { incomplete_tools: true } : {}),
             finish_reason: "context_length_exceeded",

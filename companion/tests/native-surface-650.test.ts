@@ -41,6 +41,36 @@ boundedTest("notification plus registered atomic recheck does not lose same-turn
     const second = await acquireSurface650(o.root, o.data, signal); assert.equal(hook, 1); second.checkpoint(); second.release()
   } finally { fs.openSync = open; o.cleanup() }
 })
+boundedTest("a waiting client stays queued when two owners hand off during its claim read", async t => {
+  const o = owned()
+  const claim = path.join(fs.realpathSync(o.root), "native-surface-650", "claim")
+  const first = await acquireSurface650(o.root, o.data, t.signal)
+  const open = fs.openSync
+  let replacement: ReturnType<typeof acquireSurface650> | undefined
+  try {
+    fs.openSync = ((...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] === claim && args[1] === "r") {
+        fs.openSync = open
+        // Handoff after the waiter's lstat, before opening either owner's descriptor.
+        first.release()
+        replacement = acquireSurface650(o.root, o.data, t.signal)
+      }
+      return Reflect.apply(open, fs, args)
+    }) as typeof fs.openSync
+    const waiting = acquireSurface650(o.root, o.data, t.signal)
+    assert.ok(replacement)
+    const next = await replacement
+    next.checkpoint()
+    next.release()
+    const last = await waiting
+    last.checkpoint()
+    last.release()
+    assert.equal(fs.existsSync(claim), false)
+  } finally {
+    fs.openSync = open
+    o.cleanup()
+  }
+})
 boundedTest("aborted contender cannot enter or remove the actual foreign owner claim", async t => {
   const o = owned(), abort = new AbortController(), reason = Error("OWNED_ABORT")
   try {

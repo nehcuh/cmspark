@@ -15,6 +15,7 @@
   },
   "include": [
     "src/sidepanel/types.ts",
+    "src/sidepanel/components/ContextPanelBody.tsx",
     "src/sidepanel/store/agentStore.tsx",
     "src/sidepanel/hooks/useWebSocket.ts",
     "src/sidepanel/utils/apps-utils.ts",
@@ -51,7 +52,6 @@
     "src/notebooklm/types.ts",
     "src/notebooklm/selectors.ts",
     "src/notebooklm/notebook-api.ts",
-    "src/notebooklm/dom-automation.ts",
     "src/notebooklm/ai-chat-extractor.ts",
     "src/notebooklm/page-link-extractor.ts",
     "src/notebooklm/rss-parser.ts",

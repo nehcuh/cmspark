@@ -18,6 +18,7 @@ const lifecycle = parse("companion/src/ws/lifecycle.ts")
 const incoming = parse("chrome-extension/src/sidepanel/hooks/useWebSocket.ts")
 const draft = parse("chrome-extension/src/sidepanel/utils/settings-draft.ts")
 const normalizer = parse("chrome-extension/src/sidepanel/utils/normalize-config.ts")
+const outputPolicy = parse("chrome-extension/src/sidepanel/utils/chat-output-policy.ts")
 const effort = parse("chrome-extension/src/sidepanel/utils/reasoning-effort.ts")
 const voice = parse("chrome-extension/src/sidepanel/voice/detect.ts")
 const store = parse("chrome-extension/src/sidepanel/store/agentStore.tsx", ts.ScriptKind.TSX)
@@ -58,9 +59,9 @@ const consumerCode = [
   functionText(effort, "isReasoningEffort"),
   functionText(effort, "effectiveReasoningEffort"),
   functionText(normalizer, "isMaskedApiKey"),
-  constantText(normalizer, "CHAT_OUTPUT_LIMIT_MAX"),
+  constantText(outputPolicy, "CHAT_OUTPUT_LIMIT_MAX"),
   constantText(voice, "VOICE_DEFAULT_LANG"),
-  functionText(normalizer, "normalizeSavedChatOutputLimit"),
+  functionText(outputPolicy, "normalizeSavedChatOutputLimit"),
   functionText(normalizer, "normalizeConfig"),
   functionText(store, "agentReducer"),
   `globalThis.initialState = ${initialExpression.getText(store)}; globalThis.agentReducer = agentReducer; globalThis.prepareSettingsSubmission = prepareSettingsSubmission; globalThis.normalizeConfig = normalizeConfig;`,

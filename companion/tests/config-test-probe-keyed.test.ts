@@ -85,7 +85,10 @@ test("config.test llm_override echoes the override key, not the saved one", asyn
   }
 })
 
-test("config.test probes the saved vision model only when needed", async () => {
+test("config.test probes the saved vision model only when needed", async t => {
+  // A disabled probe cache must issue a fresh request even within the same millisecond.
+  const now = Date.now()
+  t.mock.method(Date, "now", () => now)
   const visionUrl = "http://127.0.0.1:8/v1"
   const vision = {
     enabled: true, base_url: visionUrl, model_name: "separate-vision", api_key: "sk-vision-test",

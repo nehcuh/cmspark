@@ -44,6 +44,8 @@ test("sanitizeRuntimeContextBudget accepts h1 + handoff", () => {
   assert.ok(s!.handoff)
   assert.deepEqual(s!.handoff!.goals, ["ship nits"])
   assert.equal(s!.handoff!.constraints[0], "[redacted]")
+  // Reading stored H1 metadata has no reason to initialize an LLM provider.
+  assert.equal(require.cache[require.resolve("../src/llm/llm-extract")], undefined)
 })
 
 test("sanitizeRuntimeContextBudget rejects junk", () => {

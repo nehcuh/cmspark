@@ -1,10 +1,17 @@
+import { isTempUserMessageId } from "../../utils/temp-message-id"
+import { reduceThreadStream, setThreadBusy, withoutRunTerminal, type ThreadStreamEvent } from "./conversation-stream"
+import { addTranscriptMessage, mergeHydratedMessages } from "./transcript"
+export { isTempUserMessageId, mergeHydratedMessages }
+
+import { cacheThreadMessages, removeThreads, selectThread, updateThreadList, upsertThread } from "./thread-selection"
+export { MESSAGES_BY_THREAD_LRU } from "./thread-selection"
 import type { WorkspaceHintView } from "../coding-handoff/workspace-hints"
 import { VOICE_DEFAULT_LANG, type ChatDictationLanguage } from "../voice/detect"
 import { registrySummaryFromMessage, type RegistryDiscoverySummary } from "../utils/apps-discovery"
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceBinaryError, VoiceBinaryProgress, VoiceModelState, VoiceModelProgress, VoiceSystemState, VoiceWhisperExecution, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceBinaryError, VoiceBinaryProgress, VoiceModelState, VoiceModelProgress, VoiceSystemState, VoiceWhisperExecution, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
@@ -192,6 +199,7 @@ export interface AgentState {
   messagesCacheOrder: string[]
   /** True while waiting for thread.messages after a cache-miss switch. */
   hydrating: boolean
+  historyLoadStatus: "ready" | "refresh" | "retry" | "failed"
   skills: SkillMeta[]
   activeSkillIds: string[]
   operations: OperationRecord[]
@@ -516,13 +524,14 @@ export type AgentAction =
   | { type: "COMMIT_NAVIGATION"; decision: { ignored: false; layer: "session" | "projects"; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null; remembered: string | null } }
   | { type: "NAVIGATE"; layer: "projects" | "project" | "session" | "recent" | "tools"; projectId: string | null }
   | { type: "SET_ACTIVE_THREAD"; threadId: string | null }
-  | { type: "ADD_MESSAGE"; message: Message }
+  | { type: "RECEIVE_THREAD_STREAM"; threadId: string; event: ThreadStreamEvent }
+  | { type: "ADD_MESSAGE"; message: Message; source?: "chat.user" }
   | { type: "REMOVE_MESSAGE"; id: string }
   | { type: "UPDATE_MESSAGE"; id: string; content: string }
   | { type: "SET_MESSAGES"; messages: Message[]; threadId?: string }
-  | { type: "HYDRATE_FAILED"; message?: string }
+  | { type: "HYDRATE_FAILED"; threadId: string; retryable: boolean; uncorrelated?: true }
   | { type: "ADD_TOOL_CALL"; messageId: string; toolCall: any }
-  | { type: "UPDATE_TOOL_CALL"; messageId: string; toolCallId: string; updates: any }
+  | { type: "UPDATE_TOOL_CALL"; threadId: string; browserAt?: number; messageId: string; toolCallId: string; updates: any }
   | { type: "SET_SKILLS"; skills: SkillMeta[] }
   | { type: "TOGGLE_SKILL"; skillId: string }
   | { type: "SET_OPERATIONS"; operations: OperationRecord[] }
@@ -549,8 +558,6 @@ export type AgentAction =
   | { type: "UPSERT_THREAD"; thread: Thread }
   | { type: "REMOVE_THREAD"; threadId: string }
   | { type: "REMOVE_THREADS"; threadIds: string[] }
-  | { type: "SET_STREAMING"; content: string }
-  | { type: "SET_STREAMING_REASONING"; content: string }
   | { type: "SET_PROCESSING_STATUS"; status: string | null }
   | { type: "SET_TEST_RESULT"; result: string | null }
   | { type: "SET_TEST_VISION_RESULT"; result: string | null }
@@ -602,13 +609,9 @@ export type AgentAction =
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_CONFIG_HYDRATED"; hydrated: boolean }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
-  | { type: "BUMP_COMPOSER_UPLOAD_CLEAR" }
   | { type: "SET_PENDING_UPLOAD"; threadId: string; messageId: string; composerText: string }
   | { type: "CLEAR_PENDING_UPLOAD"; threadId: string }
-  | { type: "REQUEST_COMPOSER_RESTORE"; text: string }
   | { type: "CLEAR_COMPOSER_RESTORE" }
-  | { type: "SET_OVERLAY_STANDBY"; label: string }
-  | { type: "CLEAR_OVERLAY_STANDBY" }
   | { type: "APPLY_COMPOSER_LEASE"; holder: "overlay" | "panel"; threadId?: string }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_KNOWLEDGE_IMPORT_STATUS"; status: { ok: boolean; message: string } | null }
@@ -698,14 +701,11 @@ export type AgentAction =
   | { type: "CLEAR_VOICE_BINARY_PROGRESS"; backend: VoiceBinaryProgress["backend"] }
   | { type: "SET_VOICE_BINARY_ERROR"; error: VoiceBinaryError | null }
   | { type: "SET_VOICE_MODEL_ERROR"; error: string | null }
-  | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
   | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
   | { type: "SET_THREAD_BUSY"; threadId: string; busy: boolean }
   | { type: "SET_FLEET_LIST_OPEN"; open: boolean }
   | { type: "SET_INSPECT_WORKER"; workerId: string }
-  | { type: "SET_INSPECT_TAIL"; tail: string }
-  | { type: "SET_INSPECT_LATEST_TOOL"; tool: string }
   | { type: "CLEAR_INSPECT" }
   | { type: "SET_USER_ENV"; userEnv: UserEnvPublic }
   | { type: "SET_USER_ENV_ERROR"; error: string | null }
@@ -741,7 +741,6 @@ export type AgentAction =
   /** L-4 (#390): companion task_loop.status frame (sanitized view; verbatim render). */
   | { type: "SET_LOOP_STATUS"; threadId: string; view: LoopStatusView }
   /** #505: chat.done.terminal on the unarmed 100-round cap. `null` clears. */
-  | { type: "SET_RUN_TERMINAL"; threadId: string; terminal: "round_limit" | null }
   /** #513: companion fleet.suggest frame — keyed per thread (no active gate). */
   | { type: "SET_FLEET_SUGGEST"; threadId: string; reason: string; subtasks: string[] }
   /** #513: local clear on accept/dismiss (companion ack is idempotent sync). */
@@ -776,6 +775,7 @@ export const initialState: AgentState = {
   messagesByThreadId: {},
   messagesCacheOrder: [],
   hydrating: false,
+  historyLoadStatus: "ready",
   skills: [],
   activeSkillIds: [],
   operations: [],
@@ -913,21 +913,6 @@ export const initialState: AgentState = {
   fleetSuggestByThreadId: {},
 }
 
-/**
- * Client-generated optimistic user ids: `${threadId}_user_${ms}[_${rand}]`
- * (random suffix defeats same-millisecond collisions) or legacy
- * `${threadId}_${ms}`. Companion persisted ids (`${threadId}_${ms}_${rand}`,
- * no `_user_` infix) must NOT match.
- */
-export function isTempUserMessageId(id: string, threadId: string): boolean {
-  if (!id) return false
-  if (/_user_\d{10,}(_[a-z0-9]+)?$/.test(id)) return true
-  if (threadId && id.startsWith(`${threadId}_`) && new RegExp(`^${escapeRegExp(threadId)}_\\d{10,}$`).test(id)) {
-    return true
-  }
-  return false
-}
-
 /** Panel-origin chat.user: optimistic temp id (or persist echo of that id). */
 export function isPanelOriginUserMessage(message: {
   id: string
@@ -940,273 +925,6 @@ export function isPanelOriginUserMessage(message: {
   if (isTempUserMessageId(message.id, tid)) return true
   const clientId = message.client_message_id
   return !!clientId && isTempUserMessageId(clientId, tid)
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-}
-
-function mergeAttachments(
-  existing: MessageAttachment[] | undefined,
-  incoming: MessageAttachment[] | undefined,
-): MessageAttachment[] | undefined {
-  if (incoming && incoming.length > 0) return incoming
-  if (existing && existing.length > 0) return existing
-  return existing
-}
-
-function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
-  const sameIdIdx = state.messages.findIndex((m) => m.id === incoming.id)
-  if (sameIdIdx >= 0) {
-    const existing = state.messages[sameIdIdx]!
-    const merged = mergeAttachments(existing.attachments, incoming.attachments)
-    const files = incoming.files ?? existing.files
-    if (merged === existing.attachments && files === existing.files) return state
-    return {
-      ...state,
-      messages: state.messages.map((m, i) =>
-        i === sameIdIdx ? { ...m, attachments: merged, files } : m,
-      ),
-    }
-  }
-
-  if (incoming.role === "user" && incoming.thread_id) {
-    // F1 precise adopt: persist echo carries the optimistic bubble's temp id —
-    // adopt by exact id, never by position. No match → plain append (multi-
-    // surface sends in one WS window must not cross-adopt each other's bubble).
-    const clientMessageId =
-      typeof incoming.client_message_id === "string" && incoming.client_message_id
-        ? incoming.client_message_id
-        : null
-    if (clientMessageId) {
-      const matchIdx = state.messages.findIndex(
-        (m) =>
-          m.id === clientMessageId &&
-          m.role === "user" &&
-          m.thread_id === incoming.thread_id,
-      )
-      if (matchIdx < 0) {
-        return { ...state, messages: [...state.messages, incoming] }
-      }
-      const matched = state.messages[matchIdx]!
-      const merged = mergeAttachments(matched.attachments, incoming.attachments)
-      return {
-        ...state,
-        messages: state.messages.map((m, i) =>
-          i === matchIdx
-            ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}), ...(incoming.files ? { files: incoming.files } : {}) }
-            : m,
-        ),
-      }
-    }
-    // Legacy adopt (pre-F1 companion without client_message_id): last temp
-    // user bubble in this thread takes the persisted id.
-    let lastUserIdx = -1
-    for (let i = state.messages.length - 1; i >= 0; i--) {
-      const m = state.messages[i]!
-      if (m.role === "user" && m.thread_id === incoming.thread_id) {
-        lastUserIdx = i
-        break
-      }
-    }
-    if (lastUserIdx >= 0) {
-      const last = state.messages[lastUserIdx]!
-      const lastTemp = isTempUserMessageId(last.id, incoming.thread_id)
-      const incomingTemp = isTempUserMessageId(incoming.id, incoming.thread_id)
-      if (lastTemp && !incomingTemp) {
-        const merged = mergeAttachments(last.attachments, incoming.attachments)
-        return {
-          ...state,
-          messages: state.messages.map((m, i) =>
-            i === lastUserIdx
-              ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}), ...(incoming.files ? { files: incoming.files } : {}) }
-              : m,
-          ),
-        }
-      }
-      // Late SW echo after companion adopt — do not re-append the temp id.
-      if (!lastTemp && incomingTemp) {
-        const merged = mergeAttachments(last.attachments, incoming.attachments)
-        if (merged === last.attachments) return state
-        return {
-          ...state,
-          messages: state.messages.map((m, i) =>
-            i === lastUserIdx ? { ...m, attachments: merged } : m,
-          ),
-        }
-      }
-    }
-  }
-
-  return { ...state, messages: [...state.messages, incoming] }
-}
-
-/**
- * thread.messages / hydrate wholesale replace must not drop an in-flight
- * optimistic user bubble (temp id) that companion has not persisted yet.
- * Stale select / list races previously wiped the bubble so the panel only
- * showed 「思考中」 until chat.user arrived.
- *
- * If incoming already carries the persisted twin (same user content not
- * already accounted for by a non-temp existing row), drop the temp — do
- * not double-render.
- */
-/** Keep the current thread plus one previous transcript. */
-export const MESSAGES_BY_THREAD_LRU = 2
-
-function stashThreadMessages(
-  cache: Record<string, Message[]>,
-  order: string[],
-  threadId: string | null,
-  messages: Message[],
-  opts: { skipEmptyHydrating?: boolean } = {},
-): { cache: Record<string, Message[]>; order: string[] } {
-  if (!threadId) return { cache, order }
-  if (opts.skipEmptyHydrating && messages.length === 0) {
-    return { cache, order }
-  }
-  const nextCache = { ...cache, [threadId]: messages }
-  const nextOrder = order.filter((id) => id !== threadId)
-  nextOrder.push(threadId)
-  while (nextOrder.length > MESSAGES_BY_THREAD_LRU) {
-    const evict = nextOrder.shift()
-    if (evict && evict !== threadId) delete nextCache[evict]
-  }
-  return { cache: nextCache, order: nextOrder }
-}
-
-function touchCacheOrder(
-  cache: Record<string, Message[]>,
-  order: string[],
-  threadId: string | null,
-): { cache: Record<string, Message[]>; order: string[] } {
-  if (!threadId) return { cache, order }
-  const nextOrder = order.filter((id) => id !== threadId)
-  nextOrder.push(threadId)
-  const nextCache = { ...cache }
-  while (nextOrder.length > MESSAGES_BY_THREAD_LRU) {
-    const evict = nextOrder.shift()
-    if (evict && evict !== threadId) delete nextCache[evict]
-  }
-  return { cache: nextCache, order: nextOrder }
-}
-
-function dropCachedThreads(
-  cache: Record<string, Message[]>,
-  order: string[],
-  ids: Iterable<string>,
-): { cache: Record<string, Message[]>; order: string[] } {
-  const drop = new Set(ids)
-  if (drop.size === 0) return { cache, order }
-  const nextCache = { ...cache }
-  for (const id of drop) delete nextCache[id]
-  return { cache: nextCache, order: order.filter((id) => !drop.has(id)) }
-}
-
-function applyActiveThreadSwitch(
-  state: AgentState,
-  threadId: string | null,
-): Pick<
-  AgentState,
-  | "activeThreadId"
-  | "codingOperationError"
-  | "codingManualEntry"
-  | "codingHistory"
-  | "messages"
-  | "messagesByThreadId"
-  | "messagesCacheOrder"
-  | "hydrating"
-  | "streamingContent"
-  | "streamingReasoning"
-  | "processingStatus"
-  | "isProcessing"
-> {
-  const oldId = state.activeThreadId
-  let cache = state.messagesByThreadId
-  let order = state.messagesCacheOrder
-  if (oldId && oldId !== threadId) {
-    const stashed = stashThreadMessages(cache, order, oldId, state.messages, {
-      skipEmptyHydrating: state.hydrating,
-    })
-    cache = stashed.cache
-    order = stashed.order
-  }
-  const touched = touchCacheOrder(cache, order, threadId)
-  cache = touched.cache
-  order = touched.order
-  const hit = !!threadId && Object.prototype.hasOwnProperty.call(cache, threadId)
-  const hydrating = !!threadId && !hit
-  return {
-    activeThreadId: threadId,
-    codingHistory: threadId === state.activeThreadId ? state.codingHistory : null,
-    codingOperationError: null,
-    codingManualEntry: null,
-    messages: hit && threadId ? cache[threadId]! : [],
-    messagesByThreadId: cache,
-    messagesCacheOrder: order,
-    hydrating,
-    streamingContent: "",
-    streamingReasoning: "",
-    processingStatus: hydrating ? "加载中" : null,
-    isProcessing: false,
-  }
-}
-
-export function mergeHydratedMessages(
-  existing: Message[],
-  incoming: Message[],
-): Message[] {
-  const next = Array.isArray(incoming) ? incoming : []
-  if (!Array.isArray(existing) || existing.length === 0) return next
-  const incomingIds = new Set(next.map((m) => m.id).filter(Boolean))
-  const unmatchedIncomingContents: string[] = next
-    .filter((m) => m.role === "user")
-    .map((m) => m.content)
-  for (const m of existing) {
-    if (!m || m.role !== "user") continue
-    const tid = typeof m.thread_id === "string" ? m.thread_id : ""
-    if (isTempUserMessageId(m.id, tid)) continue
-    const i = unmatchedIncomingContents.indexOf(m.content)
-    if (i >= 0) unmatchedIncomingContents.splice(i, 1)
-  }
-  const extras: Message[] = []
-  for (const m of existing) {
-    if (!m || incomingIds.has(m.id)) continue
-    if (m.role !== "user") continue
-    const tid = typeof m.thread_id === "string" ? m.thread_id : ""
-    if (!isTempUserMessageId(m.id, tid)) continue
-    const i = unmatchedIncomingContents.indexOf(m.content)
-    if (i >= 0) {
-      unmatchedIncomingContents.splice(i, 1)
-      continue
-    }
-    extras.push(m)
-  }
-  return extras.length ? [...next, ...extras] : next
-}
-
-function withoutRunTerminal(state: AgentState, threadId: string): AgentState {
-  if (!threadId || !state.runTerminalByThreadId[threadId]) return state
-  const { [threadId]: _dropped, ...rest } = state.runTerminalByThreadId
-  return { ...state, runTerminalByThreadId: rest }
-}
-
-/** #513: drop fleet suggestion cards for threads no longer in the list. */
-function pruneFleetSuggest(map: AgentState["fleetSuggestByThreadId"], keepIds: string[]): AgentState["fleetSuggestByThreadId"] {
-  const keep = new Set(keepIds)
-  let changed = false
-  for (const id of Object.keys(map)) {
-    if (!keep.has(id)) {
-      changed = true
-      break
-    }
-  }
-  if (!changed) return map
-  const out: AgentState["fleetSuggestByThreadId"] = {}
-  for (const [id, entry] of Object.entries(map)) {
-    if (keep.has(id)) out[id] = entry
-  }
-  return out
 }
 
 function immediateInFlight(save: ImmediateSave | null): boolean {
@@ -1277,54 +995,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         workspaceHints: action.state === "connected" ? state.workspaceHints : null }
     }
     case "SET_DESKTOP_MAXIMUM": return { ...state, desktopMaximumExpiresAt: action.expiresAt }
-    case "SET_THREADS": {
-      const threads = Array.isArray(action.threads) ? action.threads : []
-      if (action.listScope === "all" || action.listScope === "trash") {
-        return { ...state, threads }
-      }
-      const activeExists = threads.some(t => t.id === state.activeThreadId)
-      // Preserve active + messages when active is temporarily absent only if
-      // every incoming row is trashed (only_trashed mishap) — otherwise clear.
-      const onlyTrashedIncoming =
-        threads.length > 0 && threads.every((t: any) => t.trashed_at)
-      const nextActiveThreadId = activeExists
-        ? state.activeThreadId
-        : onlyTrashedIncoming
-          ? state.activeThreadId
-          : null
-      const nextActiveThread = threads.find(t => t.id === nextActiveThreadId)
-      return {
-        ...state,
-        threads,
-        activeThreadId: nextActiveThreadId,
-        workspaceHints: nextActiveThreadId === state.activeThreadId ? state.workspaceHints : null,
-        codingHistory: nextActiveThreadId === state.activeThreadId ? state.codingHistory : null,
-        codingOperationError: nextActiveThreadId === state.activeThreadId ? state.codingOperationError : null,
-        codingManualEntry: nextActiveThreadId === state.activeThreadId ? state.codingManualEntry : null,
-        // #513: cards for threads gone from the list go with them.
-        fleetSuggestByThreadId: pruneFleetSuggest(
-          state.fleetSuggestByThreadId,
-          threads.map((t: any) => t.id as string),
-        ),
-        // Do not wipe messages when preserving active across trash-scoped merges
-        pinnedTabIds: nextActiveThread?.pinned_tabs ?? state.pinnedTabIds,
-        activeSkillIds: nextActiveThread?.active_skill_ids ?? state.activeSkillIds,
-        activeKnowledgeIds: nextActiveThread?.active_knowledge_ids ?? state.activeKnowledgeIds,
-        skillSelectionMode: nextActiveThread?.skill_selection_mode || state.skillSelectionMode || "auto",
-        knowledgeSelectionMode:
-          nextActiveThread?.knowledge_selection_mode || state.knowledgeSelectionMode || "auto",
-        knowledgeSmartMatch:
-          // #273: 字段省略 = true；不继承上一线程的 UI 状态（开关漂移窗口）
-          nextActiveThread?.knowledge_smart_match !== false,
-        // #273 Wave B: 字段省略 = false（默认关）；不继承上一线程的 UI 状态
-        knowledgeRouteByGroup: nextActiveThread?.knowledge_route_by_group === true,
-        mcpSelectionMode: nextActiveThread?.mcp_selection_mode || state.mcpSelectionMode || "auto",
-        activeMcpServerIds: nextActiveThread?.active_mcp_server_ids || state.activeMcpServerIds || [],
-        threadListArrived: true,
-        threadListSignature: threads.map(thread => thread.id).join("\n"),
-        threadListEpoch: threads.map(thread => thread.id).join("\n") === state.threadListSignature ? state.threadListEpoch : state.threadListEpoch + 1,
-      }
-    }
+    case "SET_THREADS":
+      return updateThreadList(state, Array.isArray(action.threads) ? action.threads : [], action.listScope)
     case "COMMIT_NAVIGATION": {
       const id = action.decision.activeThreadId
       const selected = id === state.activeThreadId ? state : agentReducer(state, { type: "SET_ACTIVE_THREAD", threadId: id })
@@ -1342,42 +1014,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "REMEMBER_THREAD":
       if (state.navigationRemembered === action.threadId) return state
       return { ...state, navigationRemembered: action.threadId }
-    case "SET_ACTIVE_THREAD": {
-      // Same thread: keep transcript / busy. Re-select used to wipe the
-      // in-flight user bubble (确认台 thread.list → auto-select).
-      if (action.threadId && action.threadId === state.activeThreadId) {
-        return state
-      }
-      const threads = Array.isArray(state.threads) ? state.threads : []
-      const activeThread = threads.find(t => t.id === action.threadId)
-      const switched = applyActiveThreadSwitch(state, action.threadId)
-      const records = pruneCodingSessionCache(state.codingSessionsById, action.threadId, state.codingSessionIdByThread)
-      return {
-        ...state,
-        ...switched,
-        activeThreadSelectionRevision: state.activeThreadSelectionRevision + 1,
-        workspaceHints: null,
-        codingHistory: null,
-        lastBrowserToolAt: null,
-        modePin: null,
-        pinnedTabIds: activeThread?.pinned_tabs || [],
-        activeSkillIds: activeThread?.active_skill_ids || [],
-        activeKnowledgeIds: activeThread?.active_knowledge_ids || [],
-        skillSelectionMode: activeThread?.skill_selection_mode || "auto",
-        knowledgeSelectionMode: activeThread?.knowledge_selection_mode || "auto",
-        knowledgeSmartMatch: activeThread?.knowledge_smart_match !== false,
-        knowledgeRouteByGroup: activeThread?.knowledge_route_by_group === true,
-        mcpSelectionMode: activeThread?.mcp_selection_mode || "auto",
-        activeMcpServerIds: activeThread?.active_mcp_server_ids || [],
-        overlayStandby: null,
-        codingSessionsById: records,
-        codingSessionIdsByThread: codingSessionMembership(records, state.codingSessionIdsByThread, state.codingSessionIdByThread),
-      }
-    }
-    case "SET_OVERLAY_STANDBY":
-      return { ...state, overlayStandby: { label: action.label } }
-    case "CLEAR_OVERLAY_STANDBY":
-      return state.overlayStandby ? { ...state, overlayStandby: null } : state
+    case "SET_ACTIVE_THREAD":
+      return selectThread(state, action.threadId)
     case "APPLY_COMPOSER_LEASE": {
       if (action.holder === "panel") {
         return state.overlayStandby ? { ...state, overlayStandby: null } : state
@@ -1386,19 +1024,25 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       if (state.overlayStandby?.label === label) return state
       return { ...state, overlayStandby: { label } }
     }
+    case "RECEIVE_THREAD_STREAM":
+      return reduceThreadStream(state, action.threadId, action.event)
     case "ADD_MESSAGE": {
-      // Dedup by id: Side Panel optimistic add + SW `chat.user` broadcast (Cockpit
-      // / multi-surface) must not double-append the same user turn.
-      // Same-id echo may carry companion attachments — merge them onto the row.
-      // Companion persist uses a new message_id; adopt it onto the optimistic
-      // bubble matched by client_message_id (F1), falling back to the last temp
-      // user bubble for pre-F1 companions (DoD #13).
-      const next = reduceAddMessage(state, action.message)
-      const tid = typeof action.message.thread_id === "string" ? action.message.thread_id : ""
-      const cleared =
-        action.message.role === "user" && tid ? withoutRunTerminal(next, tid) : next
-      if (cleared.overlayStandby && isPanelOriginUserMessage(action.message)) {
-        return { ...cleared, overlayStandby: null }
+      const tid = action.message.thread_id
+      if (action.source === "chat.user" && tid !== state.activeThreadId) {
+        const cached = state.messagesByThreadId[tid]
+        const clientId = action.message.client_message_id
+        if (!clientId || !cached?.some(row => row.role === "user" &&
+            (row.id === clientId || row.client_message_id === clientId))) return state
+        const messages = addTranscriptMessage(cached, action.message, action.source)
+        return messages === cached ? state : { ...state, messagesByThreadId: { ...state.messagesByThreadId, [tid]: messages } }
+      }
+      const messages = addTranscriptMessage(state.messages, action.message, action.source)
+      const next = messages === state.messages ? state : { ...state, messages }
+      let cleared = action.message.role === "user" && tid ? withoutRunTerminal(next, tid) : next
+      if (cleared.overlayStandby && isPanelOriginUserMessage(action.message)) cleared = { ...cleared, overlayStandby: null }
+      if (action.source === "chat.user") return {
+        ...cleared, isProcessing: true,
+        threadBusyById: cleared.threadBusyById[tid] ? cleared.threadBusyById : { ...cleared.threadBusyById, [tid]: true },
       }
       return cleared
     }
@@ -1415,8 +1059,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ),
       }
     case "UPDATE_TOOL_CALL":
+      if (action.threadId && action.threadId !== state.activeThreadId) return state
       return {
         ...state,
+        ...(action.browserAt !== undefined ? { lastBrowserToolAt: action.browserAt } : {}),
         messages: state.messages.map(m => {
           if (m.id !== action.messageId) return m
           return {
@@ -1429,11 +1075,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     case "SET_MESSAGES": {
       if (action.threadId !== undefined && action.threadId !== state.activeThreadId) return state
+      const clearHistoryStatus = (state.hydrating && state.processingStatus === "加载中") ||
+        (state.historyLoadStatus === "failed" && state.processingStatus === "加载失败")
       const merged = mergeHydratedMessages(state.messages, action.messages)
       let cache = state.messagesByThreadId
       let order = state.messagesCacheOrder
       if (state.activeThreadId) {
-        const stashed = stashThreadMessages(cache, order, state.activeThreadId, merged)
+        const stashed = cacheThreadMessages(cache, order, state.activeThreadId, merged)
         cache = stashed.cache
         order = stashed.order
       }
@@ -1443,15 +1091,22 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         messagesByThreadId: cache,
         messagesCacheOrder: order,
         hydrating: false,
-        processingStatus:
-          state.hydrating && state.processingStatus === "加载中" ? null : state.processingStatus,
+        historyLoadStatus: "ready",
+        processingStatus: clearHistoryStatus ? null : state.processingStatus,
       }
     }
     case "HYDRATE_FAILED":
+      if (action.threadId !== state.activeThreadId) return state
+      if (action.uncorrelated && !state.hydrating &&
+          state.historyLoadStatus !== "refresh" && state.historyLoadStatus !== "retry") return state
+      if (action.retryable && state.historyLoadStatus !== "retry" && state.historyLoadStatus !== "failed") {
+        return { ...state, historyLoadStatus: "retry" }
+      }
       return {
         ...state,
         hydrating: false,
-        processingStatus: action.message || "加载失败",
+        historyLoadStatus: "failed",
+        processingStatus: state.isProcessing ? state.processingStatus : "加载失败",
       }
     case "SET_SKILLS":
       // Guard: skill.list / error payloads may omit skills → never leave non-iterable state
@@ -1590,20 +1245,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           [action.threadId]: action.view,
         },
       }
-    }
-    case "SET_RUN_TERMINAL": {
-      if (!action.threadId) return state
-      if (action.terminal === "round_limit") {
-        if (state.runTerminalByThreadId[action.threadId] === "round_limit") return state
-        return {
-          ...state,
-          runTerminalByThreadId: {
-            ...state.runTerminalByThreadId,
-            [action.threadId]: "round_limit",
-          },
-        }
-      }
-      return withoutRunTerminal(state, action.threadId)
     }
     case "SET_FLEET_SUGGEST": {
       // #513: keyed per thread — a background thread's frame must not touch the
@@ -1819,132 +1460,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ),
       }
     case "ADD_THREAD":
-      return {
-        ...state,
-        threads: [action.thread, ...state.threads],
-        activeThreadId: action.thread.id,
-        codingHistory: action.thread.id === state.activeThreadId ? state.codingHistory : null,
-        codingOperationError: null,
-        codingManualEntry: null,
-        messages: [],
-        streamingContent: "",
-        streamingReasoning: "",
-        processingStatus: null,
-        isProcessing: false,
-        lastBrowserToolAt: null,
-        modePin: null,
-        pinnedTabIds: action.thread.pinned_tabs || [],
-      }
-    case "REMOVE_THREAD": {
-      const filtered = state.threads.filter(t => t.id !== action.threadId)
-      const nextActive = state.activeThreadId === action.threadId
-        ? (filtered[0]?.id || null)
-        : state.activeThreadId
-      const nextThread = filtered.find(t => t.id === nextActive)
-      const { [action.threadId]: _removed, ...restBusy } = state.threadBusyById
-      const dropped = dropCachedThreads(state.messagesByThreadId, state.messagesCacheOrder, [
-        action.threadId,
-      ])
-      const clearingActive = state.activeThreadId === action.threadId
-      const base: AgentState = {
-        ...state,
-        messagesByThreadId: dropped.cache,
-        messagesCacheOrder: dropped.order,
-        // #513: the removed thread's fleet card goes with it.
-        fleetSuggestByThreadId: pruneFleetSuggest(state.fleetSuggestByThreadId, filtered.map(t => t.id)),
-        ...(clearingActive
-          ? { activeThreadId: null, messages: [], hydrating: false }
-          : {}),
-      }
-      const switched = clearingActive ? applyActiveThreadSwitch(base, nextActive) : null
-      return {
-        ...base,
-        threads: filtered,
-        ...(switched || { activeThreadId: nextActive }),
-        pinnedTabIds: nextThread?.pinned_tabs || [],
-        activeSkillIds: nextThread?.active_skill_ids || [],
-        activeKnowledgeIds: nextThread?.active_knowledge_ids || [],
-        threadBusyById: restBusy,
-      }
-    }
-    case "REMOVE_THREADS": {
-      const removeSet = new Set(action.threadIds || [])
-      if (removeSet.size === 0) return state
-      const filtered = state.threads.filter(t => !removeSet.has(t.id))
-      const clearingActive =
-        !!state.activeThreadId && removeSet.has(state.activeThreadId)
-      const nextActive = clearingActive
-        ? (filtered[0]?.id || null)
-        : state.activeThreadId
-      const nextThread = filtered.find(t => t.id === nextActive)
-      const restBusy = { ...state.threadBusyById }
-      for (const id of removeSet) delete restBusy[id]
-      const dropped = dropCachedThreads(
-        state.messagesByThreadId,
-        state.messagesCacheOrder,
-        removeSet,
-      )
-      const base: AgentState = {
-        ...state,
-        messagesByThreadId: dropped.cache,
-        messagesCacheOrder: dropped.order,
-        // #513: the removed thread's fleet card goes with it.
-        fleetSuggestByThreadId: pruneFleetSuggest(state.fleetSuggestByThreadId, filtered.map(t => t.id)),
-        ...(clearingActive
-          ? { activeThreadId: null, messages: [], hydrating: false }
-          : {}),
-      }
-      const switched = clearingActive ? applyActiveThreadSwitch(base, nextActive) : null
-      return {
-        ...base,
-        threads: filtered,
-        ...(switched || { activeThreadId: nextActive }),
-        pinnedTabIds: nextThread?.pinned_tabs || [],
-        activeSkillIds: nextThread?.active_skill_ids || [],
-        activeKnowledgeIds: nextThread?.active_knowledge_ids || [],
-        threadBusyById: restBusy,
-      }
-    }
-    case "UPSERT_THREAD": {
-      const exists = state.threads.find(t => t.id === action.thread.id)
-      const isActive = action.thread.id === state.activeThreadId
-      if (exists) {
-        return {
-          ...state,
-          threads: state.threads.map(t => t.id === action.thread.id ? { ...t, ...action.thread } : t),
-          pinnedTabIds: isActive
-            ? action.thread.pinned_tabs || []
-            : state.pinnedTabIds,
-          activeSkillIds: isActive
-            ? (action.thread.active_skill_ids || state.activeSkillIds)
-            : state.activeSkillIds,
-          activeKnowledgeIds: isActive
-            ? (action.thread.active_knowledge_ids ?? state.activeKnowledgeIds)
-            : state.activeKnowledgeIds,
-          knowledgeSelectionMode: isActive
-            ? (action.thread.knowledge_selection_mode || state.knowledgeSelectionMode)
-            : state.knowledgeSelectionMode,
-          knowledgeSmartMatch: isActive
-            // #273: UPSERT 是同线程 patch 合并语义——字段省略 = 保持当前 UI 状态
-            // （乐观更新窗口内省略字段的回显不得把开关闪回 true；gate6 NF-1）。
-            // 跨线程归一（省略 = true）由 SET_THREADS / SET_ACTIVE_THREAD 负责。
-            ? (action.thread.knowledge_smart_match ?? state.knowledgeSmartMatch)
-            : state.knowledgeSmartMatch,
-          // #273 Wave B: 同 patch 合并语义（省略 = 保持；跨线程归一省略 = false）。
-          knowledgeRouteByGroup: isActive
-            ? (action.thread.knowledge_route_by_group ?? state.knowledgeRouteByGroup)
-            : state.knowledgeRouteByGroup,
-        }
-      }
-      return {
-        ...state,
-        threads: [action.thread, ...state.threads],
-      }
-    }
-    case "SET_STREAMING":
-      return { ...state, streamingContent: action.content }
-    case "SET_STREAMING_REASONING":
-      return { ...state, streamingReasoning: action.content }
+      return selectThread({ ...state, threads: [action.thread, ...state.threads] }, action.thread.id, "created")
+    case "REMOVE_THREAD":
+      return removeThreads(state, [action.threadId])
+    case "REMOVE_THREADS":
+      return removeThreads(state, action.threadIds)
+    case "UPSERT_THREAD":
+      return upsertThread(state, action.thread)
     case "SET_PROCESSING_STATUS":
       return { ...state, processingStatus: action.status }
     case "SET_TEST_RESULT":
@@ -2086,8 +1608,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, configHydratedFromCompanion: action.hydrated }
     case "SET_PROCESSING":
       return { ...state, isProcessing: action.isProcessing }
-    case "BUMP_COMPOSER_UPLOAD_CLEAR":
-      return { ...state, composerUploadClearSeq: state.composerUploadClearSeq + 1 }
     case "SET_PENDING_UPLOAD":
       if (!action.threadId) return state
       return {
@@ -2102,30 +1622,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const { [action.threadId]: _dropped, ...rest } = state.pendingUploads
       return { ...state, pendingUploads: rest }
     }
-    case "REQUEST_COMPOSER_RESTORE":
-      return {
-        ...state,
-        composerRestore: { text: action.text, token: (state.composerRestore?.token ?? 0) + 1 },
-      }
     case "CLEAR_COMPOSER_RESTORE":
       return { ...state, composerRestore: null }
-    case "SET_THREAD_BUSY": {
-      const id = action.threadId
-      if (!id) return state
-      if (action.busy) {
-        // #505: a new chat.create / live token on this thread clears the cap hint.
-        const base = withoutRunTerminal(state, id)
-        if (base.threadBusyById[id]) return base
-        return { ...base, threadBusyById: { ...base.threadBusyById, [id]: true } }
-      }
-      if (!state.threadBusyById[id]) return state
-      const { [id]: _, ...rest } = state.threadBusyById
-      return { ...state, threadBusyById: rest }
-    }
+    case "SET_THREAD_BUSY":
+      return setThreadBusy(state, action.threadId, action.busy)
     case "SET_FLEET_LIST_OPEN":
       // #502 E MAJOR-M1: every portal close path (Escape / backdrop / onClose /
       // enterWorker) funnels through here — drop the inspect buffer so worker
-      // tokens stop feeding SET_INSPECT_TAIL once the drawer is gone.
+      // Stop collecting worker output once the drawer closes.
       if (!action.open && state.inspectedWorkerId !== null) {
         return {
           ...state,
@@ -2144,12 +1648,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         inspectTokenTail: "",
         inspectLatestTool: "",
       }
-    case "SET_INSPECT_TAIL":
-      if (state.inspectTokenTail === action.tail) return state
-      return { ...state, inspectTokenTail: action.tail }
-    case "SET_INSPECT_LATEST_TOOL":
-      if (state.inspectLatestTool === action.tool) return state
-      return { ...state, inspectLatestTool: action.tool }
     case "CLEAR_INSPECT":
       if (state.inspectedWorkerId === null) return state
       return { ...state, inspectedWorkerId: null, inspectTokenTail: "", inspectLatestTool: "" }
@@ -2480,8 +1978,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     case "SET_VOICE_MODEL_ERROR":
       return { ...state, voiceModelError: action.error }
-    case "NOTE_BROWSER_TOOL":
-      return { ...state, lastBrowserToolAt: action.at ?? Date.now() }
     case "SET_MODE_PIN":
       return { ...state, modePin: action.pin }
     case "SET_FLEET":

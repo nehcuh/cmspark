@@ -8,7 +8,7 @@ import cp = require("node:child_process")
 import fs from "node:fs"
 import { initDataDir, saveConfig } from "../src/config"
 import { shellExec, listActiveShellRunIds, killProcessTree } from "../src/capability/shell"
-import { windowsTaskkillPath } from "../src/acp/win-spawn"
+import { windowsTaskkillPath } from "../src/process-path"
 
 before(async () => {
   await initDataDir()

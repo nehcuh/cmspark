@@ -4,6 +4,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
+import {createRequire} from 'node:module'
 import { DESKTOP_WINDOWS_INPUTS } from '../../companion/scripts/build-desktop-windows.mjs'
 const read = name => fs.readFileSync(new URL('../../' + name, import.meta.url), 'utf8')
 const patched = '22.23.4'
@@ -19,14 +20,27 @@ test('owned package/lock engines require the patched, qualified Node22 line', ()
   }
 })
 test('every CI/release setup-node job and packaged runtime use exact patched Node', () => {
-  for (const [name, count] of [['ci.yml', 4], ['release.yml', 2]]) {
-    const source = read('.github/workflows/' + name)
-    const setupCount = [...source.matchAll(/uses: actions\/setup-node@/g)].length
-    const versions = [...source.matchAll(/node-version:\s*['"]?([\d.]+)['"]?/g)].map(m => m[1])
-    assert.equal(setupCount, count)
-    assert.deepEqual(versions, Array(count).fill(patched))
+  assert.equal(read('.nvmrc'), patched + '\n')
+  const workflows = new URL('../../.github/workflows/', import.meta.url)
+  const yaml = createRequire(new URL('../../companion/package.json', import.meta.url))('js-yaml')
+  const counts = {}
+  for (const name of fs.readdirSync(workflows).filter(file => /\.ya?ml$/.test(file))) {
+    const {jobs} = yaml.load(fs.readFileSync(new URL(name, workflows), 'utf8'))
+    for (const job of Object.values(jobs)) {
+      let checkedOut = false
+      for (const step of job.steps ?? []) {
+        if (step.uses?.startsWith('actions/checkout@')) checkedOut = true
+        if (!step.uses?.startsWith('actions/setup-node@')) continue
+        counts[name] = (counts[name] ?? 0) + 1
+        assert.ok(checkedOut, name + ' must check out the version file before setup')
+        assert.equal(step.with['node-version-file'], '.nvmrc', name)
+        assert.ok(!Object.hasOwn(step.with, 'node-version'), name + ' overrides the version file')
+      }
+    }
   }
-  assert.match(read('scripts/package.sh'), /^NODE_VERSION="v22\.23\.4"$/m)
+  assert.equal(counts['ci.yml'], 4)
+  assert.equal(counts['release.yml'], 2)
+  assert.ok(read('scripts/package.sh').split(/\r?\n/).includes('NODE_VERSION="v$(<"${ROOT_DIR}/.nvmrc")"'))
 })
 test('native SDK URLs and SHA256 pins match the official v22.23.4 SHASUMS', () => {
   assert.equal(DESKTOP_WINDOWS_INPUTS.headers.url, 'https://nodejs.org/dist/v22.23.4/node-v22.23.4-headers.tar.gz')

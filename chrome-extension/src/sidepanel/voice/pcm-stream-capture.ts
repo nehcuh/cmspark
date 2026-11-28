@@ -9,7 +9,7 @@ import {
   LOCAL_STT_SAMPLE_RATE,
 } from "./local-stt-detect"
 import { float32ToS16lePcm, resampleFloat32Mono } from "./pcm-encode"
-import { microphoneConstraints } from "./microphone-device"
+import { openMicrophone, stopMicrophoneTracks } from "./microphone-device"
 
 export type PcmStreamCaptureOpts = {
   signal?: AbortSignal
@@ -24,17 +24,6 @@ export type PcmStreamHandle = {
   abort: () => void
   /** Which capture path was used (tests / diagnostics). */
   backend: "audioworklet" | "scriptprocessor"
-}
-
-function stopTracks(stream: MediaStream | null): void {
-  if (!stream) return
-  for (const t of stream.getTracks()) {
-    try {
-      t.stop()
-    } catch {
-      /* */
-    }
-  }
 }
 
 /** Inline worklet: post float32 mono frames to main thread. */
@@ -205,7 +194,7 @@ export async function startPcmStreamCapture(
     }
   }
 
-  const input = ctx.createGain()
+  let input: GainNode | null = null
   let source: MediaStreamAudioSourceNode | null = null
   let stream: MediaStream | null = null
   let settled = false
@@ -219,13 +208,7 @@ export async function startPcmStreamCapture(
   }
 
   let backend: "audioworklet" | "scriptprocessor" = "scriptprocessor"
-  let graph: { teardown: GraphTeardown } | null = await tryConnectWorklet(ctx, input, onFloat)
-  if (graph) {
-    backend = "audioworklet"
-  } else {
-    graph = connectScriptProcessor(ctx, input, onFloat)
-    backend = "scriptprocessor"
-  }
+  let graph: { teardown: GraphTeardown } | null = null
 
   const release = () => {
     if (maxTimer) {
@@ -239,22 +222,24 @@ export async function startPcmStreamCapture(
     }
     graph = null
     try {
-      source?.disconnect(); input.disconnect()
+      source?.disconnect(); input?.disconnect()
     } catch {
       /* */
     }
-    stopTracks(stream)
+    stopMicrophoneTracks(stream)
     try {
-      void ctx.close()
+      void ctx.close().catch(() => {})
     } catch {
       /* */
     }
   }
 
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: await microphoneConstraints(),
-    })
+    input = ctx.createGain()
+    graph = await tryConnectWorklet(ctx, input, onFloat)
+    if (graph) backend = "audioworklet"
+    else graph = connectScriptProcessor(ctx, input, onFloat)
+    stream = await openMicrophone()
 
     source = ctx.createMediaStreamSource(stream)
     source.connect(input)

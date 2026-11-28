@@ -2,7 +2,7 @@
 import type {AcpSessionRecord} from '../acp/types'
 import type {ThreadManager} from '../threads/thread-manager'
 import {redactSecrets} from '../threads/distill'
-import {commitLocalWorkMessage,type LocalFrame} from './local-work'
+import type {LocalFrame} from './local-work'
 type Binding={threads:ThreadManager;thread:string;messageId:string;current():boolean;event(frame:LocalFrame):void;settled?:'saved'|'unknown';content?:string}
 const native=new WeakMap<AcpSessionRecord,Binding>()
 export function bindNativeLocalHandback(session:AcpSessionRecord,binding:Binding):void{
@@ -18,4 +18,26 @@ export function commitNativeLocalHandback(session:AcpSessionRecord,content:strin
  binding.content=text;binding.settled='unknown'
  try{const id=commitLocalWorkMessage(binding.threads,binding.thread,binding.messageId,text,binding.current);binding.settled='saved';emit('saved',id)}catch{emit('unknown')}
  return true
+}
+
+/** A matching message in canonical history confirms a replay after a lost receipt. */
+export function commitLocalWorkMessage(
+  threads: ThreadManager,
+  thread: string,
+  messageId: string,
+  text: string,
+  current: () => boolean,
+): string {
+  if (!current()) throw new Error("LOCAL_STALE")
+  const prior = threads.readDesktopDialog(thread).messages.find(message => message.id === messageId)
+  if (prior) {
+    if (prior.role !== "assistant" || prior.content !== text) throw new Error("LOCAL_CONFLICT")
+    return prior.id
+  }
+  if (!current()) throw new Error("LOCAL_STALE")
+  // An index write may fail after the message has been saved. Let the caller report an unknown outcome.
+  threads.addMessage(thread, { id: messageId, thread_id: thread, role: "assistant", content: text })
+  const committed = threads.readDesktopDialog(thread).messages.find(message => message.id === messageId)
+  if (!committed || committed.content !== text) throw new Error("LOCAL_UNCONFIRMED")
+  return committed.id
 }

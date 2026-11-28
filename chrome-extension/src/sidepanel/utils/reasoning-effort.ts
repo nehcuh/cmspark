@@ -1,3 +1,4 @@
+// Generated from companion/src/llm/reasoning-effort.ts by companion/scripts/generate-client-contracts.mjs.
 /** Model capabilities for the protocols actually used by Companion and Settings. */
 export const orderedEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 export type ReasoningEffort = typeof orderedEfforts[number]
@@ -127,6 +128,34 @@ export function modelSpec(protocol: unknown, baseUrl: unknown, model: unknown, e
   const provider = directProvider(protocol, baseUrl)
   const spec = catalog.find(entry => entry.provider === provider && typeof model === "string" && entry.models.includes(model))
   return spec?.support === "qwen4" && effort === "none" ? { ...spec, output: 131072 } : spec
+}
+
+/** Fail-closed name heuristic. Does NOT read protocol. */
+export function likelyMultimodal(modelName: string | undefined | null, baseUrl?: string | null): boolean {
+  const m = (modelName || "").trim().toLowerCase()
+  if (!m) return false
+  if (baseUrl && (modelSpec("openai", baseUrl, m)?.imageInput || modelSpec("anthropic", baseUrl, m)?.imageInput)) return true
+  if (/deepseek/.test(m)) {
+    // Flash and its legacy aliases accept images on the official API. A gateway
+    // with the same model name needs its own probe or explicit override.
+    return ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].includes(m) &&
+      /^https:\/\/api\.deepseek\.com(?::443)?(?:\/(?:anthropic(?:\/v1)?|v1))?\/?$/i.test((baseUrl || "").trim())
+  }
+  if (/\br1\b/.test(m) && !/vision|vl/.test(m)) return false
+  if (/(^|[-_])(coder|reasoner)($|[-_])/.test(m) && !/vl|vision|omni/.test(m)) return false
+  if (/kimi-k2/.test(m) && !/vl|vision|omni/.test(m)) return false
+  if (/moonshot-v1/.test(m) && !/vl|vision|omni/.test(m)) return false
+  if (/gpt-5|gpt-4o|gpt-4\.1|gpt-4\.5|gpt-4-turbo|gpt-4-vision|o[1-9].*vision|chatgpt-4o/.test(m)) return true
+  if (/^(?:grok\/)?grok-4\.7(?:@\d+k)?$/.test(m)) return true
+  if (/claude|sonnet|opus|haiku/.test(m)) return true
+  if (/gemini|gemma.*vision/.test(m)) return true
+  if (/kimi|moonshot/.test(m)) return true
+  if (/glm-4v|glm-4\.?\d*v|glm-4\.6v/.test(m)) return true
+  if (/qwen.*vl|vl.*qwen|qwen2\.5-?vl|qwen2-vl|qwen3-vl/.test(m)) return true
+  if (/llava|minicpm-v|minicpm-o|moondream|pixtral|phi-3-vision|phi-4-multimodal/.test(m)) return true
+  if (/internvl|intern-vl|cogvlm|yi-vl|step-1v|llama-?3\.2.*vision|llama-?4/.test(m)) return true
+  if (/\bvision\b|multimodal|omni|\bvl\b/.test(m)) return true
+  return false
 }
 
 export function modelSuggestions(protocol: unknown, baseUrl: unknown): string[] {

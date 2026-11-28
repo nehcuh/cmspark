@@ -3,33 +3,15 @@
 // Runs in the background service worker. Responsibilities:
 //   1. Maintain batch state, persisted to chrome.storage.local AFTER EVERY ITEM
 //      (MV3 SW can die mid-batch — must be resumable).
-//   2. Find or open the NotebookLM tab; inject DOM-automation runners per item.
+//   2. Find or open the target NotebookLM tab and import each source via RPC.
 //   3. Throttle: random delay 500-1500ms between items + hard cap of 50 per batch.
 //   4. Retry failed items up to 2× with exponential backoff.
 //   5. Notify the side panel of progress after every item.
 //
-// Phase 5 review fixes baked in:
-//   - `startBatch` waits for `resumeIfPending` to finish; refuses if persisted state exists.
-//   - `ensureNotebookLmTab` navigates the matched tab to the target notebook URL
-//     (silent notebook mismatch was a Critical — Phase 5 review).
-//   - Tab-lost detection: on "No tab with id", re-acquire once; abort batch on second failure.
-//   - `cancelled` is part of BatchState so it survives SW restart (Phase 5 review).
-//
-// Anti-pattern: do NOT cache batch state in closure across awaits — SW may die and
-// the closure is lost. Always read/write via chrome.storage.local.
+// Each loop owns its batch object. Storage holds the last checkpoint for a new service worker.
 
-// v1.3: DOM automation removed from main path. RPC-first architecture.
-// Imports kept commented for reference; if RPC ever needs DOM fallback, uncomment.
-// import { encodeSelectorsForRunner, importTextRunner, importUrlRunner } from "../notebooklm/dom-automation"
-import {
-  addSourceViaRpc,
-  addTextSourceViaRpc,
-  isYouTubeUrl,
-} from "../notebooklm/rpc-client"
+import { addSourceViaRpc, addTextSourceViaRpc } from "../notebooklm/rpc-client"
 import type { BatchState, ImportItem, ImportItemResult } from "../notebooklm/types"
-
-// Suppress unused-import warning during transition (isYouTubeUrl used in runOne)
-void isYouTubeUrl
 
 const STORAGE_KEY = "notebooklm_batch_state_v1"
 const MAX_BATCH = 50
@@ -40,24 +22,14 @@ const MAX_DELAY_MS = 1500
 let activeBatch: BatchState | null = null
 
 /** SW boot sync — startBatch must await this to avoid race with resumeIfPending. */
-let bootReadyPromise: Promise<void>
 let bootReadyResolve!: () => void
-bootReadyPromise = new Promise(r => {
+const bootReadyPromise = new Promise<void>(r => {
   bootReadyResolve = r
 })
 
 /** Generate a batch ID. */
 function newBatchId(): string {
   return `nb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-/** Persist current batch state to chrome.storage.local. */
-async function persist(state: BatchState): Promise<void> {
-  try {
-    await chrome.storage.local.set({ [STORAGE_KEY]: state })
-  } catch {
-    // storage may be unavailable; in-memory state still authoritative within this SW life
-  }
 }
 
 /** Read any persisted batch state (for resume after SW restart). */
@@ -165,36 +137,31 @@ function isRetryableError(error: string | undefined): boolean {
   return true
 }
 
-/** Run a single import. v1.3: RPC-first (definitive success), DOM fallback only
- *  if RPC fails with a non-recoverable error.
- *
- *  RPC architecture: batchexecute call inside NotebookLM tab. Response contains
- *  source ID on success → definitive. No more "dialog closed = success" false
- *  positives that plagued v1.1/v1.2.
- */
-async function runOne(item: ImportItem, notebookId?: string): Promise<{ ok: boolean; error?: string }> {
+async function runOne(
+  item: ImportItem,
+  notebookId: string | undefined,
+  canSubmit: () => boolean,
+): Promise<{ ok: boolean; error?: string }> {
   const isUrl = !!item.url
   const isText = !!item.text
   if (!isUrl && !isText) return { ok: false, error: "Item has neither url nor text" }
   if (isUrl && isText) return { ok: false, error: "Item has both url and text" }
 
-  // RPC-first path
   if (!notebookId) {
     return { ok: false, error: "RPC path requires a target notebookId (no 'use currently-open notebook' supported yet)" }
   }
 
   try {
     if (isUrl) {
-      const r = await addSourceViaRpc(notebookId, item.url!)
+      const r = await addSourceViaRpc(notebookId, item.url!, canSubmit)
       // Kimi review: RPC response is definitive — sourceId present = success.
       // No more false positives from dialog-closure heuristics.
       return r.ok
         ? { ok: true }
         : { ok: false, error: r.error || "RPC add source failed" }
     } else {
-      // Text import: title is the first 30 chars of text (NotebookLM uses title for display)
       const title = (item.text!.slice(0, 50).replace(/\n/g, " ").trim()) || "Imported text"
-      const r = await addTextSourceViaRpc(notebookId, title, item.text!)
+      const r = await addTextSourceViaRpc(notebookId, title, item.text!, canSubmit)
       return r.ok
         ? { ok: true }
         : { ok: false, error: r.error || "RPC add text failed" }
@@ -210,23 +177,27 @@ function randomDelay(): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
 }
 
-/** Broadcast progress to any listening side panel. */
-async function broadcastProgress(state: BatchState): Promise<void> {
+/** Store a checkpoint before notifying the panel. An intervening cancel or start supersedes it. */
+async function reportProgress(batch: BatchState): Promise<void> {
+  if (activeBatch !== batch) return
+  const status = batch.status
   try {
-    await chrome.runtime.sendMessage({
-      type: "notebooklm.batch_progress",
-      state,
-    })
+    await chrome.storage.local.set({ [STORAGE_KEY]: batch })
   } catch {
-    // No listener — fine
+    // The panel still receives progress if storage is unavailable.
+  }
+  if (activeBatch !== batch || batch.status !== status) return
+  try {
+    await chrome.runtime.sendMessage({ type: "notebooklm.batch_progress", state: batch })
+  } catch {
+    // The side panel may be closed.
   }
 }
 
-/** Read the cancel flag from the current batch (checks both in-memory + persisted). */
-async function isCancelled(): Promise<boolean> {
-  if (activeBatch && activeBatch.cancelRequested) return true
-  const persisted = await loadPersistedBatch()
-  return !persisted // loadPersistedBatch returns null if cancelled OR done
+async function releaseBatch(batch: BatchState): Promise<void> {
+  if (activeBatch !== batch) return
+  activeBatch = null
+  await clearPersistedBatch()
 }
 
 /** Start a new batch. Returns the initial state. */
@@ -262,37 +233,24 @@ export async function startBatch(
     cancelRequested: false,
   }
   activeBatch = state
-  await persist(state)
-  await broadcastProgress(state)
-
-  // Fire and forget — the loop runs in the background
-  runBatchLoop(state.notebookId).catch(async e => {
-    if (activeBatch) {
-      activeBatch.status = "error"
-      activeBatch.finishedAt = new Date().toISOString()
-      await persist(activeBatch)
-      await broadcastProgress(activeBatch)
-    }
-    console.error("[notebooklm] batch loop crashed:", e)
-  })
-
+  await reportProgress(state)
+  launchBatch(state)
   return state
 }
 
 /** Cancel the running batch. */
 export async function cancelBatch(): Promise<void> {
-  if (activeBatch) {
-    activeBatch.cancelRequested = true
-    activeBatch.status = "cancelled"
-    activeBatch.finishedAt = new Date().toISOString()
-    await persist(activeBatch)
-    await broadcastProgress(activeBatch)
-    activeBatch = null
+  await bootReadyPromise
+  const batch = activeBatch
+  if (!batch) {
     await clearPersistedBatch()
-  } else {
-    // Phase 5 review: also clear any persisted state (e.g. user cancelled during SW restart)
-    await clearPersistedBatch()
+    return
   }
+  batch.cancelRequested = true
+  batch.status = "cancelled"
+  batch.finishedAt = new Date().toISOString()
+  await reportProgress(batch)
+  await releaseBatch(batch)
 }
 
 /** Get current batch state (for UI polling). */
@@ -300,37 +258,43 @@ export function getActiveBatch(): BatchState | null {
   return activeBatch
 }
 
-/** The main batch loop. Reads/writes `activeBatch` and persists after every item. */
-async function runBatchLoop(notebookId?: string): Promise<void> {
-  if (!activeBatch) return
+function launchBatch(batch: BatchState): void {
+  runBatchLoop(batch).catch(async error => {
+    if (activeBatch !== batch || batch.cancelRequested) return
+    batch.status = "error"
+    batch.finishedAt = new Date().toISOString()
+    await reportProgress(batch)
+    console.error("[notebooklm] batch loop crashed:", error)
+  })
+}
+
+async function runBatchLoop(batch: BatchState): Promise<void> {
+  const isRunning = () => activeBatch === batch && !batch.cancelRequested
+  if (!isRunning()) return
   let tabId: number | null = null
   let tabLostRetries = 0
   try {
-    tabId = await ensureNotebookLmTab(notebookId)
+    tabId = await ensureNotebookLmTab(batch.notebookId)
   } catch (e: any) {
-    if (activeBatch) {
-      activeBatch.status = "error"
-      activeBatch.finishedAt = new Date().toISOString()
-      for (let i = activeBatch.nextIndex; i < activeBatch.items.length; i++) {
-        activeBatch.results[i] = {
-          item: activeBatch.items[i],
+    if (isRunning()) {
+      batch.status = "error"
+      batch.finishedAt = new Date().toISOString()
+      for (let i = batch.nextIndex; i < batch.items.length; i++) {
+        batch.results[i] = {
+          item: batch.items[i],
           ok: false,
           error: `Tab setup failed: ${e?.message || e}`,
           durationMs: 0,
         }
       }
-      await persist(activeBatch)
-      await broadcastProgress(activeBatch)
+      await reportProgress(batch)
     }
     return
   }
 
-  while (activeBatch && activeBatch.nextIndex < activeBatch.items.length) {
-    // Phase 5 review: check cancel flag inside the loop (was only checked at loop top)
-    if (activeBatch.cancelRequested) break
-
-    const idx = activeBatch.nextIndex
-    const item = activeBatch.items[idx]
+  while (isRunning() && batch.nextIndex < batch.items.length) {
+    const idx = batch.nextIndex
+    const item = batch.items[idx]
     const startedAt = Date.now()
 
     // Retry loop — only retry transient errors (Phase 5 Kimi gate fix)
@@ -339,10 +303,11 @@ async function runBatchLoop(notebookId?: string): Promise<void> {
     let tabLost = false
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       // Check cancel between retry attempts too
-      if (activeBatch.cancelRequested) break
+      if (!isRunning()) return
       if (!tabId) break
 
-      const r = await runOne(item, activeBatch.notebookId)
+      const r = await runOne(item, batch.notebookId, isRunning)
+      if (!isRunning()) return
       if (r.ok) {
         ok = true
         break
@@ -352,7 +317,7 @@ async function runBatchLoop(notebookId?: string): Promise<void> {
       if (lastError?.startsWith("__TAB_LOST__")) {
         tabLost = true
         try {
-          tabId = await ensureNotebookLmTab(notebookId)
+          tabId = await ensureNotebookLmTab(batch.notebookId)
           tabLostRetries++
           if (tabLostRetries <= 2) continue // retry same item with new tab
           break
@@ -370,26 +335,24 @@ async function runBatchLoop(notebookId?: string): Promise<void> {
       }
     }
 
+    if (!isRunning()) return
+
     // If we hit the tab-lost retry cap, abort the whole batch
     if (tabLost && tabLostRetries > 2) {
-      if (activeBatch) {
-        activeBatch.status = "error"
-        activeBatch.finishedAt = new Date().toISOString()
-        // Mark remaining items as failed
-        for (let i = idx; i < activeBatch.items.length; i++) {
-          activeBatch.results[i] = {
-            item: activeBatch.items[i],
-            ok: false,
-            error: "NotebookLM tab closed repeatedly; batch aborted",
-            durationMs: 0,
-          }
+      batch.status = "error"
+      batch.finishedAt = new Date().toISOString()
+      // Mark remaining items as failed
+      for (let i = idx; i < batch.items.length; i++) {
+        batch.results[i] = {
+          item: batch.items[i],
+          ok: false,
+          error: "NotebookLM tab closed repeatedly; batch aborted",
+          durationMs: 0,
         }
-        activeBatch.nextIndex = activeBatch.items.length
-        await persist(activeBatch)
-        await broadcastProgress(activeBatch)
-        activeBatch = null
-        await clearPersistedBatch()
       }
+      batch.nextIndex = batch.items.length
+      await reportProgress(batch)
+      await releaseBatch(batch)
       return
     }
 
@@ -399,31 +362,21 @@ async function runBatchLoop(notebookId?: string): Promise<void> {
       durationMs: Date.now() - startedAt,
       ...(ok ? {} : { error: lastError || "Unknown error" }),
     }
-    activeBatch.results[idx] = result
-    activeBatch.nextIndex = idx + 1
-    await persist(activeBatch)
-    await broadcastProgress(activeBatch)
+    batch.results[idx] = result
+    batch.nextIndex = idx + 1
+    await reportProgress(batch)
 
     // Throttle between items (skip on last)
-    if (activeBatch.nextIndex < activeBatch.items.length && !activeBatch.cancelRequested) {
+    if (batch.nextIndex < batch.items.length && !batch.cancelRequested) {
       await randomDelay()
     }
   }
 
-  if (activeBatch && !activeBatch.cancelRequested) {
-    activeBatch.status = "done"
-    activeBatch.finishedAt = new Date().toISOString()
-    await persist(activeBatch)
-    await broadcastProgress(activeBatch)
-    activeBatch = null
-    await clearPersistedBatch()
-  } else if (activeBatch && activeBatch.cancelRequested) {
-    activeBatch.status = "cancelled"
-    activeBatch.finishedAt = new Date().toISOString()
-    await broadcastProgress(activeBatch)
-    activeBatch = null
-    await clearPersistedBatch()
-  }
+  if (!isRunning()) return
+  batch.status = "done"
+  batch.finishedAt = new Date().toISOString()
+  await reportProgress(batch)
+  await releaseBatch(batch)
 }
 
 /** On SW startup, check for a persisted batch and resume it. */
@@ -431,23 +384,9 @@ export async function resumeIfPending(): Promise<void> {
   try {
     const persisted = await loadPersistedBatch()
     if (!persisted) return
-    if (persisted.status !== "running") return
-    if (persisted.cancelRequested) {
-      await clearPersistedBatch()
-      return
-    }
-    // Adopt as active and re-enter the loop
     activeBatch = persisted
     console.log(`[notebooklm] resuming batch ${persisted.id} from index ${persisted.nextIndex}`)
-    runBatchLoop(persisted.notebookId).catch(async e => {
-      if (activeBatch) {
-        activeBatch.status = "error"
-        activeBatch.finishedAt = new Date().toISOString()
-        await persist(activeBatch)
-        await broadcastProgress(activeBatch)
-      }
-      console.error("[notebooklm] resumed batch crashed:", e)
-    })
+    launchBatch(persisted)
   } finally {
     bootReadyResolve()
   }

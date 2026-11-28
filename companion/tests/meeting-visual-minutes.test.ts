@@ -7,8 +7,8 @@ import test from "node:test"
 import { generateMeetingMinutes } from "../src/meeting/meeting-minutes"
 import { DATA_DIR } from "../src/config"
 import { createMeeting, listMeetings, loadMeeting, meetingSourceFingerprint, setMinutes, setTranscript } from "../src/meeting/meeting-store"
-import { MeetingVisualEvidenceUnavailableError, quarantineUnreadableMeetingEvidence, readMeetingVisualEvidence,
-  removeMeetingVisualEvidence, writeMeetingVisualEvidence } from "../src/meeting/meeting-visual-store"
+import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence } from "../src/meeting/meeting-visual-evidence"
+import { quarantineUnreadableMeetingEvidence, removeMeetingVisualEvidence, writeMeetingVisualEvidence } from "../src/meeting/meeting-visual-store"
 import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
 
 const transcript = "发布日尚未决定。"

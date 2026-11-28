@@ -16,6 +16,12 @@ CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://mod
 
 > MCP **不是**「中层 Agent」或新 runtime，只是把外部能力**组合**进现有 Agent。高级投研类 skill 常与 MCP/API + [user-env Secrets](user-env.md) 一起用，多数时间停在 **L0 聊**，只有真的调用浏览器 tool 时才进入 **L1 网页**。
 
+## DeepSeek Flash 工具搜索
+
+主对话直连官方 `deepseek-flash` 时，内置工具立即可用。模型需要外部能力时，会搜索本线程可用的 MCP 工具，再加载匹配的定义。选择的服务器和工具白名单继续生效。OpenAI 兼容地址使用 Responses，Anthropic 兼容地址使用 Messages。其他模型、代理网关和子线程沿用原有工具列表。
+
+新增的工具定义随搜索结果进入对话历史，让此前的前缀可以继续命中缓存。实际收益取决于工具数量、对话长度及服务端缓存状态。搜索本身可能增加一次模型往返。[DeepSeek 工具文档](https://api-docs.deepseek.com/zh-cn/guides/tool_calls/)
+
 ## 支持能力
 
 | 能力 | 状态 | 说明 |

@@ -88,6 +88,8 @@ export class CompanionClient {
   private requestId = 0
   private _state: ConnectionState = "disconnected"
 
+  private extensionConnected = false
+
   /** Authenticated = companion accepted our HMAC handshake. App sends + data
    *  fetches are gated on this; promoted to "connected" only after auth.ok. */
   private authenticated = false
@@ -235,6 +237,11 @@ export class CompanionClient {
       this.rejectAllPending("endpoint changed")
     }
     this.scheduleReconnect()
+  }
+
+  /** Last browser state reported by the currently authenticated daemon. */
+  get hasExtensionPeer(): boolean {
+    return this.authenticated && this.ws?.readyState === WebSocket.OPEN && this.extensionConnected
   }
 
   get connectionState(): ConnectionState {
@@ -523,7 +530,9 @@ export class CompanionClient {
     try {
       const pong = await this.sendMeetingBoundRequest("system.ping", {}, 5000, connection, false)
       if (!this.isMeetingConnection(connection) || pong?.type !== "system.pong" || pong.meeting_pcm_contract !== 1) return null
-      this.meetingObservation = Object.freeze(connection)
+      // Parallel probes on the same authenticated socket must retain one
+      // binding, since an in-flight meeting start compares it by identity.
+      if (!this.getMeetingPcmObservation()) this.meetingObservation = Object.freeze(connection)
       return 1
     } catch { return null }
   }
@@ -639,6 +648,7 @@ export class CompanionClient {
         return
       }
       // Promote to authenticated+connected. App sends are now accepted; fetch data.
+      this.extensionConnected = msg.extension_connected === true
       this.authenticated = true
       this._state = "connected"
       this.lastActivityAt = Date.now()
@@ -677,6 +687,11 @@ export class CompanionClient {
     // response-type name (e.g. skill.list / thread.list / *.list) to these
     // conditions — a response re-triggering its own request creates a tight
     // request/response loop (see the skill.list hotfix that pinned both CPUs).
+    if (msg.type === "browser.connection") {
+      if (this.authenticated && msg.id == null) this.extensionConnected = msg.connected === true
+      return
+    }
+
     if (msg.type === "connected") {
       // App-level connected (server sends this right after auth.ok). We already
       // promoted on auth.ok, so this is a no-op here — kept for clarity.

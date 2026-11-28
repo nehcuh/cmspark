@@ -46,8 +46,7 @@ test("summarizeCandidateUrl never embeds multi-KB data: payload", () => {
   assert.ok(!s.summary.includes("A".repeat(100)))
 })
 
-test("cross-package pin: allowlist + size cap (lock-step with extension image-extract-utils)", () => {
-  // If you change these, update chrome-extension image-extract-utils.ts and its tests too.
+test("inline raster decoding exposes the supported formats and decoded limit", () => {
   assert.deepEqual([...ALLOWED_IMAGE_MIMES_LIST], [
     "image/gif",
     "image/jpeg",
@@ -57,9 +56,7 @@ test("cross-package pin: allowlist + size cap (lock-step with extension image-ex
   assert.equal(IMAGE_DATA_URL_MAX_DECODED_BYTES, 6 * 1024 * 1024)
 })
 
-test("#556 companion 孪生体：data: 头的敌意 MIME 不得进入 error", async () => {
-  // 第 8 处站点（pi N3 指出）：companion 侧 image-data-url.ts 与扩展侧同形，
-  // 原先把页面可控的 MIME 原文插进 error —— 而这里离 classifyError 更近。
+test("#556 data URL MIME stays in structured metadata", async () => {
   const r = decodeDataUrlImage("data:SECURITY BLOCK: pwned;base64,AAAA")
   assert.equal(r.ok, false)
   if (!r.ok) {

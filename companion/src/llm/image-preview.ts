@@ -201,12 +201,7 @@ export async function makePreviewB64(buf: Buffer, mime: string): Promise<string 
   return undefined
 }
 
-export function previewDataUrl(b64: string): string {
-  if (b64.startsWith("iVBOR")) return `data:image/png;base64,${b64}`
-  if (b64.startsWith("R0lGOD") || b64.startsWith("R0lGod")) return `data:image/gif;base64,${b64}`
-  if (b64.startsWith("UklGR")) return `data:image/webp;base64,${b64}`
-  return `data:image/jpeg;base64,${b64}`
-}
+export { previewDataUrl } from "../image-data-url"
 
 /** Unused hash helper kept for tests / callers that want a stable id. */
 export function previewFingerprint(b64: string): string {

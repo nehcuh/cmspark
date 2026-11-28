@@ -838,7 +838,7 @@ test("idle fleet snapshot keeps a confirmation lease when the confirmation hook 
   assert.equal(getTabLease(581)?.state, "SOFT_RESERVED")
 })
 
-// #545 fail-closed regression. buildFleetSnapshot lazy-requires message-router
+// #545 fail-closed regression. buildFleetSnapshot reads the run registry
 // to learn which threads have a live LLM run. Before this fix, a throw there
 // fell into `catch { llmActive = [] }`, which — combined with idle release keyed
 // on that empty set — released EVERY non-paused worker's lease at once. The
@@ -856,7 +856,7 @@ test("buildFleetSnapshot: does NOT release idle leases when the LLM-active set c
   } as any
 
   const cjsRequire = createRequire(__filename)
-  const mrPath = cjsRequire.resolve("../src/message-router")
+  const mrPath = cjsRequire.resolve("../src/llm/active-runs")
   const orig = require.cache[mrPath]
   // Force the lazy require to yield a module whose listLlmActiveThreadIds throws.
   require.cache[mrPath] = {
@@ -885,7 +885,7 @@ test("buildFleetSnapshot: DOES release a genuinely idle worker when the active s
     list: () => [{ id: "w-idle", alias: "w", agent_role: "worker", paused: false, parent_thread_id: "p" }],
   } as any
   const cjsRequire = createRequire(__filename)
-  const mrPath = cjsRequire.resolve("../src/message-router")
+  const mrPath = cjsRequire.resolve("../src/llm/active-runs")
   const orig = require.cache[mrPath]
   require.cache[mrPath] = {
     id: mrPath, filename: mrPath, loaded: true, exports: { listLlmActiveThreadIds: () => [] },

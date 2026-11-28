@@ -1,6 +1,6 @@
 // S-P0-2 integrity guard for cmspark-host spawn paths.
 //
-// Mirrors swift-tray-bridge.ts:42-185: open fd → sha256 → capture inode+dev →
+// Shares the Swift tray’s open-file hash and inode/device check, then proceeds to
 // spawn via realpath → post-spawn re-stat. Catches path-substitution TOCTOU
 // between hash and exec; rejects binary mismatch pre-spawn.
 //
@@ -18,7 +18,8 @@
 // of com.cmspark.agent instead of the pre-sign pin (Pi dual-review B1).
 
 import * as fs from "fs"
-import * as crypto from "crypto"
+import { readBinaryFingerprint, statInodeDev } from "../../binary-fingerprint"
+export { statInodeDev } from "../../binary-fingerprint"
 import { promisify } from "util"
 import { execFile, execFileSync, spawnSync } from "child_process"
 import * as path from "path"
@@ -94,72 +95,24 @@ export function codesignProductIdentityOk(binPath: string): boolean {
  * Exported for unit testing. Production callers should use spawnHostBin().
  */
 export function checkHostIntegrity(binPath: string): HostIntegrityCheck {
-  let fd: number | null = null
   try {
-    const realpath = fs.realpathSync(binPath)
-    fd = fs.openSync(realpath, "r")
-    const stat = fs.fstatSync(fd)
-    const hash = crypto.createHash("sha256")
-    const BUF = Buffer.alloc(64 * 1024)
-    while (true) {
-      const n = fs.readSync(fd, BUF, 0, BUF.length, null)
-      if (n === 0) break
-      hash.update(BUF.slice(0, n))
-    }
-    // Close before codesign so we don't hold exclusive locks
-    try { fs.closeSync(fd) } catch { /* ignore */ }
-    fd = null
-
-    const digest = hash.digest("hex")
+    const { digest, inode, dev, realpath } = readBinaryFingerprint(binPath)
     if (digest === CMSPARK_HOST_SHA256) {
-      return {
-        ok: true,
-        inode: stat.ino,
-        dev: stat.dev,
-        realpath,
-        reason: "sha256",
-      }
+      return { ok: true, inode, dev, realpath, reason: "sha256" }
     }
-
-    // Packaged app: deep-sign changes SHA; trust codesign product identity.
+    // Deep signing the packaged host changes its digest.
     if (isPackagedAppHostPath(realpath) && codesignProductIdentityOk(realpath)) {
-      return {
-        ok: true,
-        inode: stat.ino,
-        dev: stat.dev,
-        realpath,
-        reason: "codesign-product",
-      }
+      return { ok: true, inode, dev, realpath, reason: "codesign-product" }
     }
-
-    return {
-      ok: false,
-      inode: stat.ino,
-      dev: stat.dev,
-      realpath,
-      reason: "mismatch",
-    }
+    return { ok: false, inode, dev, realpath, reason: "mismatch" }
   } catch {
     return { ok: false, inode: -1, dev: -1, realpath: "", reason: "error" }
-  } finally {
-    if (fd !== null) {
-      try { fs.closeSync(fd) } catch { /* ignore */ }
-    }
   }
 }
 
 /** Exported for unit testing. */
 export function getExpectedHash(): string {
   return CMSPARK_HOST_SHA256
-}
-
-export function statInodeDev(p: string): { inode: number; dev: number } | null {
-  try {
-    const s = fs.statSync(p)
-    return { inode: s.ino, dev: s.dev }
-  } catch {
-    return null
-  }
 }
 
 export interface SpawnHostBinOpts {

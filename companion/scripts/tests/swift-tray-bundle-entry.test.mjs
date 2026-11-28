@@ -15,7 +15,7 @@ const source = readFileSync(sourcePath, "utf8").replaceAll("import.meta.url", JS
 const compiled = transformSync(source, { loader: "js", format: "cjs", target: "node22" }).code
 const tray = Buffer.from("owned inert tray")
 
-function exercise({ platform = "darwin", arch = "arm64", args = [], data = tray, status = 0, spawnError = null, fresh = true, graph = true, bundleOverride = null, stagingOverride = null, whisperError = null } = {}) {
+function exercise({ platform = "darwin", arch = "arm64", args = [], data = tray, status = 0, spawnError = null, fresh = true, fingerprintFresh = true, graph = true, bundleOverride = null, stagingOverride = null, whisperError = null } = {}) {
   const calls = []
   const reads = []
   const exits = []
@@ -38,6 +38,8 @@ function exercise({ platform = "darwin", arch = "arm64", args = [], data = tray,
       if (file.endsWith("/integrity.json")) return "{}"
       if (file.endsWith("/swift-tray-bridge.ts")) return "source"
       if (file.endsWith("/swift-tray-bridge.js")) return "compiled"
+      if (file === "/owned/companion/src/binary-fingerprint.ts") return "source"
+      if (file === "/owned/companion/dist/binary-fingerprint.js") return fingerprintFresh ? "compiled" : "stale"
       if (file.endsWith("/meta.json")) {
         const key = args[0] === `--verify-macos-${arch}-tray` || args[0]?.startsWith("--verify-whisper-macos-") ? "../tmp/cmspark-tray-bundle-fixture/cmspark-agent.js" : "dist/cmspark-agent.js"
         return JSON.stringify(graph ? { outputs: { [key]: { inputs: { "dist/tray/swift-tray-bridge.js": { bytesInOutput: 1 } } } } } : { outputs: {} })
@@ -153,6 +155,12 @@ test("entry rejects unknown arguments, wrong platform, missing and empty bytes",
     assert.ok(result.thrown)
     assert.equal(result.calls.length, 0)
   }
+})
+
+test("entry rejects stale binary fingerprint code while the tray bridge is current", () => {
+  const result = exercise({ args: ["--packaged-macos-arm64-tray"], fingerprintFresh: false })
+  assert.match(result.thrown?.message ?? "", /TRAY_COMPILED_SOURCE_STALE/)
+  assert.equal(result.calls.length, 0)
 })
 
 test("entry without the option retains ordinary cross-platform behavior", () => {

@@ -53,6 +53,15 @@ export function bindExtensionPeerPicker(pick: Picker): void {
   pickAuthenticated = pick
 }
 
+/** Passive UI status. Reading it must never start a server or open a browser. */
+export function hasAuthenticatedExtensionPeer(): boolean {
+  try {
+    return pickAuthenticated() != null
+  } catch {
+    return false
+  }
+}
+
 function makeTimeoutError(): ExtensionPeerTimeoutError {
   const err = new Error(
     "EXTENSION_UNAVAILABLE: Chrome extension peer did not authenticate in time",

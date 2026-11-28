@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { spawn, type ChildProcess } from "node:child_process"
 import { killWindowsPtyTree } from "../src/pty/windows-tree"
-import { windowsTaskkillPath } from "../src/acp/win-spawn"
+import { windowsTaskkillPath } from "../src/process-path"
 import { resolveKnownFolders } from "../src/host-use/win/known-folders"
 
 test("PTY taskkill uses the pinned path and catches asynchronous startup failure", async () => {

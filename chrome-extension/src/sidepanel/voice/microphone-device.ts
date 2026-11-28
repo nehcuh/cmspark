@@ -13,3 +13,17 @@ export async function microphoneConstraints(): Promise<MediaTrackConstraints> {
     ...(typeof id === "string" && id ? { deviceId: { exact: id } } : {}),
   }
 }
+
+export async function openMicrophone(): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({ audio: await microphoneConstraints() })
+}
+
+export function stopMicrophoneTracks(stream: MediaStream | null): void {
+  for (const track of stream?.getTracks() ?? []) {
+    try {
+      track.stop()
+    } catch {
+      // Continue releasing the other tracks.
+    }
+  }
+}

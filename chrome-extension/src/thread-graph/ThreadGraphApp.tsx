@@ -1,4 +1,4 @@
-import { threadTags, aiThreadGroup } from "../sidepanel/utils/thread-management"
+import { aiThreadGroup } from "../sidepanel/utils/thread-management"
 // Full-page Obsidian-like thread graph.
 // Spec: docs/superpowers/specs/2026-08-11-thread-graph-obsidian-view-design.md
 // v1.1+: tag colors · hover labels · floating chrome · nit closeout
@@ -15,11 +15,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react"
-import {
-  buildRelatedEdges,
-  type RelatedEdge,
-  type RelatedThreadInput,
-} from "../sidepanel/utils/thread-related"
+import type { RelatedEdge } from "../sidepanel/utils/thread-related"
+import { buildThreadGraphView, displayTitle } from "./graph-view"
 import {
   forceLayoutTick,
   seedLayoutNodes,
@@ -57,12 +54,6 @@ const LABEL_ZOOM_THRESHOLD = 1.15
 const HIT_PAD = 8
 const PANEL_KEY = "cmspark_thread_graph_panel_open"
 const EXTRACT_MAX = 20
-
-function displayTitle(t: ThreadGraphSlim): string {
-  const a = (t.alias || "").trim()
-  if (a) return a.length > 22 ? a.slice(0, 21) + "…" : a
-  return `未命名 · ${(t.id || "").slice(0, 6)}`
-}
 
 function radiusForDegree(deg: number): number {
   return Math.min(7.5, Math.max(2.8, 2.8 + Math.sqrt(deg) * 1.35))
@@ -178,61 +169,10 @@ export function ThreadGraphApp() {
 
   const threads = snap?.threads || []
 
-  const { nodesInput, edges, isolatedIds } = useMemo(() => {
-    const inputs: RelatedThreadInput[] = threads.map((t) => ({
-      id: t.id,
-      alias: t.alias,
-      updated_at: t.updated_at,
-      created_at: t.created_at,
-      last_message_at: t.last_message_at,
-      agent_role: t.agent_role,
-      trashed_at: t.trashed_at,
-      digest: t.digest,
-    }))
-    const allEdges = buildRelatedEdges(inputs, { minScore, maxEdges: 200 })
-    const degree = new Map<string, number>()
-    for (const t of inputs) degree.set(t.id, 0)
-    for (const e of allEdges) {
-      degree.set(e.a, (degree.get(e.a) || 0) + 1)
-      degree.set(e.b, (degree.get(e.b) || 0) + 1)
-    }
-    const isolated = new Set<string>()
-    for (const t of inputs) {
-      if ((degree.get(t.id) || 0) === 0) isolated.add(t.id)
-    }
-    let nodeIds = inputs.map((t) => t.id)
-    if (!showIsolated) {
-      nodeIds = nodeIds.filter((id) => !isolated.has(id) || id === focusId)
-      const keep = new Set<string>()
-      for (const e of allEdges) {
-        keep.add(e.a)
-        keep.add(e.b)
-      }
-      if (focusId) keep.add(focusId)
-      nodeIds = nodeIds.filter((id) => keep.has(id))
-    }
-    const q = query.trim().toLowerCase()
-    if (q) {
-      nodeIds = nodeIds.filter((id) => {
-        const t = threads.find((x) => x.id === id)
-        if (!t) return false
-        const title = displayTitle(t).toLowerCase()
-        const tags = threadTags(t).join(" ").toLowerCase()
-        return title.includes(q) || tags.includes(q) || id.toLowerCase().includes(q)
-      })
-    }
-    const nodeSet = new Set(nodeIds)
-    const edgesF = allEdges.filter((e) => nodeSet.has(e.a) && nodeSet.has(e.b))
-    return {
-      nodesInput: nodeIds.map((id) => ({
-        id,
-        degree: degree.get(id) || 0,
-        title: displayTitle(threads.find((t) => t.id === id) || { id }),
-      })),
-      edges: edgesF,
-      isolatedIds: isolated,
-    }
-  }, [threads, minScore, showIsolated, query, focusId])
+  const { nodesInput, edges, isolatedIds } = useMemo(
+    () => buildThreadGraphView(threads, minScore, showIsolated, query, focusId),
+    [threads, minScore, showIsolated, query, focusId],
+  )
 
   const tagColors = useMemo(() => {
     const ids = nodesInput.map((n) => n.id)

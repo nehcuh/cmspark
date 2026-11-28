@@ -2,6 +2,7 @@ import { MeetingPcmEncoder, type MeetingBlock, type MeetingCredit } from "./meet
 import { MEETING_PCM_WORKLET_JS } from "./meeting-pcm-worklet-generated"
 
 export { meetingChapters, linkMeetingQuotes, turnTime } from "./meeting-chapters"
+export { openDesktopMeetingMedia } from "./desktop-meeting-media"
 export { meetingLanguages } from "./meeting-language"
 
 export type MeetingCaptureOptions = {
@@ -222,7 +223,8 @@ export function createMeetingContinuousCapture(options: MeetingCaptureOptions) {
       if (silent || ended) return
       stopping = true; closeGraph()
       const code = error instanceof Error && error.name === "NotAllowedError" ? "permission_denied" : "startup_timeout"
-      options.onError?.(code); await abort()
+      options.onError?.(code)
+      if (!cancelled) await abort()
     }
   }
   return { start, stop, abort, handleStatus, get backend() { return backend },

@@ -37,13 +37,13 @@ describe("whisper-binary.manifest", () => {
     assert.equal(m.binaries["win-x64"]!.kind, "zip")
   })
 
-  it("win-x64 primary sha256 matches whisper-binary-pins", () => {
-    const m = loadWhisperBinaryManifest(resolveManifestPath())
-    const entry = m.binaries["win-x64"]!
-    const primary = primaryWhisperBinarySha256("win-x64", entry)
-    const pin = expectedWhisperSha256("win-x64")
-    assert.equal(pin, primary, "pins.ts must match manifest primary exe hash")
-  })
+  for (const arch of ["win-x64", "win-arm64", "linux-x64", "linux-arm64"]) {
+    it(`${arch} packaged CPU manifest matches its production pin`, () => {
+      const entry = loadWhisperBinaryManifest(resolveManifestPath()).binaries[arch]!
+      assert.equal(entry.kind, arch.startsWith("linux") ? "tar.gz" : "zip")
+      assert.equal(expectedWhisperSha256(arch), primaryWhisperBinarySha256(arch, entry))
+    })
+  }
 
   it("rejects non-https url", () => {
     assert.throws(

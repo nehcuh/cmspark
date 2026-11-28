@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { buildThreadGraphView } from "../src/thread-graph/graph-view"
 import {
   isSnapshotFresh,
   isThreadGraphTabUrl,
@@ -66,4 +67,16 @@ test("slimThreadGraphRow drops unknown keys / message bodies", () => {
   assert.equal(slim!.digest?.stale, true)
   assert.equal(slimThreadGraphRow({}), null)
   assert.equal(slimThreadGraphRow(null), null)
+})
+
+test("graph view connects snapshots by shared user tags when no digest exists", () => {
+  const threads = uniqueGraphThreads([
+    { id: "a", user_tags: ["排期"] },
+    { id: "b", user_tags: ["排期"] },
+    { id: "c" },
+  ])
+  const view = buildThreadGraphView(threads, 0.2, false, "排期", null)
+  assert.deepEqual(view.nodesInput.map(row => [row.id, row.degree]), [["a", 1], ["b", 1]])
+  assert.deepEqual(view.edges, [{ a: "a", b: "b", score: 3, shared_tags: ["排期"], kind: "hard" }])
+  assert.deepEqual([...view.isolatedIds], ["c"])
 })

@@ -1,16 +1,22 @@
-/**
- * Must be imported *before* any module that reads config.DATA_DIR.
- * ESM evaluates static imports before the importer body, so assigning
- * process.env.CMSPARK_DATA_DIR at the top of a test file is too late.
- */
-import * as fs from "fs"
-import * as os from "os"
-import * as path from "path"
+// This must be the first import. Static imports run before the test body, and
+// config.DATA_DIR captures the directory at module initialization.
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 
-if (!process.env.CMSPARK_DATA_DIR) {
-  process.env.CMSPARK_DATA_DIR = fs.mkdtempSync(
-    path.join(os.tmpdir(), "cmspark-meeting-"),
-  )
+const runDir = process.env.CMSPARK_TEST_RUN_DIR
+const preloaded = process.env.CMSPARK_DATA_DIR
+
+function dataDirForMeetingTests(): string {
+  if (runDir && preloaded && path.dirname(preloaded) === runDir) return preloaded
+
+  // Direct node --test has no runner preload. Never use the operator's data.
+  const owned = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-meeting-"))
+  process.on("exit", () => {
+    try { fs.rmSync(owned, { recursive: true, force: true }) } catch { /* best effort on exit */ }
+  })
+  return owned
 }
 
-export const MEETING_TEST_DATA_DIR = process.env.CMSPARK_DATA_DIR
+export const MEETING_TEST_DATA_DIR = dataDirForMeetingTests()
+process.env.CMSPARK_DATA_DIR = MEETING_TEST_DATA_DIR

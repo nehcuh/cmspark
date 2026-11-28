@@ -53,6 +53,8 @@ function restoreController(value: string, eol: string): string {
   const x11Scope = value.slice(start, end).replace(/\r\n/g, '\n')
   assert.equal(createHash('sha256').update(x11Scope).digest('hex'), 'de81e948215c99ef05eb51243f5903b9030de02fd26231ebaeccf4a5ae85a476')
   const changes: [string, string][] = [
+    // Start the Linux fixture only after the X11 window manager owns the display.
+    ["spawn('/bin/bash',[path.resolve('scripts/test-activity-x11-758.sh'),'--owned-window',dir]", "spawn('/usr/bin/python3',[path.resolve('tests/fixtures/activity-linux-758.py'),dir]"],
     // #900 adds native line recognition and separate-window stacking assertions.
     ["    if(win) assert.match(captured.ocr_text,/PROJECT ALPHA[^\\n]*\\n[^\\n]*SEND REPORT FRIDAY/i)\n", ''],
     ["      await exec('/usr/bin/python3', ['-I', path.resolve('tests/helpers/activity-x11-stacking-900.py'), resolveLinuxRecorder(), String(before), native.app_id, dir], { signal: owned.signal, timeout: 15000 })\n", ''],

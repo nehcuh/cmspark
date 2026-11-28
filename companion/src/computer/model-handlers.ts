@@ -16,6 +16,7 @@ import {
   isQwenVlVariant,
   migrateLegacyModelVariant,
   QWEN_VL_VARIANT_META,
+  QWEN_VL_VARIANTS,
   type QwenVlVariant,
 } from "./qwen-vl-catalog"
 import {
@@ -180,7 +181,7 @@ async function statePayload(
     downloadGb: meta.downloadGb,
     minRamGb: meta.minRamGb,
     minVramGb: meta.minVramGb,
-    availableVariants: ["2b", "4b", "8b"] as const,
+    availableVariants: QWEN_VL_VARIANTS,
     downloadSource: (cfg as any).modelDownloadSource ?? "auto",
     // Product UX: always emit canDownload/canEnable as booleans so the UI never
     // treats "unknown" as "allowed to click download".

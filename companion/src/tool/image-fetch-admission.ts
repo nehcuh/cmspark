@@ -19,7 +19,7 @@ import {
   type SecurityConfirmationManager,
 } from "../security-confirmation"
 import { extendLeaseIdle, SOFT_LEASE_SKEW_MS } from "../orchestrator/tab-lease"
-import { isFullAutonomyCruise } from "./l2-admission"
+import { isFullAutonomyCruise } from "../security-arm"
 
 /** True when user armed three-flag cruise = explicit risk acceptance for tool surface + fewer gates. */
 function cruiseRiskAccepted(): boolean {

@@ -1,3 +1,4 @@
+/.nvmrc text eol=lf
 # The capture generator hashes source bytes and checks committed output exactly.
 /companion/scripts/tests/fixtures/node-22.23.4-headers/*.h -text
 /chrome-extension/src/sidepanel/voice/meeting-continuous-pcm.ts text eol=lf
@@ -6,6 +7,11 @@
 /chrome-extension/src/sidepanel/voice/meeting-language.ts text eol=lf
 /chrome-extension/src/sidepanel/voice/meeting-chapters.ts text eol=lf
 /chrome-extension/src/sidepanel/voice/meeting-continuous-capture.ts text eol=lf
+/chrome-extension/src/sidepanel/voice/desktop-meeting-media.ts text eol=lf
+/chrome-extension/src/sidepanel/voice/workbench-screen-capture.ts text eol=lf
+/chrome-extension/src/sidepanel/voice/workbench-capture-owner.ts text eol=lf
+/chrome-extension/src/sidepanel/voice/workbench-recording-store.ts text eol=lf
+/chrome-extension/src/sidepanel/voice/meeting-frame-sampler.ts text eol=lf
 /companion/src/summoner/meeting-continuous-generated.ts text eol=lf
 # The evidence recipient is fingerprinted from its exact committed PEM bytes.
 /scripts/windows-census-recipient-650.pem text eol=lf

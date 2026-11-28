@@ -393,13 +393,12 @@ export async function forwardToolToExtension(ctx: ForwardToolToExtensionCtx): Pr
               autoHoldCreatedTab,
               anyTabLeaseHeld,
             } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
-            const { isMultiAgentThread } = require("../orchestrator") as typeof import("../orchestrator")
+            const { isMultiAgentThread, ORCHESTRATOR_CAPS } = require("../orchestrator/constants") as typeof import("../orchestrator/constants")
             const th = getThreadManager()?.get(actingThreadId) as any
             if (isMultiAgentThread(th) || anyTabLeaseHeld()) {
               autoHoldCreatedTab(result.data.id, actingThreadId)
               if (th?.agent_role === "worker" || th?.agent_role === "orchestrator") {
                 const { armCreatedTabHold } = require("../orchestrator/tab-lease") as typeof import("../orchestrator/tab-lease")
-                const { ORCHESTRATOR_CAPS } = require("../orchestrator/constants") as typeof import("../orchestrator/constants")
                 armCreatedTabHold(
                   result.data.id,
                   actingThreadId,

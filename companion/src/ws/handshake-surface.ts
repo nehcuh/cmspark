@@ -26,14 +26,13 @@ export function surfaceFromOrigin(
   origin: string | undefined | null,
   claimed: unknown,
 ): SurfaceFromOrigin {
-  const originStr = typeof origin === "string" ? origin : ""
-  if (EXT_ORIGIN.test(originStr)) {
+  if (isChromeExtensionWsOrigin(origin)) {
     if (claimed === "summoner") {
       return { ok: false, reason: "summoner_from_extension" }
     }
     return { ok: true, surface: "panel", coerced: claimed === "tray" }
   }
-  if (originStr === TRAY_WS_ORIGIN) {
+  if (origin === TRAY_WS_ORIGIN) {
     if (claimed === "tray" || claimed === "summoner") {
       return { ok: true, surface: claimed, coerced: false }
     }

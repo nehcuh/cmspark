@@ -19,6 +19,10 @@ export const DOCUMENT_MIMES: Readonly<Record<string, string>> = {
   htm: "text/html",
 }
 
+export const DOCUMENT_ACCEPT = Object.keys(DOCUMENT_MIMES).map(ext => `.${ext}`).join(",")
+
+export type DocumentNotice = { filename: string; warning: string }
+
 export const LEGACY_UPLOAD_MIMES = [
   DOCUMENT_MIMES.pdf, DOCUMENT_MIMES.docx, DOCUMENT_MIMES.pptx, DOCUMENT_MIMES.xlsx,
   DOCUMENT_MIMES.txt, DOCUMENT_MIMES.md, DOCUMENT_MIMES.csv, DOCUMENT_MIMES.html,
@@ -46,13 +50,13 @@ export function documentExtension(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() || ""
 }
 
-export function resolveDocumentMime(filename: string, providedMime: string): string {
+export function resolveDocumentMime(filename: string, providedMime: string, fallbackMime?: string): string {
   const normalized = String(providedMime || "").trim().toLowerCase().split(";")[0].trim()
   // Linux WPS registers these aliases for standard Office/PDF documents.
   const wpsFormat = normalized.match(/^application\/wps-office\.(docx?|xlsx?|pptx?|pdf)$/)?.[1]
   const mime = wpsFormat ? DOCUMENT_MIMES[wpsFormat] : normalized
   if (!mime || mime === "application/octet-stream" || mime === "binary/octet-stream") {
-    return DOCUMENT_MIMES[documentExtension(filename)] || mime
+    return DOCUMENT_MIMES[documentExtension(filename)] || fallbackMime || mime
   }
   return mime
 }

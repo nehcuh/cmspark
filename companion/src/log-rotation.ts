@@ -2,17 +2,17 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import { getConfig, getConfigDir } from "./config"
+export const DEFAULT_LOG_RETENTION_DAYS = 14
+export const DEFAULT_LOG_MAX_FILE_MB = 10
 
 // Matches companion-YYYY-MM-DD.log and companion-YYYY-MM-DD.1.log
 const COMPANION_LOG_RE = /^companion-(\d{4}-\d{2}-\d{2})(?:\.1)?\.log$/
 
 /** Prune log files older than the configured retention window.
  *  Runs during initDataDir and must never throw. */
-export function pruneOldLogs(): void {
+export function pruneOldLogs(dataDir: string, configuredDays: number | null | undefined): void {
   try {
-    const config = getConfig()
-    const retentionDays = config.log_retention_days ?? 14
+    const retentionDays = configuredDays ?? DEFAULT_LOG_RETENTION_DAYS
     if (retentionDays <= 0) return
 
     // Anchor the cutoff to UTC midnight so retention is deterministic regardless
@@ -23,7 +23,6 @@ export function pruneOldLogs(): void {
     cutoff.setUTCHours(0, 0, 0, 0)
     cutoff.setUTCDate(cutoff.getUTCDate() - retentionDays)
 
-    const dataDir = getConfigDir()
     pruneByFilenameDate(path.join(dataDir, "logs"), cutoff)
     pruneByMtime(path.join(dataDir, "mcp", "logs"), cutoff)
   } catch {
@@ -72,10 +71,9 @@ function pruneByMtime(dir: string, cutoff: Date): void {
 /** Rotate a single log file when it exceeds the configured size limit.
  *  Mirrors companion-YYYY-MM-DD.log -> companion-YYYY-MM-DD.1.log.
  *  Must never throw. */
-export function rotateLogFileIfNeeded(filePath: string): void {
+export function rotateLogFileIfNeeded(filePath: string, configuredMb: number | null | undefined): void {
   try {
-    const config = getConfig()
-    const maxMb = config.log_max_file_mb ?? 10
+    const maxMb = configuredMb ?? DEFAULT_LOG_MAX_FILE_MB
     if (maxMb <= 0) return
 
     const maxBytes = maxMb * 1024 * 1024

@@ -185,7 +185,7 @@ test("#321 PR-2: no fourth horizontal band — App stack is StatusRail + FocusBa
   assert.match(between, /<ToastHost/)
   assert.doesNotMatch(between.replace(/<ToastHost[^>]*\/>/, ""), /<\/?[A-Z][A-Za-z]*[\s/>]/)
   const session = app.slice(chat, app.indexOf("</WorkspaceFrame>"))
-  assert.doesNotMatch(session, /<SettingsSlideout|<InputArea|<ContextPanelHost|<StatusRail/)
+  assert.doesNotMatch(session, /<SettingsSlideout|<InputArea|<ContextPanel(?:Host|Body)|<StatusRail/)
   // The three old band files are gone (readFileSync must throw ENOENT)
   const gone = (rel: string) => {
     try {

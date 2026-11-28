@@ -13,7 +13,7 @@ import {
 } from "./config"
 import { matchesTextModel, snapshotTextModel, type ModelCenterConfig, type TextModelProfile } from "./model-profiles"
 import { assertLlmEndpointUrlAllowed } from "./security"
-import { resolveVisionLlmConfig } from "./llm/vision-pipeline"
+import { resolveVisionLlmConfig } from "./llm/vision-config"
 import { shouldBlockVisionRequest } from "./llm/vision-reuse-inherit"
 
 const MAX_PROFILES = 32

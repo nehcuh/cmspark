@@ -330,6 +330,7 @@ async function rpcCall(
   rpcId: string,
   params: any[],
   sourcePath: string,
+  canSubmit?: () => boolean,
 ): Promise<{ ok: boolean; result?: any; error?: string }> {
   let tabId: number
   try {
@@ -340,6 +341,7 @@ async function rpcCall(
   const paramsJSON = JSON.stringify(params)
 
   const callOnce = async (): Promise<{ ok: boolean; result?: any; error?: string }> => {
+    if (canSubmit && !canSubmit()) return { ok: false, error: "Import cancelled" }
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId },
@@ -438,6 +440,7 @@ export async function renameNotebookViaRpc(
 export async function addSourceViaRpc(
   notebookId: string,
   url: string,
+  canSubmit?: () => boolean,
 ): Promise<{ ok: boolean; sourceId?: string; error?: string }> {
   const isYt = isYouTubeUrl(url)
   // Bug fix: normalize YouTube URLs — strip playlist/feature params that cause
@@ -451,6 +454,7 @@ export async function addSourceViaRpc(
     RPC.ADD_SOURCE,
     params,
     `/notebook/${notebookId}`,
+    canSubmit,
   )
   if (!r.ok) return r
 
@@ -499,11 +503,13 @@ export async function addTextSourceViaRpc(
   notebookId: string,
   title: string,
   content: string,
+  canSubmit?: () => boolean,
 ): Promise<{ ok: boolean; sourceId?: string; error?: string }> {
   const r = await rpcCall(
     RPC.ADD_SOURCE,
     buildAddTextSourceParams(notebookId, title, content),
     `/notebook/${notebookId}`,
+    canSubmit,
   )
   if (!r.ok) return r
   const result = r.result

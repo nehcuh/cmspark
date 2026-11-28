@@ -154,20 +154,9 @@ export interface CompanionToolExecOptions {
   kickWorkerChat?: (opts: { threadId: string; message: string }) => void | Promise<void>
 }
 
-/**
- * F2: is a thread's LLM run live or queued behind the multi-agent cap?
- * Union of the three run-tracking SoTs — the router abort map (any chat.create /
- * kick run, incl. summoner and non-multi-agent threads), the llm-loop-gate
- * holders (multi-agent runs), and the deferred kick queue (cap-queued kicks).
- * collect_handback uses this to refuse premature handback reads.
- */
+/** Load the live worker activity query only for tools that need it. */
 export async function buildIsThreadLlmActive(): Promise<(threadId: string) => boolean> {
-  const { listLlmActiveThreadIds } = await import("../message-router")
-  const { multiAgentLlmLoopSnapshot, pendingDeferredLlmKickThreadIds } = await import("../orchestrator/llm-loop-gate")
-  return (id: string) =>
-    listLlmActiveThreadIds().includes(id) ||
-    multiAgentLlmLoopSnapshot().holders.includes(id) ||
-    pendingDeferredLlmKickThreadIds().includes(id)
+  return (await import("../llm/active-runs")).isThreadRunActiveOrQueued
 }
 
 export async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
@@ -1141,7 +1130,7 @@ export async function executeCompanionTool(toolName: string, params: any, toolCa
       // so a finishing chat.create finally cannot drain the queue mid-cancel.
       let nextRunCancelled = 0
       try {
-        const { abortThreadChat } = await import("../message-router")
+        const { abortThreadChat } = await import("../llm/active-runs")
         if (typeof abortThreadChat === "function") {
           nextRunCancelled = abortThreadChat(String(wid), { clearQueue: true }).cancelled
         }

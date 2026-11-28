@@ -1,3 +1,4 @@
+import { isFullAutonomyCruise } from "../security-arm"
 import { readonlyComputerDraft, type ComputerReadOperation } from "./readonly-session"
 import { validateComputerDraft } from "./draft"
 // WP1 task executor — the minimal coordinate computer-use loop with the
@@ -663,11 +664,7 @@ export async function runComputerTask(
     if (!forceInteractive && !reL2ShouldPrompt(dangerous) && !vaultBrowserOneShot) {
       try {
         const sec = deps.currentSecurity ? deps.currentSecurity() : deps.config.security
-        if (
-          sec?.auto_approve_dangerous === true &&
-          sec?.auto_approve_enterprise_tools === true &&
-          sec?.allow_all_schemes === true
-        ) {
+        if (sec && isFullAutonomyCruise(sec)) {
           log("computer.task.reconfirm.auto_approved", {
             taskId,
             reason,

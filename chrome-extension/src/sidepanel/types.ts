@@ -1,3 +1,4 @@
+import type { DocumentNotice } from "../shared/file-formats"
 import type { PreviewUnavailableReason } from "./utils/confirmation-preview"
 // Shared types for Side Panel
 
@@ -342,7 +343,7 @@ export interface Message {
   streaming?: boolean
   attachments?: MessageAttachment[]
   /** Parser-generated document notices, separate from message/model content. */
-  files?: Array<{ filename: string; warning: string }>
+  files?: DocumentNotice[]
   /**
    * Companion chat.user persist echo correlation (F1): the optimistic bubble's
    * temp id from the chat.create/file.upload frame's clientMessageId. Lets the

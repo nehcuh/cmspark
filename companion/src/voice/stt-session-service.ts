@@ -177,7 +177,7 @@ export class SttSessionService {
   getMeetingCapture(): MeetingPcmCapture | null { return this.continuous }
 
   reserveMeetingCapture(identity: CaptureIdentity, peerId: string,
-    deps: Pick<MeetingPcmCaptureDeps, "persist" | "checkpoint" | "send">, speaker?: string,
+    deps: Pick<MeetingPcmCaptureDeps, "persist" | "checkpoint" | "send" | "recording">, speaker?: string,
     live?: { target: string; segmentFrames: number; transcribe?: (wav: Buffer, lang?: string) => Promise<SttServiceResult>; abort?: () => void }): MeetingPcmCapture | null {
     if (!peerId || this.continuous || this.bound || this.core.getActive()) return null
     const capture: MeetingPcmCapture = new MeetingPcmCapture(identity, peerId, {

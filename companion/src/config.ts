@@ -1,14 +1,17 @@
+import type { QwenVlVariant } from "./computer/qwen-vl-catalog"
 // Companion configuration management
 
+import { isPrototypePollutionKey } from "./security/object-keys"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 import { randomUUID } from "crypto"
 import { EventEmitter } from "events"
 import { isDeepStrictEqual } from "node:util"
-import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
 import { atomicWriteJSON } from "./io"
+import { DEFAULT_LOG_MAX_FILE_MB, DEFAULT_LOG_RETENTION_DAYS, pruneOldLogs } from "./log-rotation"
+import { validateWildcardPattern } from "./security/domain-patterns"
 import type { McpConfig, McpServerConfig } from "./mcp/types"
 import { defaultFilesystemServerConfig } from "./mcp/filesystem-home"
 import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
@@ -17,7 +20,7 @@ import { endpointsMatch, isPlaceholderVisionKey, resolveInheritedVisionApiKey } 
 import { effectiveReasoningEffort, isReasoningEffort } from "./llm/reasoning-effort"
 import { isChatOutputLimit, normalizeSavedChatOutputLimit } from "./llm/output-budget"
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
-import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-provision"
+import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-projection"
 import { defaultVoiceExternal, type VoiceExternalConfig } from "./voice/external-asr-config"
 import type { MeetingAsrConfig } from "./voice/external-asr-meeting"
 
@@ -149,7 +152,7 @@ export interface ComputerConfig {
    * 实验层模型变体（Qwen3-VL）。默认 "2b"；可选 "4b" | "8b"。
    * 设置页可切换（computer.model.set_variant）；旧 hybrid/int8 启动时迁为 2b。
    */
-  modelVariant?: "2b" | "4b" | "8b" | "hybrid" | "int8"
+  modelVariant?: QwenVlVariant | "hybrid" | "int8"
   /**
    * 模型下载源。auto=连通性探测（大陆常落 ModelScope）；
    * huggingface / hf-mirror / modelscope 为显式选择。
@@ -495,8 +498,8 @@ const defaultConfig: CompanionConfig = {
   trusted_domains: [],
   auto_approved_domains: [],
   history_retention_days: 30,
-  log_retention_days: 14,
-  log_max_file_mb: 10,
+  log_retention_days: DEFAULT_LOG_RETENTION_DAYS,
+  log_max_file_mb: DEFAULT_LOG_MAX_FILE_MB,
   thread_digest: {
     enabled: false,
     on_idle_hours: 24,
@@ -764,14 +767,6 @@ export async function initDataDir(): Promise<void> {
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
-  // P1 CORR-09: demote stuck recording meetings after process restart
-  try {
-    const { reconcileStaleRecordings } = require("./meeting/meeting-store") as typeof import("./meeting/meeting-store")
-    reconcileStaleRecordings(root)
-  } catch {
-    /* meetings module optional at very early boot */
-  }
-
   // Ensure data directory itself has restricted permissions
   try {
     fs.chmodSync(root, 0o700)
@@ -808,8 +803,7 @@ export async function initDataDir(): Promise<void> {
 
   // M8: prune stale log files after directories exist so retention never blocks startup.
   try {
-    const { pruneOldLogs } = await import("./log-rotation")
-    pruneOldLogs()
+    pruneOldLogs(root, getConfig().log_retention_days)
   } catch { /* best-effort */ }
 }
 
@@ -1335,8 +1329,6 @@ function filterDomainPatterns(
   logLabel = "rejecting",
 ): string[] {
   if (!Array.isArray(arr)) return []
-  // Lazy require avoids circular import at module load
-  const { validateWildcardPattern } = require("./security") as typeof import("./security")
   const kept: string[] = []
   for (const p of arr) {
     if (typeof p !== "string") continue
@@ -1560,12 +1552,10 @@ export function migrateLegacyModelName(): ModelMigration {
   return { migrated: true, from: cfg.llm.model_name, to: target }
 }
 
-const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"])
-
 function deepMerge(target: any, source: any): any {
   const result = { ...target }
   for (const key of Object.keys(source)) {
-    if (PROTOTYPE_POLLUTION_KEYS.has(key)) continue
+    if (isPrototypePollutionKey(key)) continue
     if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
       result[key] = deepMerge(target[key] || {}, source[key])
     } else {
@@ -1586,7 +1576,11 @@ export function getLogDir(): string {
 }
 
 export function getLockFilePath(): string {
-  return getLockPath()
+  if (os.platform() === "win32") {
+    // Windows named pipe.  Must NOT be a filesystem path.
+    return "\\\\?\\pipe\\cmspark-agent-lock"
+  }
+  return path.join(getConfigDir(), "daemon.sock")
 }
 
 /**

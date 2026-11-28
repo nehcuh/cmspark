@@ -881,6 +881,13 @@ if node --test "${ROOT}/scripts/tests/whisper-soname-783.test.cjs"; then
 else
   FAIL=$((FAIL + 1))
 fi
+if [ "$(uname -s)" = Darwin ]; then
+  if bash "${ROOT}/scripts/tests/macos-architecture.test.sh"; then
+    PASS=$((PASS + 1))
+  else
+    FAIL=$((FAIL + 1))
+  fi
+fi
 if node --test "${ROOT}/scripts/tests/macos-whisper-closure.test.mjs"; then
   PASS=$((PASS + 1))
 else

@@ -49,6 +49,7 @@ export async function recordWorkbenchScreen(
 export async function recordScreenTracks(
   tracks: MediaStreamTrack[], signal: AbortSignal, report: (phase: ScreenPhase, message: string) => void,
   label: string, meetingId?: string, frames?: RecordingFrameOptions, captureId?: string,
+  store: Pick<typeof recordingStore, "save" | "append" | "remove"> = recordingStore,
 ): Promise<ScreenRecording> {
   checkPending(signal)
   const recorder = new MediaRecorder(new MediaStream(tracks), { mimeType: "video/webm" })
@@ -56,10 +57,10 @@ export async function recordScreenTracks(
     id: captureId ?? crypto.randomUUID(), ...(meetingId && { meetingId }), started: Date.now(), mime: recorder.mimeType, chunks: 0,
     bytes: 0, elapsedMs: 0, state: "open", detail: "",
   }
-  try { await recordingStore.save(row) }
+  try { await store.save(row) }
   catch (error) { throw new Error(storageError(error)) }
   if (signal.aborted || tracks.some(track => track.readyState === "ended")) {
-    await recordingStore.remove(row.id)
+    await store.remove(row.id)
     checkPending(signal)
     throw new Error("共享来源已断开")
   }
@@ -103,7 +104,7 @@ export async function recordScreenTracks(
     }
     writes = writes.then(async () => {
       try {
-        if (!writeFailed) row = await recordingStore.append(frameStatus ? { ...row, frameStatus } : row, data, elapsed)
+        if (!writeFailed) row = await store.append(frameStatus ? { ...row, frameStatus } : row, data, elapsed)
       } catch (error) {
         discard = writeFailed = true
         stop(storageError(error), true)
@@ -117,7 +118,7 @@ export async function recordScreenTracks(
   signal.addEventListener("abort", abort, { once: true })
   try {
     try { recorder.start(1000) }
-    catch (error) { await recordingStore.remove(row.id); throw error }
+    catch (error) { await store.remove(row.id); throw error }
     if (frames && meetingId) {
       sampler = startMeetingFrameSampler(tracks[0], meetingId, row.id, started, status => {
         frameStatus = status
@@ -136,7 +137,7 @@ export async function recordScreenTracks(
     }
     row = { ...row, state: partial ? "partial" : "complete", detail: detail || "浏览器已结束录屏" }
     try {
-      await recordingStore.save(row)
+      await store.save(row)
     } catch (error) {
       throw new Error(`${storageError(error)}，已保存 ${row.chunks} 个分块`)
     }

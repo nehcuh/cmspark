@@ -168,6 +168,240 @@
       "version": "whisper.cpp-v1.7.6-vulkan",
       "url": "https://raw.githubusercontent.com/nehcuh/cmspark/main/companion/assets/whisper-vulkan-win-x64.zip",
       "kind": "zip"
+    },
+    "linux-arm64": {
+      "kind": "tar.gz",
+      "version": "whisper.cpp-b5907",
+      "url": "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-ubuntu-arm64.tar.gz",
+      "sha256": "da2e86ac058e1db0281167355428665b82c0d92e4506d186a3894bec55ceefef",
+      "size": 4623550,
+      "extract": {
+        "stripPrefix": "whisper-bin-ubuntu-arm64/",
+        "files": [
+          {
+            "src": "whisper-cli",
+            "dest": "cmspark-whisper-linux-arm64",
+            "sha256": "33f12cea6be50d77133f34c065c5cbf8bd85af585c037d8f03011b9f365a532c",
+            "size": 943840
+          },
+          {
+            "src": "LICENSE",
+            "dest": "LICENSE.whisper.txt",
+            "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+            "size": 1078
+          },
+          {
+            "src": "libggml-base.so.1.0.0",
+            "dest": "libggml-base.so.1",
+            "sha256": "074601a8fceafd389178321d37f5e2256a63b296022e6d4ec3f50f46feb60e62",
+            "size": 838448
+          },
+          {
+            "src": "libggml-cpu.so",
+            "dest": "libggml-cpu.so",
+            "sha256": "a8cc8f21c3119138ccb5955246adf9c9c8e6f2ab595f2acb5ce7e7da1fb8e066",
+            "size": 919288
+          },
+          {
+            "src": "libggml.so.1.0.0",
+            "dest": "libggml.so.1",
+            "sha256": "e82b4833d52cba6db4fa80290c7cc4d834ed46f8a3b6cef17e24ea8094171f11",
+            "size": 44376
+          },
+          {
+            "src": "libwhisper.so.1.9.6",
+            "dest": "libwhisper.so.1",
+            "sha256": "f753a75865da1028b4fea100abda97471db77346e117d7437af43ba46a194b16",
+            "size": 558320
+          }
+        ]
+      }
+    },
+    "linux-x64": {
+      "kind": "tar.gz",
+      "version": "whisper.cpp-b5907",
+      "url": "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-ubuntu-x64.tar.gz",
+      "sha256": "a6199027fe5b4239c84171d2bca4c0ff44ec86a515494d5a39b237b212d429bd",
+      "size": 10413708,
+      "extract": {
+        "stripPrefix": "whisper-bin-ubuntu-x64/",
+        "files": [
+          {
+            "src": "whisper-cli",
+            "dest": "cmspark-whisper-linux-x64",
+            "sha256": "83dc7b79be42a240583f83ee7f8ebfe7b5e06b527a8f217c18a1d4101d215dff",
+            "size": 976112
+          },
+          {
+            "src": "LICENSE",
+            "dest": "LICENSE.whisper.txt",
+            "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+            "size": 1078
+          },
+          {
+            "src": "libggml-base.so.1.0.0",
+            "dest": "libggml-base.so.1",
+            "sha256": "82129799e23c20a8b7c6ae813ac548130a48e2c8841fafcf57408623ab90d8ea",
+            "size": 937456
+          },
+          {
+            "src": "libggml-cpu-alderlake.so",
+            "dest": "libggml-cpu-alderlake.so",
+            "sha256": "6dd37efbfd9f23cb3d4ba04a6f127d16491ca59e0f69f87d6b4bcc1dfd3ff635",
+            "size": 1289752
+          },
+          {
+            "src": "libggml-cpu-cannonlake.so",
+            "dest": "libggml-cpu-cannonlake.so",
+            "sha256": "4052be28aa65ad5a4aa7fd8c52066c9a47f0e2b06a3420328db2b6bc7c33af7c",
+            "size": 1367680
+          },
+          {
+            "src": "libggml-cpu-cascadelake.so",
+            "dest": "libggml-cpu-cascadelake.so",
+            "sha256": "514b7fdecf230ac949e30a6d27fb41a40cc408689538f284aaf87a52adb4c535",
+            "size": 1383768
+          },
+          {
+            "src": "libggml-cpu-cooperlake.so",
+            "dest": "libggml-cpu-cooperlake.so",
+            "sha256": "2407a276a533845bce473979d583964b5fd50c4080a9d83e577d987880d39b00",
+            "size": 1383768
+          },
+          {
+            "src": "libggml-cpu-haswell.so",
+            "dest": "libggml-cpu-haswell.so",
+            "sha256": "dd11c26406af789121d3d5be61247d2925f2cb01bbcd3f9ef9c93bf22e4b9664",
+            "size": 1289752
+          },
+          {
+            "src": "libggml-cpu-icelake.so",
+            "dest": "libggml-cpu-icelake.so",
+            "sha256": "4bb370e92365d244d3d6ceb8be2c87f4eaf04efc3fc6028472044a7de437f6f7",
+            "size": 1383768
+          },
+          {
+            "src": "libggml-cpu-ivybridge.so",
+            "dest": "libggml-cpu-ivybridge.so",
+            "sha256": "8c6a5cd0e1ba1447ee0e695abac1ce4e693058928359f2be2293fdb4121df4f7",
+            "size": 1222568
+          },
+          {
+            "src": "libggml-cpu-piledriver.so",
+            "dest": "libggml-cpu-piledriver.so",
+            "sha256": "96c8948d0e1dca13bb405722e051ed9397dc6a237c1f548a411340cc882fe2be",
+            "size": 1222568
+          },
+          {
+            "src": "libggml-cpu-sandybridge.so",
+            "dest": "libggml-cpu-sandybridge.so",
+            "sha256": "1cf09ea7e4da6c9f9145e383ac636feacbf820556d2520fedd145c398048c0c9",
+            "size": 1235024
+          },
+          {
+            "src": "libggml-cpu-sapphirerapids.so",
+            "dest": "libggml-cpu-sapphirerapids.so",
+            "sha256": "38064a45a0187027333568b60480d8a5a1e859950ecaa0a22faf613a22e2ab30",
+            "size": 1650104
+          },
+          {
+            "src": "libggml-cpu-skylakex.so",
+            "dest": "libggml-cpu-skylakex.so",
+            "sha256": "9402bd891b83264ffdc03ea521adaf5fcd03597a423f569995a21e1eb9101d4f",
+            "size": 1367680
+          },
+          {
+            "src": "libggml-cpu-sse42.so",
+            "dest": "libggml-cpu-sse42.so",
+            "sha256": "2a5c2e229f277ea2e2832966ee7a509bf3bcfd0095a9a46938dc308d288c3722",
+            "size": 972104
+          },
+          {
+            "src": "libggml-cpu-x64.so",
+            "dest": "libggml-cpu-x64.so",
+            "sha256": "e67fea5634b1300d56f2b5152b10ef882ee75c0f2ad66066b84462422914d7de",
+            "size": 972184
+          },
+          {
+            "src": "libggml-cpu-zen4.so",
+            "dest": "libggml-cpu-zen4.so",
+            "sha256": "64aa60f5d321ec708fef38b8425d0727a8be48e6f97962aa1f054c6286459dfb",
+            "size": 1383768
+          },
+          {
+            "src": "libggml.so.1.0.0",
+            "dest": "libggml.so.1",
+            "sha256": "149bbd3ffe568ec2843be25f742ac4141c77b64cbb12d0fca7cc6ab1775313d3",
+            "size": 51040
+          },
+          {
+            "src": "libwhisper.so.1.9.6",
+            "dest": "libwhisper.so.1",
+            "sha256": "ce06f4d79c391f8128f8a51c885295db88be1ddba5be3efa6d4357d3265f2f1e",
+            "size": 620168
+          }
+        ]
+      }
+    },
+    "win-arm64": {
+      "kind": "zip",
+      "version": "whisper.cpp-b5907-llvm-openmp23.1.3",
+      "url": "https://raw.githubusercontent.com/nehcuh/cmspark/74a1ac1e3839b20e6d171b2454f0e15c3b7fb688/companion/vendor/whisper/whisper-win-arm64-b5907-llvm23.zip",
+      "sha256": "ff646e73b5bc50226962ae4dfb1b4c6ab24d6a8e3db1d59002ab88f70af4c608",
+      "size": 1505061,
+      "extract": {
+        "stripPrefix": "",
+        "files": [
+          {
+            "src": "whisper-cli.exe",
+            "dest": "cmspark-whisper-win-arm64.exe",
+            "sha256": "b8e5a6f508956ee37e2c1f607e2b11879ef9124850b6cf5a14a0eb6565387eb7",
+            "size": 708096
+          },
+          {
+            "src": "whisper.dll",
+            "dest": "whisper.dll",
+            "sha256": "b14dafffcf78e6009c2df11d493a5289b1f9aa3275fdac26e5cb6be60b8ecb88",
+            "size": 451584
+          },
+          {
+            "src": "ggml.dll",
+            "dest": "ggml.dll",
+            "sha256": "fda56544bdd8ce935aee403510437dea4ea9e0eb1a27da4f8184afed473442eb",
+            "size": 59904
+          },
+          {
+            "src": "ggml-base.dll",
+            "dest": "ggml-base.dll",
+            "sha256": "7f6ea05a230cbceafb0ba187e640b46a30cee6f1a3ca2423374b35a0027b6c75",
+            "size": 709632
+          },
+          {
+            "src": "ggml-cpu.dll",
+            "dest": "ggml-cpu.dll",
+            "sha256": "5e0b67a0583bd70c62e7a9064be69bd5fac4d7d36a4f75751e882b672f25e003",
+            "size": 778240
+          },
+          {
+            "src": "libomp140.aarch64.dll",
+            "dest": "libomp140.aarch64.dll",
+            "sha256": "266c8db2631c67f8f18c34990510e4dfd972b889576affe85283b9e6bfb746f1",
+            "size": 824832
+          },
+          {
+            "src": "LICENSE.openmp.txt",
+            "dest": "LICENSE.openmp.txt",
+            "sha256": "fdad1758a9e1f9d5a81e18879b3406772115edc92c24bfa36b70c654f325e8e4",
+            "size": 19741
+          },
+          {
+            "src": "LICENSE.whisper.txt",
+            "dest": "LICENSE.whisper.txt",
+            "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+            "size": 1078
+          }
+        ]
+      }
     }
   }
 }

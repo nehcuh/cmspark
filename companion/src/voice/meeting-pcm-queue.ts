@@ -12,7 +12,8 @@ export type PcmSegment = { index: number; start: number; end: number; contextFra
  * No per-block history except eight reorder slots and sixteen hashes. */
 export class MeetingPcmQueue {
   constructor(private readonly segmentFrames: number = C.segmentFrames,
-    private readonly firstFrames: number = segmentFrames) {}
+    private readonly firstFrames: number = segmentFrames,
+    private readonly onOrderedPcm?: (pcm: Buffer) => void) {}
   private readonly ring = Buffer.alloc(C.capacityFrames * C.sampleBytes)
   private readonly grants = new Map<number, PcmCredit>()
   private readonly reorder = new Map<number, Accepted>()
@@ -138,6 +139,13 @@ export class MeetingPcmQueue {
     while (this.reorder.has(this.contiguousEnd)) {
       const item = this.reorder.get(this.contiguousEnd)!
       this.reorder.delete(this.contiguousEnd)
+      if (this.onOrderedPcm) {
+        const pos = item.offset % C.capacityFrames * C.sampleBytes
+        const bytes = item.frames * C.sampleBytes
+        const first = Math.min(bytes, this.ring.length - pos)
+        this.onOrderedPcm(this.ring.subarray(pos, pos + first))
+        if (first < bytes) this.onOrderedPcm(this.ring.subarray(0, bytes - first))
+      }
       this.observeOpeningBlock(item)
       this.contiguousEnd = item.end
     }

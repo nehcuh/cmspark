@@ -170,6 +170,22 @@ function conservedBuildSteps806(steps) {
   return steps.filter(step => step !== selected[0])
 }
 
+// Verify the additional architecture gate before comparing the other steps with history.
+function conservedBuildStepsArchitecture(steps) {
+  const expected = {
+    name: 'Check runtime module boundaries',
+    shell: 'bash',
+    run: 'bash scripts/check-architecture-ci.sh',
+  }
+  const matches = steps.filter(step => step.name === expected.name)
+  assert.equal(matches.length, 1)
+  assert.deepEqual(matches[0], expected)
+  const index = steps.indexOf(matches[0])
+  assert.equal(steps[index - 1]?.name, 'Verify systray2 binary integrity')
+  assert.equal(steps[index + 1]?.name, 'Verify Node archive checksum helper (audit H8)')
+  return steps.filter(step => step !== matches[0])
+}
+
 function cache750(step, nodeVersion) {
   assert.equal(step.uses, 'actions/setup-node@v4')
   assert.deepEqual(omit(step.with, ['cache-dependency-path']), { 'node-version': nodeVersion, cache: 'npm' })
@@ -202,6 +218,25 @@ export function projectPickerEvidence476(steps) {
 
 export function validateWindowsCiFeedback750(text) {
   const doc = yaml.load(text)
+  const smokeSteps = doc.jobs['smoke-os'].steps
+  const setupName = 'Provision hosted WebView2 Runtime'
+  assert.equal(smokeSteps[0].uses, 'actions/checkout@v4')
+  assert.equal(smokeSteps.filter(step => step.name === setupName).length, 1)
+  assert.deepEqual(smokeSteps[1], {
+    name: setupName, if: "matrix.os == 'windows-latest'", 'timeout-minutes': 6, shell: 'pwsh', run: './scripts/ci/ensure-webview2.ps1',
+  })
+  smokeSteps.splice(1, 1)
+  // Resolve the checked-in setup-node input before comparing historical steps.
+  const pin = fs.readFileSync(new URL('../../.nvmrc', import.meta.url), 'utf8').trim()
+  assert.equal(pin, '22.23.4')
+  for (const job of Object.values(doc.jobs)) {
+    for (const step of job.steps.filter(step => step.uses === 'actions/setup-node@v4')) {
+      assert.equal(step.with['node-version-file'], '.nvmrc')
+      assert.ok(!Object.hasOwn(step.with, 'node-version'))
+      delete step.with['node-version-file']
+      step.with['node-version'] = pin
+    }
+  }
   doc.jobs['smoke-os'].steps = collapseNativeStages760(projectActivityFirst826(projectPickerEvidence476(doc.jobs['smoke-os'].steps)))
   assert.equal(digest(omit(doc, ['jobs'])), baseline.workflowWithoutJobs)
   assert.deepEqual(Object.keys(doc.jobs).sort(), ['acp-history-restart', 'activity-linux-x11', 'build', 'smoke-os'])
@@ -268,7 +303,8 @@ export function validateWindowsCiFeedback750(text) {
   assert.equal(traySteps.length, 1, 'exactly one tray CPU control')
   assert.deepEqual(traySteps[0], { name: trayControl, run: 'node --test companion/scripts/tests/swift-tray-package-pin.test.mjs companion/scripts/tests/swift-tray-bundle-entry.test.mjs companion/scripts/tests/swift-tray-source-freshness.test.mjs companion/scripts/tests/swift-tray-build-output.test.mjs companion/scripts/tests/swift-tray-package-copy.test.mjs\n' })
   assert.equal(build.steps.indexOf(traySteps[0]), build.steps.findIndex(s => key(s) === 'Run companion tests') + 1)
-  const buildSteps = conservedBuildSteps794(conservedBuildSteps806(build.steps.filter(s => key(s) !== trayControl)))
+  const originalArchitectureSteps = conservedBuildStepsArchitecture(build.steps.filter(s => key(s) !== trayControl))
+  const buildSteps = conservedBuildSteps794(conservedBuildSteps806(originalArchitectureSteps))
   assert.deepEqual(buildSteps.map(key), baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js').map(s => s.key))
   cache750(build.steps.find(s => s.name === 'Setup Node.js'), '22.23.4')
   for (const old of baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js')) {

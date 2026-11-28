@@ -6,7 +6,7 @@
 
 import { LOCAL_STT_MAX_RECORD_MS } from "./local-stt-detect"
 import { encodeMonoFloatToWav16k } from "./pcm-encode"
-import { microphoneConstraints } from "./microphone-device"
+import { openMicrophone, stopMicrophoneTracks } from "./microphone-device"
 
 export type StartCaptureOpts = {
   /** Hard cap; default LOCAL_STT_MAX_RECORD_MS (45s). */
@@ -40,17 +40,6 @@ function pickRecorderMime(): string | undefined {
   return undefined
 }
 
-function stopTracks(stream: MediaStream | null): void {
-  if (!stream) return
-  for (const t of stream.getTracks()) {
-    try {
-      t.stop()
-    } catch {
-      /* */
-    }
-  }
-}
-
 /**
  * Start mic capture. Caller must stop() or abort() to release the mic.
  * Prefer getUserMedia + MediaRecorder → decode → 16 kHz WAV.
@@ -66,14 +55,16 @@ export async function startCapture(opts: StartCaptureOpts = {}): Promise<Capture
     throw Object.assign(new Error("MediaRecorder unavailable"), { code: "audio-capture" })
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: await microphoneConstraints(),
-  })
+  const stream = await openMicrophone()
 
   const mimeType = pickRecorderMime()
-  const recorder = mimeType
-    ? new MediaRecorder(stream, { mimeType })
-    : new MediaRecorder(stream)
+  let recorder: MediaRecorder
+  try {
+    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+  } catch (error) {
+    stopMicrophoneTracks(stream)
+    throw error
+  }
 
   const chunks: BlobPart[] = []
   let settled = false
@@ -95,7 +86,7 @@ export async function startCapture(opts: StartCaptureOpts = {}): Promise<Capture
     }
     if (levelCtx) {
       try {
-        void levelCtx.close()
+        void levelCtx.close().catch(() => {})
       } catch {
         /* */
       }
@@ -109,7 +100,7 @@ export async function startCapture(opts: StartCaptureOpts = {}): Promise<Capture
       maxTimer = null
     }
     cleanupLevel()
-    stopTracks(stream)
+    stopMicrophoneTracks(stream)
   }
 
   // Optional RMS level via AnalyserNode
@@ -135,7 +126,7 @@ export async function startCapture(opts: StartCaptureOpts = {}): Promise<Capture
       }
       levelRaf = requestAnimationFrame(tick)
     } catch {
-      levelCtx = null
+      cleanupLevel()
     }
   }
 

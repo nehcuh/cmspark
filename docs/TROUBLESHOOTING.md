@@ -13,6 +13,10 @@
 
 ## Companion 相关
 
+### macOS 提醒某个组件与后续版本不兼容
+
+在 Apple 芯片的 Mac 上，运行依赖 Rosetta 的 Intel 组件可能触发这条提醒。开发或验包时可以从项目目录运行 `bash scripts/diagnose-rosetta.sh`。脚本检查两个常用安装位置、源码安装的启动器与服务，以及当前平台的打包目录，也接受指定的 `.app` 路径。输出会列出缺少本机架构的文件。扫描结果反映当前磁盘内容，历史弹窗也可能来自当时运行的其他副本。[Apple 对 Rosetta 提醒的说明](https://support.apple.com/zh-cn/102527)
+
 ### "config.json corrupted"
 
 ```bash

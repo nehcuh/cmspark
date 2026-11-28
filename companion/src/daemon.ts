@@ -1,19 +1,12 @@
-// Daemon management module — Unix Domain Socket lock, PID file, process detection, graceful shutdown
-//
-// Design: UDS lock replaces traditional PID-file locking to eliminate TOCTOU race conditions.
-//   - acquireLock creates a net.Server listening on a Unix Domain Socket path.
-//   - If the path is already bound, EADDRINUSE is thrown → another instance is running.
-//   - The OS guarantees bind() on a UDS is atomic, so there is no check-then-act window.
-//   - releaseLock closes the server and unlinks the socket file.
+// The local control socket identifies the daemon and carries authenticated stop requests.
 
 import * as net from "net"
 import { randomBytes, createHmac, timingSafeEqual } from "node:crypto"
 import * as fs from "fs"
 import * as path from "path"
-import * as os from "os"
 import { spawn } from "child_process"
 import { getConfigDir } from "./config"
-import { getLockPath, isWindows } from "./platform"
+import { isWindows } from "./platform"
 
 // ---------------------------------------------------------------------------
 // Error classification (matches security.ts pattern)
@@ -37,13 +30,7 @@ export class DaemonError extends Error {
 // Default paths
 // ---------------------------------------------------------------------------
 
-export function getDefaultLockPath(): string {
-  return getLockPath()
-}
-
-export function getDefaultPidPath(): string {
-  return path.join(getConfigDir(), "daemon.pid")
-}
+export { getLockFilePath as getDefaultLockPath, getPidFilePath as getDefaultPidPath } from "./config"
 
 // ---------------------------------------------------------------------------
 // Unix Domain Socket lock
@@ -53,71 +40,56 @@ let lockServer: net.Server | null = null
 /** Path currently held by {@link lockServer}, if any. Used for same-process re-acquire. */
 let heldLockPath: string | null = null
 
-/**
- * Acquire a UDS-based exclusive lock.
- *
- * Creates a net.Server and attempts to listen on the given Unix Domain Socket path.
- * If another process already holds the lock, this returns `false` immediately.
- * On unexpected errors, throws a `DaemonError` with appropriate classification.
- *
- * Same-process re-acquire of the path this process already holds is a no-op
- * success (`true`). That makes the daemon-start → startServer handoff safe when
- * the UDS lock is intentionally kept across init (OPS-02) so a second process
- * cannot slip in between release and re-bind.
- *
- * The implementation uses a synchronous connect test to detect stale sockets,
- * then attempts `server.listen()`.  Because `listen()` on a UDS is atomic at
- * the kernel level, two processes racing to bind the same path cannot both
- * succeed — one will receive EADDRINUSE.
- *
- * @param lockPath — absolute path to the Unix Domain Socket file
- * @returns `true` if the lock was acquired, `false` if already held by another instance
- */
 function isNamedPipe(lockPath: string): boolean {
   return lockPath.startsWith("\\\\")
 }
 
+/** Serialize the probe, removal and bind across processes. The OS releases the
+ * SQLite file lock if a contender crashes, including just before unlink().
+ * Keep the empty coordination file so every opener locks the same inode. */
+function enterUnixSocketSetup(lockPath: string): { close(): void } | null {
+  // node:sqlite ships with our pinned Node 22 runtime. Windows uses atomic pipe binding.
+  const { DatabaseSync } = require("node:sqlite")
+  const db = new DatabaseSync(lockPath + ".setup")
+  try {
+    db.exec("BEGIN EXCLUSIVE")
+    return db
+  } catch (error) {
+    db.close()
+    if ((error as { errcode?: number }).errcode === 5) return null // SQLITE_BUSY
+    throw error
+  }
+}
+
+/** Re-acquiring the current process's listening socket is idempotent. */
 export async function acquireLock(lockPath: string): Promise<boolean> {
-  // Idempotent same-process re-acquire (daemon start holds lock through initDataDir,
-  // then startServer calls acquireLock again). Without this, the second call sees
-  // our own listening socket as "already held", reads our own PID, and exits with
-  // already_running — companion never binds :23401.
-  if (lockServer !== null && heldLockPath === lockPath) {
-    return true
+  if (lockServer !== null && heldLockPath === lockPath) return true
+  if (isNamedPipe(lockPath)) return bindControlSocket(lockPath)
+
+  try {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 })
+  } catch (error) {
+    throw new DaemonError(`Failed to create lock directory: ${(error as Error).message}`,
+      "transient", "LOCK_DIR_CREATE_FAILED")
   }
 
-  const namedPipe = isNamedPipe(lockPath)
-
-  if (!namedPipe) {
-    // Unix: ensure parent directory exists
-    const dir = path.dirname(lockPath)
-    try {
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-    } catch (err: any) {
-      throw new DaemonError(
-        `Failed to create lock directory: ${err.message}`,
-        "transient",
-        "LOCK_DIR_CREATE_FAILED",
-      )
-    }
-
-    // Clean up stale socket file: if the file exists but nothing is listening,
-    // a synchronous connect will fail immediately (ECONNREFUSED) or time out.
-    if (fs.existsSync(lockPath)) {
-      const stale = isSocketStale(lockPath)
-      if (stale) {
-        try {
-          fs.unlinkSync(lockPath)
-        } catch {
-          // Ignore unlink errors — bind() will tell us the truth
-        }
-      } else {
-        // Someone is actively listening
-        return false
+  const setup = enterUnixSocketSetup(lockPath)
+  if (!setup) return false
+  try {
+    const existing = fs.lstatSync(lockPath, { throwIfNoEntry: false })
+    if (existing) {
+      if (!existing.isSocket() || !await isSocketStale(lockPath)) return false
+      try { fs.unlinkSync(lockPath) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
       }
     }
+    return await bindControlSocket(lockPath)
+  } finally {
+    setup.close()
   }
+}
 
+async function bindControlSocket(lockPath: string): Promise<boolean> {
   const server = net.createServer(socket => handleDaemonControl(socket))
 
   const result = await new Promise<
@@ -143,7 +115,7 @@ export async function acquireLock(lockPath: string): Promise<boolean> {
     )
   }
 
-  if (!namedPipe) {
+  if (!isNamedPipe(lockPath)) {
     // Unix: restrict permissions on the socket file (owner-only)
     try {
       fs.chmodSync(lockPath, 0o600)
@@ -158,52 +130,20 @@ export async function acquireLock(lockPath: string): Promise<boolean> {
   return true
 }
 
-/**
- * Perform a synchronous connect test to determine whether a Unix Domain
- * Socket is actively bound (i.e. another process is listening).
- *
- * Returns `true` if the socket is stale (no one listening), `false` if
- * someone is actively listening.
- *
- * Implementation: spawns a tiny child process that attempts to connect
- * to the socket.  The child exits 0 on successful connect, 1 on failure.
- * Using execFileSync gives us a truly synchronous result while allowing
- * the async connect to complete inside the child.
- */
-function isSocketStale(lockPath: string): boolean {
-  const testScript = `
-    const net = require("net");
-    const client = net.createConnection(process.argv[1]);
-    client.on("connect", () => { client.end(); process.exit(0); });
-    client.on("error", () => { process.exit(1); });
-    setTimeout(() => process.exit(1), 150);
-  `
-  try {
-    const { execFileSync } = require("child_process")
-    execFileSync(process.execPath, ["-e", testScript, lockPath], {
-      timeout: 300,
-      windowsHide: true,
-    })
-    // Exit 0 → connect succeeded → socket is NOT stale
-    return false
-  } catch {
-    // Exit non-zero or timeout → connect failed → socket IS stale
-    return true
-  }
-}
-
-/**
- * Verify that a socket file was actually created and is bound by checking
- * its existence.  This is used as a lightweight synchronous confirmation
- * that `server.listen()` succeeded.
- */
-function isSocketBound(lockPath: string): boolean {
-  try {
-    fs.accessSync(lockPath, fs.constants.F_OK)
-    return true
-  } catch {
-    return false
-  }
+/** A missing or refused Unix endpoint can be reclaimed. A timeout or an
+ * unexpected error does not establish that the owner has stopped. */
+function isSocketStale(lockPath: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const client = net.createConnection(lockPath)
+    const finish = (stale: boolean) => {
+      client.destroy()
+      resolve(stale)
+    }
+    client.once("connect", () => finish(false))
+    client.once("error", (error: NodeJS.ErrnoException) =>
+      finish(error.code === "ECONNREFUSED" || error.code === "ENOENT"))
+    client.setTimeout(150, () => finish(false))
+  })
 }
 
 /**
@@ -213,28 +153,11 @@ function isSocketBound(lockPath: string): boolean {
  * or when no lock is held (idempotent).
  */
 export function releaseLock(lockPath: string): void {
-  if (lockServer) {
-    try {
-      lockServer.close()
-    } catch {
-      // Ignore close errors
-    }
-    lockServer = null
-    heldLockPath = null
-  }
-
-  if (!isNamedPipe(lockPath)) {
-    try {
-      if (fs.existsSync(lockPath)) {
-        fs.unlinkSync(lockPath)
-      }
-    } catch (err: any) {
-      // If unlink fails because the file is already gone, that's fine.
-      if (err.code !== "ENOENT") {
-        console.warn(`[daemon] Warning: could not remove lock file: ${err.message}`)
-      }
-    }
-  }
+  if (!lockServer || heldLockPath !== lockPath) return
+  // net.Server closes its own named pipe or Unix socket when released.
+  lockServer.close()
+  lockServer = null
+  heldLockPath = null
 }
 
 // ---------------------------------------------------------------------------

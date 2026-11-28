@@ -45,7 +45,7 @@ test('DMG preflight refuses a modified staged library', t => { const f = fixture
 test('DMG preflight refuses a different bundle', t => { const f = fixture(t); f.ready(); fs.writeFileSync(path.join(f.staging, 'cmspark-agent.js'), 'stale'); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /staged agent differs/); });
 test('DMG preflight refuses a missing current pointer', t => { const f = fixture(t); f.ready(); fs.unlinkSync(f.current); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /WHISPER_GENERATION_FAILED/); });
 test('DMG preflight refuses a missing staged binary when a generation exists', t => { const f = fixture(t); f.ready(); fs.unlinkSync(path.join(f.staging, 'bin/cmspark-whisper-darwin-arm64')); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /WHISPER_GENERATION_FAILED/); });
-test('DMG preflight permits an intentionally absent optional helper', t => { const f = fixture(t); const r = f.run(); assert.equal(r.status, 0, r.stderr); });
+test('DMG preflight refuses staging without a speech runtime', t => { const f = fixture(t); const r = f.run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /missing sealed whisper generation/); });
 test('DMG preflight stops when the bundle proof fails', t => { const f = fixture(t); f.ready(); const r = f.run(f.pin, 23); assert.notEqual(r.status, 0); assert.match(r.stderr, /cannot verify the bundled whisper pin/); });
 const signedStart = source.indexOf('if [ -n "${_WHISPER_PIN}" ]; then', source.indexOf('# Deep signing must not change the pair'));
 const signedEnd = source.indexOf('\n\n# --- Step 4: Create DMG ---', signedStart);
@@ -54,12 +54,34 @@ const volumeEnd = source.indexOf('\n\n# Set Finder window layout', volumeStart);
 assert.ok(signedStart >= 0 && signedEnd > signedStart && volumeStart >= 0 && volumeEnd > volumeStart);
 function runPost(f, kind, resources) {
   const runner = path.join(f.root, 'post-' + kind);
-  fs.writeFileSync(runner, 'set -euo pipefail\n' + source.slice(kind === 'signed' ? signedStart : volumeStart, kind === 'signed' ? signedEnd : volumeEnd));
+  const cleanup = source.slice(source.indexOf('cleanup_dmg() {'), source.indexOf('trap cleanup_dmg EXIT'));
+  const unwind = kind === 'volume' ? cleanup + 'trap \'if [ $? -ne 0 ]; then cleanup_dmg; fi\' EXIT\n' : '';
+  fs.writeFileSync(runner, 'set -euo pipefail\n' + unwind + source.slice(kind === 'signed' ? signedStart : volumeStart, kind === 'signed' ? signedEnd : volumeEnd));
   const commands = path.join(f.root, 'commands');
-  fs.writeFileSync(path.join(commands, 'hdiutil'), '#!/bin/bash\nprintf detach > "$DETACH_LOG"\n', { mode: 0o700 });
+  fs.copyFileSync(path.join(repo, 'scripts/detach-dmg.sh'), path.join(f.root, 'scripts/detach-dmg.sh'));
+  // The first eject removes the mount point but leaves the owned whole disk attached.
+  fs.writeFileSync(path.join(commands, 'hdiutil'), `#!/usr/bin/python3
+import os, plistlib, sys
+from pathlib import Path
+volume = Path(os.environ["VOLUME"])
+if sys.argv[1:] == ["info", "-plist"]:
+    entities = [{"dev-entry": "/dev/disk123"}]
+    if volume.exists():
+        entities.append({"dev-entry": "/dev/disk123s1", "mount-point": str(volume)})
+    sys.stdout.buffer.write(plistlib.dumps({"images": [{"image-path": os.environ["TMP_DMG"], "system-entities": entities}]}))
+elif sys.argv[1:] == ["detach", "/dev/disk123"]:
+    if volume.exists():
+        volume.rename(str(volume) + ".detached")
+        sys.exit(16)
+    Path(os.environ["DETACH_LOG"]).write_text("detach")
+else:
+    sys.exit(1)
+`, { mode: 0o700 });
+  const work = fs.mkdtempSync(path.join(f.root, 'dmg-work-'));
   return spawnSync('/bin/bash', [runner], { cwd: f.root, env: {
     ...process.env, PATH: commands + ':' + path.dirname(process.execPath) + ':/usr/bin:/bin', NODE_BINARY: process.execPath,
-    ROOT_DIR: f.root, RESOURCES: resources, VOLUME: path.join(f.root, 'volume'), DEVICE: 'owned-device', DETACH_LOG: path.join(f.root, 'detach-log'),
+    ROOT_DIR: f.root, RESOURCES: resources, VOLUME: path.join(f.root, 'volume'), DMG_MOUNTED: 'true',
+    DMG_WORK: work, TMP_DMG: path.join(work, 'installer.sparseimage'), DETACH_LOG: path.join(f.root, 'detach-log'),
     _WHISPER_PIN: f.pin, _WHISPER_STORE: path.join(f.root, 'companion/dist/.whisper-generations'), _WHISPER_CURRENT: f.current,
   }, encoding: 'utf8' });
 }

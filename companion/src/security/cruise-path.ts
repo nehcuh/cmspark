@@ -6,23 +6,20 @@
  */
 
 import * as path from "path"
-import { getConfig } from "../config"
-import { isFullAutonomyCruise } from "../tool/l2-admission"
+import { isFullAutonomyCruise, type CruiseSecurityFlags } from "../security-arm"
 import {
   isVolumeOrFsRoot,
   isMultiUserProfilesRoot,
   isSensitiveSystemDir,
-} from "../mcp/allow-dir-expand"
+} from "./protected-paths"
 
 export function isCruisePathRiskAccepted(
-  security?: {
-    auto_approve_dangerous?: boolean
-    auto_approve_enterprise_tools?: boolean
-    allow_all_schemes?: boolean
-  },
+  security?: CruiseSecurityFlags,
 ): boolean {
   try {
-    return isFullAutonomyCruise(security ?? getConfig().security ?? {})
+    if (security != null) return isFullAutonomyCruise(security)
+    const { getConfig } = require("../config") as typeof import("../config")
+    return isFullAutonomyCruise(getConfig().security ?? {})
   } catch {
     return false
   }

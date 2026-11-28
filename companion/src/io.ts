@@ -33,19 +33,7 @@ function renameAtomicSync(from: string, to: string): void {
 }
 
 export function atomicWriteJSON(filePath: string, data: unknown, mode: number = 0o600): void {
-  const tmp = `${filePath}.tmp-${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode })
-  try {
-    renameAtomicSync(tmp, filePath)
-  } catch (err) {
-    // rename failed (e.g. cross-device — shouldn't happen since tmp is same dir, but be safe) —
-    // don't leak the tmp file; clean up and rethrow so the caller sees the write failed.
-    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-    throw err
-  }
-  // rename may inherit the tmp file's mode on some filesystems; enforce explicitly. Best-effort
-  // (some platforms/fs don't support chmod) — the tmp was already created with `mode`.
-  try { fs.chmodSync(filePath, mode) } catch { /* ignore */ }
+  atomicWriteText(filePath, JSON.stringify(data, null, 2), mode)
 }
 
 export function atomicWriteText(filePath: string, contents: string, mode: number = 0o600): void {

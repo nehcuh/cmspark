@@ -50,6 +50,7 @@ swiftc \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "${SCRIPT_DIR}/microphone-Info.plist" \
   -O -Xlinker -adhoc_codesign \
   -o "${OUTPUT_BIN}" \
+  "${SCRIPT_DIR}/MiniMeetingVideo.swift" \
   "${SCRIPT_DIR}/MiniActionFan.swift" \
   "${SCRIPT_DIR}/Tray.swift" \
   "${SCRIPT_DIR}/SummonerOverlay.swift" \

@@ -3,8 +3,8 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const root=path.resolve(__dirname,'../..'),ts=require(require.resolve('typescript',{paths:[path.join(root,'companion')]}));
 const source=fs.readFileSync(path.join(root,'chrome-extension/src/background/index.ts'),'utf8');
 const ast=ts.createSourceFile('background.ts',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
-const normSource=fs.readFileSync(path.join(root,'chrome-extension/src/sidepanel/utils/normalize-config.ts'),'utf8');
-const normAst=ts.createSourceFile('normalize-config.ts',normSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+const normSource=fs.readFileSync(path.join(root,'chrome-extension/src/sidepanel/utils/chat-output-policy.ts'),'utf8');
+const normAst=ts.createSourceFile('chat-output-policy.ts',normSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
 const budgetNormalizer=normAst.statements.filter(n=>
  (ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(normAst)==='CHAT_OUTPUT_LIMIT_MAX'))||
  (ts.isFunctionDeclaration(n)&&n.name?.text==='normalizeSavedChatOutputLimit')

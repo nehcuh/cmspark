@@ -7,6 +7,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { spawn } from "node:child_process"
+import { windowsTaskkillPath, windowsCmdExePath, windowsPowerShellExePath } from "../src/process-path"
 import {
   pickWindowsWhereHit,
   looksLikeWindowsShebangScript,
@@ -20,9 +21,6 @@ import {
   joinDp0Relative,
   resolveNodeForJsShim,
   writeExclusiveUtf8,
-  windowsTaskkillPath,
-  windowsCmdExePath,
-  windowsPowerShellExePath,
 } from "../src/acp/win-spawn"
 import { discoverCodingAgents, _resetDiscoverCache } from "../src/acp/discover"
 

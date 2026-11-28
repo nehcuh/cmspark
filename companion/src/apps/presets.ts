@@ -22,7 +22,7 @@ import * as fs from "fs"
 import * as path from "path"
 import type { AppEntry } from "./types"
 import { isUserWritablePath } from "./types"
-import { probeSigner } from "./add-flow"
+import { expandEnvVars, probeSigner } from "./add-flow"
 import galleryReferences from "./preset-gallery-references.json"
 
 /** Release witness only. Never compared with the installed file or used for policy. */
@@ -66,20 +66,13 @@ export const PRESET_APPS: readonly PresetAppDef[] = [
   ...galleryReferences.map(({ reference, ...app }) => ({ ...app, reference })),
 ]
 
-function expandEnv(p: string): string {
-  return p.replace(/%([^%]+)%/g, (m, name) => {
-    const v = process.env[String(name)]
-    return typeof v === "string" && v ? v : m
-  })
-}
-
 /** First existing detection candidate (list order), or undefined. */
 export function detectPresetExe(
   def: PresetAppDef,
   exists: (p: string) => boolean = (p) => fs.existsSync(p),
 ): string | undefined {
   for (const candidate of def.detectCandidates) {
-    const expanded = expandEnv(candidate)
+    const expanded = expandEnvVars(candidate)
     try {
       if (exists(expanded)) return path.resolve(expanded)
     } catch {

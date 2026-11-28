@@ -2,7 +2,7 @@ import { isCaptureEpoch, isCaptureId, MEETING_PCM as C } from "./meeting-pcm-con
 
 const own = ["type", "v", "id", "queue_contract", "sessionId", "capture_epoch"]
 const fields: Record<string, string[]> = {
-  "meeting.start": ["type", "v", "id", "meeting_id", "queue_contract", "capture_id", "expected_capture_epoch", "privacy_ack_v1", "privacy_ack_v2", "audio_retained", "speaker", "live_asr", "privacy_ack_meeting_asr_v1"],
+  "meeting.start": ["type", "v", "id", "meeting_id", "queue_contract", "capture_id", "expected_capture_epoch", "privacy_ack_v1", "privacy_ack_v2", "save_recording", "audio_retained", "speaker", "live_asr", "privacy_ack_meeting_asr_v1"],
   "meeting.end": ["type", "v", "id", "meeting_id", "queue_contract", "capture_id", "capture_epoch"],
   "voice.stt.start": [...own, "format", "sampleRate", "channels", "modelId", "engine", "privacy_ack_v2", "lang"],
   "voice.stt.chunk": [...own, "credit_id", "sample_offset", "frame_count", "data"],
@@ -17,7 +17,7 @@ export function validMeetingPcmMessage(m: any): boolean {
   if (m.id !== undefined && (typeof m.id !== "string" || m.id.length > 200)) return false
   if (m.type === "meeting.start") return isCaptureId(m.capture_id) && isCaptureEpoch(m.expected_capture_epoch) && m.expected_capture_epoch < Number.MAX_SAFE_INTEGER &&
     (m.live_asr === undefined || m.live_asr === "local" || (typeof m.live_asr === "string" && /^[a-f0-9]{64}$/.test(m.live_asr) && m.privacy_ack_meeting_asr_v1 === true)) &&
-    m.privacy_ack_v1 === true && (m.privacy_ack_v2 === true || m.privacy_ack_meeting_asr_v1 === true && typeof m.live_asr === "string" && /^[a-f0-9]{64}$/.test(m.live_asr)) && (m.speaker === undefined || (typeof m.speaker === "string" && m.speaker.length <= 32)) && (m.audio_retained === undefined || m.audio_retained === false) && (typeof m.meeting_id === "string" || typeof m.id === "string")
+    (m.save_recording === undefined || m.save_recording === true) && m.privacy_ack_v1 === true && (m.privacy_ack_v2 === true || m.privacy_ack_meeting_asr_v1 === true && typeof m.live_asr === "string" && /^[a-f0-9]{64}$/.test(m.live_asr)) && (m.speaker === undefined || (typeof m.speaker === "string" && m.speaker.length <= 32)) && (m.audio_retained === undefined || m.audio_retained === false) && (typeof m.meeting_id === "string" || typeof m.id === "string")
   if (m.type === "meeting.end") return isCaptureId(m.capture_id) && isCaptureEpoch(m.capture_epoch)
   if (!isCaptureId(m.sessionId) || !isCaptureEpoch(m.capture_epoch) || m.capture_epoch === 0) return false
   if (m.type === "voice.stt.start") return m.format === "pcm_s16le" && m.sampleRate === 16000 && m.channels === 1 && (m.privacy_ack_v2 === true || m.engine === "meeting-external") &&

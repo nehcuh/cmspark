@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { createInterface } from "node:readline"
 import test from "node:test"
-import { windowsPowerShellExePath } from "../src/acp/win-spawn"
+import { windowsPowerShellExePath } from "../src/process-path"
 import { decodePngToRgba } from "../src/computer/png-decode"
 import { captureMiniRegion } from "../src/mini/region-capture"
 

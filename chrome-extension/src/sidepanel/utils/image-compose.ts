@@ -1,19 +1,23 @@
 // Composer image paste / drop / picker helpers.
 // Pure functions (plus optional canvas compress) — node:test, no React.
 
-export const IMAGE_MAX_DECODED = 4 * 1024 * 1024
-export const IMAGE_MAX_TOTAL_DECODED = 6 * 1024 * 1024
-export const IMAGE_MAX_COUNT = 4
+import { DOCUMENT_ACCEPT, documentExtension, resolveDocumentMime } from "../../shared/file-formats"
+import { normalizeImageMime } from "../../shared/image-data-url"
+export { previewDataUrl } from "../../shared/image-data-url"
+
+import { IMAGE_FORMAT_REFUSED, MAX_UPLOAD_IMAGE_BYTES as IMAGE_MAX_DECODED } from "./composer-image-policy"
+export {
+  checkComposerImageCaps,
+  IMAGE_FORMAT_REFUSED,
+  IMAGE_PREFLIGHT_NO_VISION,
+  MAX_UPLOAD_IMAGES as IMAGE_MAX_COUNT,
+  MAX_UPLOAD_IMAGE_BYTES as IMAGE_MAX_DECODED,
+  MAX_UPLOAD_IMAGES_TOTAL_BYTES as IMAGE_MAX_TOTAL_DECODED,
+} from "./composer-image-policy"
+
 export const IMAGE_MAX_EDGE = 1568
 
-export const IMAGE_ACCEPT =
-  ".doc,.docx,.wps,.ppt,.pptx,.xls,.xlsx,.pdf,.odt,.ods,.odp,.rtf,.csv,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
-
-export const IMAGE_PREFLIGHT_NO_VISION =
-  "当前主模型不支持直接看图，且未启用视觉分析。请在设置中开启视觉分析，或改用支持图片的模型。"
-
-export const IMAGE_FORMAT_REFUSED =
-  "不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）"
+export const IMAGE_ACCEPT = `${DOCUMENT_ACCEPT},.wps,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp`
 
 /** Declared image/* that is not an allowlisted raster. */
 export function imageTypeRefuseReason(type: string): string | undefined {
@@ -45,22 +49,8 @@ export function nextFileErrorAfterIngest(opts: {
 
 export const IMAGE_GIF_SHRINK_FIRST = "动画图请先缩小"
 
-const ALLOWED_IMAGE_MIMES = new Set([
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-])
-
-/** Allowlisted raster MIME (png/jpeg/gif/webp). image/jpg → jpeg. */
-export function isAllowlistedImageMime(t: string): boolean {
-  const m = String(t || "")
-    .trim()
-    .toLowerCase()
-    .split(";")[0]
-    .trim()
-  if (m === "image/jpg") return true
-  return ALLOWED_IMAGE_MIMES.has(m)
+export function isAllowlistedImageMime(type: string): boolean {
+  return normalizeImageMime(type) !== null
 }
 
 function looksLikeUrlName(name: string): boolean {
@@ -101,56 +91,21 @@ export function classifyDrop(
   return { ok: true }
 }
 
-/** Guess MIME from basename. heic/heif/svg map to image/* so the allowlist can refuse. */
-export function mimeFromName(name: string): string {
-  const ext = name.split(".").pop()?.toLowerCase()
-  const mimeMap: Record<string, string> = {
-    doc: "application/msword",
-    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ppt: "application/vnd.ms-powerpoint",
-    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    xls: "application/vnd.ms-excel",
-    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    pdf: "application/pdf",
-    odt: "application/vnd.oasis.opendocument.text",
-    ods: "application/vnd.oasis.opendocument.spreadsheet",
-    odp: "application/vnd.oasis.opendocument.presentation",
-    rtf: "application/rtf",
-    csv: "text/csv",
-    md: "text/markdown",
-    txt: "text/plain",
-    html: "text/html",
-    htm: "text/html",
-    png: "image/png",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    gif: "image/gif",
-    webp: "image/webp",
-    heic: "image/heic",
-    heif: "image/heif",
-    svg: "image/svg+xml",
-  }
-  return mimeMap[ext || ""] || "application/octet-stream"
+// Include unsupported image extensions so the composer can show its format notice.
+const imageMimeByExtension: Readonly<Record<string, string>> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", heic: "image/heic", heif: "image/heif", svg: "image/svg+xml",
 }
 
-/** Normalize standard Office/PDF aliases registered by Linux WPS. */
+export function mimeFromName(name: string): string {
+  return mimeForIncomingFile(name, "")
+}
+
 export function mimeForIncomingFile(name: string, providedMime: string): string {
   // The Companion determines the document format from the actual .wps bytes.
   if (/\.wps$/i.test(name)) return "application/octet-stream"
-  const mime = String(providedMime || "").trim().toLowerCase().split(";")[0].trim()
-  const wpsFormat = mime.match(/^application\/wps-office\.(docx?|xlsx?|pptx?|pdf)$/)?.[1]
-  if (wpsFormat) return mimeFromName(`document.${wpsFormat}`)
-  return !mime || mime === "application/octet-stream" || mime === "binary/octet-stream"
-    ? mimeFromName(name)
-    : mime
-}
-
-/** Magic-prefix → data URL for persisted thumbs (PNG/GIF/WEBP/JPEG). */
-export function previewDataUrl(b64: string): string {
-  if (b64.startsWith("iVBOR")) return `data:image/png;base64,${b64}`
-  if (b64.startsWith("R0lGOD") || b64.startsWith("R0lGod")) return `data:image/gif;base64,${b64}`
-  if (b64.startsWith("UklGR")) return `data:image/webp;base64,${b64}`
-  return `data:image/jpeg;base64,${b64}`
+  const fallback = imageMimeByExtension[documentExtension(name)] || "application/octet-stream"
+  return resolveDocumentMime(name, providedMime, fallback)
 }
 
 /** Display name for a clipboard screenshot: `截图 YYYY-MM-DD HH:mm`. */
@@ -209,25 +164,6 @@ export function needsCompress(bytes: number, width?: number, height?: number): b
     return Math.max(width, height) > IMAGE_MAX_EDGE
   }
   return false
-}
-
-export function checkComposerImageCaps(
-  images: Array<{ name: string; size: number }>,
-): string | undefined {
-  if (images.length > IMAGE_MAX_COUNT) {
-    return `一次最多添加 ${IMAGE_MAX_COUNT} 张图片`
-  }
-  let total = 0
-  for (const img of images) {
-    if (img.size > IMAGE_MAX_DECODED) {
-      return `图片 "${img.name}" 过大，单张不超过 4MB`
-    }
-    total += img.size
-  }
-  if (total > IMAGE_MAX_TOTAL_DECODED) {
-    return `图片总大小超过 6MB 上限`
-  }
-  return undefined
 }
 
 function isGifMime(t: string): boolean {

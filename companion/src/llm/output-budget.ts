@@ -1,19 +1,8 @@
 import type { LlmConfig } from "../config"
-import { calculateChatOutputBudget } from "./chat-output-policy"
+import { calculateChatOutputBudget, normalizeSavedChatOutputLimit } from "./chat-output-policy"
 import { modelSpec } from "./reasoning-effort"
 
-export const CHAT_OUTPUT_LIMIT_MAX = 393216
-
-export function isChatOutputLimit(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= CHAT_OUTPUT_LIMIT_MAX
-}
-
-/** Read a persisted value, including explicit ceilings written by earlier versions. */
-export function normalizeSavedChatOutputLimit(value: unknown): number | undefined {
-  if (value === 0) return 0
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return undefined
-  return Math.min(CHAT_OUTPUT_LIMIT_MAX, Math.floor(value))
-}
+export { CHAT_OUTPUT_LIMIT_MAX, isChatOutputLimit, normalizeSavedChatOutputLimit } from "./chat-output-policy"
 
 type ModelConfig = Pick<LlmConfig, "protocol" | "base_url" | "model_name" | "reasoning_effort" | "max_tokens">
 

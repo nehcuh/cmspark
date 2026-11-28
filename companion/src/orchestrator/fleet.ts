@@ -78,15 +78,14 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
   // #545: `llmActiveResolved` distinguishes "no worker is in a run" from
   // "we could not find out". The lazy require used to swallow its failure into
   // an empty list, which is harmless for display but was then used as the sole
-  // evidence that a worker run had ended — so one throw in message-router
+  // evidence that a worker run had ended — so one failed activity lookup
   // released EVERY non-paused worker tab lease at once. Idle release is now
   // skipped entirely when the set could not be resolved (fail closed: the worst
   // case is a stale "holding_tabs" badge, never a dropped write lock).
   let llmActiveResolved = true
   try {
-    // Lazy require avoids circular import at module load
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { listLlmActiveThreadIds } = require("../message-router") as {
+    const { listLlmActiveThreadIds } = require("../llm/active-runs") as {
       listLlmActiveThreadIds: () => string[]
     }
     llmActive = listLlmActiveThreadIds()

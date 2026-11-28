@@ -1,3 +1,4 @@
+import { mountPanel } from "./helpers/mount-sidepanel"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
@@ -49,19 +50,6 @@ test("overlayStandbyFromError: null/empty payload is not standby", () => {
 function withStandby(label = "这边暂时打不了字，正在召唤器里说"): AgentState {
   return { ...initialState, overlayStandby: { label }, activeThreadId: "thread-a" }
 }
-
-test("SET_OVERLAY_STANDBY disables composer with holder label", () => {
-  const next = agentReducer(initialState, {
-    type: "SET_OVERLAY_STANDBY",
-    label: "这边暂时打不了字，正在召唤器里说",
-  })
-  assert.deepEqual(next.overlayStandby, { label: "这边暂时打不了字，正在召唤器里说" })
-})
-
-test("CLEAR_OVERLAY_STANDBY re-enables composer", () => {
-  const next = agentReducer(withStandby(), { type: "CLEAR_OVERLAY_STANDBY" })
-  assert.equal(next.overlayStandby, null)
-})
 
 test("SET_ACTIVE_THREAD different id clears overlay standby", () => {
   const next = agentReducer(withStandby(), { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
@@ -155,22 +143,15 @@ test("APPLY_COMPOSER_LEASE holder overlay sets summoner standby copy", () => {
   assert.deepEqual(next.overlayStandby, { label: "这边暂时打不了字，正在召唤器里说" })
 })
 
-test("chat.error OVERLAY_STANDBY sets standby and skips error bubble", () => {
-  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
-  const start = src.indexOf('case "chat.error"')
-  assert.ok(start >= 0, "chat.error case missing")
-  const nextCase = src.indexOf('case "composer.lease"', start)
-  const body = src.slice(start, nextCase > start ? nextCase : start + 2500)
-  assert.match(body, /overlayStandbyFromError/)
-  assert.match(body, /SET_OVERLAY_STANDBY/)
-  assert.match(body, /CLEAR_OVERLAY_STANDBY/)
-  const setIdx = body.indexOf('type: "SET_OVERLAY_STANDBY"')
-  const addIdx = body.indexOf('type: "ADD_MESSAGE"')
-  assert.ok(setIdx >= 0, "SET_OVERLAY_STANDBY dispatch missing")
-  assert.ok(addIdx > setIdx, "standby dispatch must precede the generic error bubble")
-  assert.match(body, /parsed\.standby/)
-  const standbyBreak = body.indexOf("if (parsed.standby)")
-  assert.ok(standbyBreak >= 0 && standbyBreak < addIdx, "standby path must break before ADD_MESSAGE")
+test("chat.error OVERLAY_STANDBY sets standby and an ordinary failure clears it", () => {
+  const panel = mountPanel()
+  panel.select("A")
+  panel.receive({ type: "chat.error", thread_id: "A", data: { error_code: "OVERLAY_STANDBY" } })
+  assert.deepEqual(panel.state().overlayStandby, { label: "这边暂时打不了字，正在召唤器里说" })
+  assert.equal(panel.state().messages.length, 0)
+  panel.receive({ type: "chat.error", thread_id: "A", error: "ordinary failure" })
+  assert.equal(panel.state().overlayStandby, null)
+  assert.match(panel.state().messages[0].content, /ordinary failure/)
 })
 
 test("composer.lease inbound applies holder to overlay standby", () => {

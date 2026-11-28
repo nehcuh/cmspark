@@ -37,7 +37,8 @@ import {
   getLockFilePath,
   getPidFilePath,
 } from "../config"
-import { handleMessage, redactMcpServersForBroadcast, listLlmActiveThreadIds } from "../message-router"
+import { abortLlmLoopsForPanel, isThreadRunActive } from "../llm/active-runs"
+import { handleMessage, redactMcpServersForBroadcast } from "../message-router"
 import { disconnectMeetingAsr } from "../meeting/meeting-handlers"
 import { projectThreadActivity } from "../message-router/handlers/projects"
 import { isModuleEnabled } from "../capability/modules"
@@ -54,14 +55,12 @@ import {
   HUD_SPIKE_TASK_ID,
 } from "../hud/spike"
 import { logger, type LogLevel } from "../logger"
-import { closeEnterpriseHttp } from "../outbound-mcp/enterprise-http"
+import { bindEnterpriseBrowserTransport, closeEnterpriseHttp } from "../outbound-mcp/enterprise-http"
 import { applyTabNavigated } from "./tab-url-cache"
 import {
   acquireLock,
   releaseLock,
-  isProcessRunning,
   readPidFile,
-  cleanupPidFile,
   setupGracefulShutdown,
 } from "../daemon"
 import { getMcpManager, getMcpConfirmCache } from "../mcp"
@@ -87,12 +86,13 @@ const cockpitNativeBridge = new CockpitNativeBridge()
 import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
-import { surfaceFromOrigin, isChromeExtensionWsOrigin } from "./handshake-surface"
+import { surfaceFromOrigin, isChromeExtensionWsOrigin, TRAY_WS_ORIGIN } from "./handshake-surface"
 import { miniPanelOwner } from "../mini/capture-handoff"
 import { getActivityService } from "../activity"
-import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
+import { normalizeVisionBaseUrl } from "../llm/vision-config"
 import {
   bindExtensionPeerPicker,
+  hasAuthenticatedExtensionPeer,
   notifyExtensionPeerAuthenticated,
 } from "./extension-peer"
 
@@ -218,31 +218,9 @@ function summarizeMessage(msg: any): Record<string, unknown> {
 // Origin gate / healthz / pick peer / outbound runner
 // ---------------------------------------------------------------------------
 
-/**
- * P0-2 (audit C1): only chrome-extension:// origins may open a WebSocket to the companion.
- * Web origins (http/https/file) are rejected so a page the user visits cannot connect to
- * ws://127.0.0.1:23401 and drive the agent (config.set / list_all_cookies / evaluate ...).
- * The browser sets the WS Origin from the page/worker origin and page JS cannot forge it.
- * Exported for unit testing the gate without spinning up the full server.
- * Residual risks (intentionally out of P0 scope):
- *  - ANY chrome extension (not just CMspark) matches — this is a scheme-level gate only. Pinning
- *    to the specific extension id requires a config step / P2.
- *  - A local process can still spoof the Origin header (curl -H); that needs the P2 shared-secret
- *    handshake. The id charset is restricted to [A-Za-z0-9_-] so CRLF/control chars are rejected.
- */
+/** First filter for local clients. Both accepted origin classes still require a paired handshake. */
 export function isAllowedWsOrigin(origin: string | undefined | null): boolean {
-  if (typeof origin !== "string") return false
-  // Trusted extension (Chrome side panel / popup / service worker). Page JS cannot
-  // forge the browser-set Origin, so this reliably excludes visited web pages.
-  if (/^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)) return true
-  // Trusted first-party tray client (the local Node menu-bar agent, a sibling of
-  // this server in the same codebase). A web page CANNOT set an arbitrary Origin —
-  // the browser enforces the real page origin — so this only ever matches the local
-  // tray, which must still complete the #35 HMAC handshake below. The shared secret
-  // is the real gate; the Origin is only a first filter (a local process can spoof
-  // either, which is exactly why P0-2B layered the HMAC challenge on top).
-  if (origin === "cmspark-tray://local") return true
-  return false
+  return isChromeExtensionWsOrigin(origin) || origin === TRAY_WS_ORIGIN
 }
 
 /**
@@ -316,13 +294,23 @@ export function getEnterprisePeer(): { peer: WebSocket; epoch: string } {
   return { peer, epoch }
 }
 
+// A cold HTTP consumer may already own the state writer when the WS module loads.
+bindEnterpriseBrowserTransport({
+  peer: getEnterprisePeer,
+  runner: () => {
+    ensureOutboundToolRunnerWired()
+    const { getOutboundToolRunner } = require("../outbound-mcp/companion-http") as typeof import("../outbound-mcp/companion-http")
+    return getOutboundToolRunner()
+  },
+})
+
 /**
  * Ensure outbound HTTP runner is wired to createToolExecutor(extensionWs).
  * Synchronous so invoke never races an empty runner after auth.
  * Extension-only: no extension peer → EXTENSION_UNAVAILABLE (fast fail).
  */
 export function ensureOutboundToolRunnerWired(): boolean {
-  // Lazy require avoids circular import at module load (companion-http is light).
+  // Load the HTTP bridge only when an authenticated runner needs refreshing.
   const { setOutboundToolRunner } = require("../outbound-mcp/companion-http") as typeof import("../outbound-mcp/companion-http")
   const ws = pickAuthenticatedClientWs()
   if (!ws) {
@@ -418,20 +406,26 @@ export function applyConnectionCloseGracePeriod(closedWs?: WebSocket): void {
  * inside the 5s handshake window (and reconnect indefinitely). Mirror the
  * inbound semantics: no completed auth.handshake, NO broadcasts.
  */
-export function broadcastToClients(data: any, recipients: "authenticated" | "extension" = "authenticated"): void {
+export function broadcastToClients(data: any, recipients: "authenticated" | "extension" | "tray" = "authenticated"): void {
   if (!wss) return
   const message = JSON.stringify(data)
   for (const client of wss.clients) {
     const auth = wsAuth.get(client)
-    if (client.readyState === WebSocket.OPEN && auth?.authenticated === true &&
-        (recipients === "authenticated" || isChromeExtensionWsOrigin(auth.origin))) {
-      try {
-        client.send(message)
-      } catch {
-        // ignore send failures (client disconnect)
-      }
+    if (client.readyState !== WebSocket.OPEN || auth?.authenticated !== true) continue
+    const selected = recipients === "authenticated"
+      || (recipients === "tray" && auth.origin === TRAY_WS_ORIGIN)
+      || (recipients === "extension" && isChromeExtensionWsOrigin(auth.origin))
+    if (!selected) continue
+    try {
+      client.send(message)
+    } catch {
+      // ignore send failures (client disconnect)
     }
   }
+}
+
+function publishExtensionConnection(): void {
+  broadcastToClients({ type: "browser.connection", connected: hasAuthenticatedExtensionPeer() }, "tray")
 }
 
 /** Publish inference results without probing models or rebuilding settings state. */
@@ -533,6 +527,15 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     })
   }
 
+  // acquireLock owns stale socket recovery. A live listener may be a foreground
+  // server without a PID file; only the successful owner may recover disk state.
+  if (!await acquireLock(getLockFilePath())) {
+    const pid = readPidFile(getPidFilePath())
+    console.error("[cmspark-agent] Another instance is already running" + (pid ? ` (pid: ${pid})` : ""))
+    logger.error("server.start_failed", { reason: "already_running", pid })
+    process.exit(1)
+  }
+
   // Migrate deprecated DeepSeek model ids (deepseek-chat/deepseek-reasoner, retiring
   // 2026-07-24) to deepseek-v4-flash BEFORE the probe, so the probe validates the
   // migrated name. Idempotent; rewrites via the atomic saveConfig path and warns so
@@ -616,29 +619,6 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     )
   }
   const port = config.port || PORT
-
-  // --- UDS Lock: check for existing instance ---
-  const lockPath = getLockFilePath()
-  const lockAcquired = await acquireLock(lockPath)
-  if (!lockAcquired) {
-    // Lock exists — check if the owning process is still alive
-    const pid = readPidFile(getPidFilePath())
-    if (pid && isProcessRunning(pid)) {
-      console.error("[cmspark-agent] Another instance is already running (pid: " + pid + ")")
-      logger.error("server.start_failed", { reason: "already_running", pid })
-      process.exit(1)
-    }
-    // Stale lock — clean up and continue
-    console.log("[cmspark-agent] Cleaning up stale lock from dead process (pid: " + (pid || "unknown") + ")")
-    cleanupPidFile(getPidFilePath())
-    releaseLock(lockPath)
-    // Try again
-    const retryAcquired = await acquireLock(lockPath)
-    if (!retryAcquired) {
-      console.error("[cmspark-agent] Failed to acquire lock after cleanup")
-      process.exit(1)
-    }
-  }
 
   // Outbound MCP: refresh tool runner before each HTTP invoke
   try {
@@ -840,13 +820,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     services: { threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), mcp: mcpManager },
     maxPayload: MAX_WS_MESSAGE_SIZE,
     securityConfirmations: requireRt().securityConfirmations,
-    archiveActivity: id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target)),
-    terminalRuntime: createNativeTerminalRuntime(id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target))),
+    archiveActivity: id => projectThreadActivity(id, isThreadRunActive),
+    terminalRuntime: createNativeTerminalRuntime(id => projectThreadActivity(id, isThreadRunActive)),
     browserPeers: () => [...clients].filter(c => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin)).map(c => desktopBrowserPeer(c, () => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin))),
     onAuthenticated: host => desktopLauncher.authenticated(host),
     dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
-    localRuntime: createNativeLocalWorkRuntime({threads:requireRt().getThreadManager(),activity:id=>projectThreadActivity(id,key=>listLlmActiveThreadIds().includes(key))}),
-    workspaceRuntime: { enabled: () => isModuleEnabled("devsec-workspace"), activity: id => projectThreadActivity(id, key => listLlmActiveThreadIds().includes(key)) },
+    localRuntime: createNativeLocalWorkRuntime({threads:requireRt().getThreadManager(),activity:id=>projectThreadActivity(id,isThreadRunActive)}),
+    workspaceRuntime: { enabled: () => isModuleEnabled("devsec-workspace"), activity: id => projectThreadActivity(id, isThreadRunActive) },
     onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws); try { require("../pty/session").killPtyByPeer(ws) } catch { /* Continue desktop teardown if PTY cleanup fails. */ } },
   })
   desktopLauncher = new DesktopHostLauncher(desktopRegistry, `ws://127.0.0.1:${port}/desktop`, (host, view) => desktopChannel.window(host, view))
@@ -1204,6 +1184,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                   negotiated_protocol_version: nego.negotiated,
                   file_upload_parts: 1,
                   chat_context_controls: 1,
+                  ...(st.origin === TRAY_WS_ORIGIN && { extension_connected: hasAuthenticatedExtensionPeer() }),
                 }),
               )
               ws.send(JSON.stringify({ type: "connected" }))
@@ -1221,6 +1202,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
             // authenticated; notify no-ops if pick() would still fail.
             if (/^chrome-extension:\/\//i.test(st.origin || "")) {
               notifyExtensionPeerAuthenticated(ws)
+              publishExtensionConnection()
             }
           } else {
             logger.warn("ws.auth_failed", {})
@@ -1633,6 +1615,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       if (closedAuth) {
         clearTimeout(closedAuth.timer)
         wsAuth.delete(ws)
+        if (closedAuth.authenticated && isChromeExtensionWsOrigin(closedAuth.origin)) publishExtensionConnection()
       }
       // #219: tray Swift overlay and C-thin web shell can both be online as
       // surface=summoner. clients/wsAuth already dropped this socket above, so
@@ -1657,7 +1640,6 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       try {
         const panelId = (ws as any).__cmsparkPanelId as string | undefined
         if (panelId) {
-          const { abortLlmLoopsForPanel } = require("../message-router") as typeof import("../message-router")
           const n = abortLlmLoopsForPanel(panelId)
           if (n > 0) {
             logger.info("ws.close_aborted_llm", { panelId, count: n })

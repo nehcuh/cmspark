@@ -98,7 +98,16 @@ export async function acquireSurface650(rootInput: string | undefined, dataInput
             // singly-linked empty claim is busy, never ownership or borrowing.
             const publishing = fs.lstatSync(claim, { bigint: true })
             if (publishing.isFile() && !publishing.isSymbolicLink() && publishing.nlink === 1n && publishing.size === 0n) return false
-            readClaim()
+            try {
+              readClaim()
+            } catch (error) {
+              // Another owner can publish between the waiter's stat and read.
+              // Only an exclusive create can grant this waiter the surface.
+              validateScope()
+              const current = fs.lstatSync(claim, { bigint: true })
+              if (same(identity(publishing), identity(current)) || !current.isFile() ||
+                  current.nlink !== 1n || (current.size !== 0n && current.size !== 64n)) throw error
+            }
           } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
           return false
         }

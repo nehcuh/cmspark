@@ -1,7 +1,7 @@
 import test, { afterEach, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import * as dns from "node:dns"
-import { readFileSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import path from "node:path"
 import { effectiveReasoningEffort, isReasoningEffort, modelSpec, modelSuggestions, reasoningSupport, reasoningWireEffort } from "../src/llm/reasoning-effort"
 import { OpenAIProvider } from "../src/llm/providers/openai"
@@ -16,8 +16,7 @@ const message = [{ role: "user" as const, content: "owned fixture" }]
 const cfg = (base_url: string, model_name: string, protocol: "openai" | "anthropic", reasoning_effort?: typeof levels[number]): LlmConfig => ({ base_url, model_name, protocol, reasoning_effort, api_key: "owned-test-key", temperature: 0.4, context_window: 128000, max_tokens: 512 })
 
 test("#789 model capability and UI mirror stay exact", () => {
-  assert.equal(readFileSync(path.resolve("src/llm/reasoning-effort.ts"), "utf8"), readFileSync(path.resolve("../chrome-extension/src/sidepanel/utils/reasoning-effort.ts"), "utf8"))
-  assert.equal(readFileSync(path.resolve("src/llm/chat-output-policy.ts"), "utf8"), readFileSync(path.resolve("../chrome-extension/src/sidepanel/utils/chat-output-policy.ts"), "utf8"))
+  execFileSync(process.execPath, [path.resolve("scripts/generate-client-contracts.mjs"), "--check"])
   assert.equal(effectiveReasoningEffort(undefined), "medium")
   assert.equal(effectiveReasoningEffort("bogus"), "medium")
   assert.equal(isReasoningEffort("MAX"), false)

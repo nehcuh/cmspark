@@ -31,7 +31,7 @@ test('filesystem staging reads the named root manifest despite an exported type-
   const sdk = f.pkg('@owned/sdk', { exports: { './*': { require: './dist/cjs/*' } }, dependencies: { 'owned-validator': '1.0.0' } }, f.source, { 'dist/cjs/package.json': '{"type":"commonjs"}\n' })
   f.pkg('owned-validator', {}, f.source, { 'index.js': '// validator bytes\n' })
   const resolved = createRequire(path.join(f.source, 'package.json')).resolve('@owned/sdk/package.json')
-  assert.equal(resolved, path.join(sdk, 'dist/cjs/package.json'))
+  assert.equal(resolved, fs.realpathSync(path.join(sdk, 'dist/cjs/package.json')))
   assert.deepEqual(JSON.parse(fs.readFileSync(resolved, 'utf8')), { type: 'commonjs' })
   const result = f.stage()
   assert.deepEqual(result.packages.map(p => p.name), [ENTRY, '@owned/sdk', 'owned-validator'])

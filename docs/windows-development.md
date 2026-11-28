@@ -1,5 +1,11 @@
 # Windows 开发与失败定位
 
+### 托管 Windows 的 WebView2 运行时
+
+两个 x64 Windows 验收任务在 checkout 后检查机器级 Evergreen Runtime。低于托管基线 158.0.4370.45 时，安装固定摘要并通过微软签名验证的 x64 安装器，核对退出码和安装后的注册版本。已满足基线的机器直接继续。此步骤只用于 GitHub 托管环境。首次启动应用仍创建独立的新配置目录，原 20 秒内须完成 MCP 表单、两次允许、一次拒绝和持久化检查。
+
+2026-11-28 的同镜像独立 VM 对照中，预装 157.0.4341.60 和更新后的 158.0.4370.45 环境在准备完成时均有 0 个 WebView2 进程。首次观测到核心 DLL 映射分别在宿主启动后 4.500 秒和 0.449 秒，原 MCP 验收分别在 7.760 秒和 2.617 秒完成。安装同时改变了运行时版本和机器的磁盘缓存，这次对照无法单独归因于版本。早先预装镜像曾在控制器回调前超时，决定交付时仍须看候选和主线两条 Windows 验收结果。[预装镜像](https://github.com/nehcuh/cmspark/actions/runs/46112091737/job/140877652037) · [更新运行时](https://github.com/nehcuh/cmspark/actions/runs/46112091737/job/140877651859) · [微软 Evergreen 分发文档](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)
+
 #476 的 macOS 工作区夹具有一例在选择与取消均成功后退出 41。XCTest 用时 18.990 秒并通过，10 项业务回执齐全，observer 与 xcodebuild 均退出 0。宿主建立了第二条连接，整个用例在 33.755 秒结束。关闭通道时先撤销能力，再发送最终控制消息，并在 WebSocket 正常关闭帧中标明宿主已撤销。Swift 在原 5 秒重连窗口内只从刚失联的已认证连接接收最终关闭指示。失败投影无法分辨读写回调的先后顺序。[CI 日志与 XCTest 附件](https://github.com/nehcuh/cmspark/actions/runs/44966424916/job/137036378958)
 
 macOS 的 #476 工作区夹具在收到经原生窗口和 nonce 核对的就绪回执后，首个选择框也先查窗口和 sheet 的唯一性。只有查询结果为零时才等待元素出现并重新计数。保留原 45 秒、按钮可点击性、真实选择和取消、工作区绑定及清理断言。失败用例的 XCTest 活动显示，首个窗口和 sheet 的两次存在等待合计约 2.7 秒，开始第二次取消点击时原预算仅余约 408 毫秒。[macOS 失败与活动回执](https://github.com/nehcuh/cmspark/actions/runs/44844411898/job/136660479711)

@@ -18,6 +18,7 @@
 //
 // No voice.stt.* here (M1+). No extension UI.
 
+import { isChromeExtensionWsOrigin } from "../ws/handshake-surface"
 import { logger } from "../logger"
 import { getConfig, setVoiceFields } from "../config"
 import { defaultVoiceExternal, reduceExternalConfig } from "./external-asr-config"
@@ -438,13 +439,9 @@ function startBackgroundDiarizeDownload(
   })()
 }
 
-// --- handler ------------------------------------------------------------------
+export { isChromeExtensionWsOrigin as isChromeExtensionOrigin } from "../ws/handshake-surface"
 
-/** ADR-023 / P1: voice.model.* only from chrome-extension:// peers (not tray). */
-export function isChromeExtensionOrigin(origin: string | undefined | null): boolean {
-  if (typeof origin !== "string") return false
-  return /^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)
-}
+// --- handler ------------------------------------------------------------------
 
 export async function handleVoiceModelMessage(
   msg: any,
@@ -454,7 +451,7 @@ export async function handleVoiceModelMessage(
   const { type, ...rest } = msg ?? {}
 
   // P1 origin fence (settings dual fence still required for mutators below)
-  if (!isChromeExtensionOrigin(ctx.origin)) {
+  if (!isChromeExtensionWsOrigin(ctx.origin)) {
     logger.warn("voice.model.refused", {
       type: typeof type === "string" ? type : undefined,
       reason: "origin_not_extension",

@@ -1,8 +1,4 @@
-import {
-  OUTBOUND_L1_DEFAULT_PROFILE,
-  OUTBOUND_L1_INTERACT_PROFILE,
-  OUTBOUND_CONTEXT_PROFILE,
-} from "./outbound-grants"
+import { OUTBOUND_CONTEXT_PROFILE } from "./context-permission"
 
 /**
  * Outbound MCP profiles (ADR-022 P1 named profiles).
@@ -14,6 +10,20 @@ import {
  * CallTool and HTTP invoke both run `canonicalOutboundMcpName` so short names
  * and `cmspark__*` aliases hit the same allowlist / exfil gates.
  */
+
+export const OUTBOUND_L1_DEFAULT_PROFILE = "outbound_l1_default"
+/** #410 — interact profile (superset of default, see OUTBOUND_PROFILE_TOOLS). */
+export const OUTBOUND_L1_INTERACT_PROFILE = "outbound_l1_interact"
+
+export const OUTBOUND_GRANT_PROFILES = [
+  OUTBOUND_L1_DEFAULT_PROFILE,
+  OUTBOUND_L1_INTERACT_PROFILE,
+  OUTBOUND_CONTEXT_PROFILE,
+] as const
+
+export function isOutboundGrantProfile(p: string): boolean {
+  return (OUTBOUND_GRANT_PROFILES as readonly string[]).includes(p)
+}
 
 export const OUTBOUND_MCP_NAME_PREFIX = "cmspark__"
 

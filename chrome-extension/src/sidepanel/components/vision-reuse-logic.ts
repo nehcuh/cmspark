@@ -1,4 +1,10 @@
-import { modelSpec } from "../utils/reasoning-effort"
+import { resolveNativeVision, type NativeVisionMode } from "../utils/native-vision-probe-cache"
+export { likelyMultimodal } from "../utils/reasoning-effort"
+export {
+  clearNativeVisionProbe, lookupNativeVisionProbe, normalizeProbeModel, normalizeProbeUrl,
+  rememberNativeVisionProbe, resolveNativeVision, type NativeVisionMode,
+} from "../utils/native-vision-probe-cache"
+
 // Vision settings: multimodal heuristic + "reuse main LLM for vision side-pipeline".
 // Pure functions only (model-switch-logic precedent) — node:test, no React.
 //
@@ -73,111 +79,6 @@ export function extractHostname(url: string | undefined | null): string {
   } catch {
     return url.trim()
   }
-}
-
-/**
- * Fail-closed multimodal name heuristic. Unknown models → false.
- * Does NOT check protocol (use shouldOfferVisionReuse for offer gate).
- */
-// lock-step companion/src/llm/likely-multimodal.ts
-export type NativeVisionMode = "auto" | "on" | "off"
-
-export function likelyMultimodal(modelName: string | undefined | null, baseUrl?: string | null): boolean {
-  const m = (modelName || "").trim().toLowerCase()
-  if (!m) return false
-  if (baseUrl && (modelSpec("openai", baseUrl, m)?.imageInput || modelSpec("anthropic", baseUrl, m)?.imageInput)) return true
-  if (/deepseek/.test(m)) {
-    // Flash and its legacy aliases accept images on the official API. A gateway
-    // with the same model name needs its own probe or explicit override.
-    return ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].includes(m) &&
-      /^https:\/\/api\.deepseek\.com(?::443)?(?:\/(?:anthropic(?:\/v1)?|v1))?\/?$/i.test((baseUrl || "").trim())
-  }
-  if (/\br1\b/.test(m) && !/vision|vl/.test(m)) return false
-  if (/(^|[-_])(coder|reasoner)($|[-_])/.test(m) && !/vl|vision|omni/.test(m)) return false
-  if (/kimi-k2/.test(m) && !/vl|vision|omni/.test(m)) return false
-  if (/moonshot-v1/.test(m) && !/vl|vision|omni/.test(m)) return false
-  if (/gpt-5|gpt-4o|gpt-4\.1|gpt-4\.5|gpt-4-turbo|gpt-4-vision|o[1-9].*vision|chatgpt-4o/.test(m)) return true
-  if (/^(?:grok\/)?grok-4\.7(?:@\d+k)?$/.test(m)) return true
-  if (/claude|sonnet|opus|haiku/.test(m)) return true
-  if (/gemini|gemma.*vision/.test(m)) return true
-  if (/kimi|moonshot/.test(m)) return true
-  if (/glm-4v|glm-4\.?\d*v|glm-4\.6v/.test(m)) return true
-  if (/qwen.*vl|vl.*qwen|qwen2\.5-?vl|qwen2-vl|qwen3-vl/.test(m)) return true
-  if (/llava|minicpm-v|minicpm-o|moondream|pixtral|phi-3-vision|phi-4-multimodal/.test(m)) return true
-  if (/internvl|intern-vl|cogvlm|yi-vl|step-1v|llama-?3\.2.*vision|llama-?4/.test(m)) return true
-  if (/\bvision\b|multimodal|omni|\bvl\b/.test(m)) return true
-  return false
-}
-
-// In-memory image-probe bit from config.test, keyed by {url, model} —
-// lock-step companion/src/llm/native-vision-probe-cache.ts. Session-only,
-// never persisted; saving a new model/base_url invalidates the key by itself.
-
-/**
- * Normalize only the case-insensitive parts of the URL: scheme and host are
- * lowercased (via URL parsing) and trailing slashes are stripped. The path
- * keeps its original case — some gateways route on case-sensitive paths.
- * Unparsable input falls back to the trimmed string (still exact-matched).
- */
-export function normalizeProbeUrl(url: string): string {
-  const trimmed = String(url || "").trim().replace(/\/+$/, "")
-  if (!trimmed) return trimmed
-  try {
-    const u = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`)
-    const auth = u.username ? `${u.username}${u.password ? `:${u.password}` : ""}@` : ""
-    const path = u.pathname === "/" ? "" : u.pathname
-    return `${u.protocol}//${auth}${u.host}${path}${u.search}${u.hash}`
-  } catch {
-    return trimmed
-  }
-}
-
-/**
- * Model names keep their original case — case-sensitive serving stacks
- * (e.g. vLLM served-model-name) treat `MyModel` and `mymodel` as different
- * models, so folding case here would let one model's probe poison another's.
- */
-export function normalizeProbeModel(model: string): string {
-  return String(model || "").trim()
-}
-
-let nativeVisionProbe: { url: string; model: string; detected: boolean } | null = null
-
-export function rememberNativeVisionProbe(url: string, model: string, detected: boolean): void {
-  nativeVisionProbe = {
-    url: normalizeProbeUrl(url),
-    model: normalizeProbeModel(model),
-    detected: detected === true,
-  }
-}
-
-/** Exact url+model match only. Mismatch / empty cache → undefined. */
-export function lookupNativeVisionProbe(url: string, model: string): boolean | undefined {
-  if (!nativeVisionProbe) return undefined
-  if (nativeVisionProbe.url !== normalizeProbeUrl(url)) return undefined
-  if (nativeVisionProbe.model !== normalizeProbeModel(model)) return undefined
-  return nativeVisionProbe.detected
-}
-
-export function clearNativeVisionProbe(): void {
-  nativeVisionProbe = null
-}
-
-export function resolveNativeVision(opts: {
-  modelName?: string | null
-  baseUrl?: string | null
-  mode?: NativeVisionMode | boolean | null
-  /** Unkeyed session probe flag — always ignored; only the keyed cache counts. */
-  detected?: boolean | null
-}): boolean {
-  const raw = opts.mode
-  const mode: NativeVisionMode =
-    raw === true || raw === "on" ? "on" : raw === false || raw === "off" ? "off" : "auto"
-  if (mode === "on") return true
-  if (mode === "off") return false
-  // Keyed {url,model} probe bit echoed by companion config.test. An unkeyed
-  // session flag would leak "native" onto any later model — never accepted.
-  return lookupNativeVisionProbe(opts.baseUrl || "", opts.modelName || "") ?? likelyMultimodal(opts.modelName, opts.baseUrl)
 }
 
 /**

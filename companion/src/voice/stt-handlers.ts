@@ -6,6 +6,7 @@
 //   - peerId = connection identity (panelId); session bound in SttSessionService
 //   - Never log audio base64 or full transcript
 
+import { isChromeExtensionWsOrigin, TRAY_WS_ORIGIN } from "../ws/handshake-surface"
 import { DATA_DIR, getConfig } from "../config"
 import { defaultVoiceExternal } from "./external-asr-config"
 import { createExternalAsrSession } from "./external-asr-session"
@@ -47,27 +48,17 @@ export interface VoiceSttHandlerDeps {
   resolveSapi?: typeof resolveWinSapiHelper
 }
 
+export { isChromeExtensionWsOrigin as isChromeExtensionOrigin } from "../ws/handshake-surface"
+
 // --- origin gate --------------------------------------------------------------
-
-/**
- * ADR-023 L6 / §7.2: voice.stt.* only from chrome-extension:// peers.
- * Tray (`cmspark-tray://local`) and missing origin are refused unless the
- * overlay handshake surface is summoner (narrow amend).
- */
-export function isChromeExtensionOrigin(origin: string | undefined | null): boolean {
-  if (typeof origin !== "string") return false
-  return /^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)
-}
-
-const TRAY_ORIGIN = "cmspark-tray://local"
 
 /** Extension origin always. Tray origin only when surface === "summoner". */
 export function isVoiceSttOriginAllowed(
   origin: string | undefined | null,
   surface?: string,
 ): boolean {
-  if (isChromeExtensionOrigin(origin)) return true
-  return origin === TRAY_ORIGIN && surface === "summoner"
+  if (isChromeExtensionWsOrigin(origin)) return true
+  return origin === TRAY_WS_ORIGIN && surface === "summoner"
 }
 
 // --- response helpers ---------------------------------------------------------
@@ -264,7 +255,7 @@ export async function handleVoiceSttMessage(
       if (typeof sessionId !== "string" || !sessionId) {
         return sttError(undefined, "invalid_session_id", "sessionId required")
       }
-      const meetingImport = rest.purpose === "meeting-import" && isChromeExtensionOrigin(ctx.origin) &&
+      const meetingImport = rest.purpose === "meeting-import" && isChromeExtensionWsOrigin(ctx.origin) &&
         rest.engine === undefined && !q1 && format === "wav"
       if (rest.purpose !== undefined && !meetingImport) {
         return sttError(sessionId, "origin_denied", "local meeting audio import requires the browser extension")

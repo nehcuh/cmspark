@@ -8,6 +8,7 @@ const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-log-r
 
 let clearConfigCache: typeof import("../src/config").clearConfigCache
 let initDataDir: typeof import("../src/config").initDataDir
+let getConfig: typeof import("../src/config").getConfig
 let saveConfig: typeof import("../src/config").saveConfig
 let pruneOldLogs: typeof import("../src/log-rotation").pruneOldLogs
 let rotateLogFileIfNeeded: typeof import("../src/log-rotation").rotateLogFileIfNeeded
@@ -50,6 +51,7 @@ before(async () => {
   clearConfigCache = cfg.clearConfigCache
   initDataDir = cfg.initDataDir
   saveConfig = cfg.saveConfig
+  getConfig = cfg.getConfig
 
   const rotation = await import("../src/log-rotation")
   pruneOldLogs = rotation.pruneOldLogs
@@ -95,7 +97,7 @@ describe("pruneOldLogs retention", { concurrency: 1 }, () => {
     fs.writeFileSync(recentFile, "recent\n")
     fs.writeFileSync(todayFile, "today\n")
 
-    pruneOldLogs()
+    pruneOldLogs(tempHome, getConfig().log_retention_days)
 
     assert.equal(fs.existsSync(oldFile), false, "old log should be deleted")
     assert.equal(fs.existsSync(rotatedOld), false, "old rotated log should be deleted")
@@ -116,7 +118,7 @@ describe("pruneOldLogs retention", { concurrency: 1 }, () => {
     fs.utimesSync(oldMcp, oldDate, oldDate)
     fs.utimesSync(oldNonLog, oldDate, oldDate)
 
-    pruneOldLogs()
+    pruneOldLogs(tempHome, getConfig().log_retention_days)
 
     assert.equal(fs.existsSync(oldMcp), false, "old mcp log should be deleted by mtime")
     assert.equal(fs.existsSync(recentMcp), true, "recent mcp log should be kept")
@@ -130,7 +132,7 @@ describe("pruneOldLogs retention", { concurrency: 1 }, () => {
     fs.writeFileSync(noDate, "no date\n")
     fs.writeFileSync(badDate, "bad date\n")
 
-    pruneOldLogs()
+    pruneOldLogs(tempHome, getConfig().log_retention_days)
 
     assert.equal(fs.existsSync(noDate), true, "non-date filename should be kept")
     assert.equal(fs.existsSync(badDate), true, "invalid date filename should be kept")
@@ -139,7 +141,7 @@ describe("pruneOldLogs retention", { concurrency: 1 }, () => {
   test("does not throw on missing directories", () => {
     fs.rmSync(path.join(tempHome, "logs"), { recursive: true, force: true })
     fs.rmSync(path.join(tempHome, "mcp", "logs"), { recursive: true, force: true })
-    assert.doesNotThrow(() => pruneOldLogs())
+    assert.doesNotThrow(() => pruneOldLogs(tempHome, getConfig().log_retention_days))
   })
 
   test("retention boundary is deterministic at UTC midnight (keeps file dated today-retention)", () => {
@@ -157,7 +159,7 @@ describe("pruneOldLogs retention", { concurrency: 1 }, () => {
     fs.writeFileSync(boundaryFile, "boundary\n")
     fs.writeFileSync(olderFile, "older\n")
 
-    pruneOldLogs() // retention = 7 (set in describe before)
+    pruneOldLogs(tempHome, getConfig().log_retention_days) // retention = 7 (set in describe before)
 
     assert.equal(fs.existsSync(boundaryFile), true, "file dated today_UTC-7 must be kept (UTC-midnight boundary)")
     assert.equal(fs.existsSync(olderFile), false, "file dated today_UTC-8 must be deleted")
@@ -181,7 +183,7 @@ describe("rotateLogFileIfNeeded size rotation", { concurrency: 1 }, () => {
     const bigLine = "x".repeat(2048)
     fs.writeFileSync(filePath, `${bigLine}\n`)
 
-    rotateLogFileIfNeeded(filePath)
+    rotateLogFileIfNeeded(filePath, getConfig().log_max_file_mb)
 
     assert.equal(fs.existsSync(filePath), false, "original oversized log should be rotated away")
     assert.equal(fs.existsSync(rotated), true, "rotated .1.log should exist")
@@ -195,7 +197,7 @@ describe("rotateLogFileIfNeeded size rotation", { concurrency: 1 }, () => {
     fs.writeFileSync(rotated, "previous rotated\n")
     fs.writeFileSync(filePath, `${"x".repeat(2048)}\n`)
 
-    rotateLogFileIfNeeded(filePath)
+    rotateLogFileIfNeeded(filePath, getConfig().log_max_file_mb)
 
     assert.equal(fs.existsSync(filePath), false)
     assert.ok(
@@ -209,7 +211,7 @@ describe("rotateLogFileIfNeeded size rotation", { concurrency: 1 }, () => {
     const filePath = path.join(logsDir, "companion-2026-07-13.log")
     fs.writeFileSync(filePath, "small\n")
 
-    rotateLogFileIfNeeded(filePath)
+    rotateLogFileIfNeeded(filePath, getConfig().log_max_file_mb)
 
     assert.equal(fs.existsSync(filePath), true)
     assert.equal(fs.readFileSync(filePath, "utf-8"), "small\n")
@@ -217,7 +219,7 @@ describe("rotateLogFileIfNeeded size rotation", { concurrency: 1 }, () => {
 
   test("does not throw when file does not exist", () => {
     const missing = path.join(tempHome, "logs", "companion-missing.log")
-    assert.doesNotThrow(() => rotateLogFileIfNeeded(missing))
+    assert.doesNotThrow(() => rotateLogFileIfNeeded(missing, getConfig().log_max_file_mb))
   })
 })
 

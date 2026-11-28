@@ -10,7 +10,7 @@ import * as path from "path"
 import * as fs from "fs"
 
 import { isProcessRunning, readPidFile } from "./daemon"
-import { getConfig, getConfigDir, getPidFilePath, saveConfig } from "./config"
+import { getConfig, getConfigDir, getLogDir, getPidFilePath, saveConfig } from "./config"
 import { getChromeOpener, openLogDirectory, getPlatform } from "./platform"
 import {
   createTray,
@@ -655,16 +655,6 @@ function openChromeSidePanel(): void {
   }
 }
 
-/** Lazy require: lifecycle already imports this module; load-time import would cycle. */
-function summonerBrowserAttached(): boolean {
-  try {
-    const { pickAuthenticatedClientWs } = require("./ws/lifecycle") as typeof import("./ws/lifecycle")
-    return pickAuthenticatedClientWs() != null
-  } catch {
-    return false
-  }
-}
-
 function readSummonerCfg() {
   return getConfig().summoner ?? {}
 }
@@ -780,7 +770,7 @@ async function hydrateSummonerThread(id: string, sessionToken?: number): Promise
         buildSummonerHydratePayload({
           thread_id: tid,
           lines: hydratePlaintext(messages),
-          browser: summonerBrowserAttached() ? "attached" : "detached",
+          browser: client.hasExtensionPeer ? "attached" : "detached",
         }),
       )
     },
@@ -1170,7 +1160,7 @@ export async function handleSummonerSubmit(
         buildSummonerHydratePayload({
           thread_id: id,
           lines,
-          browser: summonerBrowserAttached() ? "attached" : "detached",
+          browser: client.hasExtensionPeer ? "attached" : "detached",
         }),
       )
     },
@@ -1496,7 +1486,7 @@ async function handleSummonerFiles(
           buildSummonerHydratePayload({
             thread_id: tid,
             lines: [],
-            browser: summonerBrowserAttached() ? "attached" : "detached",
+            browser: client.hasExtensionPeer ? "attached" : "detached",
           }),
         )
       }
@@ -1596,7 +1586,7 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
         buildSummonerHydratePayload({
           thread_id: created.id,
           lines: [],
-          browser: summonerBrowserAttached() ? "attached" : "detached",
+          browser: client.hasExtensionPeer ? "attached" : "detached",
         }),
       )
       return claimOverlayLeaseDetailed(client, created.id)
@@ -1768,7 +1758,7 @@ async function handleQuickAction(id: string): Promise<void> {
 
 function openLogsDir(): void {
   try {
-    openLogDirectory(path.join(getConfigDir(), "logs"))
+    openLogDirectory(getLogDir())
   } catch (err: any) {
     safeNotify({ title: "CMspark Agent", message: `打开日志目录失败: ${err.message}`, timeout: 5 })
   }
@@ -1894,7 +1884,7 @@ async function openSummonerWebShell(threadId: string, view?: "meeting"): Promise
         if (!companionClient) return Promise.reject(new Error("not connected"))
         return companionClient.sendAppRequest("ui.open_sidepanel", {}, 8_000)
       },
-      hasExtensionPeer: summonerBrowserAttached,
+      hasExtensionPeer: () => companionClient?.hasExtensionPeer === true,
       onShellClosed: () => {
         void handleSummonerClosed()
       },

@@ -2,6 +2,7 @@
 // Product SoT: docs/decisions/acp-coding-handoff-product-design-2026-08-13.md
 // ADR: docs/adr/025-acp-coding-agent-client.md
 
+import { isPrototypePollutionKey } from "../security/object-keys"
 export type AcpPolicyProfile = "review_readonly" | "propose_diff" | "agent_default"
 
 export interface AcpAgentServerConfig {
@@ -152,7 +153,7 @@ export function sanitizeAcpConfig(raw: unknown): AcpConfig {
       : {}
   const servers: Record<string, AcpAgentServerConfig> = {}
   for (const [id, v] of Object.entries(serversIn)) {
-    if (id === "__proto__" || id === "constructor" || id === "prototype") continue
+    if (isPrototypePollutionKey(id)) continue
     if (!v || typeof v !== "object") continue
     const s = v as Record<string, unknown>
     const policyRaw =

@@ -12,6 +12,7 @@
 // Kept out of message-router.ts so tests can inject gate/enumerate/fs deps
 // without touching the router.
 
+import { hasPrototypePollutionKey } from "../security/object-keys"
 import os from "os"
 import { CONFIG_CHANGE_EVENT, configEvents, getConfig, replaceAppsEntries } from "../config"
 import { logger } from "../logger"
@@ -185,19 +186,6 @@ function staleGrantError() {
   return appsError("App changed while approval was pending — review the current app before granting again", {
     code: "APP_GRANT_STALE",
   })
-}
-
-// Mirrors message-router.ts's local guard (kept local — handlers must not
-// reach into the router module for it).
-const POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"])
-function hasPrototypePollutionKey(obj: any): boolean {
-  if (!obj || typeof obj !== "object") return false
-  for (const key of Object.keys(obj)) {
-    if (POLLUTION_KEYS.has(key)) return true
-    const val = obj[key]
-    if (typeof val === "object" && hasPrototypePollutionKey(val)) return true
-  }
-  return false
 }
 
 function entriesList(entries: Record<string, AppEntry>) {

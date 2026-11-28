@@ -6,8 +6,7 @@ import { createHash } from "crypto"
 import { estimateTokens } from "../threads/summary-export"
 import type { CanonicalChatMessage } from "./provider"
 import { estimateImagePartTokens, userContentToText } from "./image-parts"
-// Avoid circular import with context-handoff (which imports buildRedactedTranscript here).
-// Structured ThreadHandoff is typed loosely on meta; format happens in adapter/handoff module.
+import { formatHandoffForNotice, sanitizeThreadHandoff } from "./context-handoff"
 
 export { estimateTokens }
 
@@ -293,6 +292,16 @@ export type CompactResult = {
   shrunk?: boolean
 }
 
+/** Generate memory only for a pre-loop head drop large enough to summarize. */
+export function shouldSummarizeCompaction(
+  compact: CompactResult,
+  enabled: boolean,
+  phase: "pre_loop" | "mid_loop" = "pre_loop",
+): boolean {
+  if (enabled !== true || !compact.compacted || phase === "mid_loop") return false
+  return compact.droppedMessages.length >= 3 || compact.tokensBefore - compact.tokensAfter >= 500
+}
+
 function dropBlockAt(
   msgs: CanonicalChatMessage[],
   dropAt: number,
@@ -556,7 +565,7 @@ export type MidLoopRetainInput = {
   rollingSummary?: string
   summarySha?: string
   summaryBytes?: number
-  /** Structured H1 handoff (opaque to this module). */
+  /** Stored H1 handoff. Normalize before using it to rebuild a notice. */
   handoff?: unknown
   /** Pre-formatted handoff body for [context_handoff] notice. */
   handoffFormatted?: string
@@ -618,11 +627,8 @@ export function retainMidLoopRollingSummary(input: MidLoopRetainInput): MidLoopR
       : undefined
   if (phase === "mid_loop" && modeIn === "m1" && keepHandoff && !priorHandoffFmt) {
     try {
-      // Lazy require avoids circular import (context-handoff → context-budget)
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const ch = require("./context-handoff") as typeof import("./context-handoff")
-      const h = ch.sanitizeThreadHandoff(keepHandoff)
-      if (h) priorHandoffFmt = ch.formatHandoffForNotice(h)
+      const prior = sanitizeThreadHandoff(keepHandoff)
+      if (prior) priorHandoffFmt = formatHandoffForNotice(prior)
     } catch {
       /* best-effort */
     }

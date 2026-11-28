@@ -15,6 +15,7 @@ import { ComputerError, type ComputerAction } from "../computer/types"
 import os from "os"
 import { WebSocket } from "ws"
 import { getConfig } from "../config"
+import { isFullAutonomyCruise } from "../security-arm"
 import { securityPolicy, SecurityPolicy } from "../security-policy"
 import { logger } from "../logger"
 import {
@@ -145,18 +146,7 @@ export function resolveL2ForceConfirm(opts: {
   )
 }
 
-/** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
-export function isFullAutonomyCruise(security: {
-  auto_approve_dangerous?: boolean
-  auto_approve_enterprise_tools?: boolean
-  allow_all_schemes?: boolean
-}): boolean {
-  return (
-    security.auto_approve_dangerous === true &&
-    security.auto_approve_enterprise_tools === true &&
-    security.allow_all_schemes === true
-  )
-}
+export { isFullAutonomyCruise }
 
 export function isHostComputerPlatformGated(platform: string): boolean {
   return platform === "win32" || platform === "darwin"
@@ -1272,7 +1262,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // ADR-015 GATE1: order = (optional flight reserve) → L2 admission → SOFT → confirm.
       // SOFT after admission so softDeadline (= confirm timeout) cannot expire mid-queue.
       // Flight reserve for shell/netsec so approve is never followed by *_BUSY.
-      const { TAB_L2_TOOLS } = await import("../orchestrator/constants")
+      const { TAB_L2_TOOLS, isMultiAgentThread } = await import("../orchestrator/constants")
       let tabL2SoftHeld = false
       let tabL2HardPromoted = false
       let flightReserved: "shell_exec" | "netsec_port_scan" | null = null
@@ -1331,11 +1321,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // taking a tab lease (see early HARD gate above).
       {
         const {
-          isMultiAgentThread: isMaThread,
           anyTabLeaseHeld: anyLeaseHeld,
           acquireOrRenewTabLease,
-        } = await import("../orchestrator")
-        const multiForSoft = isMaThread(maForL2) || anyLeaseHeld()
+        } = await import("../orchestrator/tab-lease")
+        const multiForSoft = isMultiAgentThread(maForL2) || anyLeaseHeld()
         if (
           multiForSoft &&
           TAB_L2_TOOLS.has(toolName) &&
@@ -1506,8 +1495,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
             // #578: 确认卡截断也持完整谓词（async 上下文可得；与执行闸同口径，评审 n2）
             let isActive: ((id: string) => boolean) | undefined
             if (parent && actingThreadId) {
-              const { buildIsThreadLlmActive } = await import("./companion-dispatch")
-              isActive = await buildIsThreadLlmActive()
+              isActive = (await import("../llm/active-runs")).isThreadRunActiveOrQueued
             }
             const slots =
               parent && actingThreadId
@@ -1822,7 +1810,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         return result
       }
       if (tabL2SoftHeld && typeof finalParams.tabId === "number" && actingThreadId) {
-        const { hardReacquireAfterConfirm } = await import("../orchestrator")
+        const { hardReacquireAfterConfirm } = await import("../orchestrator/tab-lease")
         const hard = hardReacquireAfterConfirm({
           tabId: finalParams.tabId,
           holderThreadId: actingThreadId,
@@ -1973,7 +1961,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           actingThreadId
         ) {
           try {
-            const { releaseSoftOrPendingL2 } = await import("../orchestrator")
+            const { releaseSoftOrPendingL2 } = await import("../orchestrator/tab-lease")
             releaseSoftOrPendingL2({
               tabId: finalParams.tabId,
               holderThreadId: actingThreadId,

@@ -87,7 +87,7 @@ test("#244 禁止假装-3: failed minutes do not claim generated", async () => {
   assert.match(SUMMONER_MEETING_WORKFLOW_JS, /catch\(e\)\{meetingProblem\(e\);\$\("meetingHint"\)\.textContent="纪要生成失败"/)
 })
 
-test("#244 MeetingPanel 五条隐私原文不动（overlay lockstep）", () => {
+test("#244 Mini describes its persistent files and shares the remaining meeting consent clauses", () => {
   assert.equal(MEETING_PRIVACY_ACK_V1_CLAUSES.length, 5)
   const panel = fs.readFileSync(
     extFile("src", "sidepanel", "components", "MeetingPanel.tsx"),
@@ -97,7 +97,8 @@ test("#244 MeetingPanel 五条隐私原文不动（overlay lockstep）", () => {
   assert.ok(start >= 0, "MeetingPanel privacy <li> list missing")
   const block = panel.slice(start, panel.indexOf("</ul>", start))
   assert.match(overlayHtml, /MEETING_PRIVACY_ACK_V1_CLAUSES\.map/)
-  for (const clause of MEETING_PRIVACY_ACK_V1_CLAUSES) {
+  assert.match(MEETING_PRIVACY_ACK_V1_CLAUSES[1], /保存本地录音.*仅转写/)
+  for (const clause of MEETING_PRIVACY_ACK_V1_CLAUSES.filter((_, index) => index !== 1)) {
     assert.ok(block.includes(clause), `MeetingPanel missing clause: ${clause}`)
   }
 })

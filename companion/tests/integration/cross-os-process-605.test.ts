@@ -9,9 +9,8 @@ import net from "node:net"
 import vm from "node:vm"
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { AcpManager } from "../../src/acp/manager"
-import { initDataDir, saveConfig, getConfig, getConfigDir } from "../../src/config"
+import { initDataDir, saveConfig, getConfig, getConfigDir, getLockFilePath } from "../../src/config"
 import { requestDaemonStop } from "../../src/daemon"
-import { getLockPath } from "../../src/platform"
 import { spawnAcpChild } from "../../src/acp/win-spawn"
 import { OwnedStdioTransport } from "../../src/mcp/stdio-transport"
 import { prepareWindowsJob, quoteWindowsJobArg, spawnWindowsJob } from "../../src/process/windows-job"
@@ -229,7 +228,7 @@ for (const method of ["daemon-stop", "daemon-stop-without-pid", ...(process.plat
       descendant = Number(fs.readFileSync(f.marker, "utf8"))
       for (const frame of [null, 7, true, "stop", []]) {
         await new Promise<void>((resolve, reject) => {
-          const socket = net.createConnection(process.platform === "win32" ? getLockPath() : path.join(root, "daemon.sock"))
+          const socket = net.createConnection(process.platform === "win32" ? getLockFilePath() : path.join(root, "daemon.sock"))
           const timer = setTimeout(() => { socket.destroy(); reject(new Error("malformed control did not close")) }, 3000)
           socket.resume()
           socket.on("error", reject); socket.on("connect", () => socket.write(JSON.stringify(frame) + "\n"))

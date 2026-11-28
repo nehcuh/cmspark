@@ -84,7 +84,8 @@ function fixture(client: Client, directory: string, cruise: boolean) {
       if (name === "../security") return { classifyMcpCall: () => ["file-write"],
         mergeCapabilities: (capabilities: string[]) => ({ capabilities, declaredResolvedUnknown: false }),
         CRITICAL_MCP_CAPABILITIES: new Set(["file-write"]), CRITICAL_MCP_META_TOOLS: new Set() }
-      if (name === "../tool/l2-admission") return { isFullAutonomyCruise: () => cruise }
+      if (name === "../security-arm") return { isFullAutonomyCruise: () => cruise }
+      if (relative === "mcp/allow-dir-expand.ts" && name === "../security/protected-paths") return load("security/protected-paths.ts")
       if (name === "../security/cruise-path") return { isCruisePathRiskAccepted: () => cruise }
       if (name === "./workspace-observation") return { carryMcpWorkspaceObservation() {} }
       if (name === "./manager") return { getMcpManager: () => mcp }

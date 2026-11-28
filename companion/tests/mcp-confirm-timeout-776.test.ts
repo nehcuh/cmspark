@@ -53,7 +53,7 @@ function fixture(reason: "denied" | "timeout" | "disconnect" | "approved") {
         classifyMcpCall: () => ["file-write"], mergeCapabilities: (capabilities: string[]) => ({ capabilities, declaredResolvedUnknown: false }),
         CRITICAL_MCP_CAPABILITIES: new Set(["file-write"]), CRITICAL_MCP_META_TOOLS: new Set(["mcp_read_resource"]),
       }
-      if (name === "../tool/l2-admission") return { isFullAutonomyCruise: () => false }
+      if (name === "../security-arm") return { isFullAutonomyCruise: () => false }
       if (name === "./workspace-observation") return { carryMcpWorkspaceObservation() {} }
       if (name === "./manager") return { getMcpManager: () => mcp }
       if (name === "./confirm-cache") return { getMcpConfirmCache: () => ({ isApproved: () => false, approve() { cached++ }, recordCall() {} }) }

@@ -1,3 +1,4 @@
+import { threadHistoryRequest } from "../utils/thread-history"
 import { isReasoningEffort, type ReasoningEffort } from "../sidepanel/utils/reasoning-effort"
 // CMspark Browser Agent — Background Service Worker
 // WebSocket client, CDP manager, tab manager, cookie ops
@@ -5,7 +6,7 @@ import { isReasoningEffort, type ReasoningEffort } from "../sidepanel/utils/reas
 import { forwardSiteCounterSettings, noteSiteCounterUiSelection } from "./site-counter-settings"
 import { WSClient } from "./ws-client"
 import { forwardConfigGet } from "./config-get-forward"
-import { normalizeSavedChatOutputLimit } from "../sidepanel/utils/normalize-config"
+import { normalizeSavedChatOutputLimit } from "../sidepanel/utils/chat-output-policy"
 import { createCockpitNativeRelay, COCKPIT_NATIVE_PORT } from "./cockpit-native-bridge"
 import { projectMetadataSenderAllowed } from "./project-metadata"
 import { forwardWorkspaceRequest, workspaceSenderAllowed } from "./workspace-sender"
@@ -24,7 +25,7 @@ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { buildSecurityConfirmationWsPayload } from "./security-confirmation-payload"
 import { handleNotebooklmExport } from "./notebooklm-handler"
 import { cancelBatch, getActiveBatch, resumeIfPending, startBatch } from "./notebooklm-import-orchestrator"
-import { createNotebook, listNotebooks } from "../notebooklm/notebook-api"
+import { listNotebooks } from "../notebooklm/notebook-api"
 import { createNotebookViaRpc } from "../notebooklm/rpc-client"
 import { suggestNotebookName } from "../notebooklm/notebook-name-suggester"
 import { extractAiChatRunner } from "../notebooklm/ai-chat-extractor"
@@ -884,7 +885,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           const sent = wsClient.send(frame)
           if (!sent) {
             chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
-          } else if (message.enqueue !== true) {
+          } else if (message.enqueue !== true && message.steer !== true) {
+            // Mid-run instructions may be joined into one turn. Companion emits it when applied.
             echoUser(true)
           }
           sendResponse({ ok: sent })
@@ -1194,7 +1196,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
 
       case "thread.select":
-        if (wsClient.send({ type: "thread.select", thread_id: message.threadId })) noteSiteCounterUiSelection(message.threadId)
+        if (wsClient.send(threadHistoryRequest(message.threadId))) noteSiteCounterUiSelection(message.threadId)
         sendResponse({ ok: true })
         return true
 
@@ -1517,8 +1519,6 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           sendResponse({ ok: false, error: "Notebook name required" })
           return false
         }
-        // v1.3: RPC-first. The old DOM-automation createNotebook is unreliable
-        // (untitled notebooks, false positives). RPC returns definitive notebookId.
         createNotebookViaRpc(name)
           .then(sendResponse)
           .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
@@ -2089,7 +2089,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           return true
         }
         // Companion + side panel store
-        wsClient.send({ type: "thread.select", thread_id: threadId })
+        wsClient.send(threadHistoryRequest(threadId))
         // Notify side panel pages (graph stays open — TG-3)
         try {
           chrome.runtime.sendMessage({ type: "thread_graph.thread_selected", thread_id: threadId })

@@ -26,7 +26,8 @@ const compiled = require('esbuild').buildSync({
     import {summonerVoiceRequestTimeout} from './summoner/voice-input';
     export {handleMeetingMessage} from './meeting/meeting-handlers';
     export {generateMeetingMinutes} from './meeting/meeting-minutes';
-    export {loadMeeting, isSafeMeetingId} from './meeting/meeting-store';
+    export {loadMeeting} from './meeting/meeting-store';
+    export {isSafeMeetingId} from './meeting/meeting-paths';
     export {SttSessionService} from './voice/stt-session-service';
     export {handleVoiceSttMessage} from './voice/stt-handlers';
     ${trayAdapter}

@@ -3,7 +3,7 @@
 
 import { startServer } from "./server"
 import { installFatalHandlers } from "./crash-handlers"
-import { initDataDir, getLockFilePath, getPidFilePath, getConfig } from "./config"
+import { initDataDir, getLockFilePath, getPidFilePath, getLogDir, getConfig } from "./config"
 import { getSwiftTrayPath, getTrayBuildScript, getTrayCwd } from "./paths"
 import {
   acquireLock,
@@ -144,22 +144,9 @@ async function handleDaemonStart(): Promise<void> {
     process.exit(0)
   }
 
-  const lockAcquired = await acquireLock(lockPath)
-  if (!lockAcquired) {
-    const pidFromLock = readPidFile(pidPath)
-    if (pidFromLock && !isProcessRunning(pidFromLock)) {
-      console.log(`[cmspark-agent] Cleaning up stale lock from dead process (pid: ${pidFromLock})`)
-      cleanupPidFile(pidPath)
-      releaseLock(lockPath)
-      const retry = await acquireLock(lockPath)
-      if (!retry) {
-        console.error("[cmspark-agent] Failed to acquire lock after cleanup")
-        process.exit(1)
-      }
-    } else {
-      console.error("[cmspark-agent] Another instance is already running")
-      process.exit(1)
-    }
+  if (!await acquireLock(lockPath)) {
+    console.error("[cmspark-agent] Another instance is already running")
+    process.exit(1)
   }
 
   const shouldDaemonize = process.argv.includes("--daemonize")
@@ -247,14 +234,21 @@ async function handleDaemonStatus(): Promise<void> {
 }
 
 async function handleDaemonLogs(): Promise<void> {
-  const logDir = path.join(require("os").homedir(), ".cmspark-agent", "logs")
-  const files = fs.readdirSync(logDir)
+  const logDir = getLogDir()
+  let names: string[]
+  try {
+    names = fs.readdirSync(logDir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    names = []
+  }
+  const files = names
     .filter((f: string) => f.startsWith("companion-") && f.endsWith(".log"))
     .sort()
 
   if (files.length === 0) {
     console.log("[cmspark-agent] No log files found")
-    process.exit(0)
+    return
   }
 
   const latest = path.join(logDir, files[files.length - 1])
@@ -277,10 +271,8 @@ async function handleDaemonLogs(): Promise<void> {
     }
   } catch (err: any) {
     console.error("[cmspark-agent] Failed to read logs:", err.message)
-    process.exit(1)
+    process.exitCode = 1
   }
-
-  process.exit(0)
 }
 
 // ---------------------------------------------------------------------------

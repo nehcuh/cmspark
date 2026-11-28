@@ -339,6 +339,14 @@ const SEARCH_SCHEMA = {
   required: ["query"],
 }
 
+test("looking up an MCP tool schema leaves dispatch unloaded", () => {
+  const dispatch = require.resolve("../src/mcp/dispatch.js")
+  assert.equal(require.cache[dispatch], undefined)
+  parseToolArgs("mcp__unconnected__schema_fixture", {})
+  assert.ok(require.cache[require.resolve("../src/mcp/manager.js")])
+  assert.equal(require.cache[dispatch], undefined)
+})
+
 test("mcp: inputSchema with valid args parses successfully", () => {
   setMcpSchemaResolverForTests((name) =>
     name === "mcp__filesystem__read_text_file" ? FS_READ_SCHEMA : undefined,

@@ -5,6 +5,7 @@
  * finish_reason. UI stores it per-thread and renders only when this thread
  * has no loop-status view (armed threads already have the status row).
  */
+import { mountPanel } from "./helpers/mount-sidepanel"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
@@ -54,20 +55,15 @@ test("#505 copy is the honest unarmed cap line, not a tombstone", () => {
   assert.doesNotMatch(ROUND_LIMIT_UNARMED_COPY, /达到最大工具调用轮次/)
 })
 
-test("#505 useWebSocket: chat.done.terminal → SET_RUN_TERMINAL, not ADD_MESSAGE", () => {
-  const ws = read("src/sidepanel/hooks/useWebSocket.ts")
-  const doneIdx = ws.indexOf('case "chat.done"')
-  assert.ok(doneIdx > 0, "chat.done handler missing")
-  const nextCase = ws.indexOf("case \"", doneIdx + 10)
-  const body = ws.slice(doneIdx, nextCase > doneIdx ? nextCase : doneIdx + 4000)
-  assert.match(body, /msg\.terminal === ["']round_limit["']/)
-  assert.match(body, /SET_RUN_TERMINAL/)
-  // The commit-row `if` (content/finish_reason/...) must not mention terminal.
-  const commitIdx = body.indexOf("content ||")
-  assert.ok(commitIdx > 0, "chat.done commit-row condition missing")
-  const commitSlice = body.slice(commitIdx, commitIdx + 400)
-  assert.match(commitSlice, /finishReason !== undefined/)
-  assert.doesNotMatch(commitSlice, /terminal/)
+test("#505 an empty round-limit completion sets only the owning thread's hint", () => {
+  const panel = mountPanel()
+  panel.select("A")
+  panel.receive({ type: "chat.done", thread_id: "A", terminal: "round_limit" })
+  assert.equal(panel.state().runTerminalByThreadId.A, "round_limit")
+  assert.equal(panel.state().messages.length, 0)
+  panel.receive({ type: "chat.done", thread_id: "B", terminal: "round_limit" })
+  assert.equal(panel.state().runTerminalByThreadId.B, "round_limit")
+  assert.equal(panel.state().messages.length, 0)
 })
 
 test("#505 ChatView render gate matches loopView (frame ?? backfill)", () => {

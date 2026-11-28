@@ -9,7 +9,7 @@
     "node": ">=22.23.4 <23"
   },
   "scripts": {
-    "prebuild": "node scripts/generate-meeting-capture.mjs --check && node scripts/generate-tray-icons.mjs",
+    "prebuild": "node scripts/generate-client-contracts.mjs --check && node scripts/generate-meeting-capture.mjs --check && node scripts/generate-tray-icons.mjs",
     "build": "tsc && node scripts/stage-runtime-helpers.mjs",
     "postbuild": "node scripts/stage-win-scripts.mjs --windows-only",
     "test": "node scripts/generate-meeting-capture.mjs --check && node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node scripts/run-tests.mjs",

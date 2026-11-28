@@ -22,7 +22,11 @@ function untilClosed<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 /** Call directly from the user's source-selection gesture after meeting admission. */
-export async function openDesktopMeetingMedia(owner: AbortSignal, includeMicrophone = true): Promise<DesktopMeetingMedia> {
+export async function openDesktopMeetingMedia(owner: AbortSignal, includeMicrophone = true, options: {
+  allowTab?: boolean
+  missingSharedAudio?: (signal: AbortSignal) => Promise<MediaStream>
+  store?: Parameters<typeof recordScreenTracks>[7]
+} = {}): Promise<DesktopMeetingMedia> {
   if (owner.aborted) throw new Error("桌面会议采集已取消")
   const devices = navigator.mediaDevices
   if (!devices?.getDisplayMedia || (includeMicrophone && !devices.getUserMedia) || !globalThis.AudioContext ||
@@ -85,9 +89,15 @@ export async function openDesktopMeetingMedia(owner: AbortSignal, includeMicroph
     if (signal.aborted) throw new Error("桌面会议采集已结束")
     const [video] = display.getVideoTracks()
     const surface = video?.getSettings().displaySurface
-    if (surface !== "window" && surface !== "monitor") throw new Error("请选择桌面会议窗口或整个屏幕")
-    const [shared] = display.getAudioTracks()
-    if (!shared) throw new Error("没有共享声音。请重新选择窗口并勾选声音，或选择整个屏幕并共享系统音频")
+    if (surface !== "window" && surface !== "monitor" && !(options.allowTab && surface === "browser")) throw new Error("请选择桌面会议窗口或整个屏幕")
+    let [shared] = display.getAudioTracks()
+    if (!shared && options.missingSharedAudio) {
+      const extra = await untilClosed(options.missingSharedAudio(signal).then(take), signal)
+      shared = extra.getAudioTracks()[0]
+    }
+    if (!shared) throw new Error(options.allowTab
+      ? "没有共享声音。请选择会议标签页并共享声音，或共享整个屏幕和系统音频"
+      : "没有共享声音。请重新选择窗口并勾选声音，或选择整个屏幕并共享系统音频")
     monitor(video)
     monitor(shared)
 
@@ -129,7 +139,7 @@ export async function openDesktopMeetingMedia(owner: AbortSignal, includeMicroph
           return await recordScreenTracks([video, movieAudio], signal, (phase, message) => {
             if (phase === "recording") onStarted()
             if (phase === "finishing" && !signal.aborted) end(message)
-          }, "正在录制桌面会议", meetingId, frames, captureId)
+          }, "正在录制桌面会议", meetingId, frames, captureId, options.store)
         } finally {
           end("桌面录屏已结束")
           writing = false

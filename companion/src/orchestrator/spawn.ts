@@ -1,7 +1,9 @@
 // Spawn worker threads under an orchestrator — ADR-015 §1–2
 
 import { randomUUID } from "crypto"
-import { isMcpToolAllowedByWhitelist, type ThreadManager } from "../threads/thread-manager"
+import type { ThreadManager } from "../threads/thread-manager"
+import { isMcpToolAllowedByWhitelist, liveWorkerParent, workerParentCapabilityWhitelist, workerWhitelistAllows } from "../threads/tool-whitelist"
+export { liveWorkerParent, workerParentCapabilityWhitelist, workerWhitelistAllows } from "../threads/tool-whitelist"
 import { getMcpManager } from "../mcp/manager"
 import { getMcpMetaToolDefinitions, getToolDefinitions } from "../bridge/tool-definitions"
 import {
@@ -13,29 +15,6 @@ import {
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { workerCapUsage } from "./worker-occupancy"
 
-/** Orchestrator control tools are not the capability surface inherited by workers. */
-export function workerParentCapabilityWhitelist(parent: {
-  agent_role?: string | null
-  tool_whitelist?: string[] | null
-} | null | undefined): string[] | null {
-  const whitelist = parent?.tool_whitelist
-  if (!Array.isArray(whitelist)) return null
-  if (parent?.agent_role === "orchestrator") {
-    // Older promotions store the control catalog directly on the parent.
-    // worker_release was added to that catalog after the original promotion.
-    const catalog: readonly string[] = ORCHESTRATOR_TOOL_ALLOWLIST
-    const controls = catalog.filter(tool => tool !== "worker_release")
-    const tools = whitelist.filter(tool => tool !== "worker_release")
-    if (tools.length === controls.length && controls.every(tool => tools.includes(tool))) return null
-  }
-  return [...whitelist]
-}
-
-/** Match the same MCP exact/server/global patterns accepted at dispatch. */
-export function workerWhitelistAllows(whitelist: string[], tool: string): boolean {
-  return tool.startsWith("mcp__") ? isMcpToolAllowedByWhitelist(whitelist, tool) : whitelist.includes(tool)
-}
-
 function expandMcpPatterns(tools: string[]): string[] {
   const patterns = tools.filter(tool => tool.startsWith("mcp__") && tool.endsWith("*"))
   if (!patterns.length) return [...tools]
@@ -45,12 +24,6 @@ function expandMcpPatterns(tools: string[]): string[] {
 }
 
 type Thread = NonNullable<ReturnType<ThreadManager["get"]>>
-
-export function liveWorkerParent(tm: ThreadManager, worker: Thread): Thread | undefined {
-  const parent = worker.parent_thread_id ? tm.get(worker.parent_thread_id) : undefined
-  return parent && parent.agent_role !== "worker" && !parent.trashed_at && !parent.archived_at &&
-    worker.orchestrator_run_id && parent.orchestrator_run_id === worker.orchestrator_run_id ? parent : undefined
-}
 
 /** A user-requested delegation stores concrete tools, subject to the current parent and role. */
 export function resolveWorkerToolUpdate(tm: ThreadManager, worker: Thread, requested: string[] | null): string[] {
@@ -353,12 +326,4 @@ export function listWorkers(
     .filter((t: any) => t.orchestrator_run_id === orchestratorRunId && t.agent_role === "worker")
 }
 
-export function isMultiAgentThread(thread: any | null | undefined): boolean {
-  if (!thread) return false
-  return (
-    thread.agent_role === "worker" ||
-    thread.agent_role === "orchestrator" ||
-    !!thread.parent_thread_id ||
-    !!thread.orchestrator_run_id
-  )
-}
+export { isMultiAgentThread } from "./constants"

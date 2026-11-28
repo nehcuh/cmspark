@@ -23,7 +23,7 @@ jobs:
           sha256sum companion/package-lock.json
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
       - name: Verify runtime
         run: node -e "if (process.platform !== 'linux' || process.arch !== 'arm64' || process.version !== 'v22.23.4') process.exit(1); console.log(process.platform, process.arch, process.version)"
       - name: Install locked companion dependencies
@@ -112,8 +112,8 @@ jobs:
         run: |
           set -o pipefail
           node --test --test-reporter=tap companion/scripts/tests/swift-tray-package-pin.test.mjs companion/scripts/tests/swift-tray-bundle-entry.test.mjs companion/scripts/tests/swift-tray-source-freshness.test.mjs companion/scripts/tests/swift-tray-build-output.test.mjs companion/scripts/tests/swift-tray-package-copy.test.mjs | tee "$RUNNER_TEMP/tray-scripts-arm.tap"
-          grep -Fx '# tests 21' "$RUNNER_TEMP/tray-scripts-arm.tap"
-          grep -Fx '# pass 21' "$RUNNER_TEMP/tray-scripts-arm.tap"
+          grep -Fx '# tests 22' "$RUNNER_TEMP/tray-scripts-arm.tap"
+          grep -Fx '# pass 22' "$RUNNER_TEMP/tray-scripts-arm.tap"
           grep -Fx '# fail 0' "$RUNNER_TEMP/tray-scripts-arm.tap"
           grep -Fx '# cancelled 0' "$RUNNER_TEMP/tray-scripts-arm.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/tray-scripts-arm.tap"

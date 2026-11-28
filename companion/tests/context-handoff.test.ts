@@ -3,11 +3,10 @@ import assert from "node:assert/strict"
 import {
   sanitizeThreadHandoff,
   formatHandoffForNotice,
-  collectReasoningSlices,
   parseHandoffJson,
-  shouldRunH1,
   HANDOFF_CAPS,
 } from "../src/llm/context-handoff"
+import { collectReasoningSlices, shouldRunH1 } from "../src/llm/context-handoff-generator"
 import {
   isOmitNotice,
   buildHandoffNotice,

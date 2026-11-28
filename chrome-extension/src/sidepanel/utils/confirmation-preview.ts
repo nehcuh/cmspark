@@ -1,12 +1,7 @@
-// Keep wire diagnostics on a fixed vocabulary; raw capture errors are not UI text.
-export const PREVIEW_UNAVAILABLE_REASONS = [
-  "target_unavailable", "capture_failed", "ocr_failed", "render_failed", "timeout", "preview_failed",
-] as const
-export type PreviewUnavailableReason = typeof PREVIEW_UNAVAILABLE_REASONS[number]
-export function normalizePreviewUnavailableReason(value: unknown): PreviewUnavailableReason | undefined {
-  return typeof value === "string" && (PREVIEW_UNAVAILABLE_REASONS as readonly string[]).includes(value)
-    ? value as PreviewUnavailableReason : undefined
-}
+import { normalizePreviewUnavailableReason } from "../../shared/computer/preview-availability"
+export {
+  PREVIEW_UNAVAILABLE_REASONS, normalizePreviewUnavailableReason, type PreviewUnavailableReason,
+} from "../../shared/computer/preview-availability"
 
 /** Production WS whitelist shared with the replay test. */
 export function confirmationPreviewFromMessage(msg: Record<string, unknown>) {

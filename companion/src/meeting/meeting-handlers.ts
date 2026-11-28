@@ -5,6 +5,7 @@
  * auto_diarize / import_text remain extension-only.
  */
 
+import { MeetingWaveFile } from "./meeting-recordings"
 import { DATA_DIR, getConfig, getConfigSnapshot, setVoiceFields } from "../config"
 import { getSttSessionService, type SttSessionService } from "../voice/stt-session-service"
 import { isCaptureId, isCaptureEpoch, meetingPcmCapsSnapshot, MEETING_PCM } from "../voice/meeting-pcm-contract"
@@ -12,13 +13,15 @@ import type { MeetingPcmCapture } from "../voice/meeting-pcm-capture"
 import { resolveWinSapiHelper } from "../voice/win-sapi"
 import { logger } from "../logger"
 import { createMeetingExternalAsr, handleMeetingAsrMessage, meetingExternalRefusal } from "../voice/external-asr-meeting"
-import { isChromeExtensionOrigin, isVoiceSttOriginAllowed, sttResult } from "../voice/stt-handlers"
+import { isChromeExtensionWsOrigin } from "../ws/handshake-surface"
+import { isVoiceSttOriginAllowed, sttResult } from "../voice/stt-handlers"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import type { LlmExtractConfig } from "../llm/llm-extract"
 import { displayModelEndpoint, resolveMeetingTextModel } from "../model-center"
 import { assertLlmEndpointUrlAllowed } from "../security"
 import { generateMeetingMinutes } from "./meeting-minutes"
-import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence } from "./meeting-visual-store"
+import { isSafeMeetingId } from "./meeting-paths"
+import { MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence } from "./meeting-visual-evidence"
 import { visualMinutesMaterial, visualSourceList } from "./minutes-evidence"
 import { createTranslationService } from "./meeting-translation"
 import { createMeetingVisualService } from "./meeting-visual-handlers"
@@ -45,7 +48,6 @@ import {
   meetingCaptureSourceNotice,
   MeetingTranscriptLimitError,
   MeetingTranscriptSegmentCollisionError,
-  isSafeMeetingId,
   startMeetingRecording,
   transcriptToText,
   type TranscriptLine,
@@ -175,7 +177,7 @@ export async function handleMeetingMessage(
     ? deps.isExtensionOrigin(ctx.origin)
     : typeof type === "string" && OVERLAY_MEETING_TYPES.has(type)
       ? isVoiceSttOriginAllowed(ctx.origin, ctx.surface)
-      : isChromeExtensionOrigin(ctx.origin)
+      : isChromeExtensionWsOrigin(ctx.origin)
   if (!originOk) {
     logger.warn("meeting.refused", {
       type: typeof type === "string" ? type : undefined,
@@ -222,11 +224,12 @@ export async function handleMeetingMessage(
       if (existing.privacy.audio_retained) return err("queue_protocol_error", "continuous capture does not support retained audio")
       const speaker = typeof msg.speaker === "string" && msg.speaker.trim() ? msg.speaker.slice(0, 32) : undefined
       const wantsExternal = typeof msg.live_asr === "string" && msg.live_asr !== "local"
-      if (wantsExternal && !isChromeExtensionOrigin(ctx.origin)) return err("origin_denied", "workbench live ASR requires browser confirmation")
+      if (wantsExternal && !isChromeExtensionWsOrigin(ctx.origin)) return err("origin_denied", "workbench live ASR requires browser confirmation")
       const previous = service.getMeetingCapture()
       if (previous?.owns(ctx.peerId, msg.capture_id, existing.capture_epoch ?? 0) && previous.identity.meeting_id === id) {
         if (previous.identity.capture_epoch !== msg.expected_capture_epoch + 1) return err("stale_capture", "capture operation epoch changed")
         if (previous.liveTarget !== msg.live_asr) return err("stale_capture", "capture ASR target changed")
+        if (previous.savesRecording !== (msg.save_recording === true)) return err("stale_capture", "capture recording preference changed")
         if (previous.speaker !== speaker) return err("segment_id_conflict", "capture operation label changed")
         return { type: "meeting.started", v: 1, meeting: existing, continuous_capture: previous.status(), meeting_pcm_contract: 1, meeting_pcm_caps: meetingPcmCapsSnapshot() }
       }
@@ -250,6 +253,7 @@ export async function handleMeetingMessage(
       }
       let published = false
       const capture: MeetingPcmCapture | null = service.reserveMeetingCapture({ meeting_id: id, capture_id: msg.capture_id, capture_epoch: msg.expected_capture_epoch + 1 }, ctx.peerId, {
+        recording: msg.save_recording === true ? new MeetingWaveFile(id, msg.capture_id) : undefined,
         persist: (segment, result) => {
           const current = loadMeeting(id)
           if (!current || current.capture_epoch !== capture!.identity.capture_epoch || current.capture_summary?.last_capture_id !== msg.capture_id) throw new Error("stale_capture")

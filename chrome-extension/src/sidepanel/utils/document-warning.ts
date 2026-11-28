@@ -1,10 +1,6 @@
-/** Document import notices are bounded display metadata, never HTML/body. */
-export function normalizeDocumentWarning(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined
-  return value.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512) || undefined
-}
+import { normalizeDocumentWarning, type DocumentNotice } from "../../shared/file-formats"
+export { normalizeDocumentWarning, type DocumentNotice } from "../../shared/file-formats"
 
-export type DocumentNotice = { filename: string; warning: string }
 export function parseDocumentNotices(value: unknown): DocumentNotice[] | undefined {
   if (!Array.isArray(value)) return undefined
   const notices: DocumentNotice[] = []

@@ -1,4 +1,4 @@
-// Run only the actual cmp blocks against owned inert files, not the packager.
+// Exercise the packaging checks on inert copies. Native slice verification has a macOS fixture.
 import test from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
@@ -25,6 +25,9 @@ test("actual staging and signed-pair checks reject changes and absent files", t 
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
   const dist = path.join(temp, "companion/dist"), staging = path.join(temp, "staging"), resources = path.join(temp, "resources")
   for (const dir of [dist, staging, resources]) fs.mkdirSync(dir, { recursive: true })
+  fs.mkdirSync(path.join(temp, "scripts"))
+  fs.writeFileSync(path.join(temp, "scripts/verify-macos-architecture.sh"),
+    '[[ "$#" == 2 && "$1" == "$STAGING" && "$2" == "$PLATFORM" ]]\n')
   for (const dir of [dist, staging, resources]) for (const name of ["cmspark-agent.js", "cmspark-tray"]) fs.writeFileSync(path.join(dir, name), `fixture ${name}`)
   const env = { ...process.env, ROOT_DIR: temp, STAGING: staging, RESOURCES: resources, PLATFORM: "macos-arm64" }
   const run = block => spawnSync("bash", ["-c", `set -euo pipefail\n${block}`], { env, encoding: "utf8" }).status

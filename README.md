@@ -781,7 +781,7 @@ Companion daemon 核心（systemd 服务、WebSocket、工具执行）在 Linux 
 
 | 功能 | Linux 状态 | 说明 |
 |------|-----------|------|
-| 本机 Whisper STT | ❌ 不可用（fail-closed） | 无 linux-x64 pin、manifest 无下载条目，生产模式拒用未 pin 二进制；仅剩云端链路或 dev 逃生门 `CMSPARK_WHISPER_UNPINNED=1` |
+| 本机 Whisper STT | 支持 x86_64 与 ARM64 | 安装包附带经 SHA-256 校验的识别程序。在小窗下载模型后即可离线转写。便携 ZIP 需要 glibc 2.34 或更高版本及 libgomp。 |
 | 系统语音引擎 | ❌ 不可用 | `voice.system.state` 返回 `not_win32`（仅 Windows SAPI） |
 | host-use（host_read/host_write） | ❌ 不可用 | linux adapter 为 Phase 0 stub，直接抛 `NotImplementedOnPlatform` |
 | computer-use（host_computer） | ❌ 硬门拒绝 | 返回 `host_computer requires macOS or Windows`（诚实报错，非静默失败） |

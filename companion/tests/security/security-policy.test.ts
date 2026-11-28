@@ -5,6 +5,20 @@ import assert from "node:assert/strict"
 
 import { SecurityPolicy } from "../../src/security-policy"
 
+test("expert team confirmation serializes the approved slices without loading the worker runtime", () => {
+  const members = [
+    { id: "b", brief: "a" },
+    { pack_id: "a", task_slice: "" },
+    { id: "" },
+    { id: "b", brief: "a" },
+  ]
+  assert.equal(
+    SecurityPolicy.bindingPayloadFor("spawn_expert_team", { goal: " 议程 ", members }),
+    "spawn_expert_team|ids=a,b|goal=议程|slices=a:e3b0c44298fc1c14,b:ca978112ca1bbdca,b:ca978112ca1bbdca",
+  )
+  assert.equal(require.cache[require.resolve("../../src/orchestrator/expert-team")], undefined)
+})
+
 test("issueToken binds code hash in payload", () => {
   const policy = new SecurityPolicy()
   const token = policy.issueToken("evaluate", "fetch('/api')")

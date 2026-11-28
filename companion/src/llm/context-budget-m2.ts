@@ -6,7 +6,6 @@ import {
   M2_ROLLING_SUMMARY_SYSTEM,
   buildRedactedTranscript,
   shortSha256,
-  type CompactResult,
 } from "./context-budget"
 import type { CanonicalChatMessage } from "./provider"
 
@@ -73,20 +72,4 @@ export async function generateRollingSummary(opts: {
   }
 }
 
-/**
- * M2 default strategy (tuned 2026-08-06):
- * - Only when explicitly/implicitly enabled (default true on new installs)
- * - Only after real head-drop
- * - pre_loop only (mid_loop stays M1 — avoid latency on every tool round)
- * - Worth it when dropped ≥3 messages OR ≥500 estimated tokens removed
- */
-export function shouldRunM2(
-  compact: CompactResult,
-  m2Enabled: boolean,
-  phase: "pre_loop" | "mid_loop" = "pre_loop",
-): boolean {
-  if (m2Enabled !== true || !compact.compacted) return false
-  if (phase === "mid_loop") return false
-  const droppedTok = Math.max(0, compact.tokensBefore - compact.tokensAfter)
-  return compact.droppedMessages.length >= 3 || droppedTok >= 500
-}
+export { shouldSummarizeCompaction as shouldRunM2 } from "./context-budget"

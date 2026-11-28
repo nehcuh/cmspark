@@ -1,8 +1,9 @@
+import { threadHistoryRequest, threadHistoryFailure } from "../src/utils/thread-history"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { agentReducer, initialState, isTempUserMessageId, mergeHydratedMessages, type AgentState } from "../src/sidepanel/store/agentStore"
 import { newTempUserMessageId } from "../src/utils/temp-message-id"
-import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData, sanitizeHydratedMessages, nextHydrateRetry, clearHydrateRetry } from "../src/sidepanel/hooks/useWebSocket"
+import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData, sanitizeHydratedMessages } from "../src/sidepanel/hooks/useWebSocket"
 import { truncationHonestyChip } from "../src/sidepanel/chat-shell-copy"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -348,7 +349,8 @@ test("pendingUploads is keyed by thread so concurrent uploads do not overwrite",
   s = agentReducer(s, { type: "CLEAR_PENDING_UPLOAD", threadId: "thread-a" })
   assert.equal(s.pendingUploads["thread-a"], undefined)
   assert.equal(s.pendingUploads["thread-b"]?.messageId, "thread-b_user_2_def")
-  s = agentReducer(s, { type: "REQUEST_COMPOSER_RESTORE", text: "看图 B" })
+  s = agentReducer({ ...s, activeThreadId: "thread-b" }, { type: "RECEIVE_THREAD_STREAM", threadId: "thread-b",
+    event: { type: "file.upload_error", message: { id: "failed", thread_id: "thread-b", role: "assistant", content: "failed", created_at: "" } } })
   assert.equal(s.composerRestore?.text, "看图 B")
   s = agentReducer(s, { type: "CLEAR_COMPOSER_RESTORE" })
   assert.equal(s.composerRestore, null)
@@ -904,19 +906,15 @@ test("#507 ADD_SECURITY_CONFIRMATION keeps thread owner fields from the frame", 
   assert.equal(stored.orchestrator_run_id, "run-9")
 })
 
-test("#505 SET_RUN_TERMINAL stores per-thread round_limit and clears on new run", () => {
+test("#505 round_limit is per-thread and clears on a new run", () => {
   const tid = "thread-cap"
-  const set = agentReducer(initialState, {
-    type: "SET_RUN_TERMINAL",
-    threadId: tid,
-    terminal: "round_limit",
+  const terminal = (threadId: string) => ({
+    type: "RECEIVE_THREAD_STREAM" as const, threadId, event: { type: "chat.done" as const, roundLimit: true,
+      message: { id: "cap", thread_id: threadId, role: "assistant" as const, created_at: "" } },
   })
+  const set = agentReducer(initialState, terminal(tid))
   assert.equal(set.runTerminalByThreadId[tid], "round_limit")
-  const other = agentReducer(set, {
-    type: "SET_RUN_TERMINAL",
-    threadId: "other",
-    terminal: "round_limit",
-  })
+  const other = agentReducer(set, terminal("other"))
   assert.equal(other.runTerminalByThreadId[tid], "round_limit")
 
   const busy = agentReducer(set, { type: "SET_THREAD_BUSY", threadId: tid, busy: true })
@@ -1123,21 +1121,27 @@ test("reducer handles unknown action type without crashing", () => {
   assert.equal(next, initialState)
 })
 
-test("hydrate retry: Thread not found retries once then HYDRATE_FAILED", () => {
-  const tid = `hydrate-retry-${Date.now()}`
-  clearHydrateRetry(tid)
-  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "retry")
-  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "fail")
-  assert.equal(nextHydrateRetry(tid, "unrelated boom"), "ignore")
-  clearHydrateRetry(tid)
-  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "retry")
-  clearHydrateRetry(tid)
-  const next = agentReducer(
-    { ...initialState, hydrating: true, processingStatus: "加载中" },
-    { type: "HYDRATE_FAILED", message: "加载失败" },
-  )
-  assert.equal(next.hydrating, false)
-  assert.equal(next.processingStatus, "加载失败")
+test("history load failures retry once for the selected thread until history arrives", () => {
+  const selected = agentReducer(initialState, { type: "SET_ACTIVE_THREAD", threadId: "A" })
+  const reply = { id: threadHistoryRequest("A").id, error: "Thread not found: A" }
+  const failure = threadHistoryFailure(reply)!
+  assert.deepEqual(failure, { threadId: "A", retryable: true })
+  const action = { type: "HYDRATE_FAILED" as const, ...failure }
+  const retry = agentReducer(selected, action)
+  assert.equal(retry.historyLoadStatus, "retry")
+  const failed = agentReducer(retry, action)
+  assert.equal(failed.hydrating, false)
+  assert.equal(failed.processingStatus, "加载失败")
+  assert.equal(failed.historyLoadStatus, "failed")
+  const loaded = agentReducer(retry, { type: "SET_MESSAGES", threadId: "A", messages: [] })
+  assert.equal(loaded.historyLoadStatus, "ready")
+  const switched = agentReducer(retry, { type: "SET_ACTIVE_THREAD", threadId: "B" })
+  assert.equal(switched.historyLoadStatus, "ready")
+  assert.equal(agentReducer(switched, action), switched)
+  assert.equal(threadHistoryFailure({ request_type: "thread.peek", error: reply.error }), null)
+  assert.equal(threadHistoryFailure({ id: "unrelated", error: reply.error }), null)
+  assert.deepEqual(threadHistoryFailure({ ...reply, error: "Connection closed" }),
+    { threadId: "A", retryable: false })
 })
 
 test("startup selection accepts an immediate history response and rejects it after switching", () => {
@@ -1150,4 +1154,53 @@ test("startup selection accepts an immediate history response and rejects it aft
   assert.equal(loaded.messages[0].content, "remembered body")
   const switched = agentReducer(loaded, { type: "SET_ACTIVE_THREAD", threadId: "new" })
   assert.equal(agentReducer(switched, reply), switched)
+})
+
+test("removing the selection skips trashed rows and takes all settings from its replacement", () => {
+  const base = stateWithThreads()
+  const [a, b] = base.threads
+  const trash = { ...b!, id: "trash", trashed_at: "2026-01-01" }
+  const state: AgentState = {
+    ...base, threads: [trash, a!, b!], activeMcpServerIds: ["A-service"], mcpSelectionMode: "manual",
+    knowledgeRouteByGroup: true, overlayStandby: { label: "A" },
+  }
+  for (const action of [
+    { type: "REMOVE_THREAD" as const, threadId: "thread-a" },
+    { type: "REMOVE_THREADS" as const, threadIds: ["thread-a"] },
+  ]) {
+    const changed = agentReducer(state, action)
+    assert.equal(changed.activeThreadId, "thread-b")
+    assert.equal(changed.activeThreadSelectionRevision, state.activeThreadSelectionRevision + 1)
+    assert.equal(changed.knowledgeSelectionMode, "all")
+    assert.equal(changed.knowledgeRouteByGroup, false)
+    assert.equal(changed.mcpSelectionMode, "auto")
+    assert.deepEqual(changed.activeMcpServerIds, [])
+    assert.equal(changed.overlayStandby, null)
+  }
+})
+
+test("a locally created empty thread keeps the last transcript in the previous thread's cache", () => {
+  const base = stateWithThreads()
+  const body = { id: "last", thread_id: "thread-a", role: "user" as const, content: "last row", created_at: "t" }
+  const source = { ...base, messages: [body], activeMcpServerIds: ["A-service"], overlayStandby: { label: "A" } }
+  const created = agentReducer(source, { type: "ADD_THREAD", thread: { ...base.threads[1]!, id: "new" } })
+  assert.equal(created.activeThreadSelectionRevision, base.activeThreadSelectionRevision + 1)
+  assert.equal(created.hydrating, false)
+  assert.deepEqual(created.messages, [])
+  assert.deepEqual(created.activeMcpServerIds, [])
+  assert.equal(created.overlayStandby, null)
+  assert.deepEqual(agentReducer(created, { type: "SET_ACTIVE_THREAD", threadId: "thread-a" }).messages, [body])
+})
+
+test("an active list that loses the selected thread releases its transcript, stream and settings", () => {
+  const base = stateWithThreads()
+  const changed = agentReducer({
+    ...base, streamingContent: "A tokens", isProcessing: true, activeMcpServerIds: ["A-service"], overlayStandby: { label: "A" },
+  }, { type: "SET_THREADS", threads: [base.threads[1]!] })
+  assert.equal(changed.activeThreadId, null)
+  assert.equal(changed.activeThreadSelectionRevision, base.activeThreadSelectionRevision + 1)
+  assert.equal(changed.streamingContent, "")
+  assert.equal(changed.isProcessing, false)
+  assert.equal(changed.overlayStandby, null)
+  assert.deepEqual(changed.activeMcpServerIds, [])
 })

@@ -106,7 +106,7 @@ export class SecurityPolicy {
         return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}|allow=${canon(params?.tool_allow)}|deny=${canon(params?.tool_deny)}|intent=${intent}|goal=${goal}|role_prompt=${rolePrompt}${plan}`
       }
       case "spawn_expert_team": {
-        const { expertTeamBindingPayload } = require("./orchestrator/expert-team") as typeof import("./orchestrator/expert-team")
+        const { expertTeamBindingPayload } = require("./orchestrator/expert-team-binding") as typeof import("./orchestrator/expert-team-binding")
         return expertTeamBindingPayload(params ?? {})
       }
       case "ask_user":

@@ -16,14 +16,13 @@ import { getConfig } from "../config"
 import { logger } from "../logger"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { isPtyBusy } from "../pty/session"
+import { windowsCmdExePath, windowsPowerShellExePath } from "../process-path"
 import {
   acpSpawnUsesCmdHost,
   resolveAcpSpawn,
   resolveWindowsAgentCommand,
   writeExclusiveUtf8,
   scheduleUnlink,
-  windowsCmdExePath,
-  windowsPowerShellExePath,
 } from "./win-spawn"
 
 const execFileAsync = promisify(execFile)

@@ -185,7 +185,7 @@ export async function handleSecurityConfirmationResponse(
         // so a finishing chat.create finally cannot drain the queue mid-stop.
         let nextRunCancelled = 0
         try {
-          const { abortThreadChat } = await import("../message-router")
+          const { abortThreadChat } = await import("../llm/active-runs")
           if (typeof abortThreadChat === "function") {
             nextRunCancelled = abortThreadChat(stopTarget, { clearQueue: true }).cancelled
           }

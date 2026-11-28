@@ -13,7 +13,6 @@
 set -euo pipefail
 
 # --- Configuration ---
-NODE_VERSION="v22.23.4"
 NODE_MIRROR="${NODE_MIRROR:-https://nodejs.org/dist}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -28,6 +27,7 @@ to_mixed() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 ROOT_DIR="$(to_mixed "${ROOT_DIR}")"
+NODE_VERSION="v$(<"${ROOT_DIR}/.nvmrc")"
 # shellcheck source=win-vendor-bins.sh
 . "${ROOT_DIR}/scripts/win-vendor-bins.sh"
 
@@ -176,6 +176,10 @@ fi
 if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ]; then
   echo "GATE-ONLY: no further gates for ${PLATFORM} — exiting 0"
   exit 0
+fi
+
+if [[ "${PLATFORM}" == macos-* ]]; then
+  node "${ROOT_DIR}/scripts/prepare-macos-whisper.mjs" "darwin-${PLATFORM#macos-}"
 fi
 
 # Native desktop is an actual same-platform build; cross-package guessing is forbidden.
@@ -392,7 +396,7 @@ case "${PLATFORM}" in
       exit 1
     fi
     cp companion/dist/cmspark-tray "${STAGING}/"
-    # Path B: optional cmspark-whisper binary (local STT). Soft-warn if missing.
+    # Stage the sealed macOS Whisper runtime.
     case "${PLATFORM}" in
       macos-arm64) _WHISPER_BIN="cmspark-whisper-darwin-arm64" ;;
       macos-x64)   _WHISPER_BIN="cmspark-whisper-darwin-x64" ;;
@@ -454,7 +458,7 @@ case "${PLATFORM}" in
         if [ -e "companion/dist/bin/${_WHISPER_BIN}" ] || [ -L "companion/dist/bin/${_WHISPER_BIN}" ]; then
           echo "ERROR: legacy unsealed whisper binary cannot be packaged; rebuild it first" >&2; exit 1
         fi
-        echo "WARNING: local STT disabled (no sealed whisper generation)" >&2
+        echo "ERROR: missing sealed whisper generation" >&2; exit 1
       fi
     fi
     ;;
@@ -487,34 +491,12 @@ case "${PLATFORM}" in
     node "${ROOT_DIR}/scripts/verify-windows-host-scripts.mjs" "${WIN_SCRIPTS_SRC}" "${STAGING}/host-scripts-win"
     node "${ROOT_DIR}/companion/scripts/build-computer-uia-no-focus.mjs" --stage "${STAGING}/host-scripts-win"
     # No ORT/tinyclick hard-gate — Qwen3-VL worker staged above for all platforms.
-    # Path B: cmspark-whisper (win-x64) + DLLs. Auto-fetch when missing unless AUTO_FETCH=0.
-    if [ ! -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ] && [ ! -f "companion/dist/bin/cmspark-whisper-win-x64" ]; then
-      if [ "${CMSPARK_WHISPER_AUTO_FETCH:-1}" != "0" ]; then
-        echo "  auto-fetching cmspark-whisper-win-x64 via manifest..."
-        (cd companion && node scripts/fetch-whisper-binary.mjs --arch win-x64 --dest dist/bin) || \
-          echo "WARNING: whisper auto-fetch failed — local STT may be disabled" >&2
-      fi
-    fi
-    if [ -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ]; then
-      mkdir -p "${STAGING}/bin"
-      cp "companion/dist/bin/cmspark-whisper-win-x64.exe" "${STAGING}/bin/"
-      # Official whisper.cpp Windows builds need sibling DLLs next to the CLI.
-      shopt -s nullglob
-      _dlls=(companion/dist/bin/*.dll)
-      if [ "${#_dlls[@]}" -gt 0 ]; then
-        cp companion/dist/bin/*.dll "${STAGING}/bin/"
-        echo "  staged bin/cmspark-whisper-win-x64.exe + ${#_dlls[@]} dlls (local STT)"
-      else
-        echo "  staged bin/cmspark-whisper-win-x64.exe (local STT; no sibling *.dll found)"
-      fi
-      shopt -u nullglob
-    elif [ -f "companion/dist/bin/cmspark-whisper-win-x64" ]; then
-      mkdir -p "${STAGING}/bin"
-      cp "companion/dist/bin/cmspark-whisper-win-x64" "${STAGING}/bin/cmspark-whisper-win-x64.exe"
-      echo "  staged bin/cmspark-whisper-win-x64.exe (local STT)"
-    else
-      echo "WARNING: companion/dist/bin/cmspark-whisper-win-x64(.exe) missing — local STT disabled in package" >&2
-    fi
+    whisper_arch="win-${PLATFORM#windows-}"
+    # Keep the existing Windows x64 cache, isolate the ARM64 DLLs.
+    whisper_cache="${CACHE_DIR}/whisper-${whisper_arch}"
+    if [ "${whisper_arch}" = "win-x64" ]; then whisper_cache="companion/dist/bin"; fi
+    node companion/scripts/fetch-whisper-binary.mjs --arch "${whisper_arch}" --dest "${whisper_cache}" --stage "${STAGING}/bin"
+    node companion/scripts/stage-windows-whisper-crt.mjs "${PLATFORM#windows-}" "${STAGING}/bin"
     ;;
   linux-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
@@ -535,12 +517,7 @@ case "${PLATFORM}" in
     chmod 0755 "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
     if [ "${PLATFORM}" = "linux-arm64" ]; then strip_ort_napi linux arm64; else strip_ort_napi linux x64; fi
     strip_ort_optional_providers
-    # cmspark-whisper-linux-x64 is intentionally NOT staged (#379): the
-    # runtime pin matrix has no linux-x64 entry (whisper-binary-pins.ts) and
-    # the download manifest has no linux URL, so production mode fail-closed
-    # rejects any unpinned binary — shipping it would be dead weight that
-    # falsely suggests local STT works on Linux. Revisit if a linux-x64 pin
-    # + manifest entry is ever added.
+    node companion/scripts/fetch-whisper-binary.mjs --arch "${PLATFORM}" --dest "${CACHE_DIR}/whisper-${PLATFORM}" --stage "${STAGING}/bin"
     ;;
 esac
 
@@ -663,6 +640,7 @@ echo "  $(du -sh "${STAGING}" | cut -f1) total"
 if [[ "${PLATFORM}" == macos-* ]]; then
   cmp -s "${ROOT_DIR}/companion/dist/cmspark-agent.js" "${STAGING}/cmspark-agent.js" || { echo "ERROR: staged agent differs from checked bundle" >&2; exit 1; }
   cmp -s "${ROOT_DIR}/companion/dist/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "ERROR: staged tray differs from checked binary" >&2; exit 1; }
+  bash "${ROOT_DIR}/scripts/verify-macos-architecture.sh" "${STAGING}" "${PLATFORM}"
 fi
 
 # --- Step 8: Zip ---

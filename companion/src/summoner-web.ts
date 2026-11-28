@@ -5,6 +5,11 @@
  * chrome-extension:// and cmspark-tray://local. Tray dispatch uses the
  * existing summoner-stamped CompanionClient.
  */
+import { readBody } from "./http-body"
+import { findAvailablePort, forbidden, hostOk, parseQuery } from "./loopback-http"
+import { SUMMONER_MEETING_MEDIA_JS } from "./summoner/meeting-media"
+import { MeetingVideoUpload } from "./summoner/meeting-video-upload"
+import { serveMeetingRecordings } from "./summoner/meeting-recording-http"
 import * as http from "http"
 import { once } from "node:events"
 import * as crypto from "crypto"
@@ -164,37 +169,6 @@ function defaultAttachChrome(opts?: { foreground?: boolean }): string {
   return attachChromeOnly(getChromeOpener(), opts)
 }
 
-async function findAvailablePort(startPort: number): Promise<number> {
-  for (let port = startPort; port < startPort + 10; port++) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const probe = http.createServer()
-        probe.on("error", reject)
-        probe.listen(port, "127.0.0.1", () => {
-          probe.close(() => resolve())
-        })
-      })
-      return port
-    } catch {
-      continue
-    }
-  }
-  throw new Error("No available port for summoner web server")
-}
-
-function parseQuery(qs: string): Map<string, string> {
-  const out = new Map<string, string>()
-  if (!qs) return out
-  for (const pair of qs.split("&")) {
-    if (!pair) continue
-    const eq = pair.indexOf("=")
-    const k = eq < 0 ? decodeURIComponent(pair) : decodeURIComponent(pair.slice(0, eq))
-    const v = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1))
-    out.set(k, v)
-  }
-  return out
-}
-
 function overlayCookieToken(req: http.IncomingMessage): string | undefined {
   const raw = String(req.headers.cookie || "")
   const m = raw.match(/(?:^|;\s*)cmspark_overlay=([0-9a-fA-F]{64})/)
@@ -210,11 +184,6 @@ function tokenOk(req: http.IncomingMessage, expected: string): boolean {
   const provided = overlayHeaderToken(req) || overlayCookieToken(req)
   if (!provided || provided.length !== expected.length) return false
   return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
-}
-
-function hostOk(req: http.IncomingMessage, port: number): boolean {
-  const host = (req.headers.host || "").toLowerCase()
-  return host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`
 }
 
 function originOk(req: http.IncomingMessage, port: number): boolean {
@@ -237,38 +206,11 @@ function corsAllowOrigin(req: http.IncomingMessage, port: number): string {
   return `http://127.0.0.1:${port}`
 }
 
-function forbidden(res: http.ServerResponse, reason: string) {
-  if (res.headersSent) {
-    res.end()
-    return
-  }
-  res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" })
-  res.end(`Forbidden: ${reason}`)
-}
-
 function jsonResponse(res: http.ServerResponse, data: unknown, status = 200) {
   if (!res.headersSent) {
     res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" })
   }
   res.end(JSON.stringify(data))
-}
-
-function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = ""
-    let size = 0
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length
-      if (size > maxSize) {
-        reject(new Error("Request body too large"))
-        req.destroy()
-        return
-      }
-      body += chunk.toString()
-    })
-    req.on("end", () => resolve(body))
-    req.on("error", reject)
-  })
 }
 
 // Only the web composer's namespaced IDs may travel through the shared tray socket.
@@ -354,6 +296,16 @@ export function summonerWebEventStatus(msg: unknown): string {
   return "出错了"
 }
 
+function releaseFinishedOverlayCapture(status: ReturnType<typeof projectCaptureStatus>, observation: unknown): void {
+  const owner = overlayContinuousCapture
+  if (!owner || !status || owner.observation !== observation || owner.captureId !== status.capture_id ||
+      owner.epoch !== status.capture_epoch || owner.meetingId !== status.meeting_id ||
+      (status.phase !== "finished" && status.phase !== "failed")) return
+  meetingHttpBegin.terminal(owner.captureId, observation)
+  meetingVideoUpload.stopMonitor()
+  overlayContinuousCapture = null
+}
+
 export function pushSummonerWebEvent(msg: unknown): boolean {
   if (!msg || typeof msg !== "object" || Array.isArray(msg)) return false
   const type = (msg as { type?: unknown }).type
@@ -363,11 +315,7 @@ export function pushSummonerWebEvent(msg: unknown): boolean {
   if (!projected) return false
   if (type === "meeting.capture.status") {
     const status = projected as ReturnType<typeof projectCaptureStatus>
-    const owner = overlayContinuousCapture
-    if (owner && status && status.capture_id === owner.captureId && status.capture_epoch === owner.epoch && ["finished", "failed"].includes(status.phase)) {
-      meetingHttpBegin.terminal(owner.captureId, owner.observation)
-      if (overlayContinuousCapture === owner) overlayContinuousCapture = null
-    }
+    releaseFinishedOverlayCapture(status, activeMeetingPcmConnection?.())
   }
   const line = `data: ${JSON.stringify(projected)}\n\n`
   for (const res of sseClients) {
@@ -438,7 +386,8 @@ let overlayCloseRequested = false
 let overlaySttSessionId = ""
 let overlayMeetingId = ""
 const meetingHttpBegin = new MeetingPcmHttpBegin()
-let overlayContinuousCapture: { meetingId: string; captureId: string; epoch: number; observation: unknown } | null = null
+const meetingVideoUpload = new MeetingVideoUpload()
+let overlayContinuousCapture: { video: boolean; meetingId: string; captureId: string; epoch: number; observation: unknown } | null = null
 
 function overlayLaunchInGrace(): boolean {
   return !!(overlayLaunchAt && Date.now() - overlayLaunchAt < overlayLaunchGraceMs)
@@ -504,6 +453,7 @@ function readMeetingIdFromDispatch(result: unknown, fallback: string): string {
 
 /** Hide / last-SSE / idle-stop: stop overlay capture even if HTML pagehide never ran. */
 function abortOverlayCaptureSessions(): void {
+  meetingVideoUpload.close()
   const continuous = overlayContinuousCapture
   overlayContinuousCapture = null
   if (continuous) {
@@ -653,7 +603,7 @@ export async function startSummonerWebServer(opts: {
     return { port: activePort, token: sessionToken }
   }
 
-  const port = await findAvailablePort(opts.preferredPort ?? 23403)
+  const port = await findAvailablePort(opts.preferredPort ?? 23403, "summoner web server")
   lastAccessTime = Date.now()
   const token = crypto.randomBytes(32).toString("hex")
 
@@ -681,6 +631,7 @@ export async function startSummonerWebServer(opts: {
 }
 
 export function stopSummonerWebServer(): void {
+  meetingVideoUpload.close()
   if (autoCloseTimer) {
     clearInterval(autoCloseTimer)
     autoCloseTimer = null
@@ -776,7 +727,7 @@ async function handleRequest(
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Content-Security-Policy":
-          `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'`,
+          `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; media-src 'self'; connect-src 'self'`,
       })
       let cruise = "每次确认"
       try {
@@ -786,6 +737,7 @@ async function handleRequest(
       }
       const html = SUMMONER_HTML.replace("<script>", `<script nonce="${nonce}">`)
         .replace("%%CRUISE_LABEL%%", escHtml(cruise))
+        .replaceAll("%%OVERLAY_PLATFORM%%", process.platform)
         .replaceAll("%%OVERLAY_SESSION%%", token)
       res.end(html)
       return
@@ -1195,6 +1147,8 @@ async function handleRequest(
       const body = JSON.parse(await readBody(req, JSON_BODY_MAX)) as Record<string, unknown>
       if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
         const reply = await dispatchMeetingPcmHttp("voice.stt.abort", body, meetingObservation)
+        // An abort before the first audio block can finish via HTTP alone.
+        releaseFinishedOverlayCapture(projectCaptureStatus(reply), meetingObservation)
         jsonResponse(res, reply)
         return
       }
@@ -1219,6 +1173,14 @@ async function handleRequest(
       return
     }
 
+    if (pathOnly === "/api/meeting/video" && req.method === "POST") {
+      await meetingVideoUpload.handle(req, res, query, overlayContinuousCapture?.video ? overlayContinuousCapture : null)
+      return
+    }
+    if (pathOnly === "/api/meeting/recordings" && (req.method === "GET" || req.method === "HEAD")) {
+      serveMeetingRecordings(req, res, query)
+      return
+    }
     if (pathOnly === "/api/meeting/reference/import" && req.method === "POST") {
       // 7MiB binary + base64 envelope stays below the existing 10MiB WS limit.
       const body = JSON.parse(await readBody(req, 10 * 1024 * 1024))
@@ -1249,10 +1211,12 @@ async function handleRequest(
       if (body.queue_contract !== undefined || body.capture_epoch !== undefined || body.capture_id !== undefined) {
         const binding = meetingHttpBegin.binding(body.capture_id, meetingObservation, activeMeetingPcmConnection?.() ?? null)
         if (!binding) { jsonResponse(res, { type: "error", code: "contract_unavailable", error: "连续开始观测已失效，请重新显式开始" }); return }
-        const reply: any = await dispatchMeetingPcmHttp("meeting.start", body, binding)
+        const { save_video, ...start } = body
+        const video = save_video === true && start.save_recording === true
+        const reply: any = await dispatchMeetingPcmHttp("meeting.start", start, binding)
         if (reply?.type === "meeting.started" && reply.continuous_capture?.capture_id === body.capture_id && reply.meeting?.id === (body.meeting_id ?? body.id)) {
           meetingHttpBegin.accepted(body.capture_id, binding)
-          overlayContinuousCapture = { meetingId: reply.meeting.id, captureId: String(body.capture_id), epoch: reply.continuous_capture.capture_epoch, observation: binding }
+          overlayContinuousCapture = { video, meetingId: reply.meeting.id, captureId: String(body.capture_id), epoch: reply.continuous_capture.capture_epoch, observation: binding }
         } else if (["error", "meeting.error", "voice.stt.error"].includes(reply?.type)) meetingHttpBegin.terminal(body.capture_id, binding)
         jsonResponse(res, reply)
         return
@@ -1421,6 +1385,12 @@ body{
   position:absolute;inset:0;z-index:7;margin:0;
   display:flex;flex-direction:column;background:var(--paper);color:var(--text);
 }
+#meetingRecordings{margin:4px 12px 8px;flex-shrink:0}
+#meetingRecordings h3{font-size:13px;margin:8px 0}
+#meetingRecordings details{padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
+#meetingRecordings summary{cursor:pointer}
+#meetingRecordings audio,#meetingRecordings video{display:block;width:100%;max-height:260px;margin:8px 0}
+#meetingRecordings button,#meetingRecordings a{color:var(--indigo);background:transparent;border:0;cursor:pointer;font:inherit}
 #meetingReferenceNotes{box-sizing:border-box;width:100%;min-height:84px;resize:vertical;border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
 #meetingReferenceSection,#meetingOriginal,#meetingEvidence{margin:8px 12px 0;font-size:12px;line-height:1.5;overflow-wrap:anywhere;flex-shrink:0}
 #meetingEvidence pre,#meetingOriginal pre{white-space:pre-wrap;font:inherit}
@@ -1827,6 +1797,7 @@ ${QUICK_CHAT_CSS}
       <span class="meeting-dot" aria-hidden="true"></span>
       <span id="meetingHint">未录制</span>
       <span id="meetingVoiceMeta"></span>
+      <label>保存 <select id="meetingRecordingMode"><option value="audio">录音（WAV）</option><option value="transcript">仅转写</option></select></label>
       <label>转写语言 <select id="meetingLanguage"></select></label>
     </div>
     <div class="meeting-tools">
@@ -1836,6 +1807,8 @@ ${QUICK_CHAT_CSS}
 
     </div>
     <div class="meeting-hist" id="meetingHistList" hidden></div>
+    <button type="button" id="meetingChooseSource" hidden>选择会议画面</button>
+    <section id="meetingRecordings" aria-label="本地录制文件" hidden></section>
     <details id="meetingMaterials"><summary>录音与参考材料</summary>
     <div class="meeting-tools">
       <button type="button" id="meetingAudioImport">导入录音</button>
@@ -1908,15 +1881,14 @@ try{
     el.textContent=engine+" · "+voiceSettings.localModelId;
   }
   function loadVoiceSettings(captureId){
-    delete voiceSettings.meeting_pcm_contract;
     return api("/api/voice-settings"+(captureId?"?capture_id="+encodeURIComponent(captureId):"")).then(function(d){
-      if(!d||typeof d!=="object") return;
+      if(!d||typeof d!=="object"||d.error)throw new Error("无法读取录制设置，请重新开始录制");
       if(d.sttEngine==="browser"||d.sttEngine==="local"||d.sttEngine==="system") voiceSettings.sttEngine=d.sttEngine;
       if(d.localModelId==="small"||d.localModelId==="medium"||d.localModelId==="large-v3-turbo") voiceSettings.localModelId=d.localModelId;
       if(typeof d.lang==="string"&&d.lang) voiceSettings.lang=d.lang;
-      if(d.meeting_pcm_contract===1)voiceSettings.meeting_pcm_contract=1;
       paintMeetingVoiceMeta();
-    }).catch(function(){});
+      return d.meeting_pcm_contract===1;
+    }).catch(function(e){if(captureId)throw e});
   }
   loadVoiceSettings();
   var busy=false;
@@ -2573,6 +2545,7 @@ try{
       var m=d&&d.meeting;
       if(!m||!m.id){ setStatus("打不开这场会议"); return; }
       lastMeetingId=m.id;
+      loadRecordingFiles(m.id);
       meetingId="";
       meetingFeats=[];
       showMeetingHistory(false);
@@ -2617,7 +2590,12 @@ try{
     return beginContinuousMeeting();
   }
   ${MEETING_PCM_BROWSER_JS}
+  var miniPlatform="%%OVERLAY_PLATFORM%%";
+  if(window.webkit?.messageHandlers?.meetingVideo)$("meetingRecordingMode").add(new Option("视频会议（MP4＋录音）","video"),1);
+  else if(["win32","linux"].includes(miniPlatform) && navigator.mediaDevices?.getDisplayMedia && window.MediaRecorder?.isTypeSupported("video/webm"))
+    $("meetingRecordingMode").add(new Option("视频会议（WebM＋录音）","video"),1);
   for (const [value,label] of CMsparkMeetingPcm.meetingLanguages) $("meetingLanguage").add(new Option(label,value));
+  ${SUMMONER_MEETING_MEDIA_JS}
   ${SUMMONER_MEETING_WORKFLOW_JS}
   if(location.hash==="#meeting")showMeetingDesk(true);
   window.finishMiniMeeting = async function(){

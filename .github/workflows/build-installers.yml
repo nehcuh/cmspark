@@ -42,7 +42,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: |
             companion/package-lock.json
@@ -57,7 +57,7 @@ jobs:
         if: matrix.platform == 'windows-arm64'
         uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
           architecture: x64
 
       - name: Install extension dependencies
@@ -78,7 +78,7 @@ jobs:
         if: matrix.platform == 'windows-arm64'
         uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
           architecture: arm64
 
       - name: Install NSIS
@@ -93,7 +93,7 @@ jobs:
 
       - name: Install RPM builder
         if: startsWith(matrix.platform, 'linux-')
-        run: sudo apt-get update && sudo apt-get install -y rpm cpio desktop-file-utils xvfb dbus-x11 libappindicator3-1 xclip
+        run: sudo apt-get update && sudo apt-get install -y rpm cpio desktop-file-utils xvfb dbus-x11 libappindicator3-1 xclip libgomp1
 
       - name: Install native ARM64 tray build tools
         if: matrix.platform == 'linux-arm64'
@@ -133,6 +133,30 @@ jobs:
           bash scripts/build-linux-rpm.sh '${{ matrix.platform }}'
           CMSPARK_TEST_LINUX_STAGE="$PWD/dist-package/cmspark-${{ matrix.platform }}" dbus-run-session -- xvfb-run -a node --test scripts/tests/linux-tray-protocol.test.mjs
 
+      - name: Transcribe a meeting with packaged native Whisper
+        shell: bash
+        run: |
+          stage="dist-package/cmspark-${{ matrix.platform }}"
+          arch="${{ matrix.platform }}"
+          if [[ "$arch" == macos-* ]]; then
+            node --test scripts/tests/whisper-release-restore.test.mjs
+            mount="$RUNNER_TEMP/meeting-whisper-dmg"
+            mkdir -p "$mount"
+            image="dist-package/CMspark-v$(node -p "require('./companion/package.json').version")-macOS-${{ matrix.arch }}.dmg"
+            hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$image"
+            trap 'bash scripts/detach-dmg.sh "$mount" "$image"' EXIT
+            stage="$mount/CMspark.app/Contents/Resources"
+            arch="darwin-${arch#macos-}"
+          fi
+          node_bin="$stage/node"
+          if [[ "$arch" == windows-* ]]; then node_bin="$stage/node.exe"; arch="win-${arch#windows-}"; fi
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/ggml-org/whisper.cpp/5eaee0cc9024eb9e9a99469199920c8b7f5cb9ec/samples/jfk.wav -o jfk.wav
+          "$node_bin" scripts/tests/packaged-meeting-whisper.mjs "$stage" "$arch" jfk.wav "$RUNNER_TEMP/whisper-models"
+          if [[ "$arch" == darwin-* ]]; then
+            trap - EXIT
+            bash scripts/detach-dmg.sh "$mount" "$image"
+          fi
+
       - name: Collect platform installers
         shell: bash
         run: |
@@ -162,7 +186,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: chrome-extension/package-lock.json
       - run: cd chrome-extension && npm ci && npm run build

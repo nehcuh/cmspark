@@ -10,7 +10,9 @@ export type WhisperArch =
   | "darwin-arm64"
   | "darwin-x64"
   | "win-x64"
+  | "win-arm64"
   | "linux-x64"
+  | "linux-arm64"
   | "unsupported"
 
 /** Map process.platform + arch → package identity. */
@@ -20,7 +22,9 @@ export function resolveWhisperArch(
 ): WhisperArch {
   if (platform === "darwin" && arch === "arm64") return "darwin-arm64"
   if (platform === "darwin" && (arch === "x64" || arch === "x86_64")) return "darwin-x64"
+  if (platform === "win32" && arch === "arm64") return "win-arm64"
   if (platform === "win32" && (arch === "x64" || arch === "x86_64")) return "win-x64"
+  if (platform === "linux" && arch === "arm64") return "linux-arm64"
   if (platform === "linux" && (arch === "x64" || arch === "x86_64")) return "linux-x64"
   return "unsupported"
 }

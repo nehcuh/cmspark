@@ -9,10 +9,10 @@ import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ToastHost, useToastQueue } from "./components/ToastHost"
 import { ChatView } from "./components/ChatView"
 import {
-  ContextPanelHost,
   ContextPanelHostProvider,
   useContextPanelHost,
 } from "./components/ContextPanelHost"
+import { ContextPanelBody } from "./components/ContextPanelBody"
 import { FocusBand } from "./components/FocusBand"
 import { CodingAgentPanel } from "./components/CodingAgentPanel"
 import { SettingsSlideout } from "./components/SettingsSlideout"
@@ -57,12 +57,12 @@ import {
 } from "./utils/thread-busy"
 import {
   IMAGE_ACCEPT,
-  IMAGE_PREFLIGHT_NO_VISION,
   checkComposerImageCaps,
   defaultCaption,
   isAllowlistedImageMime,
   visionRailOpen,
 } from "./utils/image-compose"
+import { planStandaloneImageAnalysis } from "./utils/composer-image-policy"
 import { useComposerVoice } from "./hooks/useComposerVoice"
 import { useComposerIngest } from "./hooks/useComposerIngest"
 import { useComposerMentions } from "./hooks/useComposerMentions"
@@ -244,7 +244,7 @@ function AppContent() {
         </div>
       </>}
       bottom={<>
-        <ContextPanelHost />
+        <ContextPanelBody />
         <InputArea capabilityLevel={level} />
       </>}
       overlays={<>
@@ -667,8 +667,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         baseUrl: effectiveLlmBase,
         mode: state.config.native_vision,
       })
-      if (!useNative && !visionRailOpen(state.config)) {
-        setFileError(IMAGE_PREFLIGHT_NO_VISION)
+      const plan = planStandaloneImageAnalysis({
+        imageCount: imageFiles.length, useNative, visionRailOn: visionRailOpen(state.config),
+      })
+      if (plan.error) {
+        setFileError(plan.error)
         return
       }
       if (useNative) {
@@ -870,7 +873,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       setSlashVisible(false)
       setAtVisible(false)
       setThreadRefs([])
-      // selectedFiles stay until companion file.uploaded (BUMP_COMPOSER_UPLOAD_CLEAR).
+      // Keep selected files until the companion acknowledges the upload.
     } finally {
       sendingRef.current = false
     }
@@ -883,8 +886,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       type: "chat.abort",
       threadId: state.activeThreadId,
     })
-    dispatch({ type: "SET_STREAMING", content: "" })
-    dispatch({ type: "SET_STREAMING_REASONING", content: "" })
     dispatch({ type: "SET_PROCESSING_STATUS", status: null })
     dispatch({ type: "SET_PROCESSING", isProcessing: false })
   }
