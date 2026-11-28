@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { useSiteGroups } from "../hooks/useSiteGroups"
 import { useAgentStore } from "../store/agentStore"
 import { contextPanelLabel, useContextPanelHost } from "./ContextPanelHost"
 import { KnowledgeSubPanel } from "./KnowledgeSubPanel"
@@ -167,23 +168,9 @@ function SkillsPanel() {
   const [showPathImport, setShowPathImport] = useState(false)
   const [pathInput, setPathInput] = useState("")
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
-  const [currentHostname, setCurrentHostname] = useState<string>("")
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const zipInputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const url = tabs[0]?.url
-      if (url) {
-        try {
-          setCurrentHostname(new URL(url).hostname)
-        } catch {
-          setCurrentHostname("")
-        }
-      }
-    })
-  }, [state.tabList])
 
   const handleModeChange = (mode: "auto" | "all" | "manual") => {
     dispatch({ type: "SET_SKILL_SELECTION_MODE", mode })
@@ -305,7 +292,7 @@ function SkillsPanel() {
   }
 
   const skillList = Array.isArray(state.skills) ? state.skills : []
-  const groupedSkills = groupSkillsBySite(skillList, currentHostname)
+  const groupedSkills = useSiteGroups(skillList)
 
   const modeLabels: Record<string, string> = { auto: "自动", all: "全选", manual: "按需" }
   const skillMode = state.skillSelectionMode || "auto"
@@ -635,49 +622,6 @@ function groupBy<T>(arr: T[], key: keyof T): Record<string, T[]> {
     },
     {} as Record<string, T[]>,
   )
-}
-
-type SkillListItem = {
-  name: string
-  description?: string
-  site?: string
-  builtin?: boolean
-}
-
-function groupSkillsBySite(
-  skills: SkillListItem[],
-  currentHostname: string,
-): [string, SkillListItem[]][] {
-  const list = Array.isArray(skills) ? skills : []
-  const globalSkills = list.filter((s) => !s.site)
-  const siteGroups = new Map<string, SkillListItem[]>()
-  for (const skill of list.filter((s) => s.site)) {
-    const key = skill.site!
-    if (!siteGroups.has(key)) siteGroups.set(key, [])
-    siteGroups.get(key)!.push(skill)
-  }
-  const result: [string, SkillListItem[]][] = []
-  if (globalSkills.length > 0) {
-    result.push(["全局", globalSkills])
-  }
-  const sortedSites = Array.from(siteGroups.entries()).sort((a, b) => {
-    const aMatch = currentHostname && matchesSite(a[0], currentHostname) ? -1 : 0
-    const bMatch = currentHostname && matchesSite(b[0], currentHostname) ? -1 : 0
-    if (aMatch !== bMatch) return aMatch - bMatch
-    return a[0].localeCompare(b[0])
-  })
-  for (const [site, siteSkills] of sortedSites) {
-    result.push([site, siteSkills])
-  }
-  return result
-}
-
-function matchesSite(pattern: string, hostname: string): boolean {
-  if (pattern.startsWith("*.")) {
-    const suffix = pattern.slice(2)
-    return hostname === suffix || hostname.endsWith("." + suffix)
-  }
-  return hostname === pattern
 }
 
 // ── Styles (panel body only) ───────────────────────────────────────────────

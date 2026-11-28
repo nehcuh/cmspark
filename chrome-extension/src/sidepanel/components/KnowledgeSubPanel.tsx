@@ -1,6 +1,7 @@
 // Knowledge sub-panel: browse global and site knowledge docs
 
 import { useState, useRef, useEffect, useMemo } from "react"
+import { useSiteGroups } from "../hooks/useSiteGroups"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import { SectionHeader } from "../ui/SectionHeader"
@@ -37,7 +38,6 @@ export function KnowledgeSubPanel() {
   const [importUrl, setImportUrl] = useState("")
   const [showUrlImport, setShowUrlImport] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
-  const [currentHostname, setCurrentHostname] = useState<string>("")
   const [status, setStatus] = useState<string>("")
   /** Filter list when many docs */
   const [query, setQuery] = useState("")
@@ -72,21 +72,6 @@ export function KnowledgeSubPanel() {
     setStatus(msg)
     setTimeout(() => setStatus(""), 3000)
   }
-
-  // Get current tab hostname for site grouping
-  useEffect(() => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const url = tabs[0]?.url
-      if (url) {
-        try {
-          const hostname = new URL(url).hostname
-          setCurrentHostname(hostname)
-        } catch {
-          setCurrentHostname("")
-        }
-      }
-    })
-  }, [state.tabList])
 
   useEffect(() => {
     const onFocus = (e: Event) => {
@@ -561,7 +546,7 @@ export function KnowledgeSubPanel() {
   const distEmptyCopy = distributionEmptyStateCopy(state.knowledgeDistribution, state.knowledgeDocs.length)
 
   // Group knowledge docs by site, with current site first
-  const groupedDocs = groupKnowledgeBySite(filteredDocs, currentHostname)
+  const groupedDocs = useSiteGroups(filteredDocs)
   // #274: 文件夹视图数据（docs 的 folder 字段 + companion folders 元数据）
   const folderTree = useMemo(
     () => buildKnowledgeFolderTree(filteredDocs, state.knowledgeFolders),
@@ -1446,39 +1431,6 @@ function KnowledgeReaderSheet() {
       </div>
     </div>
   )
-}
-
-function groupKnowledgeBySite(docs: any[], currentHostname: string): [string, any[]][] {
-  const globalDocs = docs.filter((d) => !d.site)
-  const siteGroups = new Map<string, any[]>()
-  for (const doc of docs.filter((d) => d.site)) {
-    const key = doc.site!
-    if (!siteGroups.has(key)) siteGroups.set(key, [])
-    siteGroups.get(key)!.push(doc)
-  }
-  const result: [string, any[]][] = []
-  if (globalDocs.length > 0) {
-    result.push(["全局", globalDocs])
-  }
-  // Sort: current hostname match first, then alphabetical
-  const sortedSites = Array.from(siteGroups.entries()).sort((a, b) => {
-    const aMatch = currentHostname && matchesSite(a[0], currentHostname) ? -1 : 0
-    const bMatch = currentHostname && matchesSite(b[0], currentHostname) ? -1 : 0
-    if (aMatch !== bMatch) return aMatch - bMatch
-    return a[0].localeCompare(b[0])
-  })
-  for (const [site, siteDocs] of sortedSites) {
-    result.push([site, siteDocs])
-  }
-  return result
-}
-
-function matchesSite(pattern: string, hostname: string): boolean {
-  if (pattern.startsWith("*.")) {
-    const suffix = pattern.slice(2)
-    return hostname === suffix || hostname.endsWith("." + suffix)
-  }
-  return hostname === pattern
 }
 
 const styles: Record<string, React.CSSProperties> = {
