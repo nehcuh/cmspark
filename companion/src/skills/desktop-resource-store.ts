@@ -1,5 +1,6 @@
 /** Private native resource boundary. Files and snapshots never enter a renderer DTO. */
 import fs from "node:fs"
+import { directoryStatIdentity, fileStatIdentity } from "../desktop/filesystem-identity"
 import path from "node:path"
 import { createHash, randomBytes } from "node:crypto"
 import matter from "../passive-frontmatter"
@@ -14,9 +15,6 @@ export type DesktopResourceStore = ReturnType<typeof createDesktopResourceStore>
 const BODY_CAP = 524288, FILE_CAP = 6291456
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex")
 const conflict = () => { throw Error("DESKTOP_RESOURCE_CONFLICT") }
-function statIdentity(st: fs.BigIntStats) {
-  return [st.dev, st.ino, st.mode, st.birthtimeNs, st.ctimeNs, st.mtimeNs, st.size].map(String)
-}
 /** Reject links along the entire fixed canonical parent chain; retain identities. */
 function parents(file: string, roots: string[], allowMissing = false): string[] {
   const resolved = path.resolve(file)
@@ -26,8 +24,7 @@ function parents(file: string, roots: string[], allowMissing = false): string[] 
     try {
       const st = fs.lstatSync(current, { bigint: true })
       if (st.isSymbolicLink() || !st.isDirectory()) return conflict()
-      // Directory mtime changes on sibling writes; its physical identity must not.
-      chain.push(JSON.stringify([current, String(st.dev), String(st.ino), String(st.mode), String(st.birthtimeNs)]))
+      chain.push(directoryStatIdentity(current, st))
     } catch (error) {
       if (!allowMissing || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
       chain.push(JSON.stringify([current, "missing"]))
@@ -42,15 +39,15 @@ function readIdentity(file: string, roots: string[]) {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
   try {
     const opened = fs.fstatSync(fd, { bigint: true })
-    if (!opened.isFile() || JSON.stringify(statIdentity(opened)) !== JSON.stringify(statIdentity(before))) return conflict()
+    if (!opened.isFile() || JSON.stringify(fileStatIdentity(opened)) !== JSON.stringify(fileStatIdentity(before))) return conflict()
     // Bounded read even if another process grows the file after the first stat.
     const buffer = Buffer.alloc(Number(opened.size) + 1)
     let length = 0
     while (length < buffer.length) { const n = fs.readSync(fd, buffer, length, buffer.length - length, null); if (!n) break; length += n }
     const raw = buffer.subarray(0, length)
     const after = fs.fstatSync(fd, { bigint: true }), final = fs.lstatSync(file, { bigint: true })
-    if (raw.length !== Number(opened.size) || raw.length > FILE_CAP || JSON.stringify(statIdentity(opened)) !== JSON.stringify(statIdentity(after)) || JSON.stringify(statIdentity(after)) !== JSON.stringify(statIdentity(final)) || JSON.stringify(beforeParents) !== JSON.stringify(parents(file, roots))) return conflict()
-    return { raw, identity: hash(JSON.stringify([beforeParents, statIdentity(after), hash(raw)])) }
+    if (raw.length !== Number(opened.size) || raw.length > FILE_CAP || JSON.stringify(fileStatIdentity(opened)) !== JSON.stringify(fileStatIdentity(after)) || JSON.stringify(fileStatIdentity(after)) !== JSON.stringify(fileStatIdentity(final)) || JSON.stringify(beforeParents) !== JSON.stringify(parents(file, roots))) return conflict()
+    return { raw, identity: hash(JSON.stringify([beforeParents, fileStatIdentity(after), hash(raw)])) }
   } finally { fs.closeSync(fd) }
 }
 export function createDesktopResourceStore(services: {

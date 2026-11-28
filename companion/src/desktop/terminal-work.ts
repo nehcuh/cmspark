@@ -6,7 +6,7 @@ import {redactSecrets} from '../threads/distill'
 import {commitLocalWorkMessage} from "./local-handback"
 import {SecurityConfirmationManager,DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS} from '../security-confirmation'
 import {acquireL2Admission,releaseL2Admission} from '../orchestrator/l2-admission'
-import {snapshotRoot,assertRoot,type RootSnapshot} from './terminal-root'
+import {createRootChecks,type RootSnapshot} from './filesystem-identity'
 export const DESKTOP_TERMINAL_METHODS=['desktop.local.state','desktop.terminal.open','desktop.terminal.input','desktop.terminal.resize','desktop.terminal.ack','desktop.terminal.ping','desktop.terminal.close','desktop.terminal.return'] as const
 export type TerminalFrame=Record<string,unknown>
 export type DesktopTerminalRuntime={
@@ -28,6 +28,7 @@ const positive=(v:unknown):v is number=>typeof v==='number'&&Number.isSafeIntege
 const safe=(v:string)=>redactSecrets(v).text
 function refuse(code='LOCAL_UNAVAILABLE'):never{throw Error(code)}
 const errorCodes=new Set(['LOCAL_UNAVAILABLE','LOCAL_STALE','LOCAL_INPUT_INVALID','LOCAL_BUSY','LOCAL_ACTIVITY_UNKNOWN','LOCAL_MODULE_DISABLED','LOCAL_UNBOUND','LOCAL_CONFLICT','LOCAL_DENIED','LOCAL_CANCELLED','LOCAL_NOT_OWNED','LOCAL_NO_AGENT','LOCAL_UNCONFIRMED'])
+const {snapshotRoot,assertRoot}=createRootChecks(()=>refuse('LOCAL_CONFLICT'))
 function code(error:unknown){return error instanceof Error&&errorCodes.has(error.message)?error.message:'LOCAL_UNAVAILABLE'}
 export function createDesktopTerminalWork(opts:{threads:ThreadManager;runtime:DesktopTerminalRuntime;manager:SecurityConfirmationManager;ws:WebSocket;current():boolean;send(frame:TerminalFrame):boolean;maxPayload:number}){
  let snapshot:Snapshot|undefined,viewThread:string|undefined
