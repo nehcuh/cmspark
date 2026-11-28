@@ -24,8 +24,8 @@
 | 配置与平台循环（已消除） | `config.ts` 与 `platform.ts` 互相加载。锁和 PID 在 CLI、后台和托盘消费，须保持命名管道、套接字与实时配置目录语义 |
 | 面板导航循环（已消除） | `ContextPanelHost`、`PacksPanel`、`ShellEnableActions` 在模块初始化时互相加载。导航调用不应初始化会议与场景面板 |
 | 会议存储循环（已消除） | `meeting-store`、`meeting-visual-store`、`meeting-visual-schema` 互相加载。保留证据损坏隔离、纪要失效和会话恢复 |
-| 跨客户端模型契约 | 推理力度和输出预算分别出现在 `companion/src/llm`、`chrome-extension/src/sidepanel/utils`。对照双方打包、所有导出以及浏览器端保存到服务端执行的行为 |
-| 原子存储 | `io.ts` 中 JSON 与文本替换执行相同清理；会议另有本地写入器。区分建目录、发布前权限、持久化和失败传播后再迁移 |
+| 跨客户端模型契约（已迁移） | 推理力度和输出预算分别出现在 `companion/src/llm`、`chrome-extension/src/sidepanel/utils`。对照双方打包、所有导出以及浏览器端保存到服务端执行的行为 |
+| 原子存储（已迁移） | `io.ts` 中 JSON 与文本替换执行相同清理；会议另有本地写入器。区分建目录、发布前权限、持久化和失败传播后再迁移 |
 | 浏览器注入与公共工具 | NotebookLM 有相同 DOM 操作函数体。检查函数是否序列化进不同执行上下文，再决定如何复用；各客户端的文件类型、图像估算和线程关联也需核对 |
 | 防回归检查 | CI 已覆盖静态导入环。继续审查含 require 和动态导入的六组模块、生成资产和原生协议 |
 
@@ -60,3 +60,7 @@
 ### 007 上下文交接与模型生成
 
 `llm/context-handoff.ts` 定义持久化结构、清洗、格式及哈希输入。线程元数据读取与预算恢复直接使用该模块。`context-handoff-generator.ts` 在请求模型时组合已有预算和抽取服务。原来的运行时反向依赖已删除，图中含延后加载的循环组从六组降至五组。定向的 92 项上下文与线程进度用例通过。独立检查对照了迁移前后的 23 个声明，另在新进程验证读取元数据只加载数据模块。
+
+### 008 模型目录与输出预算
+
+`companion/src/llm/reasoning-effort.ts` 及 `chat-output-policy.ts` 是模型推理力度、目录和输出预算的编辑入口。在仓库根目录运行 `node companion/scripts/generate-model-policy.mjs` 可刷新扩展自带的两份派生代码；`--check` 在内容偏离时失败。保留两个 npm 工程现有的编译根目录、导出路径，以及直接读取浏览器源码的设置测试。独立扩展打包沿用仓库内已生成的文件，Companion 构建、测试与标准发布会检查同步。两个生产构建通过，23 项 Companion 用例与 12 项设置缓存控制通过。单独在仓库外目录验证了生成、漂移拒绝及混合 LF/CRLF 检出。
