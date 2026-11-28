@@ -222,6 +222,17 @@ export function projectPickerEvidence476(steps) {
 
 export function validateWindowsCiFeedback750(text) {
   const doc = yaml.load(text)
+  // Resolve the checked-in setup-node input before comparing historical steps.
+  const pin = fs.readFileSync(new URL('../../.nvmrc', import.meta.url), 'utf8').trim()
+  assert.equal(pin, '22.23.4')
+  for (const job of Object.values(doc.jobs)) {
+    for (const step of job.steps.filter(step => step.uses === 'actions/setup-node@v4')) {
+      assert.equal(step.with['node-version-file'], '.nvmrc')
+      assert.ok(!Object.hasOwn(step.with, 'node-version'))
+      delete step.with['node-version-file']
+      step.with['node-version'] = pin
+    }
+  }
   doc.jobs['smoke-os'].steps = collapseNativeStages760(projectActivityFirst826(projectPickerEvidence476(doc.jobs['smoke-os'].steps)))
   assert.equal(digest(omit(doc, ['jobs'])), baseline.workflowWithoutJobs)
   assert.deepEqual(Object.keys(doc.jobs).sort(), ['acp-history-restart', 'activity-linux-x11', 'build', 'smoke-os'])

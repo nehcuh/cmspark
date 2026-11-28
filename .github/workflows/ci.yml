@@ -19,7 +19,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           # REL-5 / P2: align with release.yml + package.sh (Node 22)
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: |
             companion/package-lock.json
@@ -209,7 +209,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: |
             companion/package-lock.json
@@ -785,7 +785,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: |
             companion/package-lock.json
@@ -816,7 +816,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: companion/package-lock.json
       - name: Install locked Companion runtime dependencies

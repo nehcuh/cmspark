@@ -13,7 +13,6 @@
 set -euo pipefail
 
 # --- Configuration ---
-NODE_VERSION="v22.23.4"
 NODE_MIRROR="${NODE_MIRROR:-https://nodejs.org/dist}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -28,6 +27,7 @@ to_mixed() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 ROOT_DIR="$(to_mixed "${ROOT_DIR}")"
+NODE_VERSION="v$(<"${ROOT_DIR}/.nvmrc")"
 # shellcheck source=win-vendor-bins.sh
 . "${ROOT_DIR}/scripts/win-vendor-bins.sh"
 

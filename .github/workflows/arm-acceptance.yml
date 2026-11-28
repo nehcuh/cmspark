@@ -23,7 +23,7 @@ jobs:
           sha256sum companion/package-lock.json
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version-file: .nvmrc
       - name: Verify runtime
         run: node -e "if (process.platform !== 'linux' || process.arch !== 'arm64' || process.version !== 'v22.23.4') process.exit(1); console.log(process.platform, process.arch, process.version)"
       - name: Install locked companion dependencies
