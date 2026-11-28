@@ -45,3 +45,5 @@ article, .mini-hit { margin-top: 12px; padding: 14px; border: 1px solid var(--mi
 .mini-hit span, .mini-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
 article small { display: block; margin-top: 10px; }
 [role="alert"] { color: var(--mini-error); }
+.mini-more { margin-top: 12px; }
+.mini-prose mark { background: Mark; color: MarkText; }

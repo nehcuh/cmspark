@@ -10,10 +10,11 @@ import type { SkillEngine } from '../skills/skill-engine'
 import { knowledgeSearchRows, normalizeSearchQuery } from '../summoner/read-search'
 import { isChromeExtensionWsOrigin } from '../ws/handshake-surface'
 import { miniCaptures, miniPng } from './capture-handoff'
+import { readMiniPassage, searchMiniPassages, type MiniHistory } from './passage-search'
 
 const screenshotVision = { ...DEFAULT_ACTIVITY_CONFIG, extraction_mode: 'vision' as const }
 
-export async function miniPanelRequest(request: Record<string, unknown>, session: WorkspaceSession | undefined, knowledge: Pick<SkillEngine, 'listKnowledge' | 'getKnowledge'>) {
+export async function miniPanelRequest(request: Record<string, unknown>, session: WorkspaceSession | undefined, knowledge: Pick<SkillEngine, 'listKnowledge' | 'getKnowledge'>, history?: MiniHistory) {
   const reply = { type: 'mini.result', id: request.id }
   try {
     if (session?.surface !== 'panel' || !isChromeExtensionWsOrigin(session.origin) || !session.panelId || !session.isCurrentSession?.()) {
@@ -52,10 +53,22 @@ export async function miniPanelRequest(request: Record<string, unknown>, session
       }
       case 'search': {
         const query = normalizeSearchQuery(request.query)
-        if (!query) throw new Error('请输入资料名称、描述或标签')
+        if (!query) throw new Error('请输入搜索关键词')
+        if (request.scope === 'passages') {
+          if (!history) throw new Error('对话历史暂不可用')
+          const offset = request.offset === undefined ? 0 : Number(request.offset)
+          const page = await searchMiniPassages(knowledge, history, query, offset)
+          if (!session.isCurrentSession()) throw new Error('连接已切换，请重新搜索')
+          return { ...reply, ok: true, ...page }
+        }
         return { ...reply, ok: true, hits: knowledgeSearchRows(knowledge.listKnowledge(), query, 25) }
       }
       case 'read': {
+        if (request.scope === 'passages') {
+          const query = normalizeSearchQuery(request.query)
+          if (!history || !query) throw new Error('请重新搜索后打开结果')
+          return { ...reply, ok: true, doc: readMiniPassage(knowledge, history, request, query) }
+        }
         const doc = typeof request.doc_id === 'string' && knowledge.getKnowledge(request.doc_id)
         if (!doc) throw new Error('这份资料已不存在，请重新搜索')
         return { ...reply, ok: true, doc: { title: doc.title, body: doc.body, truncated: doc.truncated } }

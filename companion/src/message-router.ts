@@ -1070,7 +1070,7 @@ async function dispatchMessage(
 
     case "mini.request": {
       const { miniPanelRequest } = await import("./mini/panel-request")
-      return miniPanelRequest(msg, session, skillEngine)
+      return miniPanelRequest(msg, session, skillEngine, threadManager)
     }
     case "ui.open_sidepanel": {
       const { handleUiOpenSidepanel } = await import("./message-router/handlers/ui-open-sidepanel")
