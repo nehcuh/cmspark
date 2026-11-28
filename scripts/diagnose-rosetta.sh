@@ -1,74 +1,67 @@
 #!/bin/bash
-# Diagnose Rosetta prompt source in CMspark DMG/App
+# Inspect installed copies and local staging without starting CMspark.
 set -euo pipefail
 
-echo "=== CMspark Rosetta Diagnostic ==="
-echo ""
-
-# 1. Check installed app
-echo "[1] Checking ~/Applications/CMspark.app for x86_64 binaries..."
-APP="${HOME}/Applications/CMspark.app"
-if [ -d "$APP" ]; then
-  FOUND_X86=0
-  while IFS= read -r -d '' f; do
-    if file "$f" 2>/dev/null | grep -q "x86_64"; then
-      echo "  ❌ x86_64: $f"
-      FOUND_X86=1
-    fi
-  done < <(find "$APP" -type f -print0)
-  if [ "$FOUND_X86" -eq 0 ]; then
-    echo "  ✅ No x86_64 binaries found in installed app"
-  fi
+scripts_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
+  platform=macos-arm64
 else
-  echo "  ⚠️  CMspark.app not found in ~/Applications/"
+  platform=macos-x64
 fi
-echo ""
 
-# 2. Check staging directory
-echo "[2] Checking dist-package staging for x86_64 binaries..."
-STAGING="$(cd "$(dirname "$0")/.." && pwd)/dist-package/cmspark-macos-arm64"
-if [ -d "$STAGING" ]; then
-  FOUND_X86=0
-  while IFS= read -r -d '' f; do
-    if file "$f" 2>/dev/null | grep -q "x86_64"; then
-      echo "  ❌ x86_64: $f"
-      FOUND_X86=1
-    fi
-  done < <(find "$STAGING" -type f -print0)
-  if [ "$FOUND_X86" -eq 0 ]; then
-    echo "  ✅ No x86_64 binaries found in staging"
+inspect_program() {
+  local program="$1" description slices
+  [ -f "$program" ] || { echo "Executable missing: $program" >&2; return 1; }
+  description="$(LC_ALL=C /usr/bin/file -Lb "$program")" || return 1
+  echo "$program: ${description%%$'\n'*}"
+  if [[ "$description" == Mach-O* ]]; then
+    slices="$(/usr/bin/lipo -archs "$program")" || return 1
+    case "$platform $slices " in
+      macos-arm64*" arm64 "*|macos-arm64*" arm64e "*|macos-x64*" x86_64 "*) ;;
+      *) echo "Missing native slice for $platform" >&2; return 1 ;;
+    esac
   fi
-else
-  echo "  ⚠️  Staging dir not found (run 'make package-macos' first)"
-fi
-echo ""
+}
 
-# 3. Check LaunchAgent plist
-echo "[3] Checking LaunchAgent plist..."
-PLIST="${HOME}/Library/LaunchAgents/com.cmspark.companion.plist"
-if [ -f "$PLIST" ]; then
-  NODE_PATH=$(grep -o '[^<]*node[^<]*' "$PLIST" 2>/dev/null | head -1 || echo "not found")
-  echo "  Node path in plist: $NODE_PATH"
-  if [ -f "$NODE_PATH" ]; then
-    echo "  Node binary: $(file "$NODE_PATH" | grep -o 'arm64\|x86_64')"
+inspect_bundle() {
+  local bundle="${1%/}" entry
+  if [[ "${bundle##*/}" == "CMspark Agent.app" ]]; then
+    # make install-macos creates an AppleScript applet or a shell launcher.
+    entry="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")" || return 1
+    inspect_program "$bundle/Contents/MacOS/$entry"
+  else
+    bash "$scripts_dir/verify-macos-architecture.sh" "$bundle" "$platform"
   fi
-else
-  echo "  ⚠️  LaunchAgent plist not found"
+}
+
+if [ "$#" -gt 0 ]; then
+  inspect_bundle "$1"
+  exit $?
 fi
-echo ""
 
-# 4. Check running processes
-echo "[4] Checking running CMspark processes..."
-ps aux | grep -i cmspark | grep -v grep | grep -v diagnose-rosetta || echo "  No CMspark processes running"
-echo ""
-
-# 5. Recommendations
-echo "=== Recommendations ==="
-echo "If x86_64 binaries were found in the installed app:"
-echo "  rm -rf ~/Applications/CMspark.app"
-echo "  rm -f ~/Library/LaunchAgents/com.cmspark.companion.plist"
-echo "  rm -f ~/Library/LaunchAgents/com.cmspark.menubar.plist"
-echo "  make clean-package && make package-macos && make install-macos"
-echo ""
-echo "If the staging dir has x86_64 binaries after 'make package-macos':"
-echo "  Check the output above and file a bug report with the paths."
+checked=0
+status=0
+for bundle in /Applications/"CMspark.app" "$HOME/Applications/CMspark.app" \
+              /Applications/"CMspark Agent.app" "$HOME/Applications/CMspark Agent.app" \
+              "$scripts_dir/../dist-package/cmspark-$platform"; do
+  if [ -d "$bundle" ]; then
+    checked=1
+    inspect_bundle "$bundle" || status=1
+  fi
+done
+for service in companion menubar; do
+  plist="$HOME/Library/LaunchAgents/com.cmspark.$service.plist"
+  if [ -f "$plist" ]; then
+    checked=1
+    program="$(/usr/libexec/PlistBuddy -c 'Print :Program' "$plist" 2>/dev/null ||
+      /usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist")" || { status=1; continue; }
+    inspect_program "$program" || status=1
+  fi
+done
+if [ "$checked" -eq 0 ]; then
+  echo "No installed or staged CMspark found. Pass the path to the .app to inspect." >&2
+  status=1
+fi
+echo "Running CMspark bundle executables:"
+/bin/ps -axo comm= | /usr/bin/awk '/\/CMspark( Agent)?\.app\/Contents\// { print }'
+exit "$status"

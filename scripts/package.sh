@@ -640,6 +640,7 @@ echo "  $(du -sh "${STAGING}" | cut -f1) total"
 if [[ "${PLATFORM}" == macos-* ]]; then
   cmp -s "${ROOT_DIR}/companion/dist/cmspark-agent.js" "${STAGING}/cmspark-agent.js" || { echo "ERROR: staged agent differs from checked bundle" >&2; exit 1; }
   cmp -s "${ROOT_DIR}/companion/dist/cmspark-tray" "${STAGING}/cmspark-tray" || { echo "ERROR: staged tray differs from checked binary" >&2; exit 1; }
+  bash "${ROOT_DIR}/scripts/verify-macos-architecture.sh" "${STAGING}" "${PLATFORM}"
 fi
 
 # --- Step 8: Zip ---

@@ -132,6 +132,8 @@ if file "${APP_BUNDLE}/Contents/MacOS/CMspark" | grep -qiE 'script|text executab
   exit 1
 fi
 
+bash "${ROOT_DIR}/scripts/verify-macos-architecture.sh" "${APP_BUNDLE}" "${MACOS_PLATFORM}"
+
 # --- Step 3.5: Ad-hoc codesign the entire .app bundle ---
 # Without this, macOS 26 Tahoe TCC treats the bundle as "unsigned" and
 # re-prompts for Screen Capture permission on every launch, even though
