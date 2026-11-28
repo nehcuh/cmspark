@@ -38,9 +38,8 @@ import {
 import { normalizeConfig } from "../utils/normalize-config"
 import { parseGenerationLimit } from "../chat-shell-copy"
 import { isSettingsSaveError } from "../utils/settings-draft"
+import { threadHistoryFailure } from "../../utils/thread-history"
 export { normalizeConfig }
-
-const hydrateRetryIds = new Set<string>()
 
 /** Session feedback must carry its stored owner; missing owner never means the active thread. */
 export function codingMessageTargetsThread(msg: { thread_id?: unknown }, threadId: string | null): boolean {
@@ -51,23 +50,6 @@ export function codingMessageTargetsThread(msg: { thread_id?: unknown }, threadI
 export function codingMessageTargetsSelection(msg: { thread_id?: unknown; session_id?: unknown }, threadId: string | null, selection: Record<string, string>): boolean {
   return codingMessageTargetsThread(msg, threadId) && (msg.session_id === undefined ||
     typeof msg.session_id === "string" && !!threadId && selection[threadId] === msg.session_id)
-}
-
-export function isHydrateSelectError(err: string): boolean {
-  return /Thread not found/i.test(err)
-}
-
-export function nextHydrateRetry(threadId: string, err: string): "retry" | "fail" | "ignore" {
-  if (!threadId || !isHydrateSelectError(err)) return "ignore"
-  if (!hydrateRetryIds.has(threadId)) {
-    hydrateRetryIds.add(threadId)
-    return "retry"
-  }
-  return "fail"
-}
-
-export function clearHydrateRetry(threadId: string): void {
-  hydrateRetryIds.delete(threadId)
 }
 
 export function requestInitialSidePanelData(
@@ -343,6 +325,12 @@ export function useWebSocket() {
     streamingRef.current = ""
     reasoningRef.current = ""
   }, [state.activeThreadId])
+
+  useEffect(() => {
+    if (state.historyRetry === "retry" && state.activeThreadId) {
+      chrome.runtime.sendMessage({ type: "thread.select", threadId: state.activeThreadId })
+    }
+  }, [state.historyRetry, state.activeThreadId])
 
   useEffect(() => {
     const requestInitialData = () => requestInitialSidePanelData((message) => {
@@ -1547,7 +1535,6 @@ export function useWebSocket() {
           // Selection and a fast history reply can be queued before React renders.
           // The reducer checks the thread against the state preceding this action.
           if (!histTid || !Array.isArray(msg.messages)) break
-          clearHydrateRetry(histTid)
           dispatch({ type: "SET_MESSAGES", threadId: histTid, messages: sanitizeHydratedMessages(msg.messages) })
           // In-memory companion snapshot only. Omitted by summoner / old companions.
           if (msg.run_status === "llm" || msg.run_status === "idle") {
@@ -2440,15 +2427,6 @@ export function useWebSocket() {
           // A management failure must not stop or append errors to unrelated chat.
           if (isManagedThreadMutationReply(msg)) break
           const overlayCode = typeof msg.error_code === "string" ? msg.error_code : ""
-          const errText = typeof msg.error === "string" ? msg.error : ""
-          if (activeThreadRef.current) {
-            const action = nextHydrateRetry(activeThreadRef.current, errText)
-            if (action === "retry") {
-              chrome.runtime.sendMessage({ type: "thread.select", threadId: activeThreadRef.current })
-            } else if (action === "fail") {
-              dispatch({ type: "HYDRATE_FAILED", message: "加载失败" })
-            }
-          }
           const overlayErr = typeof msg.error === "string" ? msg.error : ""
           if (
             overlayCode.startsWith("OVERLAY_SHELL_") ||
@@ -2536,6 +2514,14 @@ export function useWebSocket() {
               type: "SET_USER_ENV_ERROR",
               error: mapUserEnvError(code, typeof msg.error === "string" ? msg.error : null),
             })
+            break
+          }
+          const historyFailure = threadHistoryFailure(msg)
+          if (historyFailure) {
+            dispatch({ type: "HYDRATE_FAILED", ...historyFailure })
+            if (historyFailure.uncorrelated) {
+              window.dispatchEvent(new CustomEvent("cmspark:toast", { detail: `找不到对话 ${historyFailure.threadId}` }))
+            }
             break
           }
           {

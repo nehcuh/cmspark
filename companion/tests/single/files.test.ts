@@ -310,6 +310,18 @@ test("message-router: thread.select returns messages for thread", async () => {
   assert.equal(response.run_status, "idle")
 })
 
+test("thread.select identifies the failed history request and preserves its error text", async () => {
+  const threadManager = new ThreadManager()
+  const threadId = "missing-history-thread"
+  const reply = await handleMessage(
+    { type: "thread.select", thread_id: threadId },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+  assert.deepEqual(reply, {
+    type: "error", error: `Thread not found: ${threadId}`, request_type: "thread.select", thread_id: threadId,
+  })
+})
+
 test("message-router: thread.select includes run_status for summoner surface", async () => {
   const threadManager = new ThreadManager()
   const created = await handleMessage(

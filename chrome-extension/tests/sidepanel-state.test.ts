@@ -1,8 +1,9 @@
+import { threadHistoryRequest, threadHistoryFailure } from "../src/utils/thread-history"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { agentReducer, initialState, isTempUserMessageId, mergeHydratedMessages, type AgentState } from "../src/sidepanel/store/agentStore"
 import { newTempUserMessageId } from "../src/utils/temp-message-id"
-import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData, sanitizeHydratedMessages, nextHydrateRetry, clearHydrateRetry } from "../src/sidepanel/hooks/useWebSocket"
+import { normalizeConfig, parseChatUserAttachments, requestInitialSidePanelData, sanitizeHydratedMessages } from "../src/sidepanel/hooks/useWebSocket"
 import { truncationHonestyChip } from "../src/sidepanel/chat-shell-copy"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -1123,21 +1124,27 @@ test("reducer handles unknown action type without crashing", () => {
   assert.equal(next, initialState)
 })
 
-test("hydrate retry: Thread not found retries once then HYDRATE_FAILED", () => {
-  const tid = `hydrate-retry-${Date.now()}`
-  clearHydrateRetry(tid)
-  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "retry")
-  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "fail")
-  assert.equal(nextHydrateRetry(tid, "unrelated boom"), "ignore")
-  clearHydrateRetry(tid)
-  assert.equal(nextHydrateRetry(tid, "Thread not found: x"), "retry")
-  clearHydrateRetry(tid)
-  const next = agentReducer(
-    { ...initialState, hydrating: true, processingStatus: "加载中" },
-    { type: "HYDRATE_FAILED", message: "加载失败" },
-  )
-  assert.equal(next.hydrating, false)
-  assert.equal(next.processingStatus, "加载失败")
+test("history load failures retry once for the selected thread until history arrives", () => {
+  const selected = agentReducer(initialState, { type: "SET_ACTIVE_THREAD", threadId: "A" })
+  const reply = { id: threadHistoryRequest("A").id, error: "Thread not found: A" }
+  const failure = threadHistoryFailure(reply)!
+  assert.deepEqual(failure, { threadId: "A", retryable: true })
+  const action = { type: "HYDRATE_FAILED" as const, ...failure }
+  const retry = agentReducer(selected, action)
+  assert.equal(retry.historyRetry, "retry")
+  const failed = agentReducer(retry, action)
+  assert.equal(failed.hydrating, false)
+  assert.equal(failed.processingStatus, "加载失败")
+  assert.equal(failed.historyRetry, "failed")
+  const loaded = agentReducer(retry, { type: "SET_MESSAGES", threadId: "A", messages: [] })
+  assert.equal(loaded.historyRetry, "ready")
+  const switched = agentReducer(retry, { type: "SET_ACTIVE_THREAD", threadId: "B" })
+  assert.equal(switched.historyRetry, "ready")
+  assert.equal(agentReducer(switched, action), switched)
+  assert.equal(threadHistoryFailure({ request_type: "thread.peek", error: reply.error }), null)
+  assert.equal(threadHistoryFailure({ id: "unrelated", error: reply.error }), null)
+  assert.deepEqual(threadHistoryFailure({ ...reply, error: "Connection closed" }),
+    { threadId: "A", retryable: false })
 })
 
 test("startup selection accepts an immediate history response and rejects it after switching", () => {

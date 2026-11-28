@@ -1,3 +1,4 @@
+import { threadHistoryRequest } from "../utils/thread-history"
 import { isReasoningEffort, type ReasoningEffort } from "../sidepanel/utils/reasoning-effort"
 // CMspark Browser Agent — Background Service Worker
 // WebSocket client, CDP manager, tab manager, cookie ops
@@ -1194,7 +1195,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
         return true
 
       case "thread.select":
-        if (wsClient.send({ type: "thread.select", thread_id: message.threadId })) noteSiteCounterUiSelection(message.threadId)
+        if (wsClient.send(threadHistoryRequest(message.threadId))) noteSiteCounterUiSelection(message.threadId)
         sendResponse({ ok: true })
         return true
 
@@ -2087,7 +2088,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           return true
         }
         // Companion + side panel store
-        wsClient.send({ type: "thread.select", thread_id: threadId })
+        wsClient.send(threadHistoryRequest(threadId))
         // Notify side panel pages (graph stays open — TG-3)
         try {
           chrome.runtime.sendMessage({ type: "thread_graph.thread_selected", thread_id: threadId })

@@ -192,6 +192,7 @@ export interface AgentState {
   messagesCacheOrder: string[]
   /** True while waiting for thread.messages after a cache-miss switch. */
   hydrating: boolean
+  historyRetry: "ready" | "retry" | "failed"
   skills: SkillMeta[]
   activeSkillIds: string[]
   operations: OperationRecord[]
@@ -520,7 +521,7 @@ export type AgentAction =
   | { type: "REMOVE_MESSAGE"; id: string }
   | { type: "UPDATE_MESSAGE"; id: string; content: string }
   | { type: "SET_MESSAGES"; messages: Message[]; threadId?: string }
-  | { type: "HYDRATE_FAILED"; message?: string }
+  | { type: "HYDRATE_FAILED"; threadId: string; retryable: boolean; uncorrelated?: true }
   | { type: "ADD_TOOL_CALL"; messageId: string; toolCall: any }
   | { type: "UPDATE_TOOL_CALL"; messageId: string; toolCallId: string; updates: any }
   | { type: "SET_SKILLS"; skills: SkillMeta[] }
@@ -776,6 +777,7 @@ export const initialState: AgentState = {
   messagesByThreadId: {},
   messagesCacheOrder: [],
   hydrating: false,
+  historyRetry: "ready",
   skills: [],
   activeSkillIds: [],
   operations: [],
@@ -1116,6 +1118,7 @@ function applyActiveThreadSwitch(
   | "messagesByThreadId"
   | "messagesCacheOrder"
   | "hydrating"
+  | "historyRetry"
   | "streamingContent"
   | "streamingReasoning"
   | "processingStatus"
@@ -1145,6 +1148,7 @@ function applyActiveThreadSwitch(
     messagesByThreadId: cache,
     messagesCacheOrder: order,
     hydrating,
+    historyRetry: "ready",
     streamingContent: "",
     streamingReasoning: "",
     processingStatus: hydrating ? "加载中" : null,
@@ -1297,6 +1301,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         threads,
         activeThreadId: nextActiveThreadId,
+        historyRetry: nextActiveThreadId === state.activeThreadId ? state.historyRetry : "ready",
         workspaceHints: nextActiveThreadId === state.activeThreadId ? state.workspaceHints : null,
         codingHistory: nextActiveThreadId === state.activeThreadId ? state.codingHistory : null,
         codingOperationError: nextActiveThreadId === state.activeThreadId ? state.codingOperationError : null,
@@ -1429,6 +1434,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     case "SET_MESSAGES": {
       if (action.threadId !== undefined && action.threadId !== state.activeThreadId) return state
+      const clearHistoryStatus = (state.hydrating && state.processingStatus === "加载中") ||
+        (state.historyRetry === "failed" && state.processingStatus === "加载失败")
       const merged = mergeHydratedMessages(state.messages, action.messages)
       let cache = state.messagesByThreadId
       let order = state.messagesCacheOrder
@@ -1443,15 +1450,20 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         messagesByThreadId: cache,
         messagesCacheOrder: order,
         hydrating: false,
-        processingStatus:
-          state.hydrating && state.processingStatus === "加载中" ? null : state.processingStatus,
+        historyRetry: "ready",
+        processingStatus: clearHistoryStatus ? null : state.processingStatus,
       }
     }
     case "HYDRATE_FAILED":
+      if (action.threadId !== state.activeThreadId || (action.uncorrelated && !state.hydrating)) return state
+      if (action.retryable && (state.historyRetry ?? "ready") === "ready") {
+        return { ...state, historyRetry: "retry" }
+      }
       return {
         ...state,
         hydrating: false,
-        processingStatus: action.message || "加载失败",
+        historyRetry: "failed",
+        processingStatus: state.isProcessing ? state.processingStatus : "加载失败",
       }
     case "SET_SKILLS":
       // Guard: skill.list / error payloads may omit skills → never leave non-iterable state
@@ -1823,6 +1835,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         threads: [action.thread, ...state.threads],
         activeThreadId: action.thread.id,
+        historyRetry: "ready",
+        hydrating: false,
         codingHistory: action.thread.id === state.activeThreadId ? state.codingHistory : null,
         codingOperationError: null,
         codingManualEntry: null,

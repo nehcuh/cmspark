@@ -2978,7 +2978,7 @@ async function dispatchMessage(
 
     case "thread.select": {
       const thr = threadManager.get(rest.thread_id)
-      if (!thr) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+      if (!thr) return { type: "error", error: `Thread not found: ${rest.thread_id}`, request_type: "thread.select", thread_id: rest.thread_id }
       if (!thr.trashed_at) noteSiteCounterThreadSelection(session, rest.thread_id)
       // Soft-deleted: still allow reading messages in trash view, but flag so UI can warn.
       // Block switching into chat loop for trashed threads from normal select is product-side;

@@ -8,7 +8,7 @@
 
 | 边界 | 写入方、读者及生命周期 |
 | --- | --- |
-| Chrome 扩展 | MV3 background 负责浏览器权限与操作。侧栏 `useWebSocket` 经 background 接收消息，`agentStore` 维护 UI 投影、已选择线程与历史。持久化和恢复、断线与过期响应各有独立处理。 |
+| Chrome 扩展 | MV3 background 负责浏览器权限与操作。侧栏 `useWebSocket` 经 background 接收消息，`agentStore` 维护 UI 投影、已选择线程与历史。聊天历史的成功与失败都按回包中的线程归属更新，当前选择的重试状态由 reducer 持有；持久化、断线与会话操作各有独立生命周期。 |
 | Mini 与原生桌面 | 小窗服务负责会议网页和本机桥接；原生宿主经 desktop 通道进入后台。线程、工作区、PTY 与 ACP 的句柄、确认及序号归各自连接。Swift 与 C++ 消费 `desktop/capabilities.ts` 派生的协议能力名称。 |
 | Companion | `ws/lifecycle.ts` 管理已认证的连接及断线，`ws/tool-forward.ts` 管理目标、超时及租约，`llm/active-runs.ts` 持有运行控制器、代次和面板归属，`message-router.ts` 处理请求。`security/companion-confirmations.ts` 持有跨界面确认，`server.ts` 组合服务。移除这些依赖前须确定初始化、订阅和销毁的唯一责任方。 |
 | 模型、上下文与工具目录 | provider 负责供应商协议及传输重试。预算和交接拥有各自数据模型。MCP 聚合器提供已连接工具清单，管理器提供 schema 和会话；公开 schema、执行器与授权分别在调用链对应的位置。推理时选择按需加载的工具只来自已有授权目录。 |
