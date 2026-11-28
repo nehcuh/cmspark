@@ -2,7 +2,6 @@
 // Expert = Pack kind:expert (ADR-014). Collaboration kernel (ADR-015/016) unchanged:
 // HITL, WORKER_HARD_DENY, ≤5 workers, no auto-spawn, no worker-to-worker chat.
 
-import { createHash } from "crypto"
 import { logger } from "../logger"
 import { listInstalledPacks, readInstalledManifest, applyPack } from "../packs/pack-engine"
 import { packApplyErrorCode } from "../packs/pack-apply-error"
@@ -23,6 +22,8 @@ import {
 } from "./spawn"
 import { workerCapUsage } from "./worker-occupancy"
 import { appendCapabilityAudit } from "../packs/audit-log"
+
+export { expertTeamBindingPayload } from "./expert-team-binding"
 
 /** ≤4 experts so one orchestrator slot remains under the ADR-015 cap of 5. */
 export const MAX_EXPERT_TEAM_SIZE = 4
@@ -356,32 +357,6 @@ export function buildExpertTeamConfirmCard(opts: {
   }
   const fullPreview = lines.join("\n").trim()
   return { code: fullPreview, fullPreview, expertTeam }
-}
-
-function sliceFingerprint(brief: string): string {
-  return createHash("sha256").update(String(brief || "")).digest("hex").slice(0, 16)
-}
-
-/** Token binds pack-id set + slice fingerprints so a post-confirm member/slice swap fails. */
-export function expertTeamBindingPayload(params: any): string {
-  const members = Array.isArray(params?.members) ? params.members : []
-  const ids = [
-    ...new Set(
-      members
-        .map((m: any) => String(m?.pack_id || m?.id || "").trim())
-        .filter(Boolean),
-    ),
-  ].sort()
-  const slices = members
-    .map((m: any) => {
-      const id = String(m?.pack_id || m?.id || "").trim()
-      if (!id) return null
-      return `${id}:${sliceFingerprint(String(m?.brief || m?.task_slice || ""))}`
-    })
-    .filter((s: string | null): s is string => !!s)
-    .sort()
-  const goal = String(params?.goal || "").trim()
-  return `spawn_expert_team|ids=${ids.join(",")}|goal=${goal}|slices=${slices.join(",")}`
 }
 
 export function mergeEditedSlices(
