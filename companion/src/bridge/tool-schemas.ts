@@ -47,7 +47,7 @@ function lookupMcpSchema(namespacedName: string): Record<string, any> | undefine
   if (resolveMcpSchema) return resolveMcpSchema(namespacedName)
   // Lazy require to avoid pulling the full MCP stack into every caller.
   try {
-    const { getMcpManager } = require("../mcp/index.js") as typeof import("../mcp/index.js")
+    const { getMcpManager } = require("../mcp/manager.js") as typeof import("../mcp/manager.js")
     resolveMcpSchema = (name: string) => getMcpManager().getToolInputSchema(name)
     return resolveMcpSchema(namespacedName)
   } catch {
