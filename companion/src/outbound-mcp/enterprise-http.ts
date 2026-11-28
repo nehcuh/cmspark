@@ -1,24 +1,32 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { getConfigDir } from "../config"
 import { verifyOutboundGrantToken } from "./outbound-grants"
-import { EnterpriseBrowserService } from "./enterprise-service"
+import { EnterpriseBrowserService, type EnterpriseDependencies } from "./enterprise-service"
 import { EnterpriseError, deny, identifier, object } from "./enterprise-policy"
 
 export const ENTERPRISE_HTTP_PREFIX = "/outbound-mcp/v1/enterprise"
 let singleton: EnterpriseBrowserService | undefined
 let singletonDir: string | undefined
 let shuttingDown = false
+
+type BrowserTransport = Pick<EnterpriseDependencies, "peer" | "runner">
+let browserTransport: BrowserTransport | undefined
+
+/** The process owning the authenticated sockets supplies both live lookups. */
+export function bindEnterpriseBrowserTransport(transport: BrowserTransport): void {
+  browserTransport = transport
+}
+
 function service(): EnterpriseBrowserService {
   if (shuttingDown) deny("SERVICE_SHUTTING_DOWN", 503)
   if (!singleton || singletonDir !== getConfigDir()) {
     singleton?.close(); singletonDir = getConfigDir()
     singleton = new EnterpriseBrowserService({
-      peer: () => (require("../ws/lifecycle") as typeof import("../ws/lifecycle")).getEnterprisePeer(),
-      runner: () => {
-        const lifecycle = require("../ws/lifecycle") as typeof import("../ws/lifecycle")
-        lifecycle.ensureOutboundToolRunnerWired()
-        return (require("./companion-http") as typeof import("./companion-http")).getOutboundToolRunner()
+      peer: () => {
+        if (!browserTransport) throw new Error("ENTERPRISE_PEER_AMBIGUOUS")
+        return browserTransport.peer()
       },
+      runner: () => browserTransport?.runner() ?? null,
     })
   }
   return singleton

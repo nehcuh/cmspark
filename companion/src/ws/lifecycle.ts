@@ -55,7 +55,7 @@ import {
   HUD_SPIKE_TASK_ID,
 } from "../hud/spike"
 import { logger, type LogLevel } from "../logger"
-import { closeEnterpriseHttp } from "../outbound-mcp/enterprise-http"
+import { bindEnterpriseBrowserTransport, closeEnterpriseHttp } from "../outbound-mcp/enterprise-http"
 import { applyTabNavigated } from "./tab-url-cache"
 import {
   acquireLock,
@@ -294,13 +294,23 @@ export function getEnterprisePeer(): { peer: WebSocket; epoch: string } {
   return { peer, epoch }
 }
 
+// A cold HTTP consumer may already own the state writer when the WS module loads.
+bindEnterpriseBrowserTransport({
+  peer: getEnterprisePeer,
+  runner: () => {
+    ensureOutboundToolRunnerWired()
+    const { getOutboundToolRunner } = require("../outbound-mcp/companion-http") as typeof import("../outbound-mcp/companion-http")
+    return getOutboundToolRunner()
+  },
+})
+
 /**
  * Ensure outbound HTTP runner is wired to createToolExecutor(extensionWs).
  * Synchronous so invoke never races an empty runner after auth.
  * Extension-only: no extension peer → EXTENSION_UNAVAILABLE (fast fail).
  */
 export function ensureOutboundToolRunnerWired(): boolean {
-  // Lazy require avoids circular import at module load (companion-http is light).
+  // Load the HTTP bridge only when an authenticated runner needs refreshing.
   const { setOutboundToolRunner } = require("../outbound-mcp/companion-http") as typeof import("../outbound-mcp/companion-http")
   const ws = pickAuthenticatedClientWs()
   if (!ws) {
