@@ -61,7 +61,7 @@
 
 ### NotebookLM 页面执行
 
-下表八组基线重复来自已退役的三个表单操作流程，第 055 批已删除。创建和来源导入的请求由 `notebooklm/rpc-client.ts` 发出；`background/notebooklm-import-orchestrator.ts` 持有批次状态。开发用选择器探测脚本继续消费 `notebooklm/selectors.ts`。
+下表八组基线重复来自已退役的三个表单操作流程，第 055 批已删除。创建和来源导入的请求由 `notebooklm/rpc-client.ts` 发出；`background/notebooklm-import-orchestrator.ts` 持有批次状态。每个运行循环只更新自己的批次；发起或重试写请求前确认该批次仍在运行。后台重启从最近一次保存的进度恢复。开发用选择器探测脚本继续消费 `notebooklm/selectors.ts`。
 
 | 组 | 基线符号 | 源码位置（相对于对应包的 src） |
 | --- | --- | --- |
