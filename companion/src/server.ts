@@ -23,8 +23,8 @@ import { gcExpiredMeetingAudio, reconcileStaleRecordings } from "./meeting/meeti
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { SecurityConfirmationManager } from "./security-confirmation"
-import { getTrayInstance } from "./menu-bar-agent"
+import { securityConfirmations } from "./security/companion-confirmations"
+export { securityConfirmations } from "./security/companion-confirmations"
 import { logger } from "./logger"
 import { getMcpConfirmCache, isMcpNamespaced } from "./mcp"
 import {
@@ -193,26 +193,6 @@ void import("./orchestrator/tab-lease")
 
 // tabUrlCache → ws/tab-url-cache.ts (day dual-review nit: colocation)
 // applyTabNavigated / getCachedTabUrl / refreshTabUrlCache re-exported above.
-
-// Exported for integration tests (audit item 2 / 12) so tests can drive
-// securityConfirmations.respond(...) when simulating user approval/denial.
-export const securityConfirmations = new SecurityConfirmationManager()
-
-// N5 (P3a HUD spike): when a confirm becomes terminal, fan-out to tray popover
-// + HUD so multi-surface UI clears. WS origin already gets resolved via pending.send.
-// Spike scope = HUD + tray only; multi-client WS fan-out deferred (dual-review P4).
-// Wire ownership: server owns the manager singleton — do not construct a second manager.
-securityConfirmations.setOnTerminal(({ confirmationId, reason }) => {
-  try {
-    const tray = getTrayInstance()
-    if (!tray) return
-    tray.cancelConfirm(confirmationId)
-    tray.cancelHudConfirm?.(confirmationId)
-    tray.notifyHudConfirmResolved?.(confirmationId, reason)
-  } catch {
-    /* never break confirm resolve path */
-  }
-})
 
 // Per-connection MCP session IDs (randomUUID from createToolExecutor) keyed by
 // the WebSocket they belong to. Used by ws.on("close") to clear the

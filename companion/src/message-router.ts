@@ -71,7 +71,9 @@ import {
   takeNextRun,
 } from "./llm/run-queues"
 import type { RunStats } from "./loop/loop-state"
-import { listPendingToolsForThread } from "./ws/tool-forward"
+import {
+  hasPendingForTab, listPendingToolsForThread, rejectPendingForTab, rejectPendingForThread,
+} from "./ws/tool-forward"
 import { MAX_UPLOAD_BYTES } from "./ws/file-upload-parts"
 
 import { parseFile, PARSE_FILE_MAX_BYTES } from "./file-parser"
@@ -205,7 +207,7 @@ function applySlashSkillPin(
 /** Drain extension tools + L2 for a thread when superseding (mirror chat.abort core). */
 async function drainThreadOnSupersede(threadId: string, reason: string): Promise<void> {
   try {
-    const { rejectPendingForThread, securityConfirmations } = await import("./server")
+    const { securityConfirmations } = await import("./security/companion-confirmations")
     securityConfirmations.rejectForWorker(threadId, "denied")
     rejectPendingForThread(threadId, reason)
   } catch {
@@ -1034,7 +1036,7 @@ async function dispatchMessage(
     case "site.counter.status":
     case "site.counter.reset":
       return handleSiteCounterMessage(msg, threadManager, session, () => {
-        const { securityConfirmations } = require("./server") as typeof import("./server")
+        const { securityConfirmations } = require("./security/companion-confirmations") as typeof import("./security/companion-confirmations")
         return isThreadRunActive(rest.thread_id) || listPendingToolsForThread(rest.thread_id).length > 0
           || securityConfirmations.hasPendingForWorker(rest.thread_id) || securityConfirmations.hasPendingForOriginWs(session?.originWs)
       })
@@ -1246,7 +1248,7 @@ async function dispatchMessage(
           try { const { abandonWorkerIntents } = require("./board") as typeof import("./board"); await abandonWorkerIntents(services.threadManager, rest.thread_id, { reason: "desktop.chat.stop", current: nativeRunCurrent }) } catch { /* cleanup must still continue */ }
           if (!nativeRunCurrent()) return
           try {
-            const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } = require("./server") as typeof import("./server")
+            const { securityConfirmations } = require("./security/companion-confirmations") as typeof import("./security/companion-confirmations")
             securityConfirmations.rejectForWorker(rest.thread_id, "denied")
             rejectPendingForThread(rest.thread_id, `desktop.chat.stop:${rest.thread_id}`)
             const { releaseLeasesForThreadPendingAware } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
@@ -2164,8 +2166,7 @@ async function dispatchMessage(
       // ADR-015 GATE2: deny worker-stamped L2 confirmations first (frees admission/flight
       // via L2 finally), then reject CDP pending, then pending-aware lease release.
       try {
-        const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } =
-          await import("./server")
+        const { securityConfirmations } = await import("./security/companion-confirmations")
         securityConfirmations.rejectForWorker(rest.thread_id, "denied")
         rejectPendingForThread(rest.thread_id, `chat.abort:${rest.thread_id}`)
         const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
@@ -4537,8 +4538,7 @@ async function dispatchMessage(
           : null
       const { listWorkers } = await import("./orchestrator/spawn")
       const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
-      const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } =
-        await import("./server")
+      const { securityConfirmations } = await import("./security/companion-confirmations")
       let targets: any[] = []
       // Precedence: run scope > parent scope > process-wide residual cleanup.
       if (runId) {
@@ -4638,7 +4638,6 @@ async function dispatchMessage(
     case "tab.force_release": {
       if (typeof rest.tab_id !== "number") return { type: "error", error: "tab_id number required" }
       const { forceReleaseTab, completeForceRelease, getTabLease } = await import("./orchestrator/tab-lease")
-      const { rejectPendingForThread, hasPendingForTab } = await import("./server")
       const before = getTabLease(rest.tab_id)
       let rejected = 0
       let draining = false
