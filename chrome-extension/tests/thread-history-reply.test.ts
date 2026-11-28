@@ -8,8 +8,8 @@ import * as store from "../src/sidepanel/store/agentStore"
 
 type Frame = { type: string; [key: string]: unknown }
 
-function mountPanel() {
-  let state = store.initialState
+function mountPanel(initial = store.initialState) {
+  let state = initial
   const dispatch = (action: store.AgentAction) => { state = store.agentReducer(state, action) }
   const requests: Frame[] = []
   const notices: string[] = []
@@ -65,7 +65,7 @@ function mountPanel() {
       chrome.runtime.sendMessage({ type: "thread.select", threadId })
       if (renderImmediately) render()
     },
-    receive(frame: Frame) { listener(frame); render() },
+    receive(frame: Frame, renderImmediately = true) { listener(frame); if (renderImmediately) render() },
     state: () => state,
     notices, requests,
   }
@@ -141,4 +141,128 @@ test("an untagged failure for a deleted row gives feedback without changing a qu
   assert.equal(panel.state().processingStatus, "加载中")
   assert.equal(panel.state().hydrating, true)
   assert.deepEqual(panel.state().messages, [])
+})
+
+function transcript(threadId: string, content: string): Frame {
+  return { type: "thread.messages", thread_id: threadId, messages: [
+    { id: `msg-${threadId}`, thread_id: threadId, role: "user", content, created_at: "t" },
+  ] }
+}
+
+function panelWithThreads() {
+  const panel = mountPanel()
+  panel.receive({ type: "connected" })
+  panel.receive({ type: "thread.list", list_scope: "active", threads: ["A", "B", "C", "D"].map(id => ({
+    id, alias: id, created_at: "t", updated_at: "t", pinned_tabs: [], active_skill_ids: [],
+  })) })
+  return panel
+}
+
+const deletionCases = [
+  { label: "trash the active thread with a cold fallback", cached: false, frame: { type: "thread.trashed", thread_id: "A" } },
+  { label: "delete the active thread with a cached fallback", cached: true, frame: { type: "thread.deleted", thread_id: "A" } },
+  { label: "batch delete the active thread with a cold fallback", cached: false, frame: { type: "thread.batch_deleted", mode: "trash", ok: ["A", "C"], failed: [] } },
+]
+
+for (const { label, cached, frame } of deletionCases) {
+  test(`${label} and request the replacement history once`, () => {
+    const panel = panelWithThreads()
+    if (cached) {
+      panel.select("B")
+      panel.receive(transcript("B", "Cached B"))
+    }
+    panel.select("A")
+    panel.receive(transcript("A", "Previous A"))
+    const requestsBeforeRemoval = panel.requests.length
+
+    panel.receive(frame)
+
+    assert.equal(panel.state().activeThreadId, "B")
+    assert.equal(panel.state().hydrating, !cached)
+    assert.deepEqual(panel.state().messages.map(row => row.content), cached ? ["Cached B"] : [])
+    const newSelections = () => panel.requests.slice(requestsBeforeRemoval)
+      .filter(request => request.type === "thread.select").map(request => request.threadId)
+    assert.deepEqual(newSelections(), ["B"])
+
+    panel.receive(frame)
+    panel.receive({ type: "thread.deleted", thread_id: "D" })
+    assert.deepEqual(newSelections(), ["B"])
+    panel.receive(transcript("B", "Current B"))
+    assert.equal(panel.state().hydrating, false)
+    assert.deepEqual(panel.state().messages.map(row => row.content), ["Current B"])
+    assert.deepEqual(newSelections(), ["B"])
+  })
+}
+
+test("deletion broadcasts queued together only fetch the surviving selection", () => {
+  const panel = panelWithThreads()
+  panel.select("A")
+  const previous = panel.requests.length
+  panel.receive({ type: "thread.trashed", thread_id: "A" }, false)
+  panel.receive({ type: "thread.trashed", thread_id: "B" })
+  assert.equal(panel.state().activeThreadId, "C")
+  assert.deepEqual(panel.requests.slice(previous).filter(request => request.type === "thread.select").map(request => request.threadId), ["C"])
+})
+
+test("a thread.updated queued after selecting B applies the settings to A only", () => {
+  const panel = panelWithThreads()
+  panel.select("A")
+  panel.select("B", false)
+  panel.receive({ type: "thread.updated", thread: {
+    id: "A", skill_selection_mode: "manual", knowledge_selection_mode: "all",
+    knowledge_smart_match: false, knowledge_route_by_group: true,
+  } })
+  const settings = () => {
+    const state = panel.state()
+    return [state.skillSelectionMode, state.knowledgeSelectionMode, state.knowledgeSmartMatch, state.knowledgeRouteByGroup]
+  }
+  assert.deepEqual(settings(), ["auto", "auto", true, false])
+  panel.select("A")
+  assert.deepEqual(settings(), ["manual", "all", false, true])
+  panel.receive({ type: "thread.updated", thread: { id: "A", skill_selection_mode: "auto" } })
+  assert.deepEqual(settings(), ["auto", "all", false, true])
+})
+
+test("an active list queued with the deletion keeps the replacement and its refresh", () => {
+  const panel = panelWithThreads()
+  panel.select("A")
+  const before = panel.requests.length
+  panel.receive({ type: "thread.trashed", thread_id: "A" }, false)
+  panel.receive({ type: "thread.list", list_scope: "active", threads: [{ id: "B" }, { id: "C" }] })
+  assert.equal(panel.state().activeThreadId, "B")
+  assert.deepEqual(panel.requests.slice(before).filter(request => request.type === "thread.select").map(request => request.threadId), ["B"])
+})
+
+test("active lists keep project navigation and restore only a remembered, available thread", () => {
+  const panel = mountPanel({ ...store.initialState, navigationRemembered: "B" })
+  const list = { type: "thread.list", list_scope: "active", threads: [{ id: "A" }, { id: "B" }] }
+  panel.receive({ type: "thread.list" })
+  assert.equal(panel.state().threadListArrived, false)
+  panel.receive(list)
+  panel.receive(list)
+  assert.equal(panel.state().activeThreadId, "B")
+  assert.deepEqual(panel.requests.filter(frame => frame.type === "thread.select").map(frame => frame.threadId), ["B"])
+  panel.receive({ ...list, threads: [{ id: "A" }] })
+  assert.equal(panel.state().activeThreadId, null)
+  assert.equal(panel.state().navigationLayer, "projects")
+})
+
+test("an old untagged error retries a pending cache refresh once and preserves the cached rows", () => {
+  const panel = panelWithThreads()
+  panel.select("B")
+  panel.receive(transcript("B", "Cached B"))
+  panel.select("A")
+  const before = panel.requests.length
+  panel.receive({ type: "thread.deleted", thread_id: "A" })
+  const missing = { type: "error", error: "Thread not found: B" }
+  panel.receive(missing)
+  panel.receive(missing)
+  assert.equal(panel.state().processingStatus, "加载失败")
+  assert.deepEqual(panel.state().messages.map(row => row.content), ["Cached B"])
+  assert.deepEqual(panel.requests.slice(before).filter(frame => frame.type === "thread.select").map(frame => frame.threadId), ["B", "B"])
+  panel.receive(transcript("B", "Updated B"))
+  panel.receive(missing)
+  assert.deepEqual(panel.state().messages.map(row => row.content), ["Updated B"])
+  assert.equal(panel.state().processingStatus, null)
+  assert.equal(panel.requests.slice(before).filter(frame => frame.type === "thread.select").length, 2)
 })

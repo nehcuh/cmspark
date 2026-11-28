@@ -15,7 +15,6 @@ import {
 } from "../voice/whisper-acceleration-state"
 import { confirmationPreviewFromMessage } from "../utils/confirmation-preview"
 import { overlayStandbyFromError, useAgentStore, type AgentAction } from "../store/agentStore"
-import { decideActiveThreadList } from "../navigation/startup-destination"
 import { normalizeDocumentWarning, parseDocumentNotices } from "../utils/document-warning"
 import { codingControlAction } from "../utils/coding-control-message"
 import type { ComputerTaskEventView, LLMConfig, Message, MessageAttachment, VoiceExternalState } from "../types"
@@ -304,11 +303,9 @@ export function useWebSocket() {
   const workspaceHintSelectionRef = useRef(state.activeThreadSelectionRevision)
   workspaceHintSelectionRef.current = state.activeThreadSelectionRevision
   workspaceHintsRef.current.select(state.activeThreadId, state.activeThreadSelectionRevision)
-  const navigationRememberedRef = useRef<string | null>(null)
 
   // Keep refs in sync (listener is mount-once — never close over render state)
   activeThreadRef.current = state.activeThreadId
-  navigationRememberedRef.current = state.navigationRemembered
   const codingSelectionRef = useRef(state.codingSessionIdByThread)
   codingSelectionRef.current = state.codingSessionIdByThread
   // #502 E Inspect: inspected worker id rides its own ref — the inspect buffer
@@ -327,10 +324,10 @@ export function useWebSocket() {
   }, [state.activeThreadId])
 
   useEffect(() => {
-    if (state.historyRetry === "retry" && state.activeThreadId) {
+    if ((state.historyLoadStatus === "retry" || state.historyLoadStatus === "refresh") && state.activeThreadId) {
       chrome.runtime.sendMessage({ type: "thread.select", threadId: state.activeThreadId })
     }
-  }, [state.historyRetry, state.activeThreadId])
+  }, [state.historyLoadStatus, state.activeThreadId])
 
   useEffect(() => {
     const requestInitialData = () => requestInitialSidePanelData((message) => {
@@ -1085,22 +1082,6 @@ export function useWebSocket() {
 
         case "thread.updated": {
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
-          // Sync skill_selection_mode if this is the active thread
-          if (msg.thread?.id === activeThreadRef.current && msg.thread?.skill_selection_mode) {
-            dispatch({ type: "SET_SKILL_SELECTION_MODE", mode: msg.thread.skill_selection_mode })
-          }
-          // Sync knowledge_selection_mode if this is the active thread
-          if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_selection_mode) {
-            dispatch({ type: "SET_KNOWLEDGE_SELECTION_MODE", mode: msg.thread.knowledge_selection_mode })
-          }
-          // Sync knowledge_smart_match if this is the active thread (undefined = on)
-          if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_smart_match !== undefined) {
-            dispatch({ type: "SET_KNOWLEDGE_SMART_MATCH", enabled: msg.thread.knowledge_smart_match !== false })
-          }
-          // Sync knowledge_route_by_group if this is the active thread (undefined = off)
-          if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_route_by_group !== undefined) {
-            dispatch({ type: "SET_KNOWLEDGE_ROUTE_BY_GROUP", enabled: msg.thread.knowledge_route_by_group === true })
-          }
           break
         }
         case "thread.context_compacted": {
@@ -1449,36 +1430,9 @@ export function useWebSocket() {
           const listScope =
             msg.list_scope ||
             (msg.only_trashed ? "trash" : msg.include_trashed ? "all" : "active")
-          const isScopedList = listScope === "trash" || listScope === "all"
-          const incoming = msg.threads
-
-          // only_trashed responses: ignore for global store (ThreadList uses
-          // include_trashed:true which returns active+trashed together).
+          // ThreadList requests all rows for the trash view. Ignore trash-only responses.
           if (listScope === "trash") break
-
-          dispatch({
-            type: "SET_THREADS",
-            threads: incoming,
-            listScope,
-          })
-
-          if (isScopedList) break
-
-          const decision = decideActiveThreadList({
-            activeThreadId: activeThreadRef.current,
-            rememberedThreadId: navigationRememberedRef.current,
-            incoming,
-            listScope: "active",
-          })
-          if (typeof decision.selectThread === "string") {
-            dispatch({ type: "SET_ACTIVE_THREAD", threadId: decision.selectThread })
-            chrome.runtime.sendMessage({ type: "thread.select", threadId: decision.selectThread })
-          } else if (decision.activeThreadId === null) {
-            dispatch({
-              type: "COMMIT_NAVIGATION",
-              decision: { ignored: false, layer: "projects", activeThreadId: null, selectThread: false, homeCopy: decision.homeCopy, remembered: null },
-            })
-          }
+          dispatch({ type: "SET_THREADS", threads: msg.threads, listScope })
           break
         }
 

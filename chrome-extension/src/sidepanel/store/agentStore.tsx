@@ -1,3 +1,5 @@
+import { cacheThreadMessages, removeThreads, selectThread, updateThreadList, upsertThread } from "./thread-selection"
+export { MESSAGES_BY_THREAD_LRU } from "./thread-selection"
 import type { WorkspaceHintView } from "../coding-handoff/workspace-hints"
 import { VOICE_DEFAULT_LANG, type ChatDictationLanguage } from "../voice/detect"
 import { registrySummaryFromMessage, type RegistryDiscoverySummary } from "../utils/apps-discovery"
@@ -192,7 +194,7 @@ export interface AgentState {
   messagesCacheOrder: string[]
   /** True while waiting for thread.messages after a cache-miss switch. */
   hydrating: boolean
-  historyRetry: "ready" | "retry" | "failed"
+  historyLoadStatus: "ready" | "refresh" | "retry" | "failed"
   skills: SkillMeta[]
   activeSkillIds: string[]
   operations: OperationRecord[]
@@ -777,7 +779,7 @@ export const initialState: AgentState = {
   messagesByThreadId: {},
   messagesCacheOrder: [],
   hydrating: false,
-  historyRetry: "ready",
+  historyLoadStatus: "ready",
   skills: [],
   activeSkillIds: [],
   operations: [],
@@ -1053,109 +1055,6 @@ function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
  * already accounted for by a non-temp existing row), drop the temp — do
  * not double-render.
  */
-/** Keep the current thread plus one previous transcript. */
-export const MESSAGES_BY_THREAD_LRU = 2
-
-function stashThreadMessages(
-  cache: Record<string, Message[]>,
-  order: string[],
-  threadId: string | null,
-  messages: Message[],
-  opts: { skipEmptyHydrating?: boolean } = {},
-): { cache: Record<string, Message[]>; order: string[] } {
-  if (!threadId) return { cache, order }
-  if (opts.skipEmptyHydrating && messages.length === 0) {
-    return { cache, order }
-  }
-  const nextCache = { ...cache, [threadId]: messages }
-  const nextOrder = order.filter((id) => id !== threadId)
-  nextOrder.push(threadId)
-  while (nextOrder.length > MESSAGES_BY_THREAD_LRU) {
-    const evict = nextOrder.shift()
-    if (evict && evict !== threadId) delete nextCache[evict]
-  }
-  return { cache: nextCache, order: nextOrder }
-}
-
-function touchCacheOrder(
-  cache: Record<string, Message[]>,
-  order: string[],
-  threadId: string | null,
-): { cache: Record<string, Message[]>; order: string[] } {
-  if (!threadId) return { cache, order }
-  const nextOrder = order.filter((id) => id !== threadId)
-  nextOrder.push(threadId)
-  const nextCache = { ...cache }
-  while (nextOrder.length > MESSAGES_BY_THREAD_LRU) {
-    const evict = nextOrder.shift()
-    if (evict && evict !== threadId) delete nextCache[evict]
-  }
-  return { cache: nextCache, order: nextOrder }
-}
-
-function dropCachedThreads(
-  cache: Record<string, Message[]>,
-  order: string[],
-  ids: Iterable<string>,
-): { cache: Record<string, Message[]>; order: string[] } {
-  const drop = new Set(ids)
-  if (drop.size === 0) return { cache, order }
-  const nextCache = { ...cache }
-  for (const id of drop) delete nextCache[id]
-  return { cache: nextCache, order: order.filter((id) => !drop.has(id)) }
-}
-
-function applyActiveThreadSwitch(
-  state: AgentState,
-  threadId: string | null,
-): Pick<
-  AgentState,
-  | "activeThreadId"
-  | "codingOperationError"
-  | "codingManualEntry"
-  | "codingHistory"
-  | "messages"
-  | "messagesByThreadId"
-  | "messagesCacheOrder"
-  | "hydrating"
-  | "historyRetry"
-  | "streamingContent"
-  | "streamingReasoning"
-  | "processingStatus"
-  | "isProcessing"
-> {
-  const oldId = state.activeThreadId
-  let cache = state.messagesByThreadId
-  let order = state.messagesCacheOrder
-  if (oldId && oldId !== threadId) {
-    const stashed = stashThreadMessages(cache, order, oldId, state.messages, {
-      skipEmptyHydrating: state.hydrating,
-    })
-    cache = stashed.cache
-    order = stashed.order
-  }
-  const touched = touchCacheOrder(cache, order, threadId)
-  cache = touched.cache
-  order = touched.order
-  const hit = !!threadId && Object.prototype.hasOwnProperty.call(cache, threadId)
-  const hydrating = !!threadId && !hit
-  return {
-    activeThreadId: threadId,
-    codingHistory: threadId === state.activeThreadId ? state.codingHistory : null,
-    codingOperationError: null,
-    codingManualEntry: null,
-    messages: hit && threadId ? cache[threadId]! : [],
-    messagesByThreadId: cache,
-    messagesCacheOrder: order,
-    hydrating,
-    historyRetry: "ready",
-    streamingContent: "",
-    streamingReasoning: "",
-    processingStatus: hydrating ? "加载中" : null,
-    isProcessing: false,
-  }
-}
-
 export function mergeHydratedMessages(
   existing: Message[],
   incoming: Message[],
@@ -1193,24 +1092,6 @@ function withoutRunTerminal(state: AgentState, threadId: string): AgentState {
   if (!threadId || !state.runTerminalByThreadId[threadId]) return state
   const { [threadId]: _dropped, ...rest } = state.runTerminalByThreadId
   return { ...state, runTerminalByThreadId: rest }
-}
-
-/** #513: drop fleet suggestion cards for threads no longer in the list. */
-function pruneFleetSuggest(map: AgentState["fleetSuggestByThreadId"], keepIds: string[]): AgentState["fleetSuggestByThreadId"] {
-  const keep = new Set(keepIds)
-  let changed = false
-  for (const id of Object.keys(map)) {
-    if (!keep.has(id)) {
-      changed = true
-      break
-    }
-  }
-  if (!changed) return map
-  const out: AgentState["fleetSuggestByThreadId"] = {}
-  for (const [id, entry] of Object.entries(map)) {
-    if (keep.has(id)) out[id] = entry
-  }
-  return out
 }
 
 function immediateInFlight(save: ImmediateSave | null): boolean {
@@ -1281,55 +1162,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         workspaceHints: action.state === "connected" ? state.workspaceHints : null }
     }
     case "SET_DESKTOP_MAXIMUM": return { ...state, desktopMaximumExpiresAt: action.expiresAt }
-    case "SET_THREADS": {
-      const threads = Array.isArray(action.threads) ? action.threads : []
-      if (action.listScope === "all" || action.listScope === "trash") {
-        return { ...state, threads }
-      }
-      const activeExists = threads.some(t => t.id === state.activeThreadId)
-      // Preserve active + messages when active is temporarily absent only if
-      // every incoming row is trashed (only_trashed mishap) — otherwise clear.
-      const onlyTrashedIncoming =
-        threads.length > 0 && threads.every((t: any) => t.trashed_at)
-      const nextActiveThreadId = activeExists
-        ? state.activeThreadId
-        : onlyTrashedIncoming
-          ? state.activeThreadId
-          : null
-      const nextActiveThread = threads.find(t => t.id === nextActiveThreadId)
-      return {
-        ...state,
-        threads,
-        activeThreadId: nextActiveThreadId,
-        historyRetry: nextActiveThreadId === state.activeThreadId ? state.historyRetry : "ready",
-        workspaceHints: nextActiveThreadId === state.activeThreadId ? state.workspaceHints : null,
-        codingHistory: nextActiveThreadId === state.activeThreadId ? state.codingHistory : null,
-        codingOperationError: nextActiveThreadId === state.activeThreadId ? state.codingOperationError : null,
-        codingManualEntry: nextActiveThreadId === state.activeThreadId ? state.codingManualEntry : null,
-        // #513: cards for threads gone from the list go with them.
-        fleetSuggestByThreadId: pruneFleetSuggest(
-          state.fleetSuggestByThreadId,
-          threads.map((t: any) => t.id as string),
-        ),
-        // Do not wipe messages when preserving active across trash-scoped merges
-        pinnedTabIds: nextActiveThread?.pinned_tabs ?? state.pinnedTabIds,
-        activeSkillIds: nextActiveThread?.active_skill_ids ?? state.activeSkillIds,
-        activeKnowledgeIds: nextActiveThread?.active_knowledge_ids ?? state.activeKnowledgeIds,
-        skillSelectionMode: nextActiveThread?.skill_selection_mode || state.skillSelectionMode || "auto",
-        knowledgeSelectionMode:
-          nextActiveThread?.knowledge_selection_mode || state.knowledgeSelectionMode || "auto",
-        knowledgeSmartMatch:
-          // #273: 字段省略 = true；不继承上一线程的 UI 状态（开关漂移窗口）
-          nextActiveThread?.knowledge_smart_match !== false,
-        // #273 Wave B: 字段省略 = false（默认关）；不继承上一线程的 UI 状态
-        knowledgeRouteByGroup: nextActiveThread?.knowledge_route_by_group === true,
-        mcpSelectionMode: nextActiveThread?.mcp_selection_mode || state.mcpSelectionMode || "auto",
-        activeMcpServerIds: nextActiveThread?.active_mcp_server_ids || state.activeMcpServerIds || [],
-        threadListArrived: true,
-        threadListSignature: threads.map(thread => thread.id).join("\n"),
-        threadListEpoch: threads.map(thread => thread.id).join("\n") === state.threadListSignature ? state.threadListEpoch : state.threadListEpoch + 1,
-      }
-    }
+    case "SET_THREADS":
+      return updateThreadList(state, Array.isArray(action.threads) ? action.threads : [], action.listScope)
     case "COMMIT_NAVIGATION": {
       const id = action.decision.activeThreadId
       const selected = id === state.activeThreadId ? state : agentReducer(state, { type: "SET_ACTIVE_THREAD", threadId: id })
@@ -1347,38 +1181,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "REMEMBER_THREAD":
       if (state.navigationRemembered === action.threadId) return state
       return { ...state, navigationRemembered: action.threadId }
-    case "SET_ACTIVE_THREAD": {
-      // Same thread: keep transcript / busy. Re-select used to wipe the
-      // in-flight user bubble (确认台 thread.list → auto-select).
-      if (action.threadId && action.threadId === state.activeThreadId) {
-        return state
-      }
-      const threads = Array.isArray(state.threads) ? state.threads : []
-      const activeThread = threads.find(t => t.id === action.threadId)
-      const switched = applyActiveThreadSwitch(state, action.threadId)
-      const records = pruneCodingSessionCache(state.codingSessionsById, action.threadId, state.codingSessionIdByThread)
-      return {
-        ...state,
-        ...switched,
-        activeThreadSelectionRevision: state.activeThreadSelectionRevision + 1,
-        workspaceHints: null,
-        codingHistory: null,
-        lastBrowserToolAt: null,
-        modePin: null,
-        pinnedTabIds: activeThread?.pinned_tabs || [],
-        activeSkillIds: activeThread?.active_skill_ids || [],
-        activeKnowledgeIds: activeThread?.active_knowledge_ids || [],
-        skillSelectionMode: activeThread?.skill_selection_mode || "auto",
-        knowledgeSelectionMode: activeThread?.knowledge_selection_mode || "auto",
-        knowledgeSmartMatch: activeThread?.knowledge_smart_match !== false,
-        knowledgeRouteByGroup: activeThread?.knowledge_route_by_group === true,
-        mcpSelectionMode: activeThread?.mcp_selection_mode || "auto",
-        activeMcpServerIds: activeThread?.active_mcp_server_ids || [],
-        overlayStandby: null,
-        codingSessionsById: records,
-        codingSessionIdsByThread: codingSessionMembership(records, state.codingSessionIdsByThread, state.codingSessionIdByThread),
-      }
-    }
+    case "SET_ACTIVE_THREAD":
+      return selectThread(state, action.threadId)
     case "SET_OVERLAY_STANDBY":
       return { ...state, overlayStandby: { label: action.label } }
     case "CLEAR_OVERLAY_STANDBY":
@@ -1435,12 +1239,12 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_MESSAGES": {
       if (action.threadId !== undefined && action.threadId !== state.activeThreadId) return state
       const clearHistoryStatus = (state.hydrating && state.processingStatus === "加载中") ||
-        (state.historyRetry === "failed" && state.processingStatus === "加载失败")
+        (state.historyLoadStatus === "failed" && state.processingStatus === "加载失败")
       const merged = mergeHydratedMessages(state.messages, action.messages)
       let cache = state.messagesByThreadId
       let order = state.messagesCacheOrder
       if (state.activeThreadId) {
-        const stashed = stashThreadMessages(cache, order, state.activeThreadId, merged)
+        const stashed = cacheThreadMessages(cache, order, state.activeThreadId, merged)
         cache = stashed.cache
         order = stashed.order
       }
@@ -1450,19 +1254,21 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         messagesByThreadId: cache,
         messagesCacheOrder: order,
         hydrating: false,
-        historyRetry: "ready",
+        historyLoadStatus: "ready",
         processingStatus: clearHistoryStatus ? null : state.processingStatus,
       }
     }
     case "HYDRATE_FAILED":
-      if (action.threadId !== state.activeThreadId || (action.uncorrelated && !state.hydrating)) return state
-      if (action.retryable && (state.historyRetry ?? "ready") === "ready") {
-        return { ...state, historyRetry: "retry" }
+      if (action.threadId !== state.activeThreadId) return state
+      if (action.uncorrelated && !state.hydrating &&
+          state.historyLoadStatus !== "refresh" && state.historyLoadStatus !== "retry") return state
+      if (action.retryable && state.historyLoadStatus !== "retry" && state.historyLoadStatus !== "failed") {
+        return { ...state, historyLoadStatus: "retry" }
       }
       return {
         ...state,
         hydrating: false,
-        historyRetry: "failed",
+        historyLoadStatus: "failed",
         processingStatus: state.isProcessing ? state.processingStatus : "加载失败",
       }
     case "SET_SKILLS":
@@ -1831,130 +1637,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ),
       }
     case "ADD_THREAD":
-      return {
-        ...state,
-        threads: [action.thread, ...state.threads],
-        activeThreadId: action.thread.id,
-        historyRetry: "ready",
-        hydrating: false,
-        codingHistory: action.thread.id === state.activeThreadId ? state.codingHistory : null,
-        codingOperationError: null,
-        codingManualEntry: null,
-        messages: [],
-        streamingContent: "",
-        streamingReasoning: "",
-        processingStatus: null,
-        isProcessing: false,
-        lastBrowserToolAt: null,
-        modePin: null,
-        pinnedTabIds: action.thread.pinned_tabs || [],
-      }
-    case "REMOVE_THREAD": {
-      const filtered = state.threads.filter(t => t.id !== action.threadId)
-      const nextActive = state.activeThreadId === action.threadId
-        ? (filtered[0]?.id || null)
-        : state.activeThreadId
-      const nextThread = filtered.find(t => t.id === nextActive)
-      const { [action.threadId]: _removed, ...restBusy } = state.threadBusyById
-      const dropped = dropCachedThreads(state.messagesByThreadId, state.messagesCacheOrder, [
-        action.threadId,
-      ])
-      const clearingActive = state.activeThreadId === action.threadId
-      const base: AgentState = {
-        ...state,
-        messagesByThreadId: dropped.cache,
-        messagesCacheOrder: dropped.order,
-        // #513: the removed thread's fleet card goes with it.
-        fleetSuggestByThreadId: pruneFleetSuggest(state.fleetSuggestByThreadId, filtered.map(t => t.id)),
-        ...(clearingActive
-          ? { activeThreadId: null, messages: [], hydrating: false }
-          : {}),
-      }
-      const switched = clearingActive ? applyActiveThreadSwitch(base, nextActive) : null
-      return {
-        ...base,
-        threads: filtered,
-        ...(switched || { activeThreadId: nextActive }),
-        pinnedTabIds: nextThread?.pinned_tabs || [],
-        activeSkillIds: nextThread?.active_skill_ids || [],
-        activeKnowledgeIds: nextThread?.active_knowledge_ids || [],
-        threadBusyById: restBusy,
-      }
-    }
-    case "REMOVE_THREADS": {
-      const removeSet = new Set(action.threadIds || [])
-      if (removeSet.size === 0) return state
-      const filtered = state.threads.filter(t => !removeSet.has(t.id))
-      const clearingActive =
-        !!state.activeThreadId && removeSet.has(state.activeThreadId)
-      const nextActive = clearingActive
-        ? (filtered[0]?.id || null)
-        : state.activeThreadId
-      const nextThread = filtered.find(t => t.id === nextActive)
-      const restBusy = { ...state.threadBusyById }
-      for (const id of removeSet) delete restBusy[id]
-      const dropped = dropCachedThreads(
-        state.messagesByThreadId,
-        state.messagesCacheOrder,
-        removeSet,
-      )
-      const base: AgentState = {
-        ...state,
-        messagesByThreadId: dropped.cache,
-        messagesCacheOrder: dropped.order,
-        // #513: the removed thread's fleet card goes with it.
-        fleetSuggestByThreadId: pruneFleetSuggest(state.fleetSuggestByThreadId, filtered.map(t => t.id)),
-        ...(clearingActive
-          ? { activeThreadId: null, messages: [], hydrating: false }
-          : {}),
-      }
-      const switched = clearingActive ? applyActiveThreadSwitch(base, nextActive) : null
-      return {
-        ...base,
-        threads: filtered,
-        ...(switched || { activeThreadId: nextActive }),
-        pinnedTabIds: nextThread?.pinned_tabs || [],
-        activeSkillIds: nextThread?.active_skill_ids || [],
-        activeKnowledgeIds: nextThread?.active_knowledge_ids || [],
-        threadBusyById: restBusy,
-      }
-    }
-    case "UPSERT_THREAD": {
-      const exists = state.threads.find(t => t.id === action.thread.id)
-      const isActive = action.thread.id === state.activeThreadId
-      if (exists) {
-        return {
-          ...state,
-          threads: state.threads.map(t => t.id === action.thread.id ? { ...t, ...action.thread } : t),
-          pinnedTabIds: isActive
-            ? action.thread.pinned_tabs || []
-            : state.pinnedTabIds,
-          activeSkillIds: isActive
-            ? (action.thread.active_skill_ids || state.activeSkillIds)
-            : state.activeSkillIds,
-          activeKnowledgeIds: isActive
-            ? (action.thread.active_knowledge_ids ?? state.activeKnowledgeIds)
-            : state.activeKnowledgeIds,
-          knowledgeSelectionMode: isActive
-            ? (action.thread.knowledge_selection_mode || state.knowledgeSelectionMode)
-            : state.knowledgeSelectionMode,
-          knowledgeSmartMatch: isActive
-            // #273: UPSERT 是同线程 patch 合并语义——字段省略 = 保持当前 UI 状态
-            // （乐观更新窗口内省略字段的回显不得把开关闪回 true；gate6 NF-1）。
-            // 跨线程归一（省略 = true）由 SET_THREADS / SET_ACTIVE_THREAD 负责。
-            ? (action.thread.knowledge_smart_match ?? state.knowledgeSmartMatch)
-            : state.knowledgeSmartMatch,
-          // #273 Wave B: 同 patch 合并语义（省略 = 保持；跨线程归一省略 = false）。
-          knowledgeRouteByGroup: isActive
-            ? (action.thread.knowledge_route_by_group ?? state.knowledgeRouteByGroup)
-            : state.knowledgeRouteByGroup,
-        }
-      }
-      return {
-        ...state,
-        threads: [action.thread, ...state.threads],
-      }
-    }
+      return selectThread({ ...state, threads: [action.thread, ...state.threads] }, action.thread.id, "created")
+    case "REMOVE_THREAD":
+      return removeThreads(state, [action.threadId])
+    case "REMOVE_THREADS":
+      return removeThreads(state, action.threadIds)
+    case "UPSERT_THREAD":
+      return upsertThread(state, action.thread)
     case "SET_STREAMING":
       return { ...state, streamingContent: action.content }
     case "SET_STREAMING_REASONING":

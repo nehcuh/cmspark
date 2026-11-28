@@ -1131,15 +1131,15 @@ test("history load failures retry once for the selected thread until history arr
   assert.deepEqual(failure, { threadId: "A", retryable: true })
   const action = { type: "HYDRATE_FAILED" as const, ...failure }
   const retry = agentReducer(selected, action)
-  assert.equal(retry.historyRetry, "retry")
+  assert.equal(retry.historyLoadStatus, "retry")
   const failed = agentReducer(retry, action)
   assert.equal(failed.hydrating, false)
   assert.equal(failed.processingStatus, "加载失败")
-  assert.equal(failed.historyRetry, "failed")
+  assert.equal(failed.historyLoadStatus, "failed")
   const loaded = agentReducer(retry, { type: "SET_MESSAGES", threadId: "A", messages: [] })
-  assert.equal(loaded.historyRetry, "ready")
+  assert.equal(loaded.historyLoadStatus, "ready")
   const switched = agentReducer(retry, { type: "SET_ACTIVE_THREAD", threadId: "B" })
-  assert.equal(switched.historyRetry, "ready")
+  assert.equal(switched.historyLoadStatus, "ready")
   assert.equal(agentReducer(switched, action), switched)
   assert.equal(threadHistoryFailure({ request_type: "thread.peek", error: reply.error }), null)
   assert.equal(threadHistoryFailure({ id: "unrelated", error: reply.error }), null)
@@ -1157,4 +1157,53 @@ test("startup selection accepts an immediate history response and rejects it aft
   assert.equal(loaded.messages[0].content, "remembered body")
   const switched = agentReducer(loaded, { type: "SET_ACTIVE_THREAD", threadId: "new" })
   assert.equal(agentReducer(switched, reply), switched)
+})
+
+test("removing the selection skips trashed rows and takes all settings from its replacement", () => {
+  const base = stateWithThreads()
+  const [a, b] = base.threads
+  const trash = { ...b!, id: "trash", trashed_at: "2026-01-01" }
+  const state: AgentState = {
+    ...base, threads: [trash, a!, b!], activeMcpServerIds: ["A-service"], mcpSelectionMode: "manual",
+    knowledgeRouteByGroup: true, overlayStandby: { label: "A" },
+  }
+  for (const action of [
+    { type: "REMOVE_THREAD" as const, threadId: "thread-a" },
+    { type: "REMOVE_THREADS" as const, threadIds: ["thread-a"] },
+  ]) {
+    const changed = agentReducer(state, action)
+    assert.equal(changed.activeThreadId, "thread-b")
+    assert.equal(changed.activeThreadSelectionRevision, state.activeThreadSelectionRevision + 1)
+    assert.equal(changed.knowledgeSelectionMode, "all")
+    assert.equal(changed.knowledgeRouteByGroup, false)
+    assert.equal(changed.mcpSelectionMode, "auto")
+    assert.deepEqual(changed.activeMcpServerIds, [])
+    assert.equal(changed.overlayStandby, null)
+  }
+})
+
+test("a locally created empty thread keeps the last transcript in the previous thread's cache", () => {
+  const base = stateWithThreads()
+  const body = { id: "last", thread_id: "thread-a", role: "user" as const, content: "last row", created_at: "t" }
+  const source = { ...base, messages: [body], activeMcpServerIds: ["A-service"], overlayStandby: { label: "A" } }
+  const created = agentReducer(source, { type: "ADD_THREAD", thread: { ...base.threads[1]!, id: "new" } })
+  assert.equal(created.activeThreadSelectionRevision, base.activeThreadSelectionRevision + 1)
+  assert.equal(created.hydrating, false)
+  assert.deepEqual(created.messages, [])
+  assert.deepEqual(created.activeMcpServerIds, [])
+  assert.equal(created.overlayStandby, null)
+  assert.deepEqual(agentReducer(created, { type: "SET_ACTIVE_THREAD", threadId: "thread-a" }).messages, [body])
+})
+
+test("an active list that loses the selected thread releases its transcript, stream and settings", () => {
+  const base = stateWithThreads()
+  const changed = agentReducer({
+    ...base, streamingContent: "A tokens", isProcessing: true, activeMcpServerIds: ["A-service"], overlayStandby: { label: "A" },
+  }, { type: "SET_THREADS", threads: [base.threads[1]!] })
+  assert.equal(changed.activeThreadId, null)
+  assert.equal(changed.activeThreadSelectionRevision, base.activeThreadSelectionRevision + 1)
+  assert.equal(changed.streamingContent, "")
+  assert.equal(changed.isProcessing, false)
+  assert.equal(changed.overlayStandby, null)
+  assert.deepEqual(changed.activeMcpServerIds, [])
 })

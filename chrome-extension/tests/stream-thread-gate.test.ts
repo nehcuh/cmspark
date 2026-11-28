@@ -91,7 +91,7 @@ test("thread.list request echo must not be treated as an empty hydrate", () => {
   assert.ok(guardIdx >= 0, "thread.list must ignore a request echo before treating it as a list")
   assert.equal(body.indexOf("thread.create"), -1, "an empty active list must not auto-create")
   assert.equal(body.indexOf("incoming[0]"), -1, "an active list must not select the first row")
-  assert.ok(body.indexOf("decideActiveThreadList") > guardIdx, "the list decision stays behind the array guard")
+  assert.ok(body.indexOf('type: "SET_THREADS"') > guardIdx, "list updates stay behind the array guard")
 })
 
 test("apps.list/acp.list request echo must not clear entries or flip enabled", () => {
