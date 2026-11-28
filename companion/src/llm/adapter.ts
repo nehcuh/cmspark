@@ -55,11 +55,8 @@ import {
   retainMidLoopRollingSummary,
 } from "./context-budget"
 import { generateRollingSummary, shouldRunM2 } from "./context-budget-m2"
-import {
-  generateThreadHandoff,
-  shouldRunH1,
-  type ThreadHandoff,
-} from "./context-handoff"
+import { generateThreadHandoff, shouldRunH1 } from "./context-handoff-generator"
+import type { ThreadHandoff } from "./context-handoff"
 import {
   createToolResultMessage,
   persistHealedToolRows,
