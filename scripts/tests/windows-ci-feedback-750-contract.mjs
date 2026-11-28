@@ -170,6 +170,26 @@ function conservedBuildSteps806(steps) {
   return steps.filter(step => step !== selected[0])
 }
 
+// PR dependency comparisons need the first parent of the test merge checkout.
+// Validate that single checkout change and the additional gate before comparing history.
+function conservedBuildStepsArchitecture(steps) {
+  const checkout = steps[0]
+  assert.deepEqual(checkout, { uses: 'actions/checkout@v4', with: { 'fetch-depth': 2 } })
+  const expected = {
+    name: 'Check runtime module boundaries',
+    shell: 'bash',
+    env: { PUSH_BEFORE: '${{ github.event.before }}' },
+    run: 'bash scripts/check-architecture-ci.sh',
+  }
+  const matches = steps.filter(step => step.name === expected.name)
+  assert.equal(matches.length, 1)
+  assert.deepEqual(matches[0], expected)
+  const index = steps.indexOf(matches[0])
+  assert.equal(steps[index - 1]?.name, 'Verify systray2 binary integrity')
+  assert.equal(steps[index + 1]?.name, 'Verify Node archive checksum helper (audit H8)')
+  return [{ uses: checkout.uses }, ...steps.slice(1).filter(step => step !== matches[0])]
+}
+
 function cache750(step, nodeVersion) {
   assert.equal(step.uses, 'actions/setup-node@v4')
   assert.deepEqual(omit(step.with, ['cache-dependency-path']), { 'node-version': nodeVersion, cache: 'npm' })
@@ -268,7 +288,8 @@ export function validateWindowsCiFeedback750(text) {
   assert.equal(traySteps.length, 1, 'exactly one tray CPU control')
   assert.deepEqual(traySteps[0], { name: trayControl, run: 'node --test companion/scripts/tests/swift-tray-package-pin.test.mjs companion/scripts/tests/swift-tray-bundle-entry.test.mjs companion/scripts/tests/swift-tray-source-freshness.test.mjs companion/scripts/tests/swift-tray-build-output.test.mjs companion/scripts/tests/swift-tray-package-copy.test.mjs\n' })
   assert.equal(build.steps.indexOf(traySteps[0]), build.steps.findIndex(s => key(s) === 'Run companion tests') + 1)
-  const buildSteps = conservedBuildSteps794(conservedBuildSteps806(build.steps.filter(s => key(s) !== trayControl)))
+  const originalArchitectureSteps = conservedBuildStepsArchitecture(build.steps.filter(s => key(s) !== trayControl))
+  const buildSteps = conservedBuildSteps794(conservedBuildSteps806(originalArchitectureSteps))
   assert.deepEqual(buildSteps.map(key), baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js').map(s => s.key))
   cache750(build.steps.find(s => s.name === 'Setup Node.js'), '22.23.4')
   for (const old of baseline.buildSteps.filter(s => s.key !== 'Setup chrome-extension Node.js')) {
