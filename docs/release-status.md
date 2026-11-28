@@ -1,8 +1,10 @@
 # 版本与交付状态
 
-源码开发版本 **1.13.1（尚未正式发布）**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
+源码版本 **1.13.1（已于 2026-11-28 正式发布）**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
 
-## 1.13.1 发布准备
+## 1.13.1 正式发布
+
+2026-11-28 17:20（北京时间）发布。标签 `v1.13.1` 指向主线提交 `49673f19`。已逐件下载并核对 19 项公开附件的 SHA-256，覆盖 macOS、Windows、Linux 的 x64 和 ARM64 安装包以及 Chrome 扩展。[正式安装包](https://github.com/nehcuh/cmspark/releases/tag/v1.13.1) · [主线 CI](https://github.com/nehcuh/cmspark/actions/runs/46125375386) · [发行构建](https://github.com/nehcuh/cmspark/actions/runs/46128792757) · [同标签安装器](https://github.com/nehcuh/cmspark/actions/runs/46128794356) · [校验记录](https://github.com/nehcuh/cmspark/actions/runs/46130517127)
 
 Mini 的「资料搜索」可同时查知识库正文和历史对话。点开结果会在小窗定位并高亮对应段落，返回后可继续浏览和翻页。使用方式见[个人工作台指南](personal-workspace.md)。[需求 #929](https://github.com/nehcuh/cmspark/issues/929) · [实现 #930](https://github.com/nehcuh/cmspark/pull/930)
 
