@@ -34,6 +34,8 @@
 
 第 067 批将第 54 组本机模型状态消息和设置使用的规格都改为生成投影。设置拥有焦点和确认交互，模型目录拥有内存需求、下载量及默认规格。
 
+第 068 批将第 48、69 组的预览诊断与界面命令词表改为受构建检查的客户端投影。扩展负责窗口操作并解释渲染字段。全仓收敛复扫及保留项见[治理工作记录](architecture-governance.md)。
+
 | 组 | 基线符号 | 源码位置（相对于对应包的 src） |
 | --- | --- | --- |
 | 2 | `directProvider` | `Companion / llm/reasoning-effort.ts`、`扩展 / sidepanel/utils/reasoning-effort.ts` |

@@ -6,7 +6,7 @@ import { UI_COMMAND_ACTIONS, runUiCommand } from "../src/background/ui-command"
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8")
 
-test("#433 ui.command: five-action whitelist lockstep with companion", () => {
+test("#433 ui.command exposes the five supported browser actions", () => {
   assert.deepEqual([...UI_COMMAND_ACTIONS], [
     "focus_panel",
     "open_confirm_center",
@@ -14,10 +14,6 @@ test("#433 ui.command: five-action whitelist lockstep with companion", () => {
     "thread.new_in_panel",
     "open_terminal_tab",
   ])
-  const companion = src("../companion/src/ui-command.ts")
-  for (const action of UI_COMMAND_ACTIONS) {
-    assert.match(companion, new RegExp(`"${action}"`))
-  }
 })
 
 test("#433 ui.command: unknown action rejected; focus_panel calls sidePanel.open impl", async () => {

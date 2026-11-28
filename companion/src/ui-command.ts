@@ -1,6 +1,4 @@
-// #433 P2 — companion → ext `ui.command` whitelist (spec §3b).
-// Duplicate lockstep: chrome-extension/src/background/ui-command.ts
-// (same five action strings; tests pin both copies).
+// Commands Companion may ask the browser UI to perform.
 
 export const UI_COMMAND_ACTIONS = [
   "focus_panel",

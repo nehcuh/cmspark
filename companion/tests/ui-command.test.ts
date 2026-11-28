@@ -27,18 +27,6 @@ test("#433 ui.command: whitelist is five hardcoded actions", () => {
   assert.equal(isUiCommandAction(""), false)
 })
 
-test("#433 ui.command: dual-end hardcoded lockstep with extension copy", () => {
-  const companionRoot = path.resolve(__dirname, "..", "..")
-  const ext = fs.readFileSync(
-    path.join(companionRoot, "..", "chrome-extension", "src", "background", "ui-command.ts"),
-    "utf8",
-  )
-  for (const action of UI_COMMAND_ACTIONS) {
-    assert.match(ext, new RegExp(`"${action}"`))
-  }
-  assert.match(ext, /runUiCommand/)
-})
-
 test("#433 ui.command: unknown action rejected; known action broadcasts to panel", () => {
   const frames: unknown[] = []
   const bad = handleUiCommand({ action: "format_disk" }, { broadcast: (d) => frames.push(d) })
