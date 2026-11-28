@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type Ref } from 'react'
 import { requestMini, type MiniDoc, type MiniSearchHit, type MiniTarget } from '../utils/mini-request'
 import '../styles/mini.css'
 
@@ -7,6 +7,22 @@ type View = keyof typeof names
 const selected = new URLSearchParams(location.search).get('view')
 const view: View = selected && Object.hasOwn(names, selected) ? selected as View : 'search'
 
+function sourceLabel(item: { role?: 'user' | 'assistant'; created_at?: string; folder?: string }) {
+  if (!item.role) return ['知识库', item.folder].filter(Boolean).join(' · ')
+  const date = item.created_at && new Date(item.created_at)
+  return ['历史对话', item.role === 'user' ? '我' : '助手', date && !isNaN(date.getTime()) && date.toLocaleString()].filter(Boolean).join(' · ')
+}
+
+function hitKey(hit: MiniSearchHit) {
+  return JSON.stringify([hit.kind, hit.id, hit.message_id])
+}
+
+function HighlightedText({ text, highlight, markRef }: { text: string; highlight?: MiniDoc['highlight']; markRef?: Ref<HTMLElement> }) {
+  if (!highlight) return <>{text}</>
+  const end = highlight.start + highlight.length
+  return <>{text.slice(0, highlight.start)}<mark ref={markRef}>{text.slice(highlight.start, end)}</mark>{text.slice(end)}</>
+}
+
 export default function MiniPage() {
   const [image, setImage] = useState('')
   const [target, setTarget] = useState<MiniTarget>()
@@ -14,12 +30,15 @@ export default function MiniPage() {
   const [text, setText] = useState('')
   const [turns, setTurns] = useState<{ question: string; answer: string; model: string }[]>([])
   const [hits, setHits] = useState<MiniSearchHit[]>()
+  const [submittedQuery, setSubmittedQuery] = useState('')
+  const [nextPage, setNextPage] = useState<{ offset: number; anchor: string }>()
+  const matchRef = useRef<HTMLElement>(null)
+  const returnToHit = useRef<string>()
   const [doc, setDoc] = useState<MiniDoc>()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const started = useRef(false)
-  const inputRef = useRef<HTMLInputElement>(null)
   const resultText = useRef<HTMLTextAreaElement>(null)
 
   async function recognize(encoded: string) {
@@ -52,16 +71,47 @@ export default function MiniPage() {
     finally { setBusy(false) }
   }
 
+  useEffect(() => {
+    if (doc?.highlight || doc?.matched_field) matchRef.current?.scrollIntoView({ block: 'center' })
+    else if (!doc && returnToHit.current) {
+      document.getElementById(returnToHit.current)?.focus()
+      returnToHit.current = undefined
+    }
+  }, [doc])
+
+  async function search(query: string, offset = 0, anchor?: string): Promise<void> {
+    if (offset === 0) {
+      returnToHit.current = undefined
+      setDoc(undefined)
+      setHits(undefined)
+      setNextPage(undefined)
+    }
+    const result = await requestMini('search', { query, scope: 'passages', offset, anchor })
+    if (!result.ok) throw new Error(result.error || '搜索失败，请重试')
+    if (typeof result.has_more !== 'boolean') throw new Error('请更新本机 Companion 后搜索知识正文和历史对话')
+    if (offset && result.stale) {
+      await search(query)
+      setNotice('搜索结果有变化，已刷新列表。')
+      return
+    }
+    const rows = result.hits || []
+    setSubmittedQuery(query)
+    setNextPage(result.has_more && result.anchor ? { offset: offset + rows.length, anchor: result.anchor } : undefined)
+    setHits(previous => {
+      if (!offset || !previous) return rows
+      const combined = new Map(previous.map(hit => [hitKey(hit), hit]))
+      for (const hit of rows) combined.set(hitKey(hit), hit)
+      return [...combined.values()]
+    })
+  }
+
   function submit(event: FormEvent) {
     event.preventDefault()
     const query = input.trim()
     if (!query) return
     void run(async () => {
       if (view === 'search') {
-        setDoc(undefined)
-        const result = await requestMini('search', { query })
-        if (!result.ok) throw new Error(result.error)
-        setHits(result.hits || [])
+        await search(query)
       } else {
         const result = await requestMini('ask', { image_base64: image, expected_target: target?.id, question: query })
         if (result.target) setTarget(result.target)
@@ -72,10 +122,12 @@ export default function MiniPage() {
     })
   }
 
-  function read(id: string) {
+  function read(hit: MiniSearchHit) {
     void run(async () => {
-      const result = await requestMini('read', { doc_id: id })
+      const source = hit.kind === 'message' ? { thread_id: hit.id, message_id: hit.message_id } : { doc_id: hit.id }
+      const result = await requestMini('read', { scope: 'passages', kind: hit.kind, query: submittedQuery, ...source })
       if (!result.ok || !result.doc) throw new Error(result.error || '未取得资料正文')
+      returnToHit.current = hitKey(hit)
       setDoc(result.doc)
     })
   }
@@ -112,8 +164,8 @@ export default function MiniPage() {
       })}>重新读取设置</button>}
     </p>}
     {(view === 'ask' || view === 'search') && <form onSubmit={submit}>
-      <label htmlFor="mini-query">{view === 'ask' ? '关于这张截图，你想问什么？' : '搜索知识库中的资料名称、描述或标签'}</label>
-      <div className="mini-query"><input id="mini-query" ref={inputRef} autoFocus maxLength={view === 'ask' ? 4000 : 120}
+      <label htmlFor="mini-query">{view === 'ask' ? '关于这张截图，你想问什么？' : '搜索知识库和历史对话'}</label>
+      <div className="mini-query"><input id="mini-query" autoFocus maxLength={view === 'ask' ? 4000 : 120}
         value={input} onChange={event => setInput(event.target.value)} autoComplete="off" disabled={busy} />
         <button className="mini-primary" disabled={!canSubmit}>{view === 'ask' ? '发送截图' : '搜索'}</button></div>
     </form>}
@@ -122,10 +174,14 @@ export default function MiniPage() {
     {!!turns.length && <section aria-label="截图问答记录">{turns.slice().reverse().map((turn, index) => <article key={turns.length - index}>
       <h2>{turn.question}</h2><div className="mini-prose">{turn.answer}</div><small>{turn.model}</small>
     </article>)}</section>}
-    {view === 'search' && (doc ? <article><button className="mini-back" onClick={() => { setDoc(undefined); inputRef.current?.focus() }}>返回搜索结果</button>
-      <h2>{doc.title}</h2><div className="mini-prose">{doc.body}</div>{doc.truncated && <p>当前显示资料预览。</p>}</article> :
-      hits && <section aria-label="搜索结果">{hits.length === 0 ? <p>没有找到匹配的资料。</p> : hits.map(hit =>
-        <button key={hit.id} className="mini-hit" disabled={busy} onClick={() => read(hit.id)}><strong>{hit.title}</strong>
-          {hit.folder && <small>{hit.folder}</small>}{hit.snippet !== hit.title && <span>{hit.snippet}</span>}</button>)}</section>)}
+    {view === 'search' && (doc ? <article><button className="mini-back" onClick={() => setDoc(undefined)}>返回搜索结果</button>
+      <small>{sourceLabel(doc)}</small><h2>{doc.title}</h2>
+      {doc.matched_field && <p>{doc.matched_field.label} · <HighlightedText text={doc.matched_field.body} highlight={doc.matched_field.highlight} markRef={matchRef} /></p>}
+      <div className="mini-prose"><HighlightedText text={doc.body} highlight={doc.highlight} markRef={matchRef} /></div>{doc.truncated && <small>当前显示部分原文。</small>}</article> :
+      hits && <section aria-label="搜索结果">{hits.length === 0 ? <p>知识库和历史对话里都没有找到“{submittedQuery}”。</p> : hits.map(hit =>
+        <button key={hitKey(hit)} id={hitKey(hit)} className="mini-hit" disabled={busy} onClick={() => read(hit)}><small>{sourceLabel(hit)}</small><strong>{hit.title}</strong>
+          {hit.snippet !== hit.title && <span>{hit.snippet}</span>}</button>)}
+        {nextPage && <button className="mini-more" disabled={busy} onClick={() => void run(() => search(submittedQuery, nextPage.offset, nextPage.anchor))}>更多结果</button>}
+      </section>)}
   </main>
 }

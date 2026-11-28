@@ -1,6 +1,10 @@
 # 版本与交付状态
 
-源码版本 **1.13.0（已于 2026-11-28 正式发布）**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
+源码开发版本 **1.13.1（尚未正式发布）**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
+
+## 1.13.1 发布准备
+
+Mini 的「资料搜索」可同时查知识库正文和历史对话。点开结果会在小窗定位并高亮对应段落，返回后可继续浏览和翻页。使用方式见[个人工作台指南](personal-workspace.md)。[需求 #929](https://github.com/nehcuh/cmspark/issues/929) · [实现 #930](https://github.com/nehcuh/cmspark/pull/930)
 
 ## 1.13.0 正式发布
 

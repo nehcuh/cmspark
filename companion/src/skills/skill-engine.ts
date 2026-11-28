@@ -2929,7 +2929,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     return { kind, id: kind === "skill" ? String(parsed.data.id || name) : identity.id, title: identity.title, text, destination: path.join(target, `${identity.filenameStem}.md`), raw }
   }
 
-  listKnowledge(): KnowledgeListItem[] {
+  listKnowledge(includeBody = false): Array<KnowledgeListItem & { body?: string }> {
     this.ensureFresh()
     return this.skillsCache
       .filter(s => this.isKnowledgeDoc(s))
@@ -2943,6 +2943,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         tags: s.tags,
         builtin: s.builtin,
         folder: s.folder || "",
+        ...(includeBody ? { body: s.content || "" } : {}),
       }))
   }
 
