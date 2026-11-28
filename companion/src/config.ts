@@ -18,7 +18,7 @@ import { endpointsMatch, isPlaceholderVisionKey, resolveInheritedVisionApiKey } 
 import { effectiveReasoningEffort, isReasoningEffort } from "./llm/reasoning-effort"
 import { isChatOutputLimit, normalizeSavedChatOutputLimit } from "./llm/output-budget"
 import { DEFAULT_UPLOAD_MIMES } from "./file-formats"
-import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-provision"
+import { enterConfigWrite, invalidateShellReadiness, leaveConfigWrite, noteShellReady, projectShellOnto } from "./capability/shell-projection"
 import { defaultVoiceExternal, type VoiceExternalConfig } from "./voice/external-asr-config"
 import type { MeetingAsrConfig } from "./voice/external-asr-meeting"
 
