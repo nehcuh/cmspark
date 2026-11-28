@@ -15,6 +15,7 @@ import { ComputerError, type ComputerAction } from "../computer/types"
 import os from "os"
 import { WebSocket } from "ws"
 import { getConfig } from "../config"
+import { isFullAutonomyCruise } from "../security-arm"
 import { securityPolicy, SecurityPolicy } from "../security-policy"
 import { logger } from "../logger"
 import {
@@ -145,18 +146,7 @@ export function resolveL2ForceConfirm(opts: {
   )
 }
 
-/** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
-export function isFullAutonomyCruise(security: {
-  auto_approve_dangerous?: boolean
-  auto_approve_enterprise_tools?: boolean
-  allow_all_schemes?: boolean
-}): boolean {
-  return (
-    security.auto_approve_dangerous === true &&
-    security.auto_approve_enterprise_tools === true &&
-    security.allow_all_schemes === true
-  )
-}
+export { isFullAutonomyCruise }
 
 export function isHostComputerPlatformGated(platform: string): boolean {
   return platform === "win32" || platform === "darwin"

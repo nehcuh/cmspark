@@ -1,3 +1,4 @@
+import { isFullAutonomyCruise, type CruiseSecurityFlags } from "../security-arm"
 // Thread manager — CRUD for conversation threads
 
 import * as fs from "fs"
@@ -460,11 +461,7 @@ function lastUserPreviewFromMessages(
   return ""
 }
 
-export type CruiseSecurityFlags = {
-  auto_approve_dangerous?: boolean
-  auto_approve_enterprise_tools?: boolean
-  allow_all_schemes?: boolean
-}
+export type { CruiseSecurityFlags } from "../security-arm"
 
 /** Three-flag cruise (same predicate as L2). Pass `security` in tests. */
 export function isFullAutonomyCruiseOpen(security?: CruiseSecurityFlags): boolean {
@@ -478,11 +475,7 @@ export function isFullAutonomyCruiseOpen(security?: CruiseSecurityFlags): boolea
       s = {}
     }
   }
-  return (
-    s.auto_approve_dangerous === true &&
-    s.auto_approve_enterprise_tools === true &&
-    s.allow_all_schemes === true
-  )
+  return isFullAutonomyCruise(s)
 }
 
 /**

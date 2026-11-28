@@ -328,6 +328,7 @@ async function actualSeedStore(dir) {
       if(relative==='threads/thread-manager.ts'&&id==='./project-store')return sourceModule('threads/project-store.ts')
       if(relative==='threads/thread-manager.ts'&&id==='./thread-inspect')return sourceModule('threads/thread-inspect.ts')
       if(relative==='threads/thread-inspect.ts'&&id==='./cleanup-rules')return sourceModule('threads/cleanup-rules.ts')
+      if(relative==='threads/thread-manager.ts'&&id==='../security-arm')return sourceModule('security-arm.ts')
       if(relative==='threads/thread-manager.ts'&&id==='./recency')return sourceModule('threads/recency.ts')
       if(relative==='threads/thread-manager.ts'&&id==='./tool-whitelist')return sourceModule('threads/tool-whitelist.ts')
       if(relative==='threads/thread-manager.ts'&&id==='./run-progress')return sourceModule('threads/run-progress.ts')

@@ -20,6 +20,16 @@ export const SECURITY_ARM_FLAGS = [
 ] as const
 
 export type SecurityArmFlag = (typeof SECURITY_ARM_FLAGS)[number]
+export type CruiseSecurityFlags = Partial<Record<SecurityArmFlag, boolean>>
+
+/** Three-flag full autonomy cruise (dangerous + enterprise + allow_all_schemes). */
+export function isFullAutonomyCruise(security: CruiseSecurityFlags): boolean {
+  return (
+    security.auto_approve_dangerous === true &&
+    security.auto_approve_enterprise_tools === true &&
+    security.allow_all_schemes === true
+  )
+}
 
 function isTruthyFlag(value: unknown): boolean {
   return value === true || value === 1

@@ -15,7 +15,7 @@ import {
   CRITICAL_MCP_CAPABILITIES,
   CRITICAL_MCP_META_TOOLS,
 } from "../security"
-import { isFullAutonomyCruise } from "../tool/l2-admission"
+import { isFullAutonomyCruise } from "../security-arm"
 import type { SecurityConfirmationDecision, SecurityConfirmationManager } from "../security-confirmation"
 import type { ThreadManager } from "../threads/thread-manager"
 import { carryMcpWorkspaceObservation } from "./workspace-observation"
