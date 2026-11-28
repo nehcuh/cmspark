@@ -12,7 +12,7 @@ import {
   isMultiUserProfilesRoot,
   SENSITIVE_PATH_SEGMENTS,
   SENSITIVE_HOME_PREFIXES,
-} from "../mcp/allow-dir-expand"
+} from "../security/protected-paths"
 
 /** Machine token for classifyError + user-gate-copy (must not say 弹窗). */
 export const FILE_OPEN_CAGE_TOKEN = "local path is not allowed (sensitive/system/unc)"

@@ -12,7 +12,7 @@ import {
   isVolumeOrFsRoot,
   isMultiUserProfilesRoot,
   isSensitiveSystemDir,
-} from "../mcp/allow-dir-expand"
+} from "./protected-paths"
 
 export function isCruisePathRiskAccepted(
   security?: {
