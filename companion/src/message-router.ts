@@ -1,5 +1,12 @@
 import { armDesktopMaximum, desktopMaximumStatus, hasDesktopMaximum, reviewDesktopMaximum, revokeDesktopMaximum } from "./computer/desktop-maximum"
-import { retireComputerReadonlyThread } from "./computer/readonly-session"
+import {
+  abortLlmLoopsForPanel, abortThreadChat, claimThreadRun, finishThreadRun,
+  isCurrentRunGeneration, isThreadRunActive, listLlmActiveThreadIds, ownsThreadRun, releaseRunController,
+} from "./llm/active-runs"
+export {
+  __testSetLlmActiveForTests, __testSetLlmOwnerForTests, abortLlmLoopsForPanel, abortThreadChat,
+  installKickAbortController, listLlmActiveThreadIds, releaseRunController as releaseKickAbortController,
+} from "./llm/active-runs"
 // Message router — dispatches incoming WebSocket messages to handlers
 // FREEZE (C10 multi-adv 2026-08-10 / phase-A 2026-08-11):
 // NEW business handlers must not grow this file — extract a family module under
@@ -58,8 +65,6 @@ import type { ChatContextInput } from "./llm/chat-context"
 import {
   MAX_NEXT_RUN,
   MAX_STEER,
-  clearNextRun,
-  dropSteer,
   enqueueNextRun,
   enqueueSteer,
   peekNextRunCount,
@@ -125,8 +130,6 @@ import type {
 import {
   canAcquireMultiAgentLlmLoop,
   cancelDeferredLlmKick,
-  releaseMultiAgentLlmLoop,
-  setThreadRunActiveProbe,
 } from "./orchestrator/llm-loop-gate"
 import {
   handleConfigFamily,
@@ -197,132 +200,6 @@ function applySlashSkillPin(
   // authenticated connections) — a follow-up sendToExtension would deliver a
   // duplicate thread.updated to the initiator (R3a).
   session?.broadcast?.(payload)
-}
-
-// Per-thread abort controllers for cancelling in-flight LLM requests
-const abortControllers = new Map<string, AbortController>()
-// F1 (pull 2026-09-21): let the gate's deferred-kick drain see live runs without
-// llm-loop-gate importing this module (cycle). Registered once at module init.
-setThreadRunActiveProbe((threadId) => abortControllers.has(threadId))
-/**
- * SEC-D: generation token per thread so a superseded run's `finally` cannot
- * delete the successor AbortController or release the multi-agent LLM gate.
- */
-const llmLoopGeneration = new Map<string, number>()
-/** P0 CORR-02: threadId → panel/session id that owns the in-flight LLM loop */
-const llmLoopOwnerPanel = new Map<string, string>()
-
-/** Run-state: threads with an in-flight LLM abort controller. */
-export function listLlmActiveThreadIds(): string[] {
-  return [...abortControllers.keys()]
-}
-
-/**
- * Test-only: mark a thread as LLM-busy (in-flight abort controller).
- * Production code must not call this — use the chat path instead.
- */
-export function __testSetLlmActiveForTests(threadId: string, active: boolean): void {
-  if (active) {
-    abortControllers.set(threadId, new AbortController())
-    llmLoopGeneration.set(threadId, (llmLoopGeneration.get(threadId) || 0) + 1)
-  } else {
-    abortControllers.delete(threadId)
-    llmLoopGeneration.delete(threadId)
-    llmLoopOwnerPanel.delete(threadId)
-  }
-}
-
-/** Test-only: stamp llmLoopOwnerPanel so abortLlmLoopsForPanel can be exercised. */
-export function __testSetLlmOwnerForTests(threadId: string, panelId: string | null): void {
-  if (!threadId) return
-  if (panelId) llmLoopOwnerPanel.set(threadId, panelId)
-  else llmLoopOwnerPanel.delete(threadId)
-}
-
-/**
- * Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort).
- * #307: user-initiated stops (chat.abort / worker.pause / fleet.stop_all /
- * cockpit stop_thread / worker_cancel) pass `clearQueue` so the thread's
- * queued nextRun never silently revives later; non-user paths (panel close,
- * supersede) omit it and keep the queue. `cancelled` discloses how many
- * queued turns the stop dropped (0 unless clearQueue).
- */
-/**
- * Register an in-flight AbortController for a kicked worker chatCreate
- * (spawn_worker / spawn_expert_team). Same SoT as router chat.create so
- * Glance `llm_active`, fleet.stop_all, and chat.abort can see the run.
- *
- * F1 (pull 2026-09-21): returns null when another run already owns the thread
- * (e.g. the user manually chat.create'd a queued worker). Reusing the existing
- * controller made two chatCreate loops share one signal, and the kick's
- * release then deleted the USER's controller mid-flight. Callers must skip
- * the kick on null — the brief stays persisted; this kick is dropped (a later
- * fleet/orchestrator action re-kicks the worker).
- */
-export function installKickAbortController(threadId: string): AbortController | null {
-  if (abortControllers.has(threadId)) return null
-  const controller = new AbortController()
-  abortControllers.set(threadId, controller)
-  nextLlmGeneration(threadId)
-  return controller
-}
-
-/** CAS-delete the kick controller after chatCreate settles (success or throw). No-op on a refused (null) install. */
-export function releaseKickAbortController(threadId: string, controller: AbortController | null): void {
-  if (!controller) return
-  if (abortControllers.get(threadId) === controller) {
-    abortControllers.delete(threadId)
-    llmLoopOwnerPanel.delete(threadId)
-  }
-}
-
-export function abortThreadChat(
-  threadId: string,
-  opts?: { clearQueue?: boolean },
-): { stopped: boolean; cancelled: number } {
-  if (!threadId) return { stopped: false, cancelled: 0 }
-  retireComputerReadonlyThread(threadId)
-  // N-1 no-revive: cancel this thread's queued kick BEFORE freeing the gate —
-  // releaseMultiAgentLlmLoop drains synchronously and would start the very
-  // kick this stop is meant to kill (grok A / kimi B, pull 2026-09-21).
-  cancelDeferredLlmKick(threadId)
-  const controller = abortControllers.get(threadId)
-  if (controller) {
-    controller.abort()
-    abortControllers.delete(threadId)
-    llmLoopOwnerPanel.delete(threadId)
-    // Bump generation so any late finally from this run cannot reclaim the slot
-    // or clobber a successor. Because finally will CAS-skip release, we must
-    // free the multi-agent gate here (Pi REJECT: abort leaked MULTI_AGENT_LLM_CAP).
-    llmLoopGeneration.set(threadId, (llmLoopGeneration.get(threadId) || 0) + 1)
-    // Free gate here: finally will CAS-skip release after generation bump.
-    releaseMultiAgentLlmLoop(threadId)
-  }
-  dropSteer(threadId)
-  return {
-    stopped: controller != null,
-    cancelled: opts?.clearQueue ? clearNextRun(threadId) : 0,
-  }
-}
-
-/**
- * P0 CORR-02: abort all LLM loops owned by a panel/WS connection on close.
- */
-export function abortLlmLoopsForPanel(panelId: string | undefined | null): number {
-  if (!panelId) return 0
-  let n = 0
-  for (const [tid, owner] of [...llmLoopOwnerPanel.entries()]) {
-    if (owner === panelId) {
-      if (abortThreadChat(tid).stopped) n++
-    }
-  }
-  return n
-}
-
-function nextLlmGeneration(threadId: string): number {
-  const gen = (llmLoopGeneration.get(threadId) || 0) + 1
-  llmLoopGeneration.set(threadId, gen)
-  return gen
 }
 
 /** Drain extension tools + L2 for a thread when superseding (mirror chat.abort core). */
@@ -425,9 +302,9 @@ async function drainNextRun(
   services: Services,
   session?: SessionCallbacks,
 ): Promise<any> {
-  if (myGeneration !== null && llmLoopGeneration.get(threadId) !== myGeneration) return null
+  if (myGeneration !== null && !isCurrentRunGeneration(threadId, myGeneration)) return null
   if (!threadId || peekNextRunCount(threadId) === 0) return null
-  if (abortControllers.has(threadId)) return null
+  if (isThreadRunActive(threadId)) return null
   // Pre-check the gates the recursive chat.create will hit, with the surface
   // stamp the followUp frame will carry (drain keeps this session's surface —
   // unstamped create is treated as panel and OVERLAY_STANDBY-kills
@@ -1153,12 +1030,12 @@ async function dispatchMessage(
     case "project.archive":
     case "project.restore":
     case "thread.project.set":
-      return handleProjectMessage(type, rest, threadManager, session?.surface, id => abortControllers.has(id))
+      return handleProjectMessage(type, rest, threadManager, session?.surface, isThreadRunActive)
     case "site.counter.status":
     case "site.counter.reset":
       return handleSiteCounterMessage(msg, threadManager, session, () => {
         const { securityConfirmations } = require("./server") as typeof import("./server")
-        return listLlmActiveThreadIds().includes(rest.thread_id) || listPendingToolsForThread(rest.thread_id).length > 0
+        return isThreadRunActive(rest.thread_id) || listPendingToolsForThread(rest.thread_id).length > 0
           || securityConfirmations.hasPendingForWorker(rest.thread_id) || securityConfirmations.hasPendingForOriginWs(session?.originWs)
       })
     // --- Config (C10-C: handlers/config.ts) ---
@@ -1307,7 +1184,7 @@ async function dispatchMessage(
         }
       }
 
-      if (rest.enqueue === true && abortControllers.has(rest.thread_id)) {
+      if (rest.enqueue === true && isThreadRunActive(rest.thread_id)) {
         const text = typeof rest.message === "string" ? rest.message.trim() : ""
         if (!text) {
           return { type: "error", error: "empty_enqueue", thread_id: rest.thread_id }
@@ -1339,7 +1216,7 @@ async function dispatchMessage(
         }
       }
 
-      if (abortControllers.has(rest.thread_id)) {
+      if (isThreadRunActive(rest.thread_id)) {
         return { type: "error", error: "run_active", thread_id: rest.thread_id }
       }
 
@@ -1354,12 +1231,9 @@ async function dispatchMessage(
       // (chat.regenerate is the only superseding path; it aborts + drains
       // explicitly).
       if (session.nativeDialog && !session.nativeDialog.current()) return { type: "chat.error", thread_id: rest.thread_id, error: "DESKTOP_SESSION_STALE" }
-      const myGeneration = nextLlmGeneration(rest.thread_id)
-      const controller = new AbortController()
-      abortControllers.set(rest.thread_id, controller)
-      if (session?.panelId) llmLoopOwnerPanel.set(rest.thread_id, session.panelId)
+      const { generation: myGeneration, controller } = claimThreadRun(rest.thread_id, session.panelId)
       const nativeOwner = session.nativeDialog
-      const nativeRunCurrent = () => abortControllers.get(rest.thread_id) === controller && llmLoopGeneration.get(rest.thread_id) === myGeneration
+      const nativeRunCurrent = () => ownsThreadRun(rest.thread_id, controller) && isCurrentRunGeneration(rest.thread_id, myGeneration)
       let nativeStopCleanup: Promise<void> | undefined
       const stopNativeRun = () => {
         if (!nativeRunCurrent() || nativeStopCleanup) return false
@@ -1389,15 +1263,12 @@ async function dispatchMessage(
 
       // ADR-015: cap concurrent multi-agent LLM loops (workers + orchestrators)
       const threadForLlmCap = services.threadManager.get(rest.thread_id)
-      const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } = await import("./orchestrator/llm-loop-gate")
+      const { tryAcquireMultiAgentLlmLoop } = await import("./orchestrator/llm-loop-gate")
       if (nativeOwner && !nativeOwner.current()) { stopNativeRun(); await nativeStopCleanup; return { type: "chat.error", thread_id: rest.thread_id, error: "DESKTOP_SESSION_STALE" } }
       const loopGate = tryAcquireMultiAgentLlmLoop(threadForLlmCap, rest.thread_id)
       if (!loopGate.ok) {
         // Release the slot we just claimed
-        if (abortControllers.get(rest.thread_id) === controller) {
-          abortControllers.delete(rest.thread_id)
-          llmLoopOwnerPanel.delete(rest.thread_id)
-        }
+        releaseRunController(rest.thread_id, controller)
         return {
           type: "chat.error",
           thread_id: rest.thread_id,
@@ -1566,7 +1437,7 @@ async function dispatchMessage(
           runStats.terminal = "error"
         }
         // Only emit aborted UI if this generation is still current (SEC-D)
-        if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
+        if (isCurrentRunGeneration(rest.thread_id, myGeneration)) {
           if (e.name === "AbortError" || controller.signal.aborted) {
             session.sendToExtension({ type: "chat.aborted", thread_id: rest.thread_id })
           } else {
@@ -1576,16 +1447,7 @@ async function dispatchMessage(
       } finally {
         if (nativeStopCleanup) await nativeStopCleanup
         // SEC-D generation CAS: predecessor must not free successor controller/gate
-        if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
-          if (abortControllers.get(rest.thread_id) === controller) {
-            abortControllers.delete(rest.thread_id)
-          }
-          // R3b: drop the owner mapping on every exit of this run (success +
-          // caught failure) so no stale threadId→panel entry survives; the
-          // generation guard above keeps a successor run's mapping intact.
-          llmLoopOwnerPanel.delete(rest.thread_id)
-          releaseMultiAgentLlmLoop(rest.thread_id)
-        }
+        finishThreadRun(rest.thread_id, myGeneration, controller)
       }
       // Only the generation that still owns the thread may drain nextRun.
       // A superseded/aborted predecessor must not steal the queue and
@@ -1597,7 +1459,7 @@ async function dispatchMessage(
       // adapter's own finally converted leftover steers (user turns queue
       // first) and before the drain, under the same generation owner. Never
       // throws into the run path.
-      if (llmLoopGeneration.get(rest.thread_id) === myGeneration) {
+      if (isCurrentRunGeneration(rest.thread_id, myGeneration)) {
         try {
           const { onLoopRunFinished } = await import("./loop/loop-kernel")
           const { listWorkers } = await import("./orchestrator/spawn")
@@ -1660,7 +1522,7 @@ async function dispatchMessage(
       if (!steerText) {
         return { type: "error", error: "empty_steer", thread_id: rest.thread_id }
       }
-      if (!abortControllers.has(rest.thread_id)) {
+      if (!isThreadRunActive(rest.thread_id)) {
         return { type: "error", error: "no_active_run", thread_id: rest.thread_id }
       }
       {
@@ -1703,27 +1565,12 @@ async function dispatchMessage(
         const conductorErr = gateChatCreateOnConductor(thread_id, stampedSurface)
         if (conductorErr) return conductorErr
       }
-      if (abortControllers.has(thread_id)) {
+      if (isThreadRunActive(thread_id)) {
         return { type: "error", error: "run_active", thread_id }
       }
-      // P1 TOCTOU: claim the slot SYNCHRONOUSLY at entry — before parseFile /
-      // analyzeImage awaits open a multi-second window in which a chat.create
-      // would pass its own run_active check and start a full LLM run that a
-      // late abortControllers.set() would then silently overwrite (orphan
-      // double stream; chat.abort could only stop one). No await between the
-      // check above and this set. Keep the pre-#219 supersede (abort + drain)
-      // as defense-in-depth for any controller that still slips in.
-      const uploadGeneration = nextLlmGeneration(thread_id)
-      const uploadController = new AbortController()
-      const existingUpload = abortControllers.get(thread_id)
-      abortControllers.set(thread_id, uploadController)
-      if (session?.panelId) llmLoopOwnerPanel.set(thread_id, session.panelId)
-      else llmLoopOwnerPanel.set(thread_id, `upload:${thread_id}`)
-      if (existingUpload) {
-        logger.info("llm.thread_request_superseded", { thread_id })
-        existingUpload.abort()
-        await drainThreadOnSupersede(thread_id, `file.upload.supersede:${thread_id}`)
-      }
+      // Reserve the run before parsing or vision analysis yields to another request.
+      const { generation: uploadGeneration, controller: uploadController } =
+        claimThreadRun(thread_id, session.panelId || `upload:${thread_id}`)
       const config = getConfig()
       const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[], max_embedded_images: 20, enable_vision_analysis: true, max_file_tokens: 50000 }
 
@@ -1734,13 +1581,8 @@ async function dispatchMessage(
         // (parse/size/type/cap/paused/gate failures) must free it or the thread
         // stays run_active forever. SEC-D CAS: never delete a successor's
         // controller; the gate release is a no-op when never acquired.
-        if (
-          llmLoopGeneration.get(thread_id) === uploadGeneration &&
-          abortControllers.get(thread_id) === uploadController
-        ) {
-          abortControllers.delete(thread_id)
-          llmLoopOwnerPanel.delete(thread_id)
-          releaseMultiAgentLlmLoop(thread_id)
+        if (ownsThreadRun(thread_id, uploadController)) {
+          finishThreadRun(thread_id, uploadGeneration, uploadController)
         }
         try {
           if (typeof thread_id === "string" && thread_id) {
@@ -1989,7 +1831,7 @@ async function dispatchMessage(
       }
       // The slot was claimed at entry (TOCTOU fix); only the multi-agent LLM
       // cap is left to acquire here — a reject frees the claim via uploadError.
-      const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseUploadLlm } =
+      const { tryAcquireMultiAgentLlmLoop } =
         await import("./orchestrator/llm-loop-gate")
       const threadForUploadCap = services.threadManager.get(thread_id)
       const uploadLoopGate = tryAcquireMultiAgentLlmLoop(threadForUploadCap, thread_id)
@@ -2213,7 +2055,7 @@ async function dispatchMessage(
           error: e?.message || String(e),
           aborted: e?.name === "AbortError" || uploadController.signal.aborted,
         })
-        if (llmLoopGeneration.get(thread_id) === uploadGeneration) {
+        if (isCurrentRunGeneration(thread_id, uploadGeneration)) {
           if (e.name === "AbortError" || uploadController.signal.aborted) {
             session.sendToExtension({ type: "chat.aborted", thread_id })
           } else {
@@ -2221,15 +2063,7 @@ async function dispatchMessage(
           }
         }
       } finally {
-        if (llmLoopGeneration.get(thread_id) === uploadGeneration) {
-          if (abortControllers.get(thread_id) === uploadController) {
-            abortControllers.delete(thread_id)
-          }
-          // R3b: clear the owner mapping on success + failure exits alike
-          // (generation-guarded so a superseding run's mapping survives).
-          llmLoopOwnerPanel.delete(thread_id)
-          releaseUploadLlm(thread_id)
-        }
+        finishThreadRun(thread_id, uploadGeneration, uploadController)
       }
 
       const uploadedNames = [
@@ -2482,11 +2316,7 @@ async function dispatchMessage(
       }
 
       // P0 CORR-05: abort + drain FIRST, then truncate tape (no orphan write-back)
-      const myGeneration = nextLlmGeneration(thread_id)
-      const controller = new AbortController()
-      const existing = abortControllers.get(thread_id)
-      abortControllers.set(thread_id, controller)
-      if (session?.panelId) llmLoopOwnerPanel.set(thread_id, session.panelId)
+      const { generation: myGeneration, controller, previous: existing } = claimThreadRun(thread_id, session?.panelId)
       if (existing) {
         logger.info("llm.thread_request_superseded", { thread_id })
         existing.abort()
@@ -2504,15 +2334,12 @@ async function dispatchMessage(
         messages: threadManager.getMessages(thread_id),
       })
 
-      const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop: releaseRegenLlm } =
+      const { tryAcquireMultiAgentLlmLoop } =
         await import("./orchestrator/llm-loop-gate")
       const threadForRegenCap = services.threadManager.get(thread_id)
       const regenLoopGate = tryAcquireMultiAgentLlmLoop(threadForRegenCap, thread_id)
       if (!regenLoopGate.ok) {
-        if (abortControllers.get(thread_id) === controller) {
-          abortControllers.delete(thread_id)
-          llmLoopOwnerPanel.delete(thread_id)
-        }
+        releaseRunController(thread_id, controller)
         return {
           type: "chat.error",
           thread_id,
@@ -2597,7 +2424,7 @@ async function dispatchMessage(
           resolveSiteTarget: (tabId, signal) => resolveBrowserSiteTarget(session.executeTool, rest.thread_id, tabId, signal),
         })
       } catch (e: any) {
-        if (llmLoopGeneration.get(thread_id) === myGeneration) {
+        if (isCurrentRunGeneration(thread_id, myGeneration)) {
           if (e.name === "AbortError" || controller.signal.aborted) {
             session.sendToExtension({ type: "chat.aborted", thread_id })
           } else {
@@ -2605,15 +2432,7 @@ async function dispatchMessage(
           }
         }
       } finally {
-        if (llmLoopGeneration.get(thread_id) === myGeneration) {
-          if (abortControllers.get(thread_id) === controller) {
-            abortControllers.delete(thread_id)
-          }
-          // R3b: clear the owner mapping on success + failure exits alike
-          // (generation-guarded so a superseding run's mapping survives).
-          llmLoopOwnerPanel.delete(thread_id)
-          releaseRegenLlm(thread_id)
-        }
+        finishThreadRun(thread_id, myGeneration, controller)
       }
       // P1: drain one queued nextRun now that the slot is free (parity with
       // chat.create) — generation-guarded + gate-pre-checked inside, so a
@@ -2638,7 +2457,7 @@ async function dispatchMessage(
       // Soft-delete only when UI explicitly passes mode:"trash".
       const mode = rest.mode === "trash" ? "trash" : "hard"
       // Busy reject (defense-in-depth; batch already does this)
-      if (listLlmActiveThreadIds().includes(rest.thread_id)) {
+      if (isThreadRunActive(rest.thread_id)) {
         return {
           type: "error",
           error: "thread_busy",
@@ -2723,7 +2542,7 @@ async function dispatchMessage(
             failed.push({ id: String(raw ?? ""), reason: "invalid_id" })
             continue
           }
-          if (busy.has(id) || (rest.only_empty === true && listLlmActiveThreadIds().includes(id))) {
+          if (busy.has(id) || (rest.only_empty === true && isThreadRunActive(id))) {
             failed.push({ id, reason: "thread_busy" })
             continue
           }
@@ -3168,7 +2987,7 @@ async function dispatchMessage(
       // Do not persist INTERRUPTED on GET. Crash leftovers heal on next chatCreate.
       // In-memory only. run_status is abortControllers SoT (overlay maps submit).
       // pending_tools still omitted for summoner. After WS close → idle.
-      const run_status = abortControllers.has(rest.thread_id) ? "llm" : "idle"
+      const run_status = isThreadRunActive(rest.thread_id) ? "llm" : "idle"
       let pending_tools:
         | Array<{ tool_call_id: string; tool_name: string; status: "running" }>
         | undefined
@@ -3498,7 +3317,7 @@ async function dispatchMessage(
         // the queued continuation drains through the normal gates below.
         let started = false
         const kickoff = loopKernel.buildLoopKickoff(threadManager, rest.thread_id)
-        if (kickoff && !abortControllers.has(rest.thread_id)) {
+        if (kickoff && !isThreadRunActive(rest.thread_id)) {
           const { enqueueNextRun: enqueueLoopRun } = await import("./llm/run-queues")
           if (enqueueLoopRun(rest.thread_id, kickoff, undefined, "loop")) {
             const drained = await drainNextRun(rest.thread_id, null, services, session)
@@ -4902,7 +4721,7 @@ async function dispatchMessage(
             code: "pack_overlay_forbidden_fields",
           }
         }
-        if (abortControllers.has(rest.thread_id)) {
+        if (isThreadRunActive(rest.thread_id)) {
           return { type: "error", error: "pack_run_active", code: "pack_run_active" }
         }
         const inst = readInstalledManifest(rest.pack_id)

@@ -37,7 +37,8 @@ import {
   getLockFilePath,
   getPidFilePath,
 } from "../config"
-import { handleMessage, redactMcpServersForBroadcast, listLlmActiveThreadIds } from "../message-router"
+import { abortLlmLoopsForPanel, isThreadRunActive } from "../llm/active-runs"
+import { handleMessage, redactMcpServersForBroadcast } from "../message-router"
 import { disconnectMeetingAsr } from "../meeting/meeting-handlers"
 import { projectThreadActivity } from "../message-router/handlers/projects"
 import { isModuleEnabled } from "../capability/modules"
@@ -802,13 +803,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     services: { threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), mcp: mcpManager },
     maxPayload: MAX_WS_MESSAGE_SIZE,
     securityConfirmations: requireRt().securityConfirmations,
-    archiveActivity: id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target)),
-    terminalRuntime: createNativeTerminalRuntime(id => projectThreadActivity(id, target => listLlmActiveThreadIds().includes(target))),
+    archiveActivity: id => projectThreadActivity(id, isThreadRunActive),
+    terminalRuntime: createNativeTerminalRuntime(id => projectThreadActivity(id, isThreadRunActive)),
     browserPeers: () => [...clients].filter(c => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin)).map(c => desktopBrowserPeer(c, () => c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true && isChromeExtensionWsOrigin(wsAuth.get(c)?.origin))),
     onAuthenticated: host => desktopLauncher.authenticated(host),
     dialogRuntime: owner => createNativeDialogRuntime({ ...owner, threads: requireRt().getThreadManager(), skills: requireRt().getSkillEngine(), history: requireRt().getHistoryStore(), createExecutor: run => requireRt().createToolExecutor(owner.ws, run) }),
-    localRuntime: createNativeLocalWorkRuntime({threads:requireRt().getThreadManager(),activity:id=>projectThreadActivity(id,key=>listLlmActiveThreadIds().includes(key))}),
-    workspaceRuntime: { enabled: () => isModuleEnabled("devsec-workspace"), activity: id => projectThreadActivity(id, key => listLlmActiveThreadIds().includes(key)) },
+    localRuntime: createNativeLocalWorkRuntime({threads:requireRt().getThreadManager(),activity:id=>projectThreadActivity(id,isThreadRunActive)}),
+    workspaceRuntime: { enabled: () => isModuleEnabled("devsec-workspace"), activity: id => projectThreadActivity(id, isThreadRunActive) },
     onDisconnect: ws => { requireRt().securityConfirmations.rejectAll("disconnect", ws); requireRt().clearMcpSession(ws); try { require("../pty/session").killPtyByPeer(ws) } catch { /* Continue desktop teardown if PTY cleanup fails. */ } },
   })
   desktopLauncher = new DesktopHostLauncher(desktopRegistry, `ws://127.0.0.1:${port}/desktop`, (host, view) => desktopChannel.window(host, view))
@@ -1619,7 +1620,6 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       try {
         const panelId = (ws as any).__cmsparkPanelId as string | undefined
         if (panelId) {
-          const { abortLlmLoopsForPanel } = require("../message-router") as typeof import("../message-router")
           const n = abortLlmLoopsForPanel(panelId)
           if (n > 0) {
             logger.info("ws.close_aborted_llm", { panelId, count: n })

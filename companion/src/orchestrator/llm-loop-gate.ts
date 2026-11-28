@@ -137,11 +137,8 @@ export function pendingDeferredLlmKickThreadIds(): string[] {
 }
 
 /**
- * F1 (pull 2026-09-21): message-router registers this so drain can see whether
- * a thread already has an in-flight chat run (abort map). llm-loop-gate must
- * not import message-router (cycle), so the dependency is injected. A queued
- * kick for a thread the user is manually chatting stays queued instead of
- * double-running the worker alongside the user's run.
+ * The run registry installs this probe so draining a deferred kick can see a
+ * manually started chat before starting another run for the same thread.
  */
 let isThreadRunActiveProbe: ((threadId: string) => boolean) | null = null
 

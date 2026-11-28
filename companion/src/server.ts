@@ -942,7 +942,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
               // F1: synchronous require — an `await import` gap let a user
               // chat.create install its controller first, and the old
               // install-reuse then double-ran the worker on one signal.
-              const { installKickAbortController, releaseKickAbortController } = require("./message-router") as typeof import("./message-router")
+              const { installKickAbortController, releaseRunController } = require("./llm/active-runs") as typeof import("./llm/active-runs")
               const controller = installKickAbortController(threadId)
               if (!controller) {
                 // Another run owns the thread (user manually chatting this
@@ -977,7 +977,7 @@ export function createToolExecutor(ws: WebSocket, nativeOwner?: { current(): boo
                   error: e?.message || String(e),
                 })
               } finally {
-                releaseKickAbortController(threadId, controller)
+                releaseRunController(threadId, controller)
               }
             })
           },
