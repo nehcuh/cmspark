@@ -1,10 +1,10 @@
 // Vision pipeline — local vision model integration for screenshot/image analysis
 
 import { createProvider } from "./provider"
-import { getConfig, type LlmConfig } from "../config"
-import { endpointsMatch } from "./vision-reuse-inherit"
+import type { LlmConfig, VisionConfig } from "../config"
+import { resolveVisionLlmConfig } from "./vision-config"
+export { normalizeVisionBaseUrl, resolveVisionLlmConfig } from "./vision-config"
 import * as crypto from "crypto"
-import type { VisionConfig } from "../config"
 import { logger } from "../logger"
 import { sniffRasterImage } from "./image-sniff"
 import { shouldBlockVisionRequest } from "./vision-reuse-inherit"
@@ -133,23 +133,6 @@ export function visionImageDataUrl(image: { base64: string }): string | null {
   return `data:${sniffed};base64,${image.base64}`
 }
 
-/** Resolve reusable gateway auth in Companion; secrets never need to enter the UI. */
-export function resolveVisionLlmConfig(config: VisionConfig, mainConfig?: LlmConfig): LlmConfig {
-  const main = config.use_main_auth ? mainConfig ?? getConfig().llm : undefined
-  const inherited = main && endpointsMatch(main, config) &&
-    (main.protocol ?? "openai") === (config.protocol ?? "openai") ? main : undefined
-  return {
-    ...inherited, ...config,
-    auth_style: inherited?.auth_style ?? config.auth_style,
-    client_header_profile: inherited?.client_header_profile ?? config.client_header_profile,
-    claude_code_compat_version: inherited?.claude_code_compat_version ?? config.claude_code_compat_version,
-    extra_headers: inherited?.extra_headers ?? config.extra_headers,
-    anthropic_version: inherited?.anthropic_version ?? config.anthropic_version,
-    base_url: config.protocol === "anthropic" ? config.base_url : normalizeVisionBaseUrl(config.base_url),
-    temperature: 0.3, context_window: 100_000,
-  }
-}
-
 export async function probeVisionConnection(config: VisionConfig): Promise<void> {
   await analyzeImage({ base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", width: 1, height: 1, title: "connection probe", url: "" },
     { ...config, fallback: "error", cache_ttl_seconds: 0, max_tokens: 32 }, "Briefly describe this image.")
@@ -224,9 +207,8 @@ async function doAnalyze(
       return buildFallback(image, config, gate.reason || "Vision key missing for remote endpoint")
     }
 
-    const visionUrl = config.protocol === "anthropic" ? config.base_url : normalizeVisionBaseUrl(config.base_url)
     const { assertLlmEndpointAllowedAsync } = await import("../security")
-    const blocked = await assertLlmEndpointAllowedAsync(visionUrl)
+    const blocked = await assertLlmEndpointAllowedAsync(providerConfig.base_url)
     if (blocked) {
       logger.warn("vision.blocked_llm_endpoint", {
         base_url: config.base_url,
@@ -291,30 +273,6 @@ async function doAnalyze(
       ? formatProbeHttpError(err.status, config.protocol ?? "openai")
       : "图像请求失败，请核对服务连接、协议和模型名称"
     return buildFallback(image, config, err.message, attemptedModel, latencyMs, reason)
-  }
-}
-
-/**
- * OpenAI-compatible servers mount the API at /v1, but users routinely paste the
- * server root (LM Studio shows `http://localhost:1234`). Append /v1 when the URL
- * carries no path so a bare host:port still reaches /v1/chat/completions.
- * Scheme-less pastes default to http (vision endpoints are local HTTP servers);
- * URLs that already carry a path (…/v1, Azure /openai/…, gateways) pass through.
- * Rebuilt from URL parts so /v1 never lands after a stray query/fragment.
- * Note: a server that truly mounts the API at the root can no longer be
- * expressed — every mainstream OpenAI-compatible server uses /v1.
- */
-export function normalizeVisionBaseUrl(url: string): string {
-  const trimmed = String(url || "").trim().replace(/\/+$/, "")
-  if (!trimmed) return trimmed
-  try {
-    const withScheme = trimmed.includes("://") ? trimmed : `http://${trimmed}`
-    const u = new URL(withScheme)
-    if (u.pathname !== "" && u.pathname !== "/") return withScheme
-    const auth = u.username ? `${u.username}${u.password ? `:${u.password}` : ""}@` : ""
-    return `${u.protocol}//${auth}${u.host}/v1`
-  } catch {
-    return trimmed
   }
 }
 

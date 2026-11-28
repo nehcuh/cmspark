@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { DATA_DIR, getConfigSnapshot, type VisionConfig } from "../config"
 import { createProvider, type CompleteResult } from "../llm/provider"
-import { resolveVisionLlmConfig } from "../llm/vision-pipeline"
+import { resolveVisionLlmConfig } from "../llm/vision-config"
 import { displayModelEndpoint, resolveMeetingVisualModel } from "../model-center"
 import { loadMeeting, watchMeetingDeletion, type MeetingSession } from "./meeting-store"
 import { matchesVisualImage, validVisualMessage, type MeetingVisualFrame } from "./meeting-visual-schema"

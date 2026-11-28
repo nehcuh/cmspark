@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { modelRecipient } from '../llm/recipient'
 import { getConfig, type CompanionConfig, type VisionConfig } from '../config'
 import type { ActivityConfig } from './types'
-import { endpointsMatch } from '../llm/vision-reuse-inherit'
+import { resolveVisionLlmConfig } from '../llm/vision-config'
 import { visionConfigForAnalyze } from '../llm/likely-multimodal'
 
 export function activityModelTarget(config: ActivityConfig, snapshot?: CompanionConfig): { id: string; label: string; unavailable?: string } {
@@ -15,16 +15,7 @@ export function activityModelTarget(config: ActivityConfig, snapshot?: Companion
   }
   const model = activityVisionConfig(config, app)
   // Include effective gateway auth in the binding without exposing it to the renderer.
-  const inherited = model.use_main_auth && endpointsMatch(app.llm, model) &&
-    (app.llm.protocol ?? 'openai') === (model.protocol ?? 'openai') ? app.llm : undefined
-  // Match resolveVisionLlmConfig's per-field precedence; ignore unused main auth.
-  const auth = {
-    auth_style: inherited?.auth_style ?? model.auth_style,
-    client_header_profile: inherited?.client_header_profile ?? model.client_header_profile,
-    claude_code_compat_version: inherited?.claude_code_compat_version ?? model.claude_code_compat_version,
-    extra_headers: inherited?.extra_headers ?? model.extra_headers,
-    anthropic_version: inherited?.anthropic_version ?? model.anthropic_version,
-  }
+  const auth = resolveVisionLlmConfig(model, app.llm)
   const headers = auth.extra_headers === undefined ? undefined : Object.fromEntries(Object.entries(auth.extra_headers).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
   const id = createHash('sha256').update(JSON.stringify([mode, model.base_url, model.model_name, model.protocol, model.api_key, auth.auth_style, auth.client_header_profile, auth.claude_code_compat_version, headers, auth.anthropic_version])).digest('hex')
   const unavailable = !model.enabled ? '请先在「看图与截图」开启截图视觉分析' :

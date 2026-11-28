@@ -89,7 +89,7 @@ import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./comp
 import { surfaceFromOrigin, isChromeExtensionWsOrigin, TRAY_WS_ORIGIN } from "./handshake-surface"
 import { miniPanelOwner } from "../mini/capture-handoff"
 import { getActivityService } from "../activity"
-import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
+import { normalizeVisionBaseUrl } from "../llm/vision-config"
 import {
   bindExtensionPeerPicker,
   hasAuthenticatedExtensionPeer,
