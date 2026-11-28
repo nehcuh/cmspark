@@ -8,7 +8,7 @@ import * as fs from "node:fs"
 import fsNative from "node:fs"
 import * as net from "node:net"
 import netNative from "node:net"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-daemon-"))
 const windows = process.platform === "win32"
@@ -169,6 +169,48 @@ test("releaseLock is idempotent when called twice", async () => {
   await releaseOwnedLock(lockPath) // should not throw
   if (windows) assert.equal(await endpointConnects(lockPath), false)
   else assert.equal(fs.existsSync(lockPath), false)
+})
+
+test("releasing an unowned lock keeps a live foreground listener reachable", async () => {
+  const lockPath = ownedLockPath("foreground.sock")
+  const other = net.createServer(socket => socket.end())
+  await new Promise<void>((resolve, reject) => other.once("error", reject).listen(lockPath, resolve))
+  try {
+    assert.equal(await acquireLock(lockPath), false)
+    releaseLock(lockPath)
+    assert.equal(await endpointConnects(lockPath), true)
+  } finally {
+    await new Promise<void>(resolve => other.close(() => resolve()))
+  }
+})
+
+test("only one process can reclaim a refused Unix endpoint", { skip: windows }, async t => {
+  const lockPath = ownedLockPath("stale.sock")
+  const crashed = spawnSync(process.execPath, ["-e",
+    'require("node:net").createServer().listen(process.argv[1], () => process.kill(process.pid, "SIGKILL"))',
+    lockPath], { timeout: 10_000 })
+  assert.equal(crashed.signal, "SIGKILL")
+  assert.equal(fs.lstatSync(lockPath).isSocket(), true)
+  // Run a second real contender at the last moment before removing the stale socket.
+  // Both processes have seen the same dead listener, with no timing assumptions.
+  const unlink = fsNative.unlinkSync
+  let contenderResult = ""
+  t.mock.method(fsNative, "unlinkSync", (file: fs.PathLike) => {
+    if (file === lockPath) {
+      const other = spawnSync(process.execPath, ["-e",
+        'require(process.argv[1]).acquireLock(process.argv[2]).then(won => { process.stdout.write(String(won), () => process.exit(0)) })',
+        require.resolve("../src/daemon"), lockPath], { encoding: "utf8", timeout: 10_000 })
+      assert.equal(other.status, 0, other.error?.message || other.stderr)
+      contenderResult = other.stdout
+    }
+    return unlink(file)
+  })
+  assert.equal(await acquireLock(lockPath), true)
+  try {
+    assert.equal(contenderResult, "false")
+    assert.equal(await endpointConnects(lockPath), true)
+  }
+  finally { await releaseOwnedLock(lockPath) }
 })
 
 test("acquireLock creates parent directories if needed", async t => {

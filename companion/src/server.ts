@@ -19,7 +19,7 @@ import { desktopFrameInspector } from "./computer/main-model-vision"
 import { bindChatEvidenceScope } from "./business-evidence/chat-scope"
 import { setOutboundContextEngine } from "./outbound-mcp/companion-http"
 import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
-import { gcExpiredMeetingAudio } from "./meeting/meeting-store"
+import { gcExpiredMeetingAudio, reconcileStaleRecordings } from "./meeting/meeting-store"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
@@ -340,6 +340,12 @@ function logToolFinish(toolCallId: string, toolName: string, startedAt: number, 
 
 async function initServices() {
   await initDataDir()
+  // Only the server holding the daemon lock can declare a previous capture interrupted.
+  try {
+    reconcileStaleRecordings(getConfigDir())
+  } catch (error) {
+    logger.warn("meeting.recording_reconcile_boot_failed", { error: String(error) })
+  }
   threadManager = new ThreadManager()
   skillEngine = new SkillEngine(getConfig().llm)
   setOutboundContextEngine(skillEngine)

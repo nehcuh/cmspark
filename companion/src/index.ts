@@ -144,22 +144,9 @@ async function handleDaemonStart(): Promise<void> {
     process.exit(0)
   }
 
-  const lockAcquired = await acquireLock(lockPath)
-  if (!lockAcquired) {
-    const pidFromLock = readPidFile(pidPath)
-    if (pidFromLock && !isProcessRunning(pidFromLock)) {
-      console.log(`[cmspark-agent] Cleaning up stale lock from dead process (pid: ${pidFromLock})`)
-      cleanupPidFile(pidPath)
-      releaseLock(lockPath)
-      const retry = await acquireLock(lockPath)
-      if (!retry) {
-        console.error("[cmspark-agent] Failed to acquire lock after cleanup")
-        process.exit(1)
-      }
-    } else {
-      console.error("[cmspark-agent] Another instance is already running")
-      process.exit(1)
-    }
+  if (!await acquireLock(lockPath)) {
+    console.error("[cmspark-agent] Another instance is already running")
+    process.exit(1)
   }
 
   const shouldDaemonize = process.argv.includes("--daemonize")

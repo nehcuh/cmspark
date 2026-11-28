@@ -59,9 +59,7 @@ import { applyTabNavigated } from "./tab-url-cache"
 import {
   acquireLock,
   releaseLock,
-  isProcessRunning,
   readPidFile,
-  cleanupPidFile,
   setupGracefulShutdown,
 } from "../daemon"
 import { getMcpManager, getMcpConfirmCache } from "../mcp"
@@ -533,6 +531,15 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     })
   }
 
+  // acquireLock owns stale socket recovery. A live listener may be a foreground
+  // server without a PID file; only the successful owner may recover disk state.
+  if (!await acquireLock(getLockFilePath())) {
+    const pid = readPidFile(getPidFilePath())
+    console.error("[cmspark-agent] Another instance is already running" + (pid ? ` (pid: ${pid})` : ""))
+    logger.error("server.start_failed", { reason: "already_running", pid })
+    process.exit(1)
+  }
+
   // Migrate deprecated DeepSeek model ids (deepseek-chat/deepseek-reasoner, retiring
   // 2026-07-24) to deepseek-v4-flash BEFORE the probe, so the probe validates the
   // migrated name. Idempotent; rewrites via the atomic saveConfig path and warns so
@@ -616,29 +623,6 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     )
   }
   const port = config.port || PORT
-
-  // --- UDS Lock: check for existing instance ---
-  const lockPath = getLockFilePath()
-  const lockAcquired = await acquireLock(lockPath)
-  if (!lockAcquired) {
-    // Lock exists — check if the owning process is still alive
-    const pid = readPidFile(getPidFilePath())
-    if (pid && isProcessRunning(pid)) {
-      console.error("[cmspark-agent] Another instance is already running (pid: " + pid + ")")
-      logger.error("server.start_failed", { reason: "already_running", pid })
-      process.exit(1)
-    }
-    // Stale lock — clean up and continue
-    console.log("[cmspark-agent] Cleaning up stale lock from dead process (pid: " + (pid || "unknown") + ")")
-    cleanupPidFile(getPidFilePath())
-    releaseLock(lockPath)
-    // Try again
-    const retryAcquired = await acquireLock(lockPath)
-    if (!retryAcquired) {
-      console.error("[cmspark-agent] Failed to acquire lock after cleanup")
-      process.exit(1)
-    }
-  }
 
   // Outbound MCP: refresh tool runner before each HTTP invoke
   try {

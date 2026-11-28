@@ -763,14 +763,6 @@ export async function initDataDir(): Promise<void> {
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
-  // P1 CORR-09: demote stuck recording meetings after process restart
-  try {
-    const { reconcileStaleRecordings } = require("./meeting/meeting-store") as typeof import("./meeting/meeting-store")
-    reconcileStaleRecordings(root)
-  } catch {
-    /* meetings module optional at very early boot */
-  }
-
   // Ensure data directory itself has restricted permissions
   try {
     fs.chmodSync(root, 0o700)
