@@ -1,6 +1,6 @@
 # 版本与交付状态
 
-源码开发版本 **1.13.0（尚未正式发布）**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
+源码版本 **1.13.0**。当前正式安装包见 [GitHub Releases](https://github.com/nehcuh/cmspark/releases/latest)。
 
 ## 1.13.0
 

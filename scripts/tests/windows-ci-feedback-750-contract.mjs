@@ -218,6 +218,14 @@ export function projectPickerEvidence476(steps) {
 
 export function validateWindowsCiFeedback750(text) {
   const doc = yaml.load(text)
+  const smokeSteps = doc.jobs['smoke-os'].steps
+  const setupName = 'Provision hosted WebView2 Runtime'
+  assert.equal(smokeSteps[0].uses, 'actions/checkout@v4')
+  assert.equal(smokeSteps.filter(step => step.name === setupName).length, 1)
+  assert.deepEqual(smokeSteps[1], {
+    name: setupName, if: "matrix.os == 'windows-latest'", 'timeout-minutes': 6, shell: 'pwsh', run: './scripts/ci/ensure-webview2.ps1',
+  })
+  smokeSteps.splice(1, 1)
   // Resolve the checked-in setup-node input before comparing historical steps.
   const pin = fs.readFileSync(new URL('../../.nvmrc', import.meta.url), 'utf8').trim()
   assert.equal(pin, '22.23.4')

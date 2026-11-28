@@ -202,6 +202,12 @@ jobs:
           # #650: full Windows children must not inherit checkout credentials.
           persist-credentials: ${{ matrix.os != 'windows-latest' }}
 
+      - name: Provision hosted WebView2 Runtime
+        if: matrix.os == 'windows-latest'
+        timeout-minutes: 6
+        shell: pwsh
+        run: ./scripts/ci/ensure-webview2.ps1
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
