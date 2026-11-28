@@ -29,5 +29,15 @@ test("emitted dependencies distinguish type, eager, deferred and self imports", 
   assert.deepEqual([...cyclicEdges(after)].filter(edge => !before.has(edge)), [
     "companion/src/lazy.ts --dynamic-import--> companion/src/b.ts",
   ])
+  writeFileSync(path.join(root, "companion/src/lazy.ts"), 'export const value = 1')
+  const reduced = cyclicEdges(await inspectDependencies(root))
+  assert.ok(reduced.size < before.size)
+  assert.deepEqual([...reduced].filter(edge => !before.has(edge)), [])
+
+  writeFileSync(path.join(root, "companion/src/new.ts"), 'export function load() { return import("./new") }')
+  const expanded = cyclicEdges(await inspectDependencies(root))
+  assert.deepEqual([...expanded].filter(edge => !before.has(edge)), [
+    "companion/src/new.ts --dynamic-import--> companion/src/new.ts",
+  ])
   assert.deepEqual(report.modules["companion/src/a.ts"], [{ path: "companion/src/b.ts", kind: "import-statement" }])
 })

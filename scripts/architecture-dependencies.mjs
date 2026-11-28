@@ -84,13 +84,6 @@ export function cyclicEdges(report) {
 
 if (import.meta.main) {
   const report = await inspectDependencies()
-  if (process.argv.includes("--json")) {
-    console.log(JSON.stringify(report, null, 2))
-  } else {
-    console.log(`${Object.keys(report.modules).length} modules, ${report.staticCycles.length} static import cycles, ${report.runtimeCycles.length} cyclic groups including require() and import().`)
-    if (report.runtimeCycles.length) console.log("Use --json for the members and import kinds of all cyclic groups.")
-    for (const group of report.staticCycles) console.error("Static import cycle among:\n  " + group.join("\n  "))
-  }
   const baseArg = process.argv.indexOf("--base-dir")
   let added = []
   if (baseArg !== -1) {
@@ -98,7 +91,14 @@ if (import.meta.main) {
     if (!baseDir || baseDir.startsWith("--")) throw new Error("--base-dir requires a checkout directory")
     const previous = cyclicEdges(await inspectDependencies(path.resolve(baseDir)))
     added = [...cyclicEdges(report)].filter(edge => !previous.has(edge)).sort()
+  }
+  if (process.argv.includes("--json")) {
+    console.log(JSON.stringify(baseArg === -1 ? report : { ...report, addedCyclicEdges: added }, null, 2))
+  } else {
+    console.log(`${Object.keys(report.modules).length} modules, ${report.staticCycles.length} static import cycles, ${report.runtimeCycles.length} cyclic groups including require() and import().`)
+    if (report.runtimeCycles.length) console.log("Use --json for the members and import kinds of all cyclic groups.")
     for (const edge of added) console.error("New cyclic dependency:", edge)
+    for (const group of report.staticCycles) console.error("Static import cycle among:\n  " + group.join("\n  "))
   }
   process.exitCode = report.staticCycles.length || added.length ? 1 : 0
 }
