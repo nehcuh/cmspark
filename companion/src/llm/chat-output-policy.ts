@@ -4,6 +4,19 @@ export const LLM_MAX_TOKENS_DEFAULT = 32768
 export const CONTEXT_WINDOW_TINY = 16000
 export const CONTEXT_WINDOW_FLOOR = 128000
 
+export const CHAT_OUTPUT_LIMIT_MAX = 393216
+
+export function isChatOutputLimit(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= CHAT_OUTPUT_LIMIT_MAX
+}
+
+/** Read a persisted value, including explicit ceilings written by earlier versions. */
+export function normalizeSavedChatOutputLimit(value: unknown): number | undefined {
+  if (value === 0) return 0
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return undefined
+  return Math.min(CHAT_OUTPUT_LIMIT_MAX, Math.floor(value))
+}
+
 /** Floor only at request time. The user's stored window is preserved. */
 export function effectiveContextWindow(disk: number) {
   const n = Number.isFinite(disk) ? Math.floor(disk) : disk

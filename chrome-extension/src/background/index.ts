@@ -6,7 +6,7 @@ import { isReasoningEffort, type ReasoningEffort } from "../sidepanel/utils/reas
 import { forwardSiteCounterSettings, noteSiteCounterUiSelection } from "./site-counter-settings"
 import { WSClient } from "./ws-client"
 import { forwardConfigGet } from "./config-get-forward"
-import { normalizeSavedChatOutputLimit } from "../sidepanel/utils/normalize-config"
+import { normalizeSavedChatOutputLimit } from "../sidepanel/utils/chat-output-policy"
 import { createCockpitNativeRelay, COCKPIT_NATIVE_PORT } from "./cockpit-native-bridge"
 import { projectMetadataSenderAllowed } from "./project-metadata"
 import { forwardWorkspaceRequest, workspaceSenderAllowed } from "./workspace-sender"

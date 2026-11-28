@@ -2,6 +2,7 @@
 // Companion is secret SoT — masked keys never enter editable UI fields.
 
 import type { LLMConfig } from "../types"
+import { normalizeSavedChatOutputLimit } from "./chat-output-policy"
 import { effectiveReasoningEffort } from "./reasoning-effort"
 
 function isMaskedApiKey(key: string | undefined | null): boolean {
@@ -12,19 +13,6 @@ function isMaskedApiKey(key: string | undefined | null): boolean {
   // Some UIs use dots instead of asterisks
   if (key.includes("....") && key.length >= 10) return true
   return false
-}
-
-export const CHAT_OUTPUT_LIMIT_MAX = 393216
-
-export function isChatOutputLimit(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= CHAT_OUTPUT_LIMIT_MAX
-}
-
-// Match Companion's read-side normalization for legacy values and cached snapshots.
-export function normalizeSavedChatOutputLimit(value: unknown): number | undefined {
-  if (value === 0) return 0
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return undefined
-  return Math.min(CHAT_OUTPUT_LIMIT_MAX, Math.floor(value))
 }
 
 export function normalizeConfig(config: any): Partial<LLMConfig> {
