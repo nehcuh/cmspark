@@ -13,7 +13,8 @@ import type { MeetingPcmCapture } from "../voice/meeting-pcm-capture"
 import { resolveWinSapiHelper } from "../voice/win-sapi"
 import { logger } from "../logger"
 import { createMeetingExternalAsr, handleMeetingAsrMessage, meetingExternalRefusal } from "../voice/external-asr-meeting"
-import { isChromeExtensionOrigin, isVoiceSttOriginAllowed, sttResult } from "../voice/stt-handlers"
+import { isChromeExtensionWsOrigin } from "../ws/handshake-surface"
+import { isVoiceSttOriginAllowed, sttResult } from "../voice/stt-handlers"
 import { hasMeetingPcmFields, validMeetingPcmMessage } from "../voice/meeting-pcm-schema"
 import type { LlmExtractConfig } from "../llm/llm-extract"
 import { displayModelEndpoint, resolveMeetingTextModel } from "../model-center"
@@ -176,7 +177,7 @@ export async function handleMeetingMessage(
     ? deps.isExtensionOrigin(ctx.origin)
     : typeof type === "string" && OVERLAY_MEETING_TYPES.has(type)
       ? isVoiceSttOriginAllowed(ctx.origin, ctx.surface)
-      : isChromeExtensionOrigin(ctx.origin)
+      : isChromeExtensionWsOrigin(ctx.origin)
   if (!originOk) {
     logger.warn("meeting.refused", {
       type: typeof type === "string" ? type : undefined,
@@ -223,7 +224,7 @@ export async function handleMeetingMessage(
       if (existing.privacy.audio_retained) return err("queue_protocol_error", "continuous capture does not support retained audio")
       const speaker = typeof msg.speaker === "string" && msg.speaker.trim() ? msg.speaker.slice(0, 32) : undefined
       const wantsExternal = typeof msg.live_asr === "string" && msg.live_asr !== "local"
-      if (wantsExternal && !isChromeExtensionOrigin(ctx.origin)) return err("origin_denied", "workbench live ASR requires browser confirmation")
+      if (wantsExternal && !isChromeExtensionWsOrigin(ctx.origin)) return err("origin_denied", "workbench live ASR requires browser confirmation")
       const previous = service.getMeetingCapture()
       if (previous?.owns(ctx.peerId, msg.capture_id, existing.capture_epoch ?? 0) && previous.identity.meeting_id === id) {
         if (previous.identity.capture_epoch !== msg.expected_capture_epoch + 1) return err("stale_capture", "capture operation epoch changed")

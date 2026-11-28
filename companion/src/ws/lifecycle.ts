@@ -85,7 +85,7 @@ const cockpitNativeBridge = new CockpitNativeBridge()
 import { getComputerTaskAbortRegistry } from "../computer/task-abort-registry"
 import { assertSummonerAllowed, applySummonerPayloadPolicy } from "./summoner-acl"
 import { broadcastOverlayLeasesOnSocketClose, stampCmsparkSurface } from "./composer-lease"
-import { surfaceFromOrigin, isChromeExtensionWsOrigin } from "./handshake-surface"
+import { surfaceFromOrigin, isChromeExtensionWsOrigin, TRAY_WS_ORIGIN } from "./handshake-surface"
 import { miniPanelOwner } from "../mini/capture-handoff"
 import { getActivityService } from "../activity"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
@@ -216,31 +216,9 @@ function summarizeMessage(msg: any): Record<string, unknown> {
 // Origin gate / healthz / pick peer / outbound runner
 // ---------------------------------------------------------------------------
 
-/**
- * P0-2 (audit C1): only chrome-extension:// origins may open a WebSocket to the companion.
- * Web origins (http/https/file) are rejected so a page the user visits cannot connect to
- * ws://127.0.0.1:23401 and drive the agent (config.set / list_all_cookies / evaluate ...).
- * The browser sets the WS Origin from the page/worker origin and page JS cannot forge it.
- * Exported for unit testing the gate without spinning up the full server.
- * Residual risks (intentionally out of P0 scope):
- *  - ANY chrome extension (not just CMspark) matches — this is a scheme-level gate only. Pinning
- *    to the specific extension id requires a config step / P2.
- *  - A local process can still spoof the Origin header (curl -H); that needs the P2 shared-secret
- *    handshake. The id charset is restricted to [A-Za-z0-9_-] so CRLF/control chars are rejected.
- */
+/** First filter for local clients. Both accepted origin classes still require a paired handshake. */
 export function isAllowedWsOrigin(origin: string | undefined | null): boolean {
-  if (typeof origin !== "string") return false
-  // Trusted extension (Chrome side panel / popup / service worker). Page JS cannot
-  // forge the browser-set Origin, so this reliably excludes visited web pages.
-  if (/^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)) return true
-  // Trusted first-party tray client (the local Node menu-bar agent, a sibling of
-  // this server in the same codebase). A web page CANNOT set an arbitrary Origin —
-  // the browser enforces the real page origin — so this only ever matches the local
-  // tray, which must still complete the #35 HMAC handshake below. The shared secret
-  // is the real gate; the Origin is only a first filter (a local process can spoof
-  // either, which is exactly why P0-2B layered the HMAC challenge on top).
-  if (origin === "cmspark-tray://local") return true
-  return false
+  return isChromeExtensionWsOrigin(origin) || origin === TRAY_WS_ORIGIN
 }
 
 /**
