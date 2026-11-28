@@ -22,6 +22,9 @@
 import { VAULT_WIN_APPS } from "../host-use/win/blacklist"
 import type { AppKind } from "./types"
 
+/** win|mac.app.<slug> / win|mac.cli.<slug>; slug 2–32 chars, lowercase (design §5 + macOS WP3). */
+export const APP_TOKEN_PATTERN = /^(win|mac)\.(app|cli)\.[a-z0-9][a-z0-9_\-]{1,31}$/
+
 /** Companion's own exe name (packaged SEA binary) — self-add is denied. */
 export const COMPANION_EXE_BASENAME = "cmspark-agent"
 

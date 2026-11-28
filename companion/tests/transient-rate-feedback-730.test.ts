@@ -58,15 +58,12 @@ function fixture(count = 30, busy = false, policyOff = false) {
   } })
   const blacklist = compile(source("host-use/win/blacklist.ts").text)
   const guards = compile(source("apps/guards.ts").text, { require(name: string) { assert.equal(name, "../host-use/win/blacklist"); return blacklist } })
-  const appTypes = source("apps/types.ts")
-  const tokenPattern = compile(node(appTypes, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText(appTypes) === "APP_TOKEN_PATTERN")))
   const policy = compile(source("computer/policy.ts").text, { require(name: string) {
     if (name === "node:fs") return { readFileSync: denied }
     if (name === "node:crypto") return { createHash: denied }
     if (name === "path") return path.posix
     if (name === "os") return { platform: () => "darwin" }
     if (name === "../apps/guards") return guards
-    if (name === "../apps/types") return tokenPattern
     if (name === "./types") return types
     return denied()
   } })

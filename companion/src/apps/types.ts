@@ -11,10 +11,12 @@
 // apps are capped at "ai" — they can never be "auto" (normalizeAppEntry clamps).
 
 import * as path from "path"
-import { basenameToVault, isLolbinPath } from "./guards"
+import { APP_TOKEN_PATTERN, basenameToVault, isLolbinPath } from "./guards"
 import { validateCliManifest } from "./cli-manifest"
 import { guiTemplateConfigError, type GuiFileTemplate } from "./gui-templates"
 import { binaryDriftRecordError, type BinaryDriftRecord } from "./binary-drift-state"
+
+export { APP_TOKEN_PATTERN } from "./guards"
 
 export type AppKind = "gui" | "cli"
 export type AppSource = "preset" | "user"
@@ -72,9 +74,6 @@ export interface AppsConfig {
   enabled: boolean
   entries: Record<string, AppEntry>
 }
-
-/** win|mac.app.<slug> / win|mac.cli.<slug>; slug 2–32 chars, lowercase (design §5 + macOS WP3). */
-export const APP_TOKEN_PATTERN = /^(win|mac)\.(app|cli)\.[a-z0-9][a-z0-9_\-]{1,31}$/
 
 /** Adversary D11 (NIT): PackageFamilyName!AppId sanity check for UWP entries. */
 const AUMID_PATTERN = /^[\w.\-]+![\w.\-]+$/

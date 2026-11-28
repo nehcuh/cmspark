@@ -14,8 +14,7 @@ import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import type { CompanionConfig } from "../config"
 import type { AppEntry } from "../apps/types"
-import { aumidToVault, basenameToVault, isLolbinPath } from "../apps/guards"
-import { APP_TOKEN_PATTERN } from "../apps/types"
+import { APP_TOKEN_PATTERN, aumidToVault, basenameToVault, isLolbinPath } from "../apps/guards"
 import { ComputerError, type WindowInfo } from "./types"
 
 /** #723: a spoofable, protective refusal only; a non-match grants no authority. */
