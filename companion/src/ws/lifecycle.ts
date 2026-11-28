@@ -92,6 +92,7 @@ import { getActivityService } from "../activity"
 import { normalizeVisionBaseUrl } from "../llm/vision-pipeline"
 import {
   bindExtensionPeerPicker,
+  hasAuthenticatedExtensionPeer,
   notifyExtensionPeerAuthenticated,
 } from "./extension-peer"
 
@@ -395,20 +396,26 @@ export function applyConnectionCloseGracePeriod(closedWs?: WebSocket): void {
  * inside the 5s handshake window (and reconnect indefinitely). Mirror the
  * inbound semantics: no completed auth.handshake, NO broadcasts.
  */
-export function broadcastToClients(data: any, recipients: "authenticated" | "extension" = "authenticated"): void {
+export function broadcastToClients(data: any, recipients: "authenticated" | "extension" | "tray" = "authenticated"): void {
   if (!wss) return
   const message = JSON.stringify(data)
   for (const client of wss.clients) {
     const auth = wsAuth.get(client)
-    if (client.readyState === WebSocket.OPEN && auth?.authenticated === true &&
-        (recipients === "authenticated" || isChromeExtensionWsOrigin(auth.origin))) {
-      try {
-        client.send(message)
-      } catch {
-        // ignore send failures (client disconnect)
-      }
+    if (client.readyState !== WebSocket.OPEN || auth?.authenticated !== true) continue
+    const selected = recipients === "authenticated"
+      || (recipients === "tray" && auth.origin === TRAY_WS_ORIGIN)
+      || (recipients === "extension" && isChromeExtensionWsOrigin(auth.origin))
+    if (!selected) continue
+    try {
+      client.send(message)
+    } catch {
+      // ignore send failures (client disconnect)
     }
   }
+}
+
+function publishExtensionConnection(): void {
+  broadcastToClients({ type: "browser.connection", connected: hasAuthenticatedExtensionPeer() }, "tray")
 }
 
 /** Publish inference results without probing models or rebuilding settings state. */
@@ -1167,6 +1174,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                   negotiated_protocol_version: nego.negotiated,
                   file_upload_parts: 1,
                   chat_context_controls: 1,
+                  ...(st.origin === TRAY_WS_ORIGIN && { extension_connected: hasAuthenticatedExtensionPeer() }),
                 }),
               )
               ws.send(JSON.stringify({ type: "connected" }))
@@ -1184,6 +1192,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
             // authenticated; notify no-ops if pick() would still fail.
             if (/^chrome-extension:\/\//i.test(st.origin || "")) {
               notifyExtensionPeerAuthenticated(ws)
+              publishExtensionConnection()
             }
           } else {
             logger.warn("ws.auth_failed", {})
@@ -1596,6 +1605,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       if (closedAuth) {
         clearTimeout(closedAuth.timer)
         wsAuth.delete(ws)
+        if (closedAuth.authenticated && isChromeExtensionWsOrigin(closedAuth.origin)) publishExtensionConnection()
       }
       // #219: tray Swift overlay and C-thin web shell can both be online as
       // surface=summoner. clients/wsAuth already dropped this socket above, so

@@ -270,7 +270,7 @@ test("menu-bar-agent empty submit resolves last/new thread then claims overlay l
   assert.match(body, /composer\.lease|claimLease|claimOverlay/)
   assert.match(body, /sendChatCreate/)
   assert.match(body, /hydrate/)
-  assert.match(src, /hasExtensionPeer: hasAuthenticatedExtensionPeer/)
+  assert.match(src, /hasExtensionPeer: \(\) => companionClient\?\.hasExtensionPeer === true/)
   assert.doesNotMatch(src, /["']\.\/ws\/lifecycle["']/)
 })
 

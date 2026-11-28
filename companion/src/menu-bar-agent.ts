@@ -22,7 +22,6 @@ import {
   QuickActionItem,
   RecentThreadItem,
 } from "./tray/tray-adapter"
-import { hasAuthenticatedExtensionPeer } from "./ws/extension-peer"
 import { CompanionClient } from "./tray/companion-client"
 import { DesktopMini, type DesktopMiniAction } from "./mini/desktop-mini"
 import { LinuxMiniHost } from "./mini/linux-mini"
@@ -771,7 +770,7 @@ async function hydrateSummonerThread(id: string, sessionToken?: number): Promise
         buildSummonerHydratePayload({
           thread_id: tid,
           lines: hydratePlaintext(messages),
-          browser: hasAuthenticatedExtensionPeer() ? "attached" : "detached",
+          browser: client.hasExtensionPeer ? "attached" : "detached",
         }),
       )
     },
@@ -1161,7 +1160,7 @@ export async function handleSummonerSubmit(
         buildSummonerHydratePayload({
           thread_id: id,
           lines,
-          browser: hasAuthenticatedExtensionPeer() ? "attached" : "detached",
+          browser: client.hasExtensionPeer ? "attached" : "detached",
         }),
       )
     },
@@ -1487,7 +1486,7 @@ async function handleSummonerFiles(
           buildSummonerHydratePayload({
             thread_id: tid,
             lines: [],
-            browser: hasAuthenticatedExtensionPeer() ? "attached" : "detached",
+            browser: client.hasExtensionPeer ? "attached" : "detached",
           }),
         )
       }
@@ -1587,7 +1586,7 @@ export async function handleSummonerNewThread(sessionToken?: number): Promise<bo
         buildSummonerHydratePayload({
           thread_id: created.id,
           lines: [],
-          browser: hasAuthenticatedExtensionPeer() ? "attached" : "detached",
+          browser: client.hasExtensionPeer ? "attached" : "detached",
         }),
       )
       return claimOverlayLeaseDetailed(client, created.id)
@@ -1885,7 +1884,7 @@ async function openSummonerWebShell(threadId: string, view?: "meeting"): Promise
         if (!companionClient) return Promise.reject(new Error("not connected"))
         return companionClient.sendAppRequest("ui.open_sidepanel", {}, 8_000)
       },
-      hasExtensionPeer: hasAuthenticatedExtensionPeer,
+      hasExtensionPeer: () => companionClient?.hasExtensionPeer === true,
       onShellClosed: () => {
         void handleSummonerClosed()
       },
