@@ -170,15 +170,11 @@ function conservedBuildSteps806(steps) {
   return steps.filter(step => step !== selected[0])
 }
 
-// PR dependency comparisons need the first parent of the test merge checkout.
-// Validate that single checkout change and the additional gate before comparing history.
+// Verify the additional architecture gate before comparing the other steps with history.
 function conservedBuildStepsArchitecture(steps) {
-  const checkout = steps[0]
-  assert.deepEqual(checkout, { uses: 'actions/checkout@v4', with: { 'fetch-depth': 2 } })
   const expected = {
     name: 'Check runtime module boundaries',
     shell: 'bash',
-    env: { PUSH_BEFORE: '${{ github.event.before }}' },
     run: 'bash scripts/check-architecture-ci.sh',
   }
   const matches = steps.filter(step => step.name === expected.name)
@@ -187,7 +183,7 @@ function conservedBuildStepsArchitecture(steps) {
   const index = steps.indexOf(matches[0])
   assert.equal(steps[index - 1]?.name, 'Verify systray2 binary integrity')
   assert.equal(steps[index + 1]?.name, 'Verify Node archive checksum helper (audit H8)')
-  return [{ uses: checkout.uses }, ...steps.slice(1).filter(step => step !== matches[0])]
+  return steps.filter(step => step !== matches[0])
 }
 
 function cache750(step, nodeVersion) {

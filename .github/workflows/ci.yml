@@ -12,8 +12,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,8 +38,6 @@ jobs:
 
       - name: Check runtime module boundaries
         shell: bash
-        env:
-          PUSH_BEFORE: ${{ github.event.before }}
         run: bash scripts/check-architecture-ci.sh
 
       - name: Verify Node archive checksum helper (audit H8)

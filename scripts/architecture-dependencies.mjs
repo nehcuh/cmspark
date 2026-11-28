@@ -92,13 +92,14 @@ if (import.meta.main) {
     const previous = cyclicEdges(await inspectDependencies(path.resolve(baseDir)))
     added = [...cyclicEdges(report)].filter(edge => !previous.has(edge)).sort()
   }
+  const failingGroups = baseArg === -1 ? report.runtimeCycles : report.staticCycles
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(baseArg === -1 ? report : { ...report, addedCyclicEdges: added }, null, 2))
   } else {
     console.log(`${Object.keys(report.modules).length} modules, ${report.staticCycles.length} static import cycles, ${report.runtimeCycles.length} cyclic groups including require() and import().`)
     if (report.runtimeCycles.length) console.log("Use --json for the members and import kinds of all cyclic groups.")
     for (const edge of added) console.error("New cyclic dependency:", edge)
-    for (const group of report.staticCycles) console.error("Static import cycle among:\n  " + group.join("\n  "))
+    for (const group of failingGroups) console.error("Module dependency cycle among:\n  " + group.join("\n  "))
   }
-  process.exitCode = report.staticCycles.length || added.length ? 1 : 0
+  process.exitCode = failingGroups.length || added.length ? 1 : 0
 }

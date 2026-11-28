@@ -1,8 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { cyclicEdges, inspectDependencies } from "../architecture-dependencies.mjs"
 
 test("emitted dependencies distinguish type, eager, deferred and self imports", async t => {
@@ -40,4 +42,31 @@ test("emitted dependencies distinguish type, eager, deferred and self imports", 
     "companion/src/new.ts --dynamic-import--> companion/src/new.ts",
   ])
   assert.deepEqual(report.modules["companion/src/a.ts"], [{ path: "companion/src/b.ts", kind: "import-statement" }])
+})
+
+test("CLI rejects a purely deferred cycle in a checkout without Git history", t => {
+  const root = mkdtempSync(path.join(tmpdir(), "cmspark-architecture-cli-"))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  for (const dir of ["scripts", "companion/src", "chrome-extension/src"]) {
+    mkdirSync(path.join(root, dir), { recursive: true })
+  }
+  const cli = path.join(root, "scripts/architecture-dependencies.mjs")
+  copyFileSync(new URL("../architecture-dependencies.mjs", import.meta.url), cli)
+  const env = { ...process.env, NODE_PATH: fileURLToPath(new URL("../../companion/node_modules", import.meta.url)) }
+  const run = (...args) => spawnSync(process.execPath, [cli, "--json", ...args], { cwd: root, env, encoding: "utf8" })
+  const a = path.join(root, "companion/src/a.ts"), b = path.join(root, "companion/src/b.ts")
+  writeFileSync(a, 'export const load = () => import("./b")')
+  writeFileSync(b, 'export const read = () => require("./a")')
+  const rejected = run()
+  assert.equal(rejected.status, 1, rejected.stderr)
+  const { staticCycles, runtimeCycles } = JSON.parse(rejected.stdout)
+  assert.deepEqual(staticCycles, [])
+  assert.deepEqual(runtimeCycles, [["companion/src/a.ts", "companion/src/b.ts"]])
+  const compared = run("--base-dir", root)
+  assert.equal(compared.status, 0, compared.stderr)
+  assert.deepEqual(JSON.parse(compared.stdout).addedCyclicEdges, [])
+  writeFileSync(b, "export const value = 1")
+  const accepted = run()
+  assert.equal(accepted.status, 0, accepted.stderr)
+  assert.deepEqual(JSON.parse(accepted.stdout).runtimeCycles, [])
 })
