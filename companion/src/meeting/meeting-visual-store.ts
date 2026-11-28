@@ -3,7 +3,8 @@ import * as path from "node:path"
 import { randomUUID } from "node:crypto"
 import { DATA_DIR } from "../config"
 import { logger } from "../logger"
-import { refreshVisualMinutesStatus, writeJsonAtomic } from "./meeting-store"
+import { atomicWriteJSON } from "../io"
+import { refreshVisualMinutesStatus } from "./meeting-store"
 import { evidenceFile, MeetingVisualEvidenceUnavailableError, readMeetingVisualEvidence,
   sameVisualFrame, validEvidence, type MeetingVisualEvidence } from "./meeting-visual-evidence"
 
@@ -41,7 +42,7 @@ export function removeMeetingVisualEvidence(id: string, frameId: string, dataDir
 }
 
 function commitVisualRows(id: string, file: string, rows: MeetingVisualEvidence[], dataDir: string): void {
-  writeJsonAtomic(file, rows)
+  atomicWriteJSON(file, rows)
   try {
     refreshVisualMinutesStatus(id, dataDir)
   } catch {

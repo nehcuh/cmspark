@@ -3,6 +3,7 @@
  * SoT: 2026-08-07-meeting-minutes-design.md
  */
 
+import { atomicWriteJSON, atomicWriteText } from "../io"
 import * as fs from "fs"
 import * as path from "path"
 import * as crypto from "crypto"
@@ -138,19 +139,6 @@ function reconcileMinutesSource(session: MeetingSession, dataDir: string): boole
   }
   if (session.minutes?.stale && session.status === "done") session.status = "ready"
   return hasVisualMaterial
-}
-
-export function writeJsonAtomic(filePath: string, data: unknown): void {
-  const dir = path.dirname(filePath)
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const tmp = `${filePath}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { encoding: "utf8", mode: 0o600 })
-  fs.renameSync(tmp, filePath)
-  try {
-    fs.chmodSync(filePath, 0o600)
-  } catch {
-    /* */
-  }
 }
 
 function readJson<T>(filePath: string): T | null {
@@ -299,14 +287,13 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
     capture_summary: session.capture_summary,
     capture_ids: session.capture_ids,
   }
-  writeJsonAtomic(path.join(dir, "meta.json"), meta)
-  writeJsonAtomic(path.join(dir, "transcript.json"), session.transcript)
-  writeJsonAtomic(path.join(dir, "reference.json"), { notes: session.reference_notes || "", name: session.reference_name || "" })
-  writeJsonAtomic(path.join(dir, "original-transcript.json"), session.original_transcript || [])
+  atomicWriteJSON(path.join(dir, "meta.json"), meta)
+  atomicWriteJSON(path.join(dir, "transcript.json"), session.transcript)
+  atomicWriteJSON(path.join(dir, "reference.json"), { notes: session.reference_notes || "", name: session.reference_name || "" })
+  atomicWriteJSON(path.join(dir, "original-transcript.json"), session.original_transcript || [])
   if (session.minutes) {
-    writeJsonAtomic(path.join(dir, "minutes.json"), session.minutes)
-    const mdPath = path.join(dir, "minutes.md")
-    fs.writeFileSync(mdPath, session.minutes.raw_md || "", { encoding: "utf8", mode: 0o600 })
+    atomicWriteJSON(path.join(dir, "minutes.json"), session.minutes)
+    atomicWriteText(path.join(dir, "minutes.md"), session.minutes.raw_md || "")
   }
 }
 
@@ -325,7 +312,7 @@ export function beginMeetingCapture(id: string, captureId: string, expectedEpoch
     phase: "starting", outcome: null, server_received_end: 0, committed_end: 0,
     known_unprocessed_end: null, reason: null, sticky_incomplete: s.capture_summary?.sticky_incomplete ?? false }
   meta.status = "recording"; meta.ended_at = null; meta.error = null
-  writeJsonAtomic(path.join(dir, "meta.json"), meta)
+  atomicWriteJSON(path.join(dir, "meta.json"), meta)
   return { ...s, ...meta }
 }
 
@@ -348,7 +335,7 @@ export function checkpointMeetingCapture(status: CaptureStatus, dataDir = DATA_D
       (status.stop_reason !== null && status.stop_reason !== "user_stop") ||
       status.completion.outcome === "failed" || status.completion.outcome === "interrupted" || status.completion.outcome === "cancelled" }
   if (terminal) { meta.status = "ready"; meta.ended_at = new Date().toISOString() }
-  writeJsonAtomic(path.join(dir, "meta.json"), meta)
+  atomicWriteJSON(path.join(dir, "meta.json"), meta)
 }
 
 export function loadMeeting(id: string, dataDir = DATA_DIR, cache?: "meeting-read" | "evidence-change"): MeetingSession | null {
@@ -378,8 +365,8 @@ export function loadMeeting(id: string, dataDir = DATA_DIR, cache?: "meeting-rea
       (hasVisualMaterial || cache === "evidence-change" || fs.existsSync(path.join(dir, VISUAL_EVIDENCE_FILENAME)))) {
     // The sidecar is authoritative. Retry interrupted cache writes without hiding the raw meeting.
     try {
-      if (minutes.stale !== previouslyStale) writeJsonAtomic(path.join(dir, "minutes.json"), minutes)
-      if (meta.status !== session.status) writeJsonAtomic(path.join(dir, "meta.json"), { ...meta, status: session.status })
+      if (minutes.stale !== previouslyStale) atomicWriteJSON(path.join(dir, "minutes.json"), minutes)
+      if (meta.status !== session.status) atomicWriteJSON(path.join(dir, "meta.json"), { ...meta, status: session.status })
     } catch { logger.warn("meeting.visual_minutes_status_deferred", { id }) }
   }
   return session
@@ -688,5 +675,5 @@ export function readMeetingTranslations(id: string, dataDir = DATA_DIR): SavedTr
 export function writeMeetingTranslations(id: string, entries: SavedTranslation[], dataDir = DATA_DIR): void {
   const dir = resolveMeetingDir(id, dataDir)
   if (!dir || !fs.existsSync(path.join(dir, "meta.json"))) throw new Error("meeting not found")
-  writeJsonAtomic(path.join(dir, "translations.json"), entries)
+  atomicWriteJSON(path.join(dir, "translations.json"), entries)
 }
