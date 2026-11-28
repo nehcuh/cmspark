@@ -118,7 +118,6 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           thread_id: stopTargetId,
         })
         if (stopTargetId === activeThreadId) {
-          dispatch({ type: "SET_STREAMING", content: "" })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
         }
       }

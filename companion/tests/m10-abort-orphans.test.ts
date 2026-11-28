@@ -140,7 +140,9 @@ test("abort during streaming persists non-empty partial reply as text-only", asy
   // when the SDK has parsed a content delta, so assistantContent is non-empty
   // when the abort propagates. (Polling a server-write flag races the SDK parse.)
   const params = chatParams(manager, thread, controller, async () => ({ success: true, data: {} }))
+  const wire: any[] = []
   params.sendToExtension = (data: any) => {
+    wire.push(data)
     if (data.type === "chat.token" && !controller.signal.aborted) {
       controller.abort()
     }
@@ -154,6 +156,10 @@ test("abort during streaming persists non-empty partial reply as text-only", asy
   const assistant = msgs.find((m: any) => m.role === "assistant")
   assert.ok(assistant, "partial assistant message should be persisted")
   assert.equal(assistant!.content, "partial reply text")
+  const done = wire.find(frame => frame.type === "chat.done")
+  assert.equal(done?.message_id, assistant!.id)
+  assert.equal(done?.content, assistant!.content)
+  assert.equal(done?.content, wire.find(frame => frame.type === "chat.token")?.content)
   assert.ok(!assistant!.tool_calls?.length, "partial assistant must be text-only (no dangling tool_calls)")
 })
 

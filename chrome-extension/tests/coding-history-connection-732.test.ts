@@ -67,8 +67,8 @@ test("#732 management connection observations preserve chat, while the existing 
   const f = fixture(); f.render(); await f.deliver(0, true)
   f.dispatch({ type: "SET_THREAD_BUSY", threadId: "owner", busy: true })
   f.dispatch({ type: "SET_PROCESSING", isProcessing: true })
-  f.dispatch({ type: "SET_STREAMING", content: "owned chat stream" })
-  f.dispatch({ type: "SET_STREAMING_REASONING", content: "owned chat reasoning" })
+  f.dispatch({ type: "RECEIVE_THREAD_STREAM", threadId: "owner", event: { type: "chat.token", content: "owned chat stream" } })
+  f.dispatch({ type: "RECEIVE_THREAD_STREAM", threadId: "owner", event: { type: "chat.reasoning", content: "owned chat reasoning", retrying: false } })
   const chat = () => JSON.stringify({ busy: f.state.threadBusyById, processing: f.state.isProcessing,
     content: f.state.streamingContent, reasoning: f.state.streamingReasoning, messages: f.state.messages })
   const before = chat(), revision = f.state.codingHistoryConnectionRevision

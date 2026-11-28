@@ -2,12 +2,13 @@
 //
 // 契约（plan 2026-09-18-502-e-fleet-inspect Task 3 / spec §6）：
 //  - Inspect 走独立 inspectedWorkerId buffer：chat.token 命中被查 worker 时
-//    只 SET_INSPECT_TAIL，绝不 SET_STREAMING（主对话气泡不被 worker token 污染）。
+//    更新旁观输出，不向主对话气泡写入 worker token。
 //  - shouldApplyStreamEvent 门不变（stream-thread-gate 继续绿）。
 //  - tool.start 可更新 inspect 的最近工具名；tool.progress 一律不进 inspect
 //    （stdout_tail 可能含密钥）。
 //  - Inspect 展开不 SET_ACTIVE_THREAD / 不 thread.select；「进入子任务」保持原行为。
 //  - token 窗：本轮输出，等宽 11px，默认收起。
+import { mountPanel } from "./helpers/mount-sidepanel"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
@@ -60,47 +61,17 @@ test("inspectTailSlice keeps the last ~800 chars, tolerates junk", () => {
 // 2. useWebSocket wiring (source lock)
 // ---------------------------------------------------------------------------
 
-test("chat.token inspect branch sits BEFORE the gate and never SET_STREAMING", () => {
-  const src = read("src/sidepanel/hooks/useWebSocket.ts")
-  const start = src.indexOf('case "chat.token": {')
-  const end = src.indexOf('case "chat.reasoning": {')
-  assert.ok(start > 0 && end > start, "chat.token case must exist")
-  const block = src.slice(start, end)
-  // inspect buffer update present ...
-  assert.match(block, /shouldUpdateInspectBuffer\(/)
-  assert.match(block, /SET_INSPECT_TAIL/)
-  // ... and sits before the unchanged gate
-  const inspectIdx = block.indexOf("shouldUpdateInspectBuffer(")
-  const gateIdx = block.indexOf("shouldApplyStreamEvent(")
-  assert.ok(inspectIdx > 0 && gateIdx > inspectIdx, "inspect update must precede the active-thread gate")
-  // the inspect branch itself must not touch the main transcript stream
-  const inspectBranch = block.slice(inspectIdx, gateIdx)
-  assert.ok(
-    !inspectBranch.includes("SET_STREAMING"),
-    "inspect branch must never dispatch SET_STREAMING",
-  )
-  // the gate is still there, exactly once, un-widened
-  const gates = block.match(/shouldApplyStreamEvent\(/g) || []
-  assert.equal(gates.length, 1)
-})
-
-test("tool.start updates the inspect latest tool before the gate; tool.progress never feeds inspect", () => {
-  const src = read("src/sidepanel/hooks/useWebSocket.ts")
-  const tsStart = src.indexOf('case "tool.start": {')
-  const tsEnd = src.indexOf('case "tool.result": {')
-  assert.ok(tsStart > 0 && tsEnd > tsStart)
-  const startBlock = src.slice(tsStart, tsEnd)
-  assert.match(startBlock, /shouldUpdateInspectBuffer\(/)
-  assert.match(startBlock, /SET_INSPECT_LATEST_TOOL/)
-  const inspectIdx = startBlock.indexOf("shouldUpdateInspectBuffer(")
-  const gateIdx = startBlock.indexOf("shouldApplyStreamEvent(")
-  assert.ok(inspectIdx > 0 && gateIdx > inspectIdx, "inspect update must precede the active-thread gate")
-
-  const tpStart = src.indexOf('case "tool.progress": {')
-  const tpEnd = src.indexOf('case "tool.vision_start": {')
-  assert.ok(tpStart > 0 && tpEnd > tpStart)
-  const progressBlock = src.slice(tpStart, tpEnd)
-  assert.ok(!progressBlock.includes("INSPECT"), "tool.progress must never feed the inspect buffer (tails may carry secrets)")
+test("inspected worker frames update its drawer and leave the selected transcript intact", () => {
+  const panel = mountPanel({ ...initialState, inspectedWorkerId: "worker" })
+  panel.select("A")
+  panel.receive({ type: "chat.token", thread_id: "A", content: "selected" })
+  panel.receive({ type: "chat.token", thread_id: "worker", content: "x".repeat(900) + "tail" })
+  panel.receive({ type: "tool.start", thread_id: "worker", tool_name: "read", tool_call_id: "call" })
+  panel.receive({ type: "tool.progress", thread_id: "worker", tool_call_id: "call", stdout_tail: "progress" })
+  assert.equal(panel.state().inspectTokenTail, "x".repeat(796) + "tail")
+  assert.equal(panel.state().inspectLatestTool, "read")
+  assert.equal(panel.state().streamingContent, "selected")
+  assert.equal(panel.state().messages.length, 0)
 })
 
 // ---------------------------------------------------------------------------
@@ -117,7 +88,7 @@ test("agentStore carries inspect state + actions", () => {
   assert.match(src, /inspectTokenTail:\s*""/)
   assert.match(src, /inspectLatestTool:\s*""/)
   // reducer actions
-  for (const a of ["SET_INSPECT_WORKER", "SET_INSPECT_TAIL", "SET_INSPECT_LATEST_TOOL", "CLEAR_INSPECT"]) {
+  for (const a of ["SET_INSPECT_WORKER", "CLEAR_INSPECT"]) {
     assert.ok(src.includes(`case "${a}"`), `reducer must handle ${a}`)
   }
 })
@@ -127,8 +98,7 @@ test("MAJOR-M1: closing the fleet portal clears inspect state — tokens stop bu
   // onClose / enterWorker) dispatches SET_FLEET_LIST_OPEN false — that single
   // choke point must drop the inspected worker and its buffer.
   let s = agentReducer(initialState, { type: "SET_INSPECT_WORKER", workerId: "w1" })
-  s = agentReducer(s, { type: "SET_INSPECT_TAIL", tail: "部分输出" })
-  s = agentReducer(s, { type: "SET_INSPECT_LATEST_TOOL", tool: "click" })
+  s = { ...s, inspectTokenTail: "部分输出", inspectLatestTool: "read" }
   assert.equal(s.inspectedWorkerId, "w1")
 
   s = agentReducer(s, { type: "SET_FLEET_LIST_OPEN", open: false })

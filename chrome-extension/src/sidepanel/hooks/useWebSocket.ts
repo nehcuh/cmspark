@@ -1,4 +1,6 @@
 import { takeCodingOperationReply, clearCodingOperationFeedback } from "../utils/coding-operation-send"
+import { shouldApplyStreamEvent, type ThreadStreamEvent } from "../store/conversation-stream"
+export { shouldApplyStreamEvent, shouldApplyStreamEvent as shouldUpdateInspectBuffer, inspectTailSlice, shouldApplyStreamEvent as fileUploadedApplyToPanel } from "../store/conversation-stream"
 import { WorkspaceHints } from "../coding-handoff/workspace-hints"
 import { isBoardHintReply } from "../utils/board-hint-request"
 import { codingManualEntryAction } from "../utils/coding-manual-entry-message"
@@ -114,47 +116,6 @@ export function scheduleUnattendedExpireClear(
 }
 
 /**
- * Stream/error gate for multi-agent UI isolation (P1 fail-closed).
- * - Missing/empty thread_id → do NOT apply (legacy path polluted active thread).
- * - When set, only apply if it matches the currently active thread.
- * Pure helper for unit tests (stream-thread-gate).
- */
-export function shouldApplyStreamEvent(
-  msgThreadId: string | undefined | null,
-  activeThreadId: string | null | undefined,
-): boolean {
-  if (msgThreadId == null || msgThreadId === "") return false
-  if (activeThreadId == null || activeThreadId === "") return false
-  return msgThreadId === activeThreadId
-}
-
-/**
- * #502 E Inspect: a frame belongs to the inspect buffer only when it carries
- * the inspected worker's thread id. The inspect path is deliberately separate
- * from shouldApplyStreamEvent — inspected frames must NEVER touch the main
- * transcript (SET_STREAMING stays gated exactly as before).
- * Pure helper for unit tests (fleet-inspect-buffer).
- */
-export function shouldUpdateInspectBuffer(
-  msgThreadId: string | undefined | null,
-  inspectedWorkerId: string | null | undefined,
-): boolean {
-  if (msgThreadId == null || msgThreadId === "") return false
-  if (inspectedWorkerId == null || inspectedWorkerId === "") return false
-  return msgThreadId === inspectedWorkerId
-}
-
-/**
- * #502 E Inspect: keep only the tail of the worker's answer stream (~800
- * chars) — the drawer is a glance surface, not a transcript mirror.
- * Pure helper for unit tests (fleet-inspect-buffer).
- */
-export function inspectTailSlice(content: unknown, max = 800): string {
-  if (typeof content !== "string" || !content) return ""
-  return content.length > max ? content.slice(-max) : content
-}
-
-/**
  * #295: mid-turn assistant rows committed from live frames must carry the
  * tool_calls the companion already persisted (function-shaped, same as the
  * hydrated row — Message.tool_calls tolerates both shapes at runtime), so
@@ -164,21 +125,6 @@ export function inspectTailSlice(content: unknown, max = 800): string {
  */
 export function midTurnToolCalls(raw: unknown): Message["tool_calls"] | undefined {
   return Array.isArray(raw) && raw.length > 0 ? (raw as Message["tool_calls"]) : undefined
-}
-
-/**
- * file.uploaded panel-chrome gate (F3). The composer chip clear is a global UI
- * signal with no thread ownership — the listener dispatches it unconditionally,
- * before this gate, so it fires even when the user switched threads mid-upload
- * (otherwise the sent chips stick and leak into the next send on another
- * thread). Only panel chrome (status/processing) is gated here.
- * Pure helper for unit tests (stream-thread-gate).
- */
-export function fileUploadedApplyToPanel(
-  msgThreadId: string | undefined | null,
-  activeThreadId: string | null | undefined,
-): boolean {
-  return shouldApplyStreamEvent(msgThreadId, activeThreadId)
 }
 
 /**
@@ -296,7 +242,6 @@ export function knowledgePreviewFromMessage(msg: any): Extract<AgentAction, { ty
 
 export function useWebSocket() {
   const { state, dispatch } = useAgentStore()
-  const streamingRef = useRef("")
   const initializedRef = useRef(false)
   const activeThreadRef = useRef<string | null>(null)
   const workspaceHintsRef = useRef(new WorkspaceHints())
@@ -308,21 +253,6 @@ export function useWebSocket() {
   activeThreadRef.current = state.activeThreadId
   const codingSelectionRef = useRef(state.codingSessionIdByThread)
   codingSelectionRef.current = state.codingSessionIdByThread
-  // #502 E Inspect: inspected worker id rides its own ref — the inspect buffer
-  // is updated independent of (and never widens) the active-thread gate above.
-  const inspectedWorkerRef = useRef<string | null>(null)
-  inspectedWorkerRef.current = state.inspectedWorkerId
-  const pendingUploadsRef = useRef(state.pendingUploads)
-  pendingUploadsRef.current = state.pendingUploads
-
-  // P0-B: clear accumulated stream buffer on thread switch so late tokens from
-  // the previous thread cannot reappear via chat.done → ADD_MESSAGE.
-  const reasoningRef = useRef("")
-  useEffect(() => {
-    streamingRef.current = ""
-    reasoningRef.current = ""
-  }, [state.activeThreadId])
-
   useEffect(() => {
     if ((state.historyLoadStatus === "retry" || state.historyLoadStatus === "refresh") && state.activeThreadId) {
       chrome.runtime.sendMessage({ type: "thread.select", threadId: state.activeThreadId })
@@ -458,46 +388,18 @@ export function useWebSocket() {
       // Live frames only: history/hydration branches never call the tool observer.
       workspaceHintsRef.current.select(activeThreadRef.current, workspaceHintSelectionRef.current)
       if (workspaceHintsRef.current.observe(msg)) dispatch({ type: "SET_WORKSPACE_HINTS", view: workspaceHintsRef.current.view() })
+      const threadId = typeof msg.thread_id === "string" ? msg.thread_id : ""
+      const stream = (event: ThreadStreamEvent) => dispatch({ type: "RECEIVE_THREAD_STREAM", threadId, event })
       switch (msg.type) {
-        case "chat.token": {
-          // P0-B: ignore stream events for non-active threads
-          const tokenTid =
-            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
-          if (tokenTid) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: tokenTid, busy: true })
-          }
-          // #502 E Inspect: buffer the inspected worker's tokens BEFORE the
-          // active-thread gate — SET_INSPECT_TAIL only, never SET_STREAMING.
-          if (shouldUpdateInspectBuffer(tokenTid, inspectedWorkerRef.current)) {
-            dispatch({ type: "SET_INSPECT_TAIL", tail: inspectTailSlice(msg.content) })
-          }
-          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
-          streamingRef.current = msg.content
-          dispatch({ type: "SET_STREAMING", content: msg.content })
-          // Answer tokens mean parse/status phase is done
-          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+        case "chat.token":
+          stream({ type: "chat.token", content: msg.content })
           break
-        }
 
-        case "chat.reasoning": {
-          const reasonTid =
-            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
-          if (reasonTid) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: reasonTid, busy: true })
-          }
-          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
-          const r =
-            typeof msg.content === "string"
-              ? msg.content
-              : typeof msg.text === "string"
-                ? msg.text
-                : ""
-          reasoningRef.current = r
-          dispatch({ type: "SET_STREAMING_REASONING", content: r })
-          dispatch({ type: "SET_PROCESSING", isProcessing: true })
-          dispatch({ type: "SET_PROCESSING_STATUS", status: msg.retrying === true ? "模型尚未给出答案，正在重试…" : null })
+        case "chat.reasoning":
+          stream({ type: "chat.reasoning",
+            content: typeof msg.content === "string" ? msg.content : typeof msg.text === "string" ? msg.text : "",
+            retrying: msg.retrying === true })
           break
-        }
 
         case "chat.user": {
           // SW rebroadcast + companion persist echo (message_id + attachments).
@@ -537,106 +439,28 @@ export function useWebSocket() {
         }
 
         case "chat.done": {
-          const doneThreadId =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
-          if (doneThreadId) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: doneThreadId, busy: false })
-          }
-          // #505: terminal rides chat.done (not finish_reason — that would
-          // ADD_MESSAGE an empty ghost bubble). Per-thread; not gated on the
-          // active transcript so a background cap still shows on switch-back.
-          if (doneThreadId && msg.terminal === "round_limit") {
-            dispatch({ type: "SET_RUN_TERMINAL", threadId: doneThreadId, terminal: "round_limit" })
-          }
-          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
-          const content = streamingRef.current
-          const reasoning =
-            (typeof msg.reasoning_content === "string" && msg.reasoning_content) ||
-            reasoningRef.current ||
-            ""
-          streamingRef.current = ""
-          reasoningRef.current = ""
-          dispatch({ type: "SET_STREAMING", content: "" })
-          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
-          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
-          dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          const truncated = msg.truncated === true
           const generationLimit = parseGenerationLimit(msg.generation_limit)
-          const incompleteTools = msg.incomplete_tools === true
-          const finishReason: string | null | undefined =
-            typeof msg.finish_reason === "string"
-              ? msg.finish_reason
-              : msg.finish_reason === null
-                ? null
-                : undefined
-          if (
-            doneThreadId &&
-            (content ||
-              reasoning ||
-              truncated ||
-              generationLimit ||
-              incompleteTools ||
-              finishReason !== undefined ||
-              (Array.isArray(msg.retrieved_sources) && msg.retrieved_sources.length > 0))
-          ) {
-            const honesty: Partial<Pick<Message, "truncated" | "incomplete_tools" | "finish_reason" | "generation_limit">> = {
-              ...(generationLimit ? { generation_limit: generationLimit } : {}),
-              ...(truncated ? { truncated: true } : {}),
-              ...(incompleteTools ? { incomplete_tools: true } : {}),
-              ...(finishReason !== undefined ? { finish_reason: finishReason } : {}),
-            }
-            dispatch({
-              type: "ADD_MESSAGE",
-              message: {
-                // Prefer the companion's persisted message id (echoed in chat.done) so the
-                // UI id matches what's stored — anchor-based features (per-message export)
-                // then work on the just-received response without a thread reload. Fall back
-                // to a client id only if the companion didn't echo one.
-                id: msg.message_id || `${doneThreadId}_assistant_${Date.now()}`,
-                thread_id: doneThreadId,
-                role: "assistant",
-                content: content || "",
-                ...(reasoning ? { reasoning_content: reasoning } : {}),
-                ...(Array.isArray(msg.retrieved_sources) ? { retrieved_sources: msg.retrieved_sources } : {}),
-                // #273 Wave B: 分组概览两态（含分组概览 / 未注入）随消息落 store
-                ...(msg.knowledge_routing && typeof msg.knowledge_routing === "object"
-                  ? { knowledge_routing: msg.knowledge_routing }
-                  : {}),
-                ...honesty,
-                created_at: new Date().toISOString(),
-              },
-            })
-          }
+          stream({ type: "chat.done", roundLimit: msg.terminal === "round_limit", message: {
+            id: msg.message_id || `${threadId}_assistant_${Date.now()}`,
+            thread_id: threadId, role: "assistant", created_at: new Date().toISOString(),
+            ...(typeof msg.content === "string" ? { content: msg.content } : {}),
+            ...(typeof msg.reasoning_content === "string" && msg.reasoning_content ? { reasoning_content: msg.reasoning_content } : {}),
+            ...(Array.isArray(msg.retrieved_sources) ? { retrieved_sources: msg.retrieved_sources } : {}),
+            ...(msg.knowledge_routing && typeof msg.knowledge_routing === "object" ? { knowledge_routing: msg.knowledge_routing } : {}),
+            ...(generationLimit ? { generation_limit: generationLimit } : {}),
+            ...(msg.truncated === true ? { truncated: true } : {}),
+            ...(msg.incomplete_tools === true ? { incomplete_tools: true } : {}),
+            ...(typeof msg.finish_reason === "string" || msg.finish_reason === null ? { finish_reason: msg.finish_reason } : {}),
+          } })
           break
         }
 
-        case "chat.aborted": {
-          const abortTid =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
-          // #308: stopped:false ACK must not hide Stop while a run may still
-          // be going. Field-less run-driven echoes still clear busy.
-          if (abortTid && shouldClearBusyOnChatAborted(msg)) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: abortTid, busy: false })
-          }
-          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
-          streamingRef.current = ""
-          reasoningRef.current = ""
-          dispatch({ type: "SET_STREAMING", content: "" })
-          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
-          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
-          dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          dispatch({
-            type: "ADD_MESSAGE",
-            message: {
-              id: `${activeThreadRef.current}_abort_${Date.now()}`,
-              thread_id: activeThreadRef.current || "",
-              role: "assistant",
-              content: chatAbortedAckText(msg),
-              created_at: new Date().toISOString(),
-            },
-          })
+        case "chat.aborted":
+          stream({ type: "chat.aborted", clearBusy: shouldClearBusyOnChatAborted(msg), message: {
+            id: `${threadId}_abort_${Date.now()}`, thread_id: threadId, role: "assistant",
+            content: chatAbortedAckText(msg), created_at: new Date().toISOString(),
+          } })
           break
-        }
 
         case "log.event": {
           // Wire shape is top-level { source, level, event, data } (see
@@ -650,35 +474,10 @@ export function useWebSocket() {
         }
 
         case "chat.error": {
-          // P0-B: gate on thread_id; clear streamingRef so residual tokens are
-          // not later ADD_MESSAGE'd as a completed assistant via chat.done.
-          const errTid =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
-          if (errTid) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: errTid, busy: false })
-          }
-          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
-          streamingRef.current = ""
-          reasoningRef.current = ""
-          dispatch({ type: "SET_STREAMING", content: "" })
-          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
-          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
-          dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          {
-            const parsed = overlayStandbyFromError(msg)
-            if (parsed.standby) {
-              dispatch({ type: "SET_OVERLAY_STANDBY", label: parsed.label })
-              break
-            }
-            dispatch({ type: "CLEAR_OVERLAY_STANDBY" })
-            // Soften god-mode-orthogonal gates (workspace / scene) — never show
-            // raw "安全阻断/不可恢复" for setup steps the user can fix in UI.
-            const raw = typeof msg.error === "string" ? msg.error : "出错了"
-            dispatch({
-              type: "ADD_MESSAGE",
-              message: gateErrorChatMessage(raw, activeThreadRef.current || "", `${activeThreadRef.current}_error_${Date.now()}`),
-            })
-          }
+          const parsed = overlayStandbyFromError(msg)
+          const raw = typeof msg.error === "string" ? msg.error : "出错了"
+          stream({ type: "chat.error", standby: parsed.standby ? parsed.label : null,
+            message: parsed.standby ? null : gateErrorChatMessage(raw, threadId, `${threadId}_error_${Date.now()}`) })
           break
         }
 
@@ -692,151 +491,56 @@ export function useWebSocket() {
         }
 
         case "chat.assistant": {
-          // Mid-loop assistant committed by companion (before tools run). Must land
-          // reasoning/content into the transcript — tool.start alone only adds shell cards.
-          const asstTid =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
-          if (asstTid) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: asstTid, busy: true })
-          }
-          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
-          const asstContent = typeof msg.content === "string" ? msg.content : ""
-          const asstReasoning =
-            typeof msg.reasoning_content === "string" ? msg.reasoning_content : ""
-          // Prefer companion payload; fall back to live stream if echo omitted fields.
-          const content = asstContent || streamingRef.current || ""
-          const reasoning = asstReasoning || reasoningRef.current || ""
-          // #295: tool_calls ride the chat.assistant frame so the committed row
-          // matches the persisted one — without them the honesty chip mislabels
-          // this thinking-then-tool round as 模型未返回内容.
-          const asstToolCalls = midTurnToolCalls(msg.tool_calls)
-          streamingRef.current = ""
-          reasoningRef.current = ""
-          dispatch({ type: "SET_STREAMING", content: "" })
-          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
-          if (asstTid && (content || reasoning)) {
-            dispatch({
-              type: "ADD_MESSAGE",
-              message: {
-                id:
-                  (typeof msg.message_id === "string" && msg.message_id) ||
-                  `${asstTid}_assistant_mid_${Date.now()}`,
-                thread_id: asstTid,
-                role: "assistant",
-                content,
-                ...(reasoning ? { reasoning_content: reasoning } : {}),
-                ...(asstToolCalls ? { tool_calls: asstToolCalls } : {}),
-                created_at: new Date().toISOString(),
-              },
-            })
-          }
+          const toolCalls = midTurnToolCalls(msg.tool_calls)
+          stream({ type: "chat.assistant", message: {
+            id: (typeof msg.message_id === "string" && msg.message_id) || `${threadId}_assistant_mid_${Date.now()}`,
+            thread_id: threadId, role: "assistant", created_at: new Date().toISOString(),
+            content: typeof msg.content === "string" ? msg.content : "",
+            ...(typeof msg.reasoning_content === "string" && msg.reasoning_content ? { reasoning_content: msg.reasoning_content } : {}),
+            ...(toolCalls ? { tool_calls: toolCalls } : {}),
+          } })
           break
         }
 
         case "tool.start": {
-          const toolTid =
-            typeof msg.thread_id === "string" && msg.thread_id
-              ? msg.thread_id
-              : ""
-          // P1 CORR-M05: missing thread_id fail-closed (no legacy active fallback)
-          if (!toolTid) break
-          dispatch({ type: "SET_THREAD_BUSY", threadId: toolTid, busy: true })
-          // #502 E Inspect: live latest-tool name for the inspected worker
-          // (before the gate; independent of the active transcript).
-          if (
-            shouldUpdateInspectBuffer(toolTid, inspectedWorkerRef.current) &&
-            typeof msg.tool_name === "string" &&
-            msg.tool_name
-          ) {
-            dispatch({ type: "SET_INSPECT_LATEST_TOOL", tool: msg.tool_name })
-          }
-          if (!shouldApplyStreamEvent(toolTid, activeThreadRef.current)) break
-          // Intermediate assistant stream ends when tools begin. Commit live
-          // reasoning/content into a historical row first — otherwise only the
-          // shell/tool card remains after the turn (user report on #h1yi2w).
-          // Prefer chat.assistant from companion when present; this is a fallback
-          // for older companions or races where tools start before the echo.
-          if (streamingRef.current || reasoningRef.current) {
-            const midContent = streamingRef.current || ""
-            const midReasoning = reasoningRef.current || ""
-            streamingRef.current = ""
-            reasoningRef.current = ""
-            dispatch({ type: "SET_STREAMING", content: "" })
-            dispatch({ type: "SET_STREAMING_REASONING", content: "" })
-            if (midContent || midReasoning) {
-              dispatch({
-                type: "ADD_MESSAGE",
-                message: {
-                  id: `${toolTid}_assistant_mid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                  thread_id: toolTid,
-                  role: "assistant",
-                  content: midContent,
-                  ...(midReasoning ? { reasoning_content: midReasoning } : {}),
-                  // #295: a tool is starting by definition, so this fallback row
-                  // IS a tool round — mark it (function shape, same as persisted
-                  // rows) or the honesty chip mislabels it 模型未返回内容.
-                  tool_calls: midTurnToolCalls([{
-                    id: typeof msg.tool_call_id === "string" ? msg.tool_call_id : "",
-                    type: "function",
-                    function: {
-                      name: typeof msg.tool_name === "string" ? msg.tool_name : "",
-                      arguments: "{}",
-                    },
-                  }]),
-                  created_at: new Date().toISOString(),
-                },
-              })
-            }
-          }
-          dispatch({
-            type: "ADD_MESSAGE",
-            message: {
-              id: msg.tool_call_id,
-              thread_id: toolTid,
-              role: "tool",
-              content: "",
-              tool_calls: [{
-                id: msg.tool_call_id,
-                tool_name: msg.tool_name,
-                params: msg.params || {},
-                result: null,
-                status: "running",
-              }],
-              created_at: new Date().toISOString(),
+          if (!threadId) break
+          const createdAt = new Date().toISOString()
+          stream({ type: "tool.start", browser: typeof msg.tool_name === "string" && isBrowserTool(msg.tool_name),
+            fallback: {
+              id: `${threadId}_assistant_mid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              thread_id: threadId, role: "assistant", content: "", created_at: createdAt,
+              tool_calls: midTurnToolCalls([{ id: typeof msg.tool_call_id === "string" ? msg.tool_call_id : "",
+                type: "function", function: { name: typeof msg.tool_name === "string" ? msg.tool_name : "", arguments: "{}" } }]),
+            },
+            tool: {
+              id: msg.tool_call_id, thread_id: threadId, role: "tool", content: "", created_at: createdAt,
+              tool_calls: [{ id: msg.tool_call_id, tool_name: msg.tool_name, params: msg.params || {}, result: null, status: "running" }],
             },
           })
-          if (typeof msg.tool_name === "string" && isBrowserTool(msg.tool_name)) {
-            dispatch({ type: "NOTE_BROWSER_TOOL" })
-          }
           break
         }
 
         case "tool.result": {
-          const resTid =
-            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
-          if (resTid && !shouldApplyStreamEvent(resTid, activeThreadRef.current)) break
           dispatch({
-            type: "UPDATE_TOOL_CALL",
+            type: "UPDATE_TOOL_CALL", threadId,
             messageId: msg.tool_call_id,
             toolCallId: msg.tool_call_id,
+            ...(typeof msg.tool_name === "string" && isBrowserTool(msg.tool_name) ? { browserAt: Date.now() } : {}),
             updates: {
               result: msg.result,
               status: msg.result?.success ? "success" : "error",
             },
           })
-          if (typeof msg.tool_name === "string" && isBrowserTool(msg.tool_name)) {
-            dispatch({ type: "NOTE_BROWSER_TOOL" })
-          }
           break
         }
 
         case "tool.progress": {
           // #au4dch ST-2: optional live tails; ignore if not for active thread
-          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
+          if (!threadId) break
           const id = typeof msg.tool_call_id === "string" ? msg.tool_call_id : ""
           if (!id) break
           dispatch({
-            type: "UPDATE_TOOL_CALL",
+            type: "UPDATE_TOOL_CALL", threadId,
             messageId: id,
             toolCallId: id,
             updates: {
@@ -853,11 +557,8 @@ export function useWebSocket() {
         }
 
         case "tool.vision_start": {
-          const vTid =
-            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
-          if (vTid && !shouldApplyStreamEvent(vTid, activeThreadRef.current)) break
           dispatch({
-            type: "UPDATE_TOOL_CALL",
+            type: "UPDATE_TOOL_CALL", threadId,
             messageId: msg.tool_call_id,
             toolCallId: msg.tool_call_id,
             updates: { vision_status: "analyzing" },
@@ -866,11 +567,8 @@ export function useWebSocket() {
         }
 
         case "tool.vision_done": {
-          const vdTid =
-            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
-          if (vdTid && !shouldApplyStreamEvent(vdTid, activeThreadRef.current)) break
           dispatch({
-            type: "UPDATE_TOOL_CALL",
+            type: "UPDATE_TOOL_CALL", threadId,
             messageId: msg.tool_call_id,
             toolCallId: msg.tool_call_id,
             updates: {
@@ -2263,97 +1961,26 @@ export function useWebSocket() {
           chrome.runtime.sendMessage({ type: "knowledge.list" })
           break
 
-        // Progress while companion parses / vision-analyzes attachments.
         case "file.upload_status": {
-          const stTid =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
-          if (stTid && !shouldApplyStreamEvent(stTid, activeThreadRef.current)) break
-          if (stTid) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: stTid, busy: true })
-          }
-          dispatch({ type: "SET_PROCESSING", isProcessing: true })
-          const label =
-            typeof msg.message === "string" && msg.message
-              ? msg.message
-              : msg.phase === "vision"
-                ? "正在分析文档内嵌图片…"
-                : msg.phase === "chat"
-                  ? "文档已解析，模型思考中…"
-                  : "正在解析文档…"
-          dispatch({ type: "SET_PROCESSING_STATUS", status: label })
+          const label = typeof msg.message === "string" && msg.message ? msg.message
+            : msg.phase === "vision" ? "正在分析文档内嵌图片…"
+            : msg.phase === "chat" ? "文档已解析，模型思考中…" : "正在解析文档…"
+          stream({ type: "file.upload_status", label })
           break
         }
 
-        // File parse/type/size failures return before chatCreate — must clear
-        // the optimistic "思考中" busy set by InputArea on send. Without this
-        // the panel stays stuck forever (no chat.done / chat.error ever arrives).
-        // S45 multi-lane P0: always clear mapBusy for the upload thread; panel
-        // chrome (isProcessing / ADD_MESSAGE) only when that thread is active —
-        // otherwise thread-switch mid-upload pollutes the wrong transcript.
         case "file.upload_error": {
-          const uploadErrTid =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
-          if (uploadErrTid) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId: uploadErrTid, busy: false })
-          }
-          // Companion parse/type/size fail after WS accept: retract the
-          // exact optimistic id (ref — listener must not close over render state).
-          const pending = uploadErrTid ? pendingUploadsRef.current[uploadErrTid] : undefined
-          if (pending) {
-            dispatch({ type: "REMOVE_MESSAGE", id: pending.messageId })
-            dispatch({ type: "CLEAR_PENDING_UPLOAD", threadId: uploadErrTid })
-            if (
-              pending.composerText &&
-              shouldApplyStreamEvent(uploadErrTid, activeThreadRef.current)
-            ) {
-              dispatch({ type: "REQUEST_COMPOSER_RESTORE", text: pending.composerText })
-            }
-          }
-          if (!shouldApplyStreamEvent(uploadErrTid, activeThreadRef.current)) break
-          streamingRef.current = ""
-          reasoningRef.current = ""
-          dispatch({ type: "SET_STREAMING", content: "" })
-          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
-          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
-          dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          {
-            const raw = typeof msg.error === "string" ? msg.error : "文件上传失败"
-            dispatch({
-              type: "ADD_MESSAGE",
-              message: {
-                id: `${uploadErrTid || "file"}_upload_err_${Date.now()}`,
-                thread_id: uploadErrTid,
-                role: "assistant",
-                content: `\u274c ${raw}`,
-                created_at: new Date().toISOString(),
-              },
-            })
-          }
+          const raw = typeof msg.error === "string" ? msg.error : "文件上传失败"
+          stream({ type: "file.upload_error", message: {
+            id: `${threadId || "file"}_upload_err_${Date.now()}`, thread_id: threadId, role: "assistant",
+            content: `❌ ${raw}`, created_at: new Date().toISOString(),
+          } })
           break
         }
 
-        // Ack after successful parse+chat — chat.done already cleared busy; keep
-        // as a safety net if chat path returned early without streaming.
-        // S45 P1: clear mapBusy for upload thread always; isProcessing only if
-        // active (avoid unlocking another thread's "thinking" after switch).
-        case "file.uploaded": {
-          const upTid =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
-          if (upTid) {
-            dispatch({ type: "CLEAR_PENDING_UPLOAD", threadId: upTid })
-            dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
-          }
-          // F3: chip clear has no thread ownership — dispatch before the gate,
-          // like SET_THREAD_BUSY above, or chips leak across threads.
-          dispatch({ type: "BUMP_COMPOSER_UPLOAD_CLEAR" })
-          if (!fileUploadedApplyToPanel(upTid, activeThreadRef.current)) break
-          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
-          // Only clear processing if no stream is in flight for this panel.
-          if (!streamingRef.current && !reasoningRef.current) {
-            dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          }
+        case "file.uploaded":
+          stream({ type: "file.uploaded" })
           break
-        }
 
         case "overlay.shell.accepted":
           // Silent ack — request accepted, not opened. Spawn failure toasts via error.
@@ -2474,30 +2101,10 @@ export function useWebSocket() {
             }
             break
           }
-          {
-            const errTid = activeThreadRef.current || ""
-            if (errTid) {
-              dispatch({ type: "SET_THREAD_BUSY", threadId: errTid, busy: false })
-            }
-            streamingRef.current = ""
-            reasoningRef.current = ""
-            dispatch({ type: "SET_STREAMING", content: "" })
-            dispatch({ type: "SET_STREAMING_REASONING", content: "" })
-            dispatch({ type: "SET_PROCESSING_STATUS", status: null })
-            dispatch({ type: "SET_PROCESSING", isProcessing: false })
-            dispatch({
-              type: "ADD_MESSAGE",
-              message: {
-                id: `error_${Date.now()}`,
-                thread_id: errTid,
-                role: "assistant",
-                content: `\u274c ${msg.error || "Unknown error"}`,
-                created_at: new Date().toISOString(),
-              },
-            })
-          }
-          // P3: a failed summary export surfaces as an error chat message \u2014 clear its spinner.
-          dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: null })
+          stream({ type: "error", message: {
+            id: `error_${Date.now()}`, thread_id: threadId, role: "assistant",
+            content: `❌ ${msg.error || "Unknown error"}`, created_at: new Date().toISOString(),
+          } })
           break
         }
 

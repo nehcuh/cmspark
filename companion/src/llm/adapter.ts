@@ -1775,6 +1775,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           type: "chat.done",
           thread_id: threadId,
           message_id: savedTruncated.id,
+          content: savedTruncated.content,
           truncated: true,
           incomplete_tools: true,
           finish_reason: finishReason,
@@ -1893,7 +1894,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           // Length-stop with no tool_call deltas = pure-text truncation. The reply
           // is kept as-is but flagged (optional, backward-compatible) so the UI can
           // hint the answer was cut off instead of looking complete.
-          ...(generationLimit ? { truncated: true, generation_limit: generationLimit, finish_reason: finishReason } : {}),
+          ...(generationLimit ? { content: savedAssistant.content, truncated: true, generation_limit: generationLimit, finish_reason: finishReason } : {}),
         })
         if (generationLimit) {
           runStats.terminal = "error"
@@ -2702,16 +2703,18 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           const abortedCalls: StreamToolCall[] = toolCalls.filter(
             (tc): tc is StreamToolCall => tc != null,
           )
-          savedAssistantId = persistAssistantDraft({
+          const partial = persistAssistantDraft({
             content: assistantContent,
             reasoning: reasoningContent,
             tool_calls: abortedCalls,
             finish_reason: finishReason || "aborted",
-          }).id
+          })
+          savedAssistantId = partial.id
           sendToExtension({
             type: "chat.done",
             thread_id: threadId,
-            message_id: savedAssistantId,
+            message_id: partial.id,
+            content: partial.content,
             finish_reason: finishReason || "aborted",
             ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
           })
@@ -2728,7 +2731,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             incomplete_tools: incomplete, finish_reason: "interrupted", retrieved_sources: retrievedSources, knowledge_routing: knowledgeRoutingWire })
           if (incomplete) persistInterruptedRemainder(partial.id, "interrupted")
           sendToExtension({ type: "chat.done", thread_id: threadId, message_id: partial.id,
-            finish_reason: "interrupted", incomplete_tools: incomplete, reasoning_content: reasoningContent })
+            content: partial.content, finish_reason: "interrupted", incomplete_tools: incomplete, reasoning_content: reasoningContent })
         }
         sendToExtension({ type: "chat.error", thread_id: threadId,
           error: e instanceof ReasoningRecoveryError ? e.message : "重新请求模型时失败，本轮已停止。" })
@@ -2768,6 +2771,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
             type: "chat.done",
             thread_id: threadId,
             message_id: savedAssistantId,
+            content: saved.content,
             truncated: true,
             ...(incomplete ? { incomplete_tools: true } : {}),
             finish_reason: "context_length_exceeded",

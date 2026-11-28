@@ -349,7 +349,8 @@ test("pendingUploads is keyed by thread so concurrent uploads do not overwrite",
   s = agentReducer(s, { type: "CLEAR_PENDING_UPLOAD", threadId: "thread-a" })
   assert.equal(s.pendingUploads["thread-a"], undefined)
   assert.equal(s.pendingUploads["thread-b"]?.messageId, "thread-b_user_2_def")
-  s = agentReducer(s, { type: "REQUEST_COMPOSER_RESTORE", text: "看图 B" })
+  s = agentReducer({ ...s, activeThreadId: "thread-b" }, { type: "RECEIVE_THREAD_STREAM", threadId: "thread-b",
+    event: { type: "file.upload_error", message: { id: "failed", thread_id: "thread-b", role: "assistant", content: "failed", created_at: "" } } })
   assert.equal(s.composerRestore?.text, "看图 B")
   s = agentReducer(s, { type: "CLEAR_COMPOSER_RESTORE" })
   assert.equal(s.composerRestore, null)
@@ -905,19 +906,15 @@ test("#507 ADD_SECURITY_CONFIRMATION keeps thread owner fields from the frame", 
   assert.equal(stored.orchestrator_run_id, "run-9")
 })
 
-test("#505 SET_RUN_TERMINAL stores per-thread round_limit and clears on new run", () => {
+test("#505 round_limit is per-thread and clears on a new run", () => {
   const tid = "thread-cap"
-  const set = agentReducer(initialState, {
-    type: "SET_RUN_TERMINAL",
-    threadId: tid,
-    terminal: "round_limit",
+  const terminal = (threadId: string) => ({
+    type: "RECEIVE_THREAD_STREAM" as const, threadId, event: { type: "chat.done" as const, roundLimit: true,
+      message: { id: "cap", thread_id: threadId, role: "assistant" as const, created_at: "" } },
   })
+  const set = agentReducer(initialState, terminal(tid))
   assert.equal(set.runTerminalByThreadId[tid], "round_limit")
-  const other = agentReducer(set, {
-    type: "SET_RUN_TERMINAL",
-    threadId: "other",
-    terminal: "round_limit",
-  })
+  const other = agentReducer(set, terminal("other"))
   assert.equal(other.runTerminalByThreadId[tid], "round_limit")
 
   const busy = agentReducer(set, { type: "SET_THREAD_BUSY", threadId: tid, busy: true })

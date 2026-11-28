@@ -1,4 +1,5 @@
 import { isTempUserMessageId } from "../../utils/temp-message-id"
+import { reduceThreadStream, setThreadBusy, withoutRunTerminal, type ThreadStreamEvent } from "./conversation-stream"
 import { addTranscriptMessage, mergeHydratedMessages } from "./transcript"
 export { isTempUserMessageId, mergeHydratedMessages }
 
@@ -523,13 +524,14 @@ export type AgentAction =
   | { type: "COMMIT_NAVIGATION"; decision: { ignored: false; layer: "session" | "projects"; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null; remembered: string | null } }
   | { type: "NAVIGATE"; layer: "projects" | "project" | "session" | "recent" | "tools"; projectId: string | null }
   | { type: "SET_ACTIVE_THREAD"; threadId: string | null }
+  | { type: "RECEIVE_THREAD_STREAM"; threadId: string; event: ThreadStreamEvent }
   | { type: "ADD_MESSAGE"; message: Message; source?: "chat.user" }
   | { type: "REMOVE_MESSAGE"; id: string }
   | { type: "UPDATE_MESSAGE"; id: string; content: string }
   | { type: "SET_MESSAGES"; messages: Message[]; threadId?: string }
   | { type: "HYDRATE_FAILED"; threadId: string; retryable: boolean; uncorrelated?: true }
   | { type: "ADD_TOOL_CALL"; messageId: string; toolCall: any }
-  | { type: "UPDATE_TOOL_CALL"; messageId: string; toolCallId: string; updates: any }
+  | { type: "UPDATE_TOOL_CALL"; threadId: string; browserAt?: number; messageId: string; toolCallId: string; updates: any }
   | { type: "SET_SKILLS"; skills: SkillMeta[] }
   | { type: "TOGGLE_SKILL"; skillId: string }
   | { type: "SET_OPERATIONS"; operations: OperationRecord[] }
@@ -556,8 +558,6 @@ export type AgentAction =
   | { type: "UPSERT_THREAD"; thread: Thread }
   | { type: "REMOVE_THREAD"; threadId: string }
   | { type: "REMOVE_THREADS"; threadIds: string[] }
-  | { type: "SET_STREAMING"; content: string }
-  | { type: "SET_STREAMING_REASONING"; content: string }
   | { type: "SET_PROCESSING_STATUS"; status: string | null }
   | { type: "SET_TEST_RESULT"; result: string | null }
   | { type: "SET_TEST_VISION_RESULT"; result: string | null }
@@ -609,13 +609,9 @@ export type AgentAction =
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_CONFIG_HYDRATED"; hydrated: boolean }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
-  | { type: "BUMP_COMPOSER_UPLOAD_CLEAR" }
   | { type: "SET_PENDING_UPLOAD"; threadId: string; messageId: string; composerText: string }
   | { type: "CLEAR_PENDING_UPLOAD"; threadId: string }
-  | { type: "REQUEST_COMPOSER_RESTORE"; text: string }
   | { type: "CLEAR_COMPOSER_RESTORE" }
-  | { type: "SET_OVERLAY_STANDBY"; label: string }
-  | { type: "CLEAR_OVERLAY_STANDBY" }
   | { type: "APPLY_COMPOSER_LEASE"; holder: "overlay" | "panel"; threadId?: string }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_KNOWLEDGE_IMPORT_STATUS"; status: { ok: boolean; message: string } | null }
@@ -705,14 +701,11 @@ export type AgentAction =
   | { type: "CLEAR_VOICE_BINARY_PROGRESS"; backend: VoiceBinaryProgress["backend"] }
   | { type: "SET_VOICE_BINARY_ERROR"; error: VoiceBinaryError | null }
   | { type: "SET_VOICE_MODEL_ERROR"; error: string | null }
-  | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
   | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
   | { type: "SET_THREAD_BUSY"; threadId: string; busy: boolean }
   | { type: "SET_FLEET_LIST_OPEN"; open: boolean }
   | { type: "SET_INSPECT_WORKER"; workerId: string }
-  | { type: "SET_INSPECT_TAIL"; tail: string }
-  | { type: "SET_INSPECT_LATEST_TOOL"; tool: string }
   | { type: "CLEAR_INSPECT" }
   | { type: "SET_USER_ENV"; userEnv: UserEnvPublic }
   | { type: "SET_USER_ENV_ERROR"; error: string | null }
@@ -748,7 +741,6 @@ export type AgentAction =
   /** L-4 (#390): companion task_loop.status frame (sanitized view; verbatim render). */
   | { type: "SET_LOOP_STATUS"; threadId: string; view: LoopStatusView }
   /** #505: chat.done.terminal on the unarmed 100-round cap. `null` clears. */
-  | { type: "SET_RUN_TERMINAL"; threadId: string; terminal: "round_limit" | null }
   /** #513: companion fleet.suggest frame — keyed per thread (no active gate). */
   | { type: "SET_FLEET_SUGGEST"; threadId: string; reason: string; subtasks: string[] }
   /** #513: local clear on accept/dismiss (companion ack is idempotent sync). */
@@ -935,12 +927,6 @@ export function isPanelOriginUserMessage(message: {
   return !!clientId && isTempUserMessageId(clientId, tid)
 }
 
-function withoutRunTerminal(state: AgentState, threadId: string): AgentState {
-  if (!threadId || !state.runTerminalByThreadId[threadId]) return state
-  const { [threadId]: _dropped, ...rest } = state.runTerminalByThreadId
-  return { ...state, runTerminalByThreadId: rest }
-}
-
 function immediateInFlight(save: ImmediateSave | null): boolean {
   return !!save && (save.status === "sending" || save.status === "accepted")
 }
@@ -1030,10 +1016,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, navigationRemembered: action.threadId }
     case "SET_ACTIVE_THREAD":
       return selectThread(state, action.threadId)
-    case "SET_OVERLAY_STANDBY":
-      return { ...state, overlayStandby: { label: action.label } }
-    case "CLEAR_OVERLAY_STANDBY":
-      return state.overlayStandby ? { ...state, overlayStandby: null } : state
     case "APPLY_COMPOSER_LEASE": {
       if (action.holder === "panel") {
         return state.overlayStandby ? { ...state, overlayStandby: null } : state
@@ -1042,6 +1024,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       if (state.overlayStandby?.label === label) return state
       return { ...state, overlayStandby: { label } }
     }
+    case "RECEIVE_THREAD_STREAM":
+      return reduceThreadStream(state, action.threadId, action.event)
     case "ADD_MESSAGE": {
       const tid = action.message.thread_id
       if (action.source === "chat.user" && tid !== state.activeThreadId) {
@@ -1075,8 +1059,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ),
       }
     case "UPDATE_TOOL_CALL":
+      if (action.threadId && action.threadId !== state.activeThreadId) return state
       return {
         ...state,
+        ...(action.browserAt !== undefined ? { lastBrowserToolAt: action.browserAt } : {}),
         messages: state.messages.map(m => {
           if (m.id !== action.messageId) return m
           return {
@@ -1259,20 +1245,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           [action.threadId]: action.view,
         },
       }
-    }
-    case "SET_RUN_TERMINAL": {
-      if (!action.threadId) return state
-      if (action.terminal === "round_limit") {
-        if (state.runTerminalByThreadId[action.threadId] === "round_limit") return state
-        return {
-          ...state,
-          runTerminalByThreadId: {
-            ...state.runTerminalByThreadId,
-            [action.threadId]: "round_limit",
-          },
-        }
-      }
-      return withoutRunTerminal(state, action.threadId)
     }
     case "SET_FLEET_SUGGEST": {
       // #513: keyed per thread — a background thread's frame must not touch the
@@ -1495,10 +1467,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return removeThreads(state, action.threadIds)
     case "UPSERT_THREAD":
       return upsertThread(state, action.thread)
-    case "SET_STREAMING":
-      return { ...state, streamingContent: action.content }
-    case "SET_STREAMING_REASONING":
-      return { ...state, streamingReasoning: action.content }
     case "SET_PROCESSING_STATUS":
       return { ...state, processingStatus: action.status }
     case "SET_TEST_RESULT":
@@ -1640,8 +1608,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, configHydratedFromCompanion: action.hydrated }
     case "SET_PROCESSING":
       return { ...state, isProcessing: action.isProcessing }
-    case "BUMP_COMPOSER_UPLOAD_CLEAR":
-      return { ...state, composerUploadClearSeq: state.composerUploadClearSeq + 1 }
     case "SET_PENDING_UPLOAD":
       if (!action.threadId) return state
       return {
@@ -1656,30 +1622,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const { [action.threadId]: _dropped, ...rest } = state.pendingUploads
       return { ...state, pendingUploads: rest }
     }
-    case "REQUEST_COMPOSER_RESTORE":
-      return {
-        ...state,
-        composerRestore: { text: action.text, token: (state.composerRestore?.token ?? 0) + 1 },
-      }
     case "CLEAR_COMPOSER_RESTORE":
       return { ...state, composerRestore: null }
-    case "SET_THREAD_BUSY": {
-      const id = action.threadId
-      if (!id) return state
-      if (action.busy) {
-        // #505: a new chat.create / live token on this thread clears the cap hint.
-        const base = withoutRunTerminal(state, id)
-        if (base.threadBusyById[id]) return base
-        return { ...base, threadBusyById: { ...base.threadBusyById, [id]: true } }
-      }
-      if (!state.threadBusyById[id]) return state
-      const { [id]: _, ...rest } = state.threadBusyById
-      return { ...state, threadBusyById: rest }
-    }
+    case "SET_THREAD_BUSY":
+      return setThreadBusy(state, action.threadId, action.busy)
     case "SET_FLEET_LIST_OPEN":
       // #502 E MAJOR-M1: every portal close path (Escape / backdrop / onClose /
       // enterWorker) funnels through here — drop the inspect buffer so worker
-      // tokens stop feeding SET_INSPECT_TAIL once the drawer is gone.
+      // Stop collecting worker output once the drawer closes.
       if (!action.open && state.inspectedWorkerId !== null) {
         return {
           ...state,
@@ -1698,12 +1648,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         inspectTokenTail: "",
         inspectLatestTool: "",
       }
-    case "SET_INSPECT_TAIL":
-      if (state.inspectTokenTail === action.tail) return state
-      return { ...state, inspectTokenTail: action.tail }
-    case "SET_INSPECT_LATEST_TOOL":
-      if (state.inspectLatestTool === action.tool) return state
-      return { ...state, inspectLatestTool: action.tool }
     case "CLEAR_INSPECT":
       if (state.inspectedWorkerId === null) return state
       return { ...state, inspectedWorkerId: null, inspectTokenTail: "", inspectLatestTool: "" }
@@ -2034,8 +1978,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     case "SET_VOICE_MODEL_ERROR":
       return { ...state, voiceModelError: action.error }
-    case "NOTE_BROWSER_TOOL":
-      return { ...state, lastBrowserToolAt: action.at ?? Date.now() }
     case "SET_MODE_PIN":
       return { ...state, modePin: action.pin }
     case "SET_FLEET":

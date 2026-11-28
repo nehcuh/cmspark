@@ -1,3 +1,5 @@
+import { initialState } from "../src/sidepanel/store/agentStore"
+import { mountPanel } from "./helpers/mount-sidepanel"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
@@ -44,20 +46,25 @@ test("fileUploadedApplyToPanel: only panel chrome is thread-gated (F3)", () => {
   assert.equal(fileUploadedApplyToPanel("thread-a", null), false)
 })
 
-test("file.upload_error retracts via pendingUploadsRef (not stale state.messages)", () => {
-  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
-  assert.match(src, /pendingUploadsRef\.current = state\.pendingUploads/)
-  const start = src.indexOf('case "file.upload_error"')
-  assert.ok(start >= 0, "file.upload_error case missing")
-  const body = src.slice(start, start + 2000)
-  assert.match(body, /pendingUploadsRef\.current/)
-  assert.match(body, /REMOVE_MESSAGE/)
-  assert.equal(body.includes("state.messages"), false)
-  assert.match(body, /CLEAR_PENDING_UPLOAD/)
-  const restoreIdx = body.indexOf("REQUEST_COMPOSER_RESTORE")
-  const gateIdx = body.indexOf("shouldApplyStreamEvent(uploadErrTid")
-  assert.ok(restoreIdx >= 0, "REQUEST_COMPOSER_RESTORE missing")
-  assert.ok(gateIdx >= 0 && gateIdx < restoreIdx, "composer restore must sit behind the active-thread gate")
+test("upload failure retracts only the owner's pending bubble and restores only its active composer", () => {
+  for (const switchAway of [false, true]) {
+    const pending = { messageId: "upload", composerText: "original draft" }
+    const panel = mountPanel({ ...initialState, pendingUploads: { A: pending } })
+    panel.select("A")
+    panel.addLocal({ id: "upload", thread_id: "A", role: "user", content: "upload", created_at: "" })
+    if (switchAway) panel.select("B", false)
+    panel.receive({ type: "file.upload_error", thread_id: "A", error: "bad file" })
+    assert.equal(panel.state().pendingUploads.A, undefined)
+    if (switchAway) {
+      assert.equal(panel.state().composerRestore, null)
+      assert.equal(panel.state().messages.length, 0)
+      panel.select("A")
+      assert.equal(panel.state().messages.length, 0)
+    } else {
+      assert.equal(panel.state().composerRestore?.text, pending.composerText)
+      assert.deepEqual(panel.state().messages.map(m => m.content), ["❌ bad file"])
+    }
+  }
 })
 
 test("InputArea consumes composerRestore via nextComposerText", () => {
@@ -110,19 +117,16 @@ test("apps.list/acp.list request echo must not clear entries or flip enabled", (
   )
 })
 
-test("file.uploaded: chip-clear BUMP is dispatched before the thread gate (F3)", () => {
-  // Source-order lock (pre-F3 this ordering was inverted → red): the BUMP sat
-  // behind shouldApplyStreamEvent, so foreign-thread uploads never cleared chips.
-  const src = readFileSync(
-    join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"),
-    "utf8",
-  )
-  const start = src.indexOf('case "file.uploaded"')
-  assert.ok(start >= 0, "file.uploaded case missing")
-  const body = src.slice(start, start + 1200)
-  const bumpIdx = body.indexOf('type: "BUMP_COMPOSER_UPLOAD_CLEAR"')
-  const gateIdx = body.indexOf("fileUploadedApplyToPanel(")
-  assert.ok(bumpIdx >= 0, "BUMP dispatch missing")
-  assert.ok(gateIdx >= 0, "panel gate missing")
-  assert.ok(bumpIdx < gateIdx, "chip clear must dispatch before the thread gate")
+test("an upload ack clears composer chips globally but preserves the selected thread's live stream", () => {
+  const panel = mountPanel()
+  panel.select("A")
+  panel.select("B", false)
+  panel.receive({ type: "chat.reasoning", thread_id: "B", content: "working" }, false)
+  panel.receive({ type: "file.uploaded", thread_id: "A" }, false)
+  assert.equal(panel.state().composerUploadClearSeq, 1)
+  assert.equal(panel.state().isProcessing, true)
+  panel.receive({ type: "file.uploaded", thread_id: "B" })
+  assert.equal(panel.state().composerUploadClearSeq, 2)
+  assert.equal(panel.state().isProcessing, true)
+  assert.equal(panel.state().streamingReasoning, "working")
 })

@@ -873,7 +873,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       setSlashVisible(false)
       setAtVisible(false)
       setThreadRefs([])
-      // selectedFiles stay until companion file.uploaded (BUMP_COMPOSER_UPLOAD_CLEAR).
+      // Keep selected files until the companion acknowledges the upload.
     } finally {
       sendingRef.current = false
     }
@@ -886,8 +886,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       type: "chat.abort",
       threadId: state.activeThreadId,
     })
-    dispatch({ type: "SET_STREAMING", content: "" })
-    dispatch({ type: "SET_STREAMING_REASONING", content: "" })
     dispatch({ type: "SET_PROCESSING_STATUS", status: null })
     dispatch({ type: "SET_PROCESSING", isProcessing: false })
   }
