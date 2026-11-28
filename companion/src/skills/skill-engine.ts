@@ -28,7 +28,7 @@ import {
   nfc,
   writeRestrictedFile,
 } from "./doc-identity"
-import { validateWildcardPattern } from "../security"
+import { validateWildcardPattern } from "../security/domain-patterns"
 import { redactSecrets } from "../threads/distill"
 import { normalizeTags } from "../threads/digest"
 import { createDesktopResourceStore, type ResourceKind, type ResourceImport } from "./desktop-resource-store"

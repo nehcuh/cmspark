@@ -8,6 +8,7 @@ import { EventEmitter } from "events"
 import { isDeepStrictEqual } from "node:util"
 import { getBuiltinSkillsSrc } from "./paths"
 import { atomicWriteJSON } from "./io"
+import { validateWildcardPattern } from "./security/domain-patterns"
 import type { McpConfig, McpServerConfig } from "./mcp/types"
 import { defaultFilesystemServerConfig } from "./mcp/filesystem-home"
 import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
@@ -1326,8 +1327,6 @@ function filterDomainPatterns(
   logLabel = "rejecting",
 ): string[] {
   if (!Array.isArray(arr)) return []
-  // Lazy require avoids circular import at module load
-  const { validateWildcardPattern } = require("./security") as typeof import("./security")
   const kept: string[] = []
   for (const p of arr) {
     if (typeof p !== "string") continue
