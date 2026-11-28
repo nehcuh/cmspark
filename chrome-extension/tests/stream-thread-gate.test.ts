@@ -69,16 +69,6 @@ test("InputArea consumes composerRestore via nextComposerText", () => {
   assert.match(body, /CLEAR_COMPOSER_RESTORE/)
 })
 
-test("chat.user paints the bubble before busy chrome", () => {
-  const src = readFileSync(join(process.cwd(), "src/sidepanel/hooks/useWebSocket.ts"), "utf8")
-  const start = src.indexOf('case "chat.user"')
-  assert.ok(start >= 0, "chat.user case missing")
-  const body = src.slice(start, src.indexOf("case \"chat.done\"", start))
-  const addIdx = body.indexOf("ADD_MESSAGE")
-  const procIdx = body.indexOf("SET_PROCESSING")
-  assert.ok(addIdx >= 0 && procIdx > addIdx, "ADD_MESSAGE must precede SET_PROCESSING")
-})
-
 test("thread.list request echo must not be treated as an empty hydrate", () => {
   // Cockpit open → sendMessage({type:"thread.list"}) lands on the Panel listener.
   // Without this guard, incoming=[] → auto-create a blank thread.

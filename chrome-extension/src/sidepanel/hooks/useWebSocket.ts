@@ -503,13 +503,12 @@ export function useWebSocket() {
           // SW rebroadcast + companion persist echo (message_id + attachments).
           // Optimistic panel bubble uses a temp id; ADD_MESSAGE adopts the
           // persisted id and merges attachments (DoD #13).
-          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
+          if (typeof msg.thread_id !== "string" || !msg.thread_id) break
           const content = typeof msg.content === "string" ? msg.content : ""
           const attachments = parseChatUserAttachments(msg.attachments)
           const files = parseDocumentNotices(msg.files)
           if (!content.trim() && !attachments?.length) break
-          const threadId =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
+          const threadId = msg.thread_id
           const id =
             (typeof msg.message_id === "string" && msg.message_id) ||
             newTempUserMessageId(threadId)
@@ -520,6 +519,7 @@ export function useWebSocket() {
             (typeof msg.client_message_id === "string" && msg.client_message_id) || undefined
           dispatch({
             type: "ADD_MESSAGE",
+            source: "chat.user",
             message: {
               id,
               thread_id: threadId,
@@ -533,10 +533,6 @@ export function useWebSocket() {
               ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
             },
           })
-          if (threadId) {
-            dispatch({ type: "SET_THREAD_BUSY", threadId, busy: true })
-          }
-          dispatch({ type: "SET_PROCESSING", isProcessing: true })
           break
         }
 

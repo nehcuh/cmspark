@@ -1,3 +1,7 @@
+import { isTempUserMessageId } from "../../utils/temp-message-id"
+import { addTranscriptMessage, mergeHydratedMessages } from "./transcript"
+export { isTempUserMessageId, mergeHydratedMessages }
+
 import { cacheThreadMessages, removeThreads, selectThread, updateThreadList, upsertThread } from "./thread-selection"
 export { MESSAGES_BY_THREAD_LRU } from "./thread-selection"
 import type { WorkspaceHintView } from "../coding-handoff/workspace-hints"
@@ -6,7 +10,7 @@ import { registrySummaryFromMessage, type RegistryDiscoverySummary } from "../ut
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, MessageAttachment, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceBinaryError, VoiceBinaryProgress, VoiceModelState, VoiceModelProgress, VoiceSystemState, VoiceWhisperExecution, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, KnowledgeDocView, KnowledgeFolderMeta, KnowledgeDistribution, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceBinaryError, VoiceBinaryProgress, VoiceModelState, VoiceModelProgress, VoiceSystemState, VoiceWhisperExecution, CapabilityLevel, FleetSnapshot, UserEnvPublic, LoopStatusView } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 import type { KnowledgeDraftSuggestion } from "../utils/knowledge-preview"
 import { normalizeDocumentWarning } from "../utils/document-warning"
@@ -519,7 +523,7 @@ export type AgentAction =
   | { type: "COMMIT_NAVIGATION"; decision: { ignored: false; layer: "session" | "projects"; activeThreadId: string | null; selectThread: false | string; homeCopy: string | null; remembered: string | null } }
   | { type: "NAVIGATE"; layer: "projects" | "project" | "session" | "recent" | "tools"; projectId: string | null }
   | { type: "SET_ACTIVE_THREAD"; threadId: string | null }
-  | { type: "ADD_MESSAGE"; message: Message }
+  | { type: "ADD_MESSAGE"; message: Message; source?: "chat.user" }
   | { type: "REMOVE_MESSAGE"; id: string }
   | { type: "UPDATE_MESSAGE"; id: string; content: string }
   | { type: "SET_MESSAGES"; messages: Message[]; threadId?: string }
@@ -917,21 +921,6 @@ export const initialState: AgentState = {
   fleetSuggestByThreadId: {},
 }
 
-/**
- * Client-generated optimistic user ids: `${threadId}_user_${ms}[_${rand}]`
- * (random suffix defeats same-millisecond collisions) or legacy
- * `${threadId}_${ms}`. Companion persisted ids (`${threadId}_${ms}_${rand}`,
- * no `_user_` infix) must NOT match.
- */
-export function isTempUserMessageId(id: string, threadId: string): boolean {
-  if (!id) return false
-  if (/_user_\d{10,}(_[a-z0-9]+)?$/.test(id)) return true
-  if (threadId && id.startsWith(`${threadId}_`) && new RegExp(`^${escapeRegExp(threadId)}_\\d{10,}$`).test(id)) {
-    return true
-  }
-  return false
-}
-
 /** Panel-origin chat.user: optimistic temp id (or persist echo of that id). */
 export function isPanelOriginUserMessage(message: {
   id: string
@@ -944,148 +933,6 @@ export function isPanelOriginUserMessage(message: {
   if (isTempUserMessageId(message.id, tid)) return true
   const clientId = message.client_message_id
   return !!clientId && isTempUserMessageId(clientId, tid)
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-}
-
-function mergeAttachments(
-  existing: MessageAttachment[] | undefined,
-  incoming: MessageAttachment[] | undefined,
-): MessageAttachment[] | undefined {
-  if (incoming && incoming.length > 0) return incoming
-  if (existing && existing.length > 0) return existing
-  return existing
-}
-
-function reduceAddMessage(state: AgentState, incoming: Message): AgentState {
-  const sameIdIdx = state.messages.findIndex((m) => m.id === incoming.id)
-  if (sameIdIdx >= 0) {
-    const existing = state.messages[sameIdIdx]!
-    const merged = mergeAttachments(existing.attachments, incoming.attachments)
-    const files = incoming.files ?? existing.files
-    if (merged === existing.attachments && files === existing.files) return state
-    return {
-      ...state,
-      messages: state.messages.map((m, i) =>
-        i === sameIdIdx ? { ...m, attachments: merged, files } : m,
-      ),
-    }
-  }
-
-  if (incoming.role === "user" && incoming.thread_id) {
-    // F1 precise adopt: persist echo carries the optimistic bubble's temp id —
-    // adopt by exact id, never by position. No match → plain append (multi-
-    // surface sends in one WS window must not cross-adopt each other's bubble).
-    const clientMessageId =
-      typeof incoming.client_message_id === "string" && incoming.client_message_id
-        ? incoming.client_message_id
-        : null
-    if (clientMessageId) {
-      const matchIdx = state.messages.findIndex(
-        (m) =>
-          m.id === clientMessageId &&
-          m.role === "user" &&
-          m.thread_id === incoming.thread_id,
-      )
-      if (matchIdx < 0) {
-        return { ...state, messages: [...state.messages, incoming] }
-      }
-      const matched = state.messages[matchIdx]!
-      const merged = mergeAttachments(matched.attachments, incoming.attachments)
-      return {
-        ...state,
-        messages: state.messages.map((m, i) =>
-          i === matchIdx
-            ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}), ...(incoming.files ? { files: incoming.files } : {}) }
-            : m,
-        ),
-      }
-    }
-    // Legacy adopt (pre-F1 companion without client_message_id): last temp
-    // user bubble in this thread takes the persisted id.
-    let lastUserIdx = -1
-    for (let i = state.messages.length - 1; i >= 0; i--) {
-      const m = state.messages[i]!
-      if (m.role === "user" && m.thread_id === incoming.thread_id) {
-        lastUserIdx = i
-        break
-      }
-    }
-    if (lastUserIdx >= 0) {
-      const last = state.messages[lastUserIdx]!
-      const lastTemp = isTempUserMessageId(last.id, incoming.thread_id)
-      const incomingTemp = isTempUserMessageId(incoming.id, incoming.thread_id)
-      if (lastTemp && !incomingTemp) {
-        const merged = mergeAttachments(last.attachments, incoming.attachments)
-        return {
-          ...state,
-          messages: state.messages.map((m, i) =>
-            i === lastUserIdx
-              ? { ...m, id: incoming.id, ...(merged ? { attachments: merged } : {}), ...(incoming.files ? { files: incoming.files } : {}) }
-              : m,
-          ),
-        }
-      }
-      // Late SW echo after companion adopt — do not re-append the temp id.
-      if (!lastTemp && incomingTemp) {
-        const merged = mergeAttachments(last.attachments, incoming.attachments)
-        if (merged === last.attachments) return state
-        return {
-          ...state,
-          messages: state.messages.map((m, i) =>
-            i === lastUserIdx ? { ...m, attachments: merged } : m,
-          ),
-        }
-      }
-    }
-  }
-
-  return { ...state, messages: [...state.messages, incoming] }
-}
-
-/**
- * thread.messages / hydrate wholesale replace must not drop an in-flight
- * optimistic user bubble (temp id) that companion has not persisted yet.
- * Stale select / list races previously wiped the bubble so the panel only
- * showed 「思考中」 until chat.user arrived.
- *
- * If incoming already carries the persisted twin (same user content not
- * already accounted for by a non-temp existing row), drop the temp — do
- * not double-render.
- */
-export function mergeHydratedMessages(
-  existing: Message[],
-  incoming: Message[],
-): Message[] {
-  const next = Array.isArray(incoming) ? incoming : []
-  if (!Array.isArray(existing) || existing.length === 0) return next
-  const incomingIds = new Set(next.map((m) => m.id).filter(Boolean))
-  const unmatchedIncomingContents: string[] = next
-    .filter((m) => m.role === "user")
-    .map((m) => m.content)
-  for (const m of existing) {
-    if (!m || m.role !== "user") continue
-    const tid = typeof m.thread_id === "string" ? m.thread_id : ""
-    if (isTempUserMessageId(m.id, tid)) continue
-    const i = unmatchedIncomingContents.indexOf(m.content)
-    if (i >= 0) unmatchedIncomingContents.splice(i, 1)
-  }
-  const extras: Message[] = []
-  for (const m of existing) {
-    if (!m || incomingIds.has(m.id)) continue
-    if (m.role !== "user") continue
-    const tid = typeof m.thread_id === "string" ? m.thread_id : ""
-    if (!isTempUserMessageId(m.id, tid)) continue
-    const i = unmatchedIncomingContents.indexOf(m.content)
-    if (i >= 0) {
-      unmatchedIncomingContents.splice(i, 1)
-      continue
-    }
-    extras.push(m)
-  }
-  return extras.length ? [...next, ...extras] : next
 }
 
 function withoutRunTerminal(state: AgentState, threadId: string): AgentState {
@@ -1196,18 +1043,22 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, overlayStandby: { label } }
     }
     case "ADD_MESSAGE": {
-      // Dedup by id: Side Panel optimistic add + SW `chat.user` broadcast (Cockpit
-      // / multi-surface) must not double-append the same user turn.
-      // Same-id echo may carry companion attachments — merge them onto the row.
-      // Companion persist uses a new message_id; adopt it onto the optimistic
-      // bubble matched by client_message_id (F1), falling back to the last temp
-      // user bubble for pre-F1 companions (DoD #13).
-      const next = reduceAddMessage(state, action.message)
-      const tid = typeof action.message.thread_id === "string" ? action.message.thread_id : ""
-      const cleared =
-        action.message.role === "user" && tid ? withoutRunTerminal(next, tid) : next
-      if (cleared.overlayStandby && isPanelOriginUserMessage(action.message)) {
-        return { ...cleared, overlayStandby: null }
+      const tid = action.message.thread_id
+      if (action.source === "chat.user" && tid !== state.activeThreadId) {
+        const cached = state.messagesByThreadId[tid]
+        const clientId = action.message.client_message_id
+        if (!clientId || !cached?.some(row => row.role === "user" &&
+            (row.id === clientId || row.client_message_id === clientId))) return state
+        const messages = addTranscriptMessage(cached, action.message, action.source)
+        return messages === cached ? state : { ...state, messagesByThreadId: { ...state.messagesByThreadId, [tid]: messages } }
+      }
+      const messages = addTranscriptMessage(state.messages, action.message, action.source)
+      const next = messages === state.messages ? state : { ...state, messages }
+      let cleared = action.message.role === "user" && tid ? withoutRunTerminal(next, tid) : next
+      if (cleared.overlayStandby && isPanelOriginUserMessage(action.message)) cleared = { ...cleared, overlayStandby: null }
+      if (action.source === "chat.user") return {
+        ...cleared, isProcessing: true,
+        threadBusyById: cleared.threadBusyById[tid] ? cleared.threadBusyById : { ...cleared.threadBusyById, [tid]: true },
       }
       return cleared
     }

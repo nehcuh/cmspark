@@ -885,7 +885,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void, sen
           const sent = wsClient.send(frame)
           if (!sent) {
             chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
-          } else if (message.enqueue !== true) {
+          } else if (message.enqueue !== true && message.steer !== true) {
+            // Mid-run instructions may be joined into one turn. Companion emits it when applied.
             echoUser(true)
           }
           sendResponse({ ok: sent })

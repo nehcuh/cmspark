@@ -5,6 +5,7 @@ import { resolve } from "node:path"
 import test from "node:test"
 import vm from "node:vm"
 import * as store from "../src/sidepanel/store/agentStore"
+import { buildOptimisticUploadBubble } from "../src/sidepanel/utils/upload-send"
 
 type Frame = { type: string; [key: string]: unknown }
 
@@ -60,6 +61,7 @@ function mountPanel(initial = store.initialState) {
   }
   render()
   return {
+    addLocal(message: import("../src/sidepanel/types").Message) { dispatch({ type: "ADD_MESSAGE", message }); render() },
     select(threadId: string, renderImmediately = true) {
       dispatch({ type: "SET_ACTIVE_THREAD", threadId })
       chrome.runtime.sendMessage({ type: "thread.select", threadId })
@@ -70,6 +72,35 @@ function mountPanel(initial = store.initialState) {
     notices, requests,
   }
 }
+
+test("chat.user shows its bubble and busy state together in the active conversation", () => {
+  const panel = mountPanel()
+  panel.select("A")
+  panel.receive({ type: "chat.user", thread_id: "A", message_id: "mA", content: "own turn" })
+  assert.deepEqual(panel.state().messages.map(row => row.content), ["own turn"])
+  assert.equal(panel.state().isProcessing, true)
+  assert.equal(panel.state().threadBusyById.A, true)
+})
+
+test("an exact upload receipt during a queued switch reconciles only the cached thread", () => {
+  const panel = mountPanel()
+  panel.select("A")
+  const upload = buildOptimisticUploadBubble({ threadId: "A", userMessage: "look", fileNames: ["shot.png"] })
+  panel.addLocal(upload.message)
+  panel.select("B", false)
+  const stored = { ...upload.message, id: "stored-upload", attachments: [{ kind: "image", name: "shot.png", mime: "image/png" }] }
+  panel.receive({ type: "chat.user", thread_id: "A", message_id: stored.id, content: stored.content,
+    client_message_id: upload.clientMessageId, attachments: stored.attachments })
+  assert.deepEqual(panel.state().messages, [])
+  assert.equal(panel.state().isProcessing, false)
+  assert.equal(panel.state().threadBusyById.B, undefined)
+  panel.select("A")
+  assert.deepEqual(panel.state().messages.map(row => row.id), [stored.id])
+  for (let i = 0; i < 2; i++) {
+    panel.receive({ type: "thread.messages", thread_id: "A", messages: [stored] })
+    assert.deepEqual(panel.state().messages.map(row => [row.id, row.attachments?.[0]?.name]), [[stored.id, "shot.png"]])
+  }
+})
 
 test("ordinary errors still appear in the active conversation", () => {
   const panel = mountPanel()
