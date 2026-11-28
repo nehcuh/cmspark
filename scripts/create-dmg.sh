@@ -194,7 +194,7 @@ VOLUME="${DMG_WORK}/volume"
 mkdir "${VOLUME}"
 DMG_MOUNTED=false
 cleanup_dmg() {
-  if [ "${DMG_MOUNTED}" = true ] && ! bash "${ROOT_DIR}/scripts/detach-dmg.sh" "${VOLUME}"; then
+  if [ "${DMG_MOUNTED}" = true ] && ! bash "${ROOT_DIR}/scripts/detach-dmg.sh" "${VOLUME}" "${TMP_DMG}"; then
     echo "[create-dmg] Image still mounted at ${VOLUME}; retained ${TMP_DMG}" >&2
     return
   fi
@@ -271,7 +271,7 @@ end run
 APPLESCRIPT
 
 sync
-if ! bash "${ROOT_DIR}/scripts/detach-dmg.sh" "${VOLUME}"; then
+if ! bash "${ROOT_DIR}/scripts/detach-dmg.sh" "${VOLUME}" "${TMP_DMG}"; then
   trap - EXIT
   echo "[create-dmg] ERROR: image still mounted at ${VOLUME}; retained ${TMP_DMG}" >&2
   exit 1

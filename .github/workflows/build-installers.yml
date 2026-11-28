@@ -142,8 +142,9 @@ jobs:
             node --test scripts/tests/whisper-release-restore.test.mjs
             mount="$RUNNER_TEMP/meeting-whisper-dmg"
             mkdir -p "$mount"
-            hdiutil attach -readonly -nobrowse -mountpoint "$mount" dist-package/CMspark-v*-macOS-${{ matrix.arch }}.dmg
-            trap 'bash scripts/detach-dmg.sh "$mount"' EXIT
+            image="dist-package/CMspark-v$(node -p "require('./companion/package.json').version")-macOS-${{ matrix.arch }}.dmg"
+            hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$image"
+            trap 'bash scripts/detach-dmg.sh "$mount" "$image"' EXIT
             stage="$mount/CMspark.app/Contents/Resources"
             arch="darwin-${arch#macos-}"
           fi
@@ -153,7 +154,7 @@ jobs:
           "$node_bin" scripts/tests/packaged-meeting-whisper.mjs "$stage" "$arch" jfk.wav "$RUNNER_TEMP/whisper-models"
           if [[ "$arch" == darwin-* ]]; then
             trap - EXIT
-            bash scripts/detach-dmg.sh "$mount"
+            bash scripts/detach-dmg.sh "$mount" "$image"
           fi
 
       - name: Collect platform installers

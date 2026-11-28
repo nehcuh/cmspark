@@ -59,7 +59,24 @@ function runPost(f, kind, resources) {
   fs.writeFileSync(runner, 'set -euo pipefail\n' + unwind + source.slice(kind === 'signed' ? signedStart : volumeStart, kind === 'signed' ? signedEnd : volumeEnd));
   const commands = path.join(f.root, 'commands');
   fs.copyFileSync(path.join(repo, 'scripts/detach-dmg.sh'), path.join(f.root, 'scripts/detach-dmg.sh'));
-  fs.writeFileSync(path.join(commands, 'hdiutil'), '#!/bin/bash\n[[ "$1" == detach && "$2" == "$VOLUME" ]] || exit 1\nmv "$VOLUME" "$VOLUME.detached"\nprintf detach > "$DETACH_LOG"\n', { mode: 0o700 });
+  // The first eject removes the mount point but leaves the owned whole disk attached.
+  fs.writeFileSync(path.join(commands, 'hdiutil'), `#!/usr/bin/python3
+import os, plistlib, sys
+from pathlib import Path
+volume = Path(os.environ["VOLUME"])
+if sys.argv[1:] == ["info", "-plist"]:
+    entities = [{"dev-entry": "/dev/disk123"}]
+    if volume.exists():
+        entities.append({"dev-entry": "/dev/disk123s1", "mount-point": str(volume)})
+    sys.stdout.buffer.write(plistlib.dumps({"images": [{"image-path": os.environ["TMP_DMG"], "system-entities": entities}]}))
+elif sys.argv[1:] == ["detach", "/dev/disk123"]:
+    if volume.exists():
+        volume.rename(str(volume) + ".detached")
+        sys.exit(16)
+    Path(os.environ["DETACH_LOG"]).write_text("detach")
+else:
+    sys.exit(1)
+`, { mode: 0o700 });
   const work = fs.mkdtempSync(path.join(f.root, 'dmg-work-'));
   return spawnSync('/bin/bash', [runner], { cwd: f.root, env: {
     ...process.env, PATH: commands + ':' + path.dirname(process.execPath) + ':/usr/bin:/bin', NODE_BINARY: process.execPath,
