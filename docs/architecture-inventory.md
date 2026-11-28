@@ -32,6 +32,8 @@
 
 第 066 批合并第 55 组文档提示。聊天与知识选择器的文档清单从解析器的 `DOCUMENT_MIMES` 生成，聊天单独接受图片及交给服务端识别的 WPS 文件。
 
+第 067 批将第 54 组本机模型状态消息和设置使用的规格都改为生成投影。设置拥有焦点和确认交互，模型目录拥有内存需求、下载量及默认规格。
+
 | 组 | 基线符号 | 源码位置（相对于对应包的 src） |
 | --- | --- | --- |
 | 2 | `directProvider` | `Companion / llm/reasoning-effort.ts`、`扩展 / sidepanel/utils/reasoning-effort.ts` |

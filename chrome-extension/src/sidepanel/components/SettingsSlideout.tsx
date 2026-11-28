@@ -1,3 +1,4 @@
+import { QWEN_VL_DEFAULT_VARIANT, QWEN_VL_VARIANTS, type QwenVlVariant } from "../../shared/computer/qwen-vl-catalog"
 import { DesktopMaximumDialog } from "./DesktopMaximumDialog"
 // Settings slideout panel for LLM configuration + NetSec (migrated from 场景 panel)
 
@@ -10,7 +11,7 @@ import type { LLMConfig, SecurityAuditEntry } from "../types"
 type LocalSettingKey = "asrRefinerEnabled" | "sendShortcut" | "showReasoningMode" | "exportIncludeReasoning" | "voiceInputEnabled" | "voiceDictationMode" | "chatDictationLanguage" | "dictationHotkeyEnabled" | "dictationHotkeyChord" | "voiceSoundEffects" | "voiceRealtimeStreaming"
 type LocalSettingsDraft = Partial<Pick<AgentState, LocalSettingKey>>
 type VoicePrefsDraft = Partial<Record<"autoFallbackToBrowser" | "modelPrewarm" | "postprocessFillers" | "postprocessLowercase" | "postprocessStripPunct", boolean>>
-type ComputerDraft = { pythonMode?: "isolated" | "system"; downloadSource?: "auto" | "modelscope" | "hf-mirror" | "huggingface"; variant?: "2b" | "4b" | "8b" }
+type ComputerDraft = { pythonMode?: "isolated" | "system"; downloadSource?: "auto" | "modelscope" | "hf-mirror" | "huggingface"; variant?: QwenVlVariant }
 type FooterControl = { dirty: boolean; busy: boolean; save: (known?: ModelCenterState) => void | Promise<boolean | ModelCenterState>; error?: string }
 import { Modal } from "./ui/Modal"
 import { connectionLabel, tokens } from "../ui/tokens"
@@ -195,6 +196,9 @@ export function SettingsSlideout() {
   const [unattendedAckSession, setUnattendedAckSession] = useState(false)
   const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
+  const modelChecksHeading = useRef<HTMLDivElement>(null)
+  const modelStorageHeading = useRef<HTMLDivElement>(null)
+  const modelSourceHeading = useRef<HTMLDivElement>(null)
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
   // Path B M0: engine radio is UI draft until ready model + explicit "启用本机转写".
   const [engineSelection, setEngineDraft] = useState<"browser" | "local" | "system" | "external" | null>(null)
@@ -4063,11 +4067,20 @@ export function SettingsSlideout() {
             const model = state.computerModel
             const statusLine = modelStatusLine(model, state.computerModelProgress)
             const send = (msg: object) => chrome.runtime.sendMessage(msg)
-            // 词表动作 → 发送映射(组件不组文案,只做按钮接线)
+            const helpSections: Partial<Record<string, typeof modelChecksHeading>> = {
+              "查看环境检查": modelChecksHeading,
+              "释放磁盘空间": modelStorageHeading,
+              "检查镜像设置": modelSourceHeading,
+            }
+            const helpTarget = statusLine.action ? helpSections[statusLine.action] : undefined
             const runAction = (action: string) => {
-              if (action === "重置熔断") send({ type: "computer.model.reset_circuit_breaker", source: "settings" })
-              else if (action === "删除并重新下载") setModelDeleteArmed(true)
-              else if (!computerHasEdits) {
+              if (helpTarget) {
+                helpTarget.current?.focus()
+              } else if (action === "重置熔断") {
+                send({ type: "computer.model.reset_circuit_breaker", source: "settings" })
+              } else if (action === "删除并重新下载") {
+                setModelDeleteArmed(true)
+              } else if (!computerHasEdits && ["下载模型", "下载当前规模", "重试下载"].includes(action)) {
                 dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
                 send({ type: "computer.model.download", source: "settings" })
               }
@@ -4123,7 +4136,7 @@ export function SettingsSlideout() {
                         : tokens.dangerSoft,
                   }}
                 >
-                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4, color: tokens.text }}>
+                  <div ref={modelChecksHeading} tabIndex={-1} style={{ fontWeight: 700, fontSize: 12, marginBottom: 4, color: tokens.text }}>
                     本地模型环境检查
                   </div>
                   <div style={{ fontSize: 12, lineHeight: 1.45, color: tokens.text, marginBottom: 6 }}>
@@ -4256,7 +4269,7 @@ export function SettingsSlideout() {
                 </div>
 
                 {/* 模型保存位置 + Python 环境（用户可控） */}
-                <div style={{ ...styles.helpText, marginTop: 12, fontWeight: 700, fontSize: 12 }}>
+                <div ref={modelStorageHeading} tabIndex={-1} style={{ ...styles.helpText, marginTop: 12, fontWeight: 700, fontSize: 12 }}>
                   模型保存位置
                 </div>
                 <div
@@ -4493,7 +4506,7 @@ export function SettingsSlideout() {
                 </div>
 
                 {/* 下载源 */}
-                <div style={{ ...styles.helpText, marginTop: 10, fontWeight: 600 }}>下载源</div>
+                <div ref={modelSourceHeading} tabIndex={-1} style={{ ...styles.helpText, marginTop: 10, fontWeight: 600 }}>下载源</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
                   {(
                     [
@@ -4536,8 +4549,8 @@ export function SettingsSlideout() {
                 {/* 变体选择 2B / 4B / 8B + 资源提示 */}
                 <div style={{ ...styles.helpText, marginTop: 8, fontWeight: 600 }}>模型规模</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-                  {(["2b", "4b", "8b"] as const).map((v) => {
-                    const active = (computerDraft.variant ?? model?.variant ?? "2b") === v
+                  {QWEN_VL_VARIANTS.map((v) => {
+                    const active = (computerDraft.variant ?? model?.variant ?? QWEN_VL_DEFAULT_VARIANT) === v
                     const tip = QWEN_VL_VARIANT_TIPS[v]!
                     const rec = model?.recommendedVariant === v
                     return (
@@ -4581,7 +4594,7 @@ export function SettingsSlideout() {
                   {statusLine.text}
                   {statusLine.detail ? ` ${statusLine.detail}` : ""}
                   {statusLine.action ? (
-                    <button style={{ ...styles.secondaryBtn, marginLeft: 8 }} disabled={computerHasEdits && statusLine.action !== "重置熔断"} onClick={() => runAction(statusLine.action!)}>
+                    <button style={{ ...styles.secondaryBtn, marginLeft: 8 }} disabled={computerHasEdits && !helpTarget && statusLine.action !== "重置熔断"} onClick={() => runAction(statusLine.action!)}>
                       {statusLine.action}
                     </button>
                   ) : null}

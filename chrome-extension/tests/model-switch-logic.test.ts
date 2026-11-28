@@ -89,6 +89,12 @@ test("状态行:disabled → circuit-breaker 词表;ready → 就绪双态", () 
   assert.equal(v3.text, v2.text, "历史定位开关不影响工作中心就绪状态")
 })
 
+test("a failed downloaded model checksum offers the recovery action", () => {
+  const status = modelStatusLine(modelState({ modelStatus: "error", error: "sha256-mismatch" }), null)
+  assert.equal(status.text, "模型文件校验失败")
+  assert.equal(status.action, "删除并重新下载")
+})
+
 test("状态行:error 字段优先于 modelStatus 分支", () => {
   const v = modelStatusLine(modelState({ modelStatus: "ready", error: "model-size-mismatch" }), null)
   assert.equal(v.kind, "error", "有 reason 即走词表(诚实边界:probe 异常不被 ready 掩盖)")

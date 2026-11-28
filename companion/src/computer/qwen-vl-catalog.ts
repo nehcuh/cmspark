@@ -2,14 +2,12 @@
 // Replaces TinyClick (Florence-2 ONNX) with downloadable Qwen3-VL Instruct models
 // from Hugging Face (Apache 2.0 / Qwen license terms as published on the model card).
 
-export type QwenVlVariant = "2b" | "4b" | "8b"
-
+export const QWEN_VL_VARIANTS = ["2b", "4b", "8b"] as const
+export type QwenVlVariant = typeof QWEN_VL_VARIANTS[number]
 export const QWEN_VL_DEFAULT_VARIANT: QwenVlVariant = "2b"
 
-export const QWEN_VL_VARIANTS: readonly QwenVlVariant[] = ["2b", "4b", "8b"] as const
-
 export function isQwenVlVariant(v: unknown): v is QwenVlVariant {
-  return v === "2b" || v === "4b" || v === "8b"
+  return typeof v === "string" && (QWEN_VL_VARIANTS as readonly string[]).includes(v)
 }
 
 /** Map legacy TinyClick variants → default Qwen3-VL size (config migration). */

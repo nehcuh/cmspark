@@ -933,3 +933,23 @@ test("concurrency transport ok alone leaves the previous limit in place", () => 
   assert.equal(String(again.props.value), "4")
   assert.equal(ui.state().config.acp.max_concurrent_sessions, 1)
 })
+
+test("model recovery guidance focuses the named settings section without starting a download", () => {
+  const h = harness()
+  for (const [reason, label, heading] of [
+    ["modelscope-missing", "查看环境检查", "本地模型环境检查"],
+    ["disk-budget-exceeded", "释放磁盘空间", "模型保存位置"],
+    ["mirror-scheme-denied", "检查镜像设置", "下载源"],
+  ]) {
+    h.dispatch({ type: "SET_COMPUTER_MODEL_STATE", modelState: { modelStatus: "error", error: reason } })
+    const ui = h.renderSlideout()
+    const section = h.find(ui, node => node.props?.tabIndex === -1 && textOf(node) === heading, heading)
+    let focused = false
+    section.props.ref.current = { focus() { focused = true } }
+    const sent = h.messages.length
+    const button = h.find(ui, node => node.type === "button" && textOf(node) === label, label)
+    button.props.onClick()
+    assert.ok(focused, heading)
+    assert.equal(h.messages.length, sent)
+  }
+})

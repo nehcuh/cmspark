@@ -1,3 +1,4 @@
+import type { QwenVlVariant } from "./computer/qwen-vl-catalog"
 // Companion configuration management
 
 import { isPrototypePollutionKey } from "./security/object-keys"
@@ -151,7 +152,7 @@ export interface ComputerConfig {
    * 实验层模型变体（Qwen3-VL）。默认 "2b"；可选 "4b" | "8b"。
    * 设置页可切换（computer.model.set_variant）；旧 hybrid/int8 启动时迁为 2b。
    */
-  modelVariant?: "2b" | "4b" | "8b" | "hybrid" | "int8"
+  modelVariant?: QwenVlVariant | "hybrid" | "int8"
   /**
    * 模型下载源。auto=连通性探测（大陆常落 ModelScope）；
    * huggingface / hf-mirror / modelscope 为显式选择。
