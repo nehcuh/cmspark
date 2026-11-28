@@ -7,6 +7,24 @@ import {
 } from "../src/threads/related"
 
 describe("thread related (Wave C)", () => {
+  it("falls back to creation time for a blank legacy message timestamp", () => {
+    const created_at = "2026-01-15T00:00:00Z"
+    const hit = scoreRelatedPair(
+      { id: "a", last_message_at: "  ", created_at },
+      { id: "b", created_at },
+    )
+    assert.equal(hit.signals.time, 0.5)
+  })
+
+  it("uses the same trimmed transcript timestamps as the timeline", () => {
+    const last_message_at = "2026-11-05T10:00:00Z"
+    const hit = scoreRelatedPair(
+      { id: "a", last_message_at: "  " + last_message_at + "  ", created_at: "2025-01-01" },
+      { id: "b", last_message_at },
+    )
+    assert.equal(hit.signals.time, 0.5)
+  })
+
   it("scores co-tag pairs", () => {
     const hit = scoreRelatedPair(
       { id: "a", digest: { tags: ["alpha", "beta"], tldr: "竞品" } },

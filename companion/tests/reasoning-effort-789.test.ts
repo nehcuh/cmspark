@@ -16,7 +16,7 @@ const message = [{ role: "user" as const, content: "owned fixture" }]
 const cfg = (base_url: string, model_name: string, protocol: "openai" | "anthropic", reasoning_effort?: typeof levels[number]): LlmConfig => ({ base_url, model_name, protocol, reasoning_effort, api_key: "owned-test-key", temperature: 0.4, context_window: 128000, max_tokens: 512 })
 
 test("#789 model capability and UI mirror stay exact", () => {
-  execFileSync(process.execPath, [path.resolve("scripts/generate-model-policy.mjs"), "--check"])
+  execFileSync(process.execPath, [path.resolve("scripts/generate-client-contracts.mjs"), "--check"])
   assert.equal(effectiveReasoningEffort(undefined), "medium")
   assert.equal(effectiveReasoningEffort("bogus"), "medium")
   assert.equal(isReasoningEffort("MAX"), false)

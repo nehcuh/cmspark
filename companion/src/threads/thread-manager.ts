@@ -323,15 +323,7 @@ export function uniqueIndexThreads<T extends { id?: string }>(threads: T[]): T[]
   return out
 }
 
-/** Human-facing recency: last transcript row, else created_at. Never `updated_at`. */
-export function threadRecency(t: {
-  last_message_at?: string | null
-  created_at?: string
-}): string {
-  const last = typeof t.last_message_at === "string" ? t.last_message_at.trim() : ""
-  if (last) return last
-  return typeof t.created_at === "string" ? t.created_at : ""
-}
+export { threadRecency } from "./recency"
 
 const RASTER_MIMES = new Set<RasterMime>([
   "image/png",

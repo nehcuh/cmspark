@@ -2,6 +2,7 @@
 // Spec: docs/superpowers/specs/2026-08-11-thread-history-ia-gap-optimization-adversarial.md §Wave C
 // Signal weights are code constants (S9), not user settings.
 
+import { threadRecency } from "./recency"
 import { tokenize, tokensToVec, cosineSimilarity } from "../skills/semantic-match"
 
 /** Code constants — dual-review pin S9. */
@@ -52,7 +53,7 @@ function textBlob(t: RelatedThreadInput): string {
   return parts.join(" ")
 }
 
-function inRelatedPool(t: RelatedThreadInput): boolean {
+export function inRelatedPool(t: RelatedThreadInput): boolean {
   if (!t?.id || t.trashed_at) return false
   // Subtasks are slices of the parent — not peer conversations (#517).
   if (t.agent_role === "worker") return false
@@ -60,7 +61,7 @@ function inRelatedPool(t: RelatedThreadInput): boolean {
 }
 
 function updatedMs(t: RelatedThreadInput): number {
-  const raw = t.last_message_at || t.created_at
+  const raw = threadRecency(t)
   if (!raw) return 0
   const n = new Date(raw).getTime()
   return Number.isFinite(n) ? n : 0

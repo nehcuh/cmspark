@@ -1,3 +1,4 @@
+import { threadRecency } from "../../shared/threads/recency"
 import { threadTags } from "./thread-management"
 // Thread History IA — calendar grouping + filter helpers (pure).
 // Spec: docs/superpowers/specs/2026-08-06-thread-history-ia-product-design.md
@@ -157,18 +158,7 @@ function parseTs(iso: string | undefined, fallbackMs: number): Date {
   return new Date(t)
 }
 
-/**
- * Human-facing recency: last transcript row, else created_at. Never `updated_at`
- * (digest / run_progress / budget must not impersonate "recent").
- */
-export function threadRecency(t: {
-  last_message_at?: string | null
-  created_at?: string
-}): string {
-  const last = typeof t.last_message_at === "string" ? t.last_message_at.trim() : ""
-  if (last) return last
-  return typeof t.created_at === "string" ? t.created_at : ""
-}
+export { threadRecency }
 
 /**
  * Screen-reader name: (preview || alias) AND short id — never one without the other

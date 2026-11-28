@@ -1,4 +1,4 @@
-// Generated from companion/src/llm/chat-output-policy.ts by companion/scripts/generate-model-policy.mjs.
+// Generated from companion/src/llm/chat-output-policy.ts by companion/scripts/generate-client-contracts.mjs.
 import { reasoningWireEffort, type modelSpec } from "./reasoning-effort"
 
 export const LLM_MAX_TOKENS_DEFAULT = 32768

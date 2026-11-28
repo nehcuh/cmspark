@@ -1,4 +1,4 @@
-// Generated from companion/src/llm/native-vision-probe-cache.ts by companion/scripts/generate-model-policy.mjs.
+// Generated from companion/src/llm/native-vision-probe-cache.ts by companion/scripts/generate-client-contracts.mjs.
 import { likelyMultimodal } from "./reasoning-effort"
 
 /**

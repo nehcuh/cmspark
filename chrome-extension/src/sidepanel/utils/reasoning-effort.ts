@@ -1,4 +1,4 @@
-// Generated from companion/src/llm/reasoning-effort.ts by companion/scripts/generate-model-policy.mjs.
+// Generated from companion/src/llm/reasoning-effort.ts by companion/scripts/generate-client-contracts.mjs.
 /** Model capabilities for the protocols actually used by Companion and Settings. */
 export const orderedEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 export type ReasoningEffort = typeof orderedEfforts[number]
