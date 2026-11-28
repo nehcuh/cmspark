@@ -5,6 +5,7 @@
  * chrome-extension:// and cmspark-tray://local. Tray dispatch uses the
  * existing summoner-stamped CompanionClient.
  */
+import { readBody } from "./http-body"
 import { SUMMONER_MEETING_MEDIA_JS } from "./summoner/meeting-media"
 import { MeetingVideoUpload } from "./summoner/meeting-video-upload"
 import { serveMeetingRecordings } from "./summoner/meeting-recording-http"
@@ -254,24 +255,6 @@ function jsonResponse(res: http.ServerResponse, data: unknown, status = 200) {
     res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" })
   }
   res.end(JSON.stringify(data))
-}
-
-function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = ""
-    let size = 0
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length
-      if (size > maxSize) {
-        reject(new Error("Request body too large"))
-        req.destroy()
-        return
-      }
-      body += chunk.toString()
-    })
-    req.on("end", () => resolve(body))
-    req.on("error", reject)
-  })
 }
 
 // Only the web composer's namespaced IDs may travel through the shared tray socket.

@@ -1,3 +1,4 @@
+import { readBody } from "./http-body"
 import { probeVisionConnection } from "./llm/vision-pipeline"
 import { likelyMultimodal, resolveNativeVision } from "./llm/likely-multimodal"
 // Local Web settings server for CMspark Companion
@@ -78,24 +79,6 @@ async function findAvailablePort(startPort: number): Promise<number> {
     }
   }
   throw new Error("No available port for settings server")
-}
-
-function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = ""
-    let size = 0
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length
-      if (size > maxSize) {
-        reject(new Error("Request body too large"))
-        req.destroy()
-        return
-      }
-      body += chunk.toString()
-    })
-    req.on("end", () => resolve(body))
-    req.on("error", reject)
-  })
 }
 
 function jsonResponse(res: http.ServerResponse, data: any, status = 200) {

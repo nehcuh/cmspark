@@ -11,6 +11,7 @@
  * and must not arm the Map that gateOutboundCall reads.
  */
 
+import { readBody } from "../http-body"
 import type { IncomingMessage, ServerResponse } from "http"
 import type { EnterprisePermit } from "./enterprise-permit"
 import { handleEnterpriseHttp } from "./enterprise-http"
@@ -436,33 +437,9 @@ export function authorizeOutboundRequest(
   }
 }
 
-function readJsonBody(req: IncomingMessage, limit = 1_000_000): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    let size = 0
-    req.on("data", (c: Buffer) => {
-      size += c.length
-      if (size > limit) {
-        reject(new Error("body_too_large"))
-        req.destroy()
-        return
-      }
-      chunks.push(c)
-    })
-    req.on("end", () => {
-      try {
-        const raw = Buffer.concat(chunks).toString("utf8")
-        if (!raw.trim()) {
-          resolve({})
-          return
-        }
-        resolve(JSON.parse(raw))
-      } catch (e) {
-        reject(e)
-      }
-    })
-    req.on("error", reject)
-  })
+async function readJsonBody(req: IncomingMessage, limit = 1_000_000): Promise<unknown> {
+  const body = await readBody(req, limit, "body_too_large")
+  return body.trim() ? JSON.parse(body) : {}
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
