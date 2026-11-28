@@ -36,6 +36,11 @@ jobs:
         run: |
           cd companion && node ../scripts/verify-systray2.js --strict
 
+      - name: Check runtime module boundaries
+        run: |
+          node --test scripts/tests/architecture-dependencies.test.mjs
+          node scripts/architecture-dependencies.mjs
+
       - name: Verify Node archive checksum helper (audit H8)
         # package.sh now sha256-verifies the downloaded Node binary against
         # nodejs.org SHASUMS256.txt before extracting. This runs that helper's
