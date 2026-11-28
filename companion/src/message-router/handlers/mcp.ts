@@ -7,7 +7,7 @@ import { URL } from "url"
 import { CONFIG_CHANGE_EVENT, configEvents, getConfig, getConfigDir, replaceMcpServers, setMcpEnabled } from "../../config"
 import { getMcpManager } from "../../mcp"
 import type { McpServerConfig, McpServerMeta } from "../../mcp/types"
-import { hasPrototypePollutionKey } from "./config"
+import { hasPrototypePollutionKey } from "../../security/object-keys"
 import { isUnsafeLoaderEnvKey } from "../../user-env"
 import type {
   SecurityConfirmationDecision,

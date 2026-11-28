@@ -1,5 +1,7 @@
 /** #739 actual manager/config code, with explicit inert process/FS/clock seams.
  * No native child, configured CLI, provider or real config is evaluated. */
+import { hasPrototypePollutionKey, isPrototypePollutionKey } from "../src/security/object-keys"
+import * as types from "../src/acp/types"
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -25,14 +27,14 @@ function evaluate(code: string, globals: Record<string, unknown> = {}) {
 }
 
 function configFixture() {
-  const types = evaluate(source("acp/types.ts")), writes: any[] = [], events: any[] = []
+  const writes: any[] = [], events: any[] = []
   let current: any = { llm: {}, acp: types.sanitizeAcpConfig({ enabled: true, servers: { A: { enabled: true, command: "INERT" } } }) }
   let revision = 0 // Inert revision transport; no cross-process claim in this fixture.
   let realmClone: (value: unknown) => any = value => value
   const saveApi = evaluate(`function realmize(value){ if(Array.isArray(value)) return Array.from(value,realmize); if(value && typeof value === "object"){const out={}; for(const key of Object.keys(value)) out[key]=realmize(value[key]); return out} return value } function structuredClone(value){ return realmize(hostClone(value)) } installClone(structuredClone); let cachedConfig, cachedConfigMtimeMs, storedLlmKey = "", storedVisionKey = "", visionUsesLlm = false; let configRevisionEpoch = "owned-fixture", configRevisionSequence = 0; const committedConfigRevisions = new WeakMap(); function advanceConfigRevision(){ recordRevision(++configRevisionSequence) }\n${functions("config.ts", ["saveConfig", "saveConfigWithReceipt", "saveConfigInternal", "saveConfigInternalBody", "saveConfigSnapshot", "observeCommittedConfig", "peekCommittedConfigRevision", "getCommittedConfigRevision", "deepMerge", "stripCompanionUiProcessContinueDeny"])}`, {
     hostClone: structuredClone, installClone: (clone: (value: unknown) => any) => { realmClone = clone }, isDeepStrictEqual, isMaskedApiKey: () => false,
     enterConfigWrite() {}, leaveConfigWrite() {}, noteShellReady() {}, projectShellOnto,
-    getConfig: () => current, PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), require: (n: string) => {
+    getConfig: () => current, isPrototypePollutionKey, require: (n: string) => {
       assert.equal(n, "./acp/types")
       // The isolated evaluator lives in a different VM realm. Production
       // sanitizer output and config share one realm, so materialize the
@@ -45,11 +47,11 @@ function configFixture() {
     configEvents: { emit: (_: string, value: any) => { current = value; events.push(value) } }, CONFIG_CHANGE_EVENT: "inert-config",
   })
   const save = saveApi.saveConfig
-  const handler = evaluate(functions("message-router/handlers/config.ts", ["handleConfigFamily", "hasPrototypePollutionKey", "sanitizeConfig"]), {
+  const handler = evaluate(functions("message-router/handlers/config.ts", ["handleConfigFamily", "sanitizeConfig"]), {
     getConfig: () => current, getConfigSnapshot: () => ({ config: current, revision: `owned-fixture:${revision}` }),
     getCommittedConfigRevision: saveApi.getCommittedConfigRevision,
     saveConfig: save, saveConfigWithReceipt: saveApi.saveConfigWithReceipt, validateAcpConcurrencyLimit: types.validateAcpConcurrencyLimit,
-    PROTOTYPE_POLLUTION_KEYS: new Set(["__proto__", "constructor", "prototype"]), redactConfigForWire: (v: any) => v, isMaskedApiKey: () => false,
+    hasPrototypePollutionKey, isPrototypePollutionKey, redactConfigForWire: (v: any) => v, isMaskedApiKey: () => false,
   }).handleConfigFamily
   return { save, handler, writes, events, current: () => current }
 }
@@ -152,7 +154,6 @@ test("#739 two actual handler confirmations preflight freely but final synchrono
 })
 
 test("#739 actual config preserves legal N1..4 and rejects nonnumeric/nonfinite/out-of-range explicit values", () => {
-  const types = evaluate(source("acp/types.ts"))
   assert.equal(types.sanitizeAcpConfig({ enabled: true }).max_concurrent_sessions, 1)
   for (const n of [1, 2, 3, 4]) assert.equal(types.sanitizeAcpConfig({ enabled: true, max_concurrent_sessions: n }).max_concurrent_sessions, n)
   for (const n of [undefined, null, "2", true, [], {}, NaN, Infinity, 0, 5, 1.5]) assert.throws(() => types.sanitizeAcpConfig({ max_concurrent_sessions: n }))

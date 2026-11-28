@@ -10,6 +10,7 @@
 // Policy cap (Owner decision 3, 2026-07-18): user-writable-directory or unsigned
 // apps are capped at "ai" — they can never be "auto" (normalizeAppEntry clamps).
 
+import { hasPrototypePollutionKey, isPrototypePollutionKey } from "../security/object-keys"
 import * as path from "path"
 import { APP_TOKEN_PATTERN, basenameToVault, isLolbinPath } from "./guards"
 import { validateCliManifest } from "./cli-manifest"
@@ -79,19 +80,6 @@ export interface AppsConfig {
 const AUMID_PATTERN = /^[\w.\-]+![\w.\-]+$/
 
 const VALID_POLICIES: ReadonlySet<string> = new Set(["auto", "ai", "manual"])
-
-const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"])
-
-/** Recursive pollution-key scan — mirrors message-router.ts hasPrototypePollutionKey. */
-function hasPrototypePollutionKey(obj: any): boolean {
-  if (!obj || typeof obj !== "object") return false
-  for (const key of Object.keys(obj)) {
-    if (PROTOTYPE_POLLUTION_KEYS.has(key)) return true
-    const val = obj[key]
-    if (typeof val === "object" && hasPrototypePollutionKey(val)) return true
-  }
-  return false
-}
 
 /**
  * Schema validation, mirroring validateMcpServerConfig's style: returns an error
@@ -350,7 +338,7 @@ export function sanitizeAppEntries(rawEntries: unknown): Record<string, AppEntry
     return clean
   }
   for (const key of Object.keys(rawEntries as Record<string, unknown>)) {
-    if (PROTOTYPE_POLLUTION_KEYS.has(key)) {
+    if (isPrototypePollutionKey(key)) {
       console.error(`[cmspark-agent] apps.entries key "${key}" is a prototype-pollution key — dropped`)
       continue
     }

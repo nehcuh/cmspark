@@ -1,5 +1,6 @@
 // Companion configuration management
 
+import { isPrototypePollutionKey } from "./security/object-keys"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
@@ -1550,12 +1551,10 @@ export function migrateLegacyModelName(): ModelMigration {
   return { migrated: true, from: cfg.llm.model_name, to: target }
 }
 
-const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"])
-
 function deepMerge(target: any, source: any): any {
   const result = { ...target }
   for (const key of Object.keys(source)) {
-    if (PROTOTYPE_POLLUTION_KEYS.has(key)) continue
+    if (isPrototypePollutionKey(key)) continue
     if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
       result[key] = deepMerge(target[key] || {}, source[key])
     } else {

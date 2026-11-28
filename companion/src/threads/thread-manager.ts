@@ -1,6 +1,7 @@
 import { isFullAutonomyCruise, type CruiseSecurityFlags } from "../security-arm"
 // Thread manager — CRUD for conversation threads
 
+import { isPrototypePollutionKey } from "../security/object-keys"
 import * as fs from "fs"
 import * as path from "path"
 import { getConfig, getConfigDir } from "../config"
@@ -222,7 +223,7 @@ function validateConfigOverride(config: any): { valid: boolean; error?: string; 
   }
   const sanitized: Record<string, any> = {}
   for (const key of Object.keys(config)) {
-    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+    if (isPrototypePollutionKey(key)) {
       return { valid: false, error: `Invalid config key: ${key}`, sanitized: {} }
     }
     const expectedType = ALLOWED_CONFIG_OVERRIDE_KEYS[key]

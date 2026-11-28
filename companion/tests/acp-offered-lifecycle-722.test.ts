@@ -1,4 +1,5 @@
 /** #722 actual manager offer metadata and default-one bounded config; no OS process or token. */
+import * as types from "../src/acp/types"
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -84,7 +85,6 @@ test("#722 running claim preserves admission independently of a different-agent 
   assert.equal(next.state, "offered"); assert.equal(f.manager.executionClaims.size, 1); zero(f)
 })
 test("#739 bounded configuration preserves default1 and rejects invalid explicit capacity", () => {
-  const types = compile(source("acp/types.ts").text)
   assert.equal(types.DEFAULT_ACP_CONFIG.enabled, false); assert.equal(types.DEFAULT_ACP_CONFIG.max_concurrent_sessions, 1)
   assert.equal(types.sanitizeAcpConfig({ enabled: true }).max_concurrent_sessions, 1)
   for (const max of [1, 2, 3, 4]) assert.equal(types.sanitizeAcpConfig({ enabled: true, max_concurrent_sessions: max }).max_concurrent_sessions, max)
