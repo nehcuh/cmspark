@@ -1,8 +1,7 @@
 // Process-wide multi-agent concurrent LLM loop cap — ADR-015 §3.5
 // max_concurrent_multi_agent_llm_loops (default 5). Non multi-agent chats are unlimited.
 
-import { ORCHESTRATOR_CAPS } from "./constants"
-import { isMultiAgentThread } from "./spawn"
+import { isMultiAgentThread, ORCHESTRATOR_CAPS } from "./constants"
 
 let activeMultiAgentLoops = 0
 const holders = new Set<string>() // thread ids currently holding a slot

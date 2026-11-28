@@ -326,12 +326,4 @@ export function listWorkers(
     .filter((t: any) => t.orchestrator_run_id === orchestratorRunId && t.agent_role === "worker")
 }
 
-export function isMultiAgentThread(thread: any | null | undefined): boolean {
-  if (!thread) return false
-  return (
-    thread.agent_role === "worker" ||
-    thread.agent_role === "orchestrator" ||
-    !!thread.parent_thread_id ||
-    !!thread.orchestrator_run_id
-  )
-}
+export { isMultiAgentThread } from "./constants"

@@ -2128,7 +2128,7 @@ ${hostUseRule12}${computerUsePlaybook}${appIndexSection ? `\n\n${appIndexSection
           let resolvedTabId = params.tabId
           if (resolvedTabId == null) {
             try {
-              const { TAB_LEASE_TOOLS, isMultiAgentThread } = await import("../orchestrator")
+              const { TAB_LEASE_TOOLS, isMultiAgentThread } = await import("../orchestrator/constants")
               const th = threadManager.get(threadId)
               const multi = isMultiAgentThread(th as any)
               if (!multi && !TAB_LEASE_TOOLS.has(toolName)) {

@@ -139,3 +139,17 @@ export const TAB_MUTATION_LEASE_TOOLS = new Set([
 export const TAB_L2_TOOLS = new Set(["evaluate"])
 
 export type AgentRole = "normal" | "orchestrator" | "worker"
+
+export function isMultiAgentThread(thread: {
+  agent_role?: string | null
+  parent_thread_id?: string | null
+  orchestrator_run_id?: string | null
+} | null | undefined): boolean {
+  if (!thread) return false
+  return (
+    thread.agent_role === "worker" ||
+    thread.agent_role === "orchestrator" ||
+    !!thread.parent_thread_id ||
+    !!thread.orchestrator_run_id
+  )
+}

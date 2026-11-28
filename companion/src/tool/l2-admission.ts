@@ -1272,7 +1272,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // ADR-015 GATE1: order = (optional flight reserve) → L2 admission → SOFT → confirm.
       // SOFT after admission so softDeadline (= confirm timeout) cannot expire mid-queue.
       // Flight reserve for shell/netsec so approve is never followed by *_BUSY.
-      const { TAB_L2_TOOLS } = await import("../orchestrator/constants")
+      const { TAB_L2_TOOLS, isMultiAgentThread } = await import("../orchestrator/constants")
       let tabL2SoftHeld = false
       let tabL2HardPromoted = false
       let flightReserved: "shell_exec" | "netsec_port_scan" | null = null
@@ -1331,11 +1331,10 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
       // taking a tab lease (see early HARD gate above).
       {
         const {
-          isMultiAgentThread: isMaThread,
           anyTabLeaseHeld: anyLeaseHeld,
           acquireOrRenewTabLease,
-        } = await import("../orchestrator")
-        const multiForSoft = isMaThread(maForL2) || anyLeaseHeld()
+        } = await import("../orchestrator/tab-lease")
+        const multiForSoft = isMultiAgentThread(maForL2) || anyLeaseHeld()
         if (
           multiForSoft &&
           TAB_L2_TOOLS.has(toolName) &&
@@ -1822,7 +1821,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
         return result
       }
       if (tabL2SoftHeld && typeof finalParams.tabId === "number" && actingThreadId) {
-        const { hardReacquireAfterConfirm } = await import("../orchestrator")
+        const { hardReacquireAfterConfirm } = await import("../orchestrator/tab-lease")
         const hard = hardReacquireAfterConfirm({
           tabId: finalParams.tabId,
           holderThreadId: actingThreadId,
@@ -1973,7 +1972,7 @@ export async function runL2ToolAdmission(ctx: L2AdmissionContext): Promise<L2Adm
           actingThreadId
         ) {
           try {
-            const { releaseSoftOrPendingL2 } = await import("../orchestrator")
+            const { releaseSoftOrPendingL2 } = await import("../orchestrator/tab-lease")
             releaseSoftOrPendingL2({
               tabId: finalParams.tabId,
               holderThreadId: actingThreadId,
