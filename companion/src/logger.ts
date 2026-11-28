@@ -2,7 +2,7 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import { getConfigDir } from "./config"
+import { getLogDir } from "./config"
 import { rotateLogFileIfNeeded } from "./log-rotation"
 
 export type LogLevel = "debug" | "info" | "warn" | "error"
@@ -106,7 +106,7 @@ export function redactLogData(value: unknown, depth = 0, seen = new WeakSet<obje
 
 export function getLogFilePath(now = new Date()): string {
   const day = now.toISOString().slice(0, 10)
-  return path.join(getConfigDir(), "logs", `companion-${day}.log`)
+  return path.join(getLogDir(), `companion-${day}.log`)
 }
 
 export function logEvent(

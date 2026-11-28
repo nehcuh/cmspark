@@ -10,7 +10,7 @@ import * as path from "path"
 import * as fs from "fs"
 
 import { isProcessRunning, readPidFile } from "./daemon"
-import { getConfig, getConfigDir, getPidFilePath, saveConfig } from "./config"
+import { getConfig, getConfigDir, getLogDir, getPidFilePath, saveConfig } from "./config"
 import { getChromeOpener, openLogDirectory, getPlatform } from "./platform"
 import {
   createTray,
@@ -1768,7 +1768,7 @@ async function handleQuickAction(id: string): Promise<void> {
 
 function openLogsDir(): void {
   try {
-    openLogDirectory(path.join(getConfigDir(), "logs"))
+    openLogDirectory(getLogDir())
   } catch (err: any) {
     safeNotify({ title: "CMspark Agent", message: `打开日志目录失败: ${err.message}`, timeout: 5 })
   }
