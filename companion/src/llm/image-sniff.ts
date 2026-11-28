@@ -1,6 +1,6 @@
-import { normalizeImageMime } from "../image-data-url"
+import { normalizeImageMime, type RasterMime } from "../image-data-url"
 
-export type RasterMime = "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+export type { RasterMime } from "../image-data-url"
 
 export function sniffRasterImage(buf: Buffer): RasterMime | null {
   if (buf.length < 12) return null

@@ -20,7 +20,7 @@ function project(target, content) {
 const projections = [
   ...["reasoning-effort.ts", "chat-output-policy.ts", "native-vision-probe-cache.ts"]
     .map(name => [`llm/${name}`, `sidepanel/utils/${name}`]),
-  ...["threads/related.ts", "threads/recency.ts", "skills/semantic-match.ts", "skills/site-matcher.ts"]
+  ...["image-data-url.ts", "threads/related.ts", "threads/recency.ts", "skills/semantic-match.ts", "skills/site-matcher.ts"]
     .map(name => [name, `shared/${name}`]),
 ]
 for (const [sourcePath, targetPath] of projections) {

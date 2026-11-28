@@ -20,7 +20,7 @@ export async function createActivityFixture() {
   function load(file: string): any {
     file = path.resolve(file)
     if (modules.has(file)) return modules.get(file)
-    assert.ok(['../llm/recipient.ts', '../llm/vision-config.ts', '../llm/vision-reuse-inherit.ts', '../llm/likely-multimodal.ts', '../llm/reasoning-effort.ts', '../llm/native-vision-probe-cache.ts', '../llm/image-preview.ts', '../computer/png-decode.ts'].some(name => file === path.resolve(root, name)) || ['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config', 'windows-apps', 'chat-scope'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
+    assert.ok(['../llm/recipient.ts', '../llm/vision-config.ts', '../llm/vision-reuse-inherit.ts', '../llm/likely-multimodal.ts', '../llm/reasoning-effort.ts', '../llm/native-vision-probe-cache.ts', '../llm/image-preview.ts', '../image-data-url.ts', '../computer/png-decode.ts'].some(name => file === path.resolve(root, name)) || ['service', 'store', 'types', 'validation', 'platform', 'image', 'deadline-evidence', 'model-config', 'windows-apps', 'chat-scope'].some(name => file === path.join(root, name + '.ts')), `unexpected source ${file}`)
     const output: any = {}; modules.set(file, output)
     const requireValue = (id: string): any => {
       if (id === '../config') return { DATA_DIR: directory, getConfig: () => models }

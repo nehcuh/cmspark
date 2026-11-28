@@ -41,6 +41,18 @@ test("decodeDataUrl extracts base64 payload and mime", () => {
   assert.equal(r.mime, "image/png")
 })
 
+test("promoteFetchSrc preserves the original PNG bytes for a mixed-case Base64 marker", () => {
+  const png = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAYklEQVR4nGNgIA+ItcSKtcQSo5IJohqujSgNJAEmBgaGVzWL4XyCljAic9BUIxuEXQMuPWIwwVc1i1nQNODXz0Cmp/GAVzWL0XxCrqfFkJRiVQcHKDFNUDU5noYC4hMfyQAAUC0f6tcKCMIAAAAASUVORK5CYII="
+  const src = `data:image/png;BaSe64,${png}`
+  assert.deepEqual(promoteFetchSrc(src), {
+    kind: "canvas",
+    image_base64: png,
+    mime: "image/png",
+    byte_len: 155,
+  })
+  assert.equal(decodeDataUrl(src).base64, png)
+})
+
 test("decodeDataUrl decodes URL-encoded payloads", () => {
   const r = decodeDataUrl("data:text/plain,Hello%20World")
   assert.equal(atob(r.base64), "Hello World")
@@ -306,8 +318,7 @@ test("sanitizeImageDim only accepts positive finite numbers", () => {
   assert.equal(sanitizeImageDim("nope"), 0)
 })
 
-test("cross-package pin: allowlist + size cap (lock-step with companion image-data-url)", () => {
-  // If you change these, update companion/src/image-data-url.ts and its tests too.
+test("worker exports the supported inline image formats and decoded limit", () => {
   assert.deepEqual([...ALLOWED_IMAGE_MIMES_LIST], [
     "image/gif",
     "image/jpeg",

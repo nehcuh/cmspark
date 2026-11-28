@@ -1,19 +1,17 @@
-// Companion residual decoder for analyze_image data: URLs (old-extension skew).
-// Mirrors chrome-extension image-extract-utils rules: raster MIME allowlist +
-// 6 MiB decoded payload cap. Intentionally duplicated (do not import extension).
-// Cross-pin: ALLOWED_IMAGE_MIMES_LIST + IMAGE_DATA_URL_MAX_DECODED_BYTES must
-// match extension (see tests/image-data-url.test.ts + extension image-extract-utils tests).
+// Inline raster image parsing shared by Companion and the browser extension.
 
 /** Decoded payload size cap for data: images (WS ceiling is 10MB; keep headroom). */
 export const IMAGE_DATA_URL_MAX_DECODED_BYTES = 6 * 1024 * 1024 // 6291456
 
-/** Sorted allowlist — lock-step with chrome-extension ALLOWED_IMAGE_MIMES_LIST. */
+/** Raster formats accepted in inline image URLs and composer uploads. */
 export const ALLOWED_IMAGE_MIMES_LIST = [
   "image/gif",
   "image/jpeg",
   "image/png",
   "image/webp",
 ] as const
+
+export type RasterMime = typeof ALLOWED_IMAGE_MIMES_LIST[number]
 
 const ALLOWED_IMAGE_MIMES = new Set<string>(ALLOWED_IMAGE_MIMES_LIST)
 
@@ -39,6 +37,27 @@ export function normalizeImageMime(raw: string | undefined | null): string | nul
   return null
 }
 
+function base64ByteLength(payload: string): number {
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0
+  return Math.max(0, Math.floor(payload.length * 3 / 4) - padding)
+}
+
+function decodePayload(header: string, payload: string): string {
+  if (header.toLowerCase().includes("base64")) return payload.replace(/\s/g, "")
+  // Both historical decoders kept the low byte of each UTF-16 code unit.
+  const binary = decodeURIComponent(payload).replace(/[\u0100-\uffff]/g,
+    char => String.fromCharCode(char.charCodeAt(0) & 0xff))
+  return btoa(binary)
+}
+
+/** Decode the inline payload without applying the raster format or size policy. */
+export function decodeDataUrl(src: string): { base64: string; mime: string } {
+  const comma = src.indexOf(",")
+  if (comma < 0) throw new Error("Invalid data: URL (no payload)")
+  const header = src.slice(5, comma)
+  return { base64: decodePayload(header, src.slice(comma + 1)), mime: header.split(";")[0] || "image/jpeg" }
+}
+
 /** Estimate decoded payload bytes (base64 4→3; percent-encoded via decodeURIComponent). */
 export function estimateDataUrlPayloadBytes(src: string): number {
   const comma = src.indexOf(",")
@@ -46,9 +65,7 @@ export function estimateDataUrlPayloadBytes(src: string): number {
   const header = src.slice(5, comma)
   const payload = src.slice(comma + 1).replace(/\s/g, "")
   if (header.toLowerCase().indexOf("base64") >= 0) {
-    if (!payload) return 0
-    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0
-    return Math.max(0, Math.floor((payload.length * 3) / 4) - padding)
+    return base64ByteLength(payload)
   }
   try {
     return decodeURIComponent(payload).length
@@ -112,9 +129,7 @@ export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
   if (!mime) {
     return {
       ok: false,
-      // #556 (8th site, companion 孪生体): `rawMimeShort` comes from the data: URL
-      // header — page-controlled text. It must not be interpolated into `error`
-      // (that string reaches classifyError). Kept on the `mime` field instead.
+      // The classifier reads error text. Keep the supplied MIME in its own field.
       error: "Unsupported image MIME (not a recognized image type)",
       error_code: "IMAGE_MIME_REJECTED",
       mime: rawMimeShort || undefined,
@@ -131,18 +146,8 @@ export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
     }
   }
   try {
-    let base64: string
-    if (header.toLowerCase().indexOf("base64") >= 0) {
-      // Strip whitespace so returned base64 matches byte_len (RFC 4648 §3.3).
-      base64 = payload.replace(/\s/g, "")
-    } else {
-      const decoded = decodeURIComponent(payload)
-      base64 = Buffer.from(decoded, "binary").toString("base64")
-    }
-    const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0
-    const byte_len = base64
-      ? Math.max(0, Math.floor((base64.length * 3) / 4) - padding)
-      : 0
+    const base64 = decodePayload(header, payload)
+    const byte_len = base64ByteLength(base64)
     if (byte_len > IMAGE_DATA_URL_MAX_DECODED_BYTES) {
       return {
         ok: false,
@@ -160,4 +165,12 @@ export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
       error_code: "INVALID_DATA_URL",
     }
   }
+}
+
+/** Magic-prefix → data URL for persisted thumbs (PNG/GIF/WEBP/JPEG). */
+export function previewDataUrl(b64: string): string {
+  if (b64.startsWith("iVBOR")) return `data:image/png;base64,${b64}`
+  if (b64.startsWith("R0lGOD") || b64.startsWith("R0lGod")) return `data:image/gif;base64,${b64}`
+  if (b64.startsWith("UklGR")) return `data:image/webp;base64,${b64}`
+  return `data:image/jpeg;base64,${b64}`
 }

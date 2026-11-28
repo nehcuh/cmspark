@@ -1,6 +1,9 @@
 // Composer image paste / drop / picker helpers.
 // Pure functions (plus optional canvas compress) — node:test, no React.
 
+import { normalizeImageMime } from "../../shared/image-data-url"
+export { previewDataUrl } from "../../shared/image-data-url"
+
 export const IMAGE_MAX_DECODED = 4 * 1024 * 1024
 export const IMAGE_MAX_TOTAL_DECODED = 6 * 1024 * 1024
 export const IMAGE_MAX_COUNT = 4
@@ -45,22 +48,8 @@ export function nextFileErrorAfterIngest(opts: {
 
 export const IMAGE_GIF_SHRINK_FIRST = "动画图请先缩小"
 
-const ALLOWED_IMAGE_MIMES = new Set([
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-])
-
-/** Allowlisted raster MIME (png/jpeg/gif/webp). image/jpg → jpeg. */
-export function isAllowlistedImageMime(t: string): boolean {
-  const m = String(t || "")
-    .trim()
-    .toLowerCase()
-    .split(";")[0]
-    .trim()
-  if (m === "image/jpg") return true
-  return ALLOWED_IMAGE_MIMES.has(m)
+export function isAllowlistedImageMime(type: string): boolean {
+  return normalizeImageMime(type) !== null
 }
 
 function looksLikeUrlName(name: string): boolean {
@@ -143,14 +132,6 @@ export function mimeForIncomingFile(name: string, providedMime: string): string 
   return !mime || mime === "application/octet-stream" || mime === "binary/octet-stream"
     ? mimeFromName(name)
     : mime
-}
-
-/** Magic-prefix → data URL for persisted thumbs (PNG/GIF/WEBP/JPEG). */
-export function previewDataUrl(b64: string): string {
-  if (b64.startsWith("iVBOR")) return `data:image/png;base64,${b64}`
-  if (b64.startsWith("R0lGOD") || b64.startsWith("R0lGod")) return `data:image/gif;base64,${b64}`
-  if (b64.startsWith("UklGR")) return `data:image/webp;base64,${b64}`
-  return `data:image/jpeg;base64,${b64}`
 }
 
 /** Display name for a clipboard screenshot: `截图 YYYY-MM-DD HH:mm`. */

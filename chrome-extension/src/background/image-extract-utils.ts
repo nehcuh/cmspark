@@ -11,68 +11,20 @@
 // payload size cap (6 MiB). Never network-fetch data:; never return
 // fetch_required for data: (companion IMAGE_FETCH_GATE is http(s) only).
 
+import { decodeDataUrlImage } from "../shared/image-data-url"
+export {
+  ALLOWED_IMAGE_MIMES_LIST,
+  IMAGE_DATA_URL_MAX_DECODED_BYTES,
+  decodeDataUrl,
+  decodeDataUrlImage,
+  estimateDataUrlPayloadBytes,
+  normalizeImageMime,
+  type DecodeDataUrlImageResult,
+} from "../shared/image-data-url"
+
 export interface ExtractedImage {
   base64: string
   mime: string
-}
-
-/** Decoded payload size cap for data: images (WS ceiling is 10MB; keep headroom).
- *  Keep in lock-step with companion/src/image-data-url.ts (cross-pin tests). */
-export const IMAGE_DATA_URL_MAX_DECODED_BYTES = 6 * 1024 * 1024 // 6291456
-
-/**
- * Raster MIME allowlist (sorted) for analyze_image data: promotion.
- * Keep in lock-step with companion/src/image-data-url.ts ALLOWED_IMAGE_MIMES_LIST.
- */
-export const ALLOWED_IMAGE_MIMES_LIST = [
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-] as const
-
-const ALLOWED_IMAGE_MIMES = new Set<string>(ALLOWED_IMAGE_MIMES_LIST)
-
-export type DecodeDataUrlImageResult =
-  | { ok: true; base64: string; mime: string; byte_len: number }
-  | {
-      ok: false
-      error: string
-      error_code: "INVALID_DATA_URL" | "IMAGE_MIME_REJECTED" | "IMAGE_TOO_LARGE"
-      mime?: string
-      byte_len?: number
-    }
-
-/** Normalize a Content-Type / data: header MIME. image/jpg → image/jpeg.
- *  Returns null for non-allowlisted types (incl. image/svg+xml, text/*). */
-export function normalizeImageMime(raw: string | undefined | null): string | null {
-  const m = String(raw || "")
-    .trim()
-    .toLowerCase()
-    .split(";")[0]
-    .trim()
-  if (m === "image/jpg") return "image/jpeg"
-  if (ALLOWED_IMAGE_MIMES.has(m)) return m
-  return null
-}
-
-/** Estimate decoded payload bytes from a data: URL (no network). Base64 uses
- *  the standard 4→3 mapping; percent-encoded uses decodeURIComponent length. */
-export function estimateDataUrlPayloadBytes(src: string): number {
-  const comma = src.indexOf(",")
-  if (comma < 0) return 0
-  const header = src.slice(5, comma)
-  const payload = src.slice(comma + 1).replace(/\s/g, "")
-  if (header.toLowerCase().indexOf("base64") >= 0) {
-    if (!payload) return 0
-    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0
-    return Math.max(0, Math.floor((payload.length * 3) / 4) - padding)
-  }
-  try {
-    return decodeURIComponent(payload).length
-  } catch {
-    return payload.length
-  }
 }
 
 /** Decode a Uint8Array to base64 without FileReader (which is unavailable in a
@@ -86,95 +38,6 @@ export function bytesToBase64(bytes: Uint8Array): string {
     parts.push(String.fromCharCode.apply(null, chunk))
   }
   return btoa(parts.join(""))
-}
-
-/** Decode a `data:` URL into {base64, mime}. Handles base64 payloads (the
- *  common case for inline images) and, defensively, URL-encoded payloads.
- *  Low-level: no MIME allowlist / size gate — prefer decodeDataUrlImage for
- *  analyze_image promotion. */
-export function decodeDataUrl(src: string): ExtractedImage {
-  const comma = src.indexOf(",")
-  if (comma < 0) throw new Error("Invalid data: URL (no payload)")
-  // Header sits between "data:" and the comma, e.g. "image/png;base64".
-  const header = src.slice(5, comma)
-  const payload = src.slice(comma + 1)
-  const mime = header.split(";")[0] || "image/jpeg"
-  if (header.indexOf("base64") >= 0) {
-    // Strip whitespace so returned base64 matches byte_len accounting (RFC 4648 §3.3).
-    return { base64: payload.replace(/\s/g, ""), mime }
-  }
-  // URL-encoded (percent-encoded) payload — decode, then re-encode to base64.
-  // Note: decodeURIComponent assumes a UTF-8 percent-encoded *text* payload;
-  // binary data: URLs should use base64 (handled above). This defensive branch
-  // covers the rare text-only case.
-  const decoded = decodeURIComponent(payload)
-  const bytes = new Uint8Array(decoded.length)
-  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i)
-  return { base64: bytesToBase64(bytes), mime }
-}
-
-/** Gate + decode a data: URL for analyze_image. Applies raster MIME allowlist
- *  and decoded-payload size cap. Never touches the network. */
-export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
-  if (typeof src !== "string" || !src.toLowerCase().startsWith("data:")) {
-    return { ok: false, error: "Not a data: URL", error_code: "INVALID_DATA_URL" }
-  }
-  const comma = src.indexOf(",")
-  if (comma < 0) {
-    return { ok: false, error: "Invalid data: URL (no payload)", error_code: "INVALID_DATA_URL" }
-  }
-  const header = src.slice(5, comma)
-  const rawMime = (header.split(";")[0] || "").trim()
-  // Cap mime echo length so pathological headers cannot flood tool errors/logs.
-  const rawMimeShort = rawMime.length > 64 ? rawMime.slice(0, 64) + "…" : rawMime
-  const mime = normalizeImageMime(rawMime)
-  if (!mime) {
-    return {
-      ok: false,
-      // #556: `rawMimeShort` comes from the data: URL header, i.e. PAGE-CONTROLLED
-      // text. It must not be interpolated into `error` (that string reaches the
-      // companion's substring-based classifyError). The value stays available on
-      // the `mime` field, which is data — never classified.
-      error: "Unsupported image MIME (not a recognized image type)",
-      error_code: "IMAGE_MIME_REJECTED",
-      mime: rawMimeShort || undefined,
-    }
-  }
-  const estimated = estimateDataUrlPayloadBytes(src)
-  if (estimated > IMAGE_DATA_URL_MAX_DECODED_BYTES) {
-    return {
-      ok: false,
-      error: `Image too large (${estimated} bytes; max ${IMAGE_DATA_URL_MAX_DECODED_BYTES})`,
-      error_code: "IMAGE_TOO_LARGE",
-      mime,
-      byte_len: estimated,
-    }
-  }
-  try {
-    const extracted = decodeDataUrl(src)
-    // Authoritative size from cleaned base64 (decodeDataUrl already strips \s).
-    const payload = extracted.base64
-    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0
-    const byte_len = payload
-      ? Math.max(0, Math.floor((payload.length * 3) / 4) - padding)
-      : 0
-    if (byte_len > IMAGE_DATA_URL_MAX_DECODED_BYTES) {
-      return {
-        ok: false,
-        error: `Image too large (${byte_len} bytes; max ${IMAGE_DATA_URL_MAX_DECODED_BYTES})`,
-        error_code: "IMAGE_TOO_LARGE",
-        mime,
-        byte_len,
-      }
-    }
-    return { ok: true, base64: payload, mime, byte_len }
-  } catch (e: any) {
-    return {
-      ok: false,
-      error: e?.message || "Failed to decode data: URL",
-      error_code: "INVALID_DATA_URL",
-    }
-  }
 }
 
 /** Coerce image dimensions from CDP/page metadata: only positive finite values. */
