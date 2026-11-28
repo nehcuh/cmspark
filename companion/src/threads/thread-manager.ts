@@ -18,6 +18,8 @@ import {
 import { sanitizeRunProgress, seedRunProgress, type RunProgress } from "./run-progress"
 import { sanitizeLoopState, type LoopState } from "../loop/loop-state"
 import { ProjectStore } from "./project-store"
+import { isMcpToolAllowedByWhitelist, liveWorkerParent, workerParentCapabilityWhitelist, workerWhitelistAllows } from "./tool-whitelist"
+export { isMcpToolAllowedByWhitelist, mcpServerIdsForWhitelistMatch, MCP_SERVER_ID_ALIASES } from "./tool-whitelist"
 import { isExecutionPolicy, type ExecutionPolicy } from "../tool/plan-readonly"
 import type { ImageAttachmentMeta } from "../llm/image-parts"
 import { sniffedExt, type RasterMime } from "../llm/image-sniff"
@@ -464,52 +466,6 @@ function lastUserPreviewFromMessages(
     if (text) return text
   }
   return ""
-}
-
-/**
- * Known MCP server-id aliases for tool_whitelist patterns.
- * Real default server id is `filesystem` → tools `mcp__filesystem__*`.
- * Legacy UI/tests often wrote `mcp__fs__*`; match both directions.
- */
-export const MCP_SERVER_ID_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  filesystem: ["fs"],
-  fs: ["filesystem"],
-}
-
-/** Server ids that should match a whitelist server segment (self + aliases). */
-export function mcpServerIdsForWhitelistMatch(serverId: string): string[] {
-  const alts = MCP_SERVER_ID_ALIASES[serverId]
-  return alts ? [serverId, ...alts] : [serverId]
-}
-
-/**
- * Whether an MCP tool name is allowed by a non-null thread tool_whitelist.
- * Pure helper for unit tests (same rules as ThreadManager.isToolAllowed MCP branch).
- */
-export function isMcpToolAllowedByWhitelist(wl: string[], toolName: string): boolean {
-  if (wl.includes(toolName)) return true
-  if (wl.includes("mcp__*")) return true
-  if (
-    toolName === "mcp_list_resources" ||
-    toolName === "mcp_read_resource" ||
-    toolName === "mcp_get_prompt"
-  ) {
-    // Meta tools: exact name only (unless mcp__* already matched)
-    return false
-  }
-  if (!toolName.startsWith("mcp__")) return false
-
-  const parts = toolName.split("__")
-  // mcp__server__tool…  (tool segment may itself contain __)
-  if (parts.length < 3) return false
-  const serverId = parts[1]!
-  const rest = parts.slice(2).join("__")
-
-  for (const sid of mcpServerIdsForWhitelistMatch(serverId)) {
-    if (wl.includes(`mcp__${sid}__*`)) return true
-    if (wl.includes(`mcp__${sid}__${rest}`)) return true
-  }
-  return false
 }
 
 export type CruiseSecurityFlags = {
@@ -1646,7 +1602,6 @@ export class ThreadManager {
       }
       // Workers never get cruise-expanded surface (spawn whitelist + HARD_DENY stay).
       if (thread.parent_thread_id && thread.orchestrator_run_id) {
-        const { liveWorkerParent, workerParentCapabilityWhitelist, workerWhitelistAllows } = require("../orchestrator/spawn") as typeof import("../orchestrator/spawn")
         const parent = liveWorkerParent(this, thread)
         if (!parent || workerWhitelistAllows(thread.worker_tool_denials ?? [], toolName)) return false
         const parentWhitelist = workerParentCapabilityWhitelist(parent)

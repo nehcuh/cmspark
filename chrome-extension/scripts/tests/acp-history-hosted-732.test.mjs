@@ -328,8 +328,9 @@ async function actualSeedStore(dir) {
       if(relative==='threads/thread-manager.ts'&&id==='./project-store')return sourceModule('threads/project-store.ts')
       if(relative==='threads/thread-manager.ts'&&id==='./thread-inspect')return sourceModule('threads/thread-inspect.ts')
       if(relative==='threads/thread-inspect.ts'&&id==='./cleanup-rules')return sourceModule('threads/cleanup-rules.ts')
+      if(relative==='threads/thread-manager.ts'&&id==='./tool-whitelist')return sourceModule('threads/tool-whitelist.ts')
       if(relative==='threads/thread-manager.ts'&&id==='./run-progress')return sourceModule('threads/run-progress.ts')
-      if(relative==='threads/run-progress.ts'&&id==='../orchestrator/constants')return sourceModule('orchestrator/constants.ts')
+      if((relative==='threads/run-progress.ts'||relative==='threads/tool-whitelist.ts')&&id==='../orchestrator/constants')return sourceModule('orchestrator/constants.ts')
       if(['./digest','./user-tags','./metadata-patch','./distill','./thread-inspect','./runtime-context-budget','../loop/loop-state','./project-store','../tool/plan-readonly','../llm/image-sniff','./image-sidecar'].includes(id))return unused
       throw Error('UNEXPECTED_STORE_IMPORT')
     }
