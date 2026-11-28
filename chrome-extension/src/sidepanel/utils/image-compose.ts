@@ -4,19 +4,20 @@
 import { normalizeImageMime } from "../../shared/image-data-url"
 export { previewDataUrl } from "../../shared/image-data-url"
 
-export const IMAGE_MAX_DECODED = 4 * 1024 * 1024
-export const IMAGE_MAX_TOTAL_DECODED = 6 * 1024 * 1024
-export const IMAGE_MAX_COUNT = 4
+import { IMAGE_FORMAT_REFUSED, MAX_UPLOAD_IMAGE_BYTES as IMAGE_MAX_DECODED } from "./composer-image-policy"
+export {
+  checkComposerImageCaps,
+  IMAGE_FORMAT_REFUSED,
+  IMAGE_PREFLIGHT_NO_VISION,
+  MAX_UPLOAD_IMAGES as IMAGE_MAX_COUNT,
+  MAX_UPLOAD_IMAGE_BYTES as IMAGE_MAX_DECODED,
+  MAX_UPLOAD_IMAGES_TOTAL_BYTES as IMAGE_MAX_TOTAL_DECODED,
+} from "./composer-image-policy"
+
 export const IMAGE_MAX_EDGE = 1568
 
 export const IMAGE_ACCEPT =
   ".doc,.docx,.wps,.ppt,.pptx,.xls,.xlsx,.pdf,.odt,.ods,.odp,.rtf,.csv,.md,.txt,.html,.htm,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
-
-export const IMAGE_PREFLIGHT_NO_VISION =
-  "当前主模型不支持直接看图，且未启用视觉分析。请在设置中开启视觉分析，或改用支持图片的模型。"
-
-export const IMAGE_FORMAT_REFUSED =
-  "不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）"
 
 /** Declared image/* that is not an allowlisted raster. */
 export function imageTypeRefuseReason(type: string): string | undefined {
@@ -190,25 +191,6 @@ export function needsCompress(bytes: number, width?: number, height?: number): b
     return Math.max(width, height) > IMAGE_MAX_EDGE
   }
   return false
-}
-
-export function checkComposerImageCaps(
-  images: Array<{ name: string; size: number }>,
-): string | undefined {
-  if (images.length > IMAGE_MAX_COUNT) {
-    return `一次最多添加 ${IMAGE_MAX_COUNT} 张图片`
-  }
-  let total = 0
-  for (const img of images) {
-    if (img.size > IMAGE_MAX_DECODED) {
-      return `图片 "${img.name}" 过大，单张不超过 4MB`
-    }
-    total += img.size
-  }
-  if (total > IMAGE_MAX_TOTAL_DECODED) {
-    return `图片总大小超过 6MB 上限`
-  }
-  return undefined
 }
 
 function isGifMime(t: string): boolean {

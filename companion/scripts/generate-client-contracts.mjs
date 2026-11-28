@@ -18,7 +18,7 @@ function project(target, content) {
 // Keep both packages independently buildable. Generated imports resolve entirely
 // inside the extension; the Companion source owns the business rules.
 const projections = [
-  ...["reasoning-effort.ts", "chat-output-policy.ts", "native-vision-probe-cache.ts"]
+  ...["reasoning-effort.ts", "chat-output-policy.ts", "composer-image-policy.ts", "native-vision-probe-cache.ts"]
     .map(name => [`llm/${name}`, `sidepanel/utils/${name}`]),
   ...["image-data-url.ts", "threads/related.ts", "threads/recency.ts", "skills/semantic-match.ts", "skills/site-matcher.ts"]
     .map(name => [name, `shared/${name}`]),

@@ -57,12 +57,12 @@ import {
 } from "./utils/thread-busy"
 import {
   IMAGE_ACCEPT,
-  IMAGE_PREFLIGHT_NO_VISION,
   checkComposerImageCaps,
   defaultCaption,
   isAllowlistedImageMime,
   visionRailOpen,
 } from "./utils/image-compose"
+import { planStandaloneImageAnalysis } from "./utils/composer-image-policy"
 import { useComposerVoice } from "./hooks/useComposerVoice"
 import { useComposerIngest } from "./hooks/useComposerIngest"
 import { useComposerMentions } from "./hooks/useComposerMentions"
@@ -667,8 +667,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         baseUrl: effectiveLlmBase,
         mode: state.config.native_vision,
       })
-      if (!useNative && !visionRailOpen(state.config)) {
-        setFileError(IMAGE_PREFLIGHT_NO_VISION)
+      const plan = planStandaloneImageAnalysis({
+        imageCount: imageFiles.length, useNative, visionRailOn: visionRailOpen(state.config),
+      })
+      if (plan.error) {
+        setFileError(plan.error)
         return
       }
       if (useNative) {

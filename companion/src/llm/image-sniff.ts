@@ -1,5 +1,7 @@
 import { normalizeImageMime, type RasterMime } from "../image-data-url"
 
+import { IMAGE_FORMAT_REFUSED } from "./composer-image-policy"
+
 export type { RasterMime } from "../image-data-url"
 
 export function sniffRasterImage(buf: Buffer): RasterMime | null {
@@ -27,7 +29,7 @@ export function admitComposerImage(
   const sniffed = sniffRasterImage(buf)
   if (!sniffed) return { ok: false, error: "文件内容与类型不符，已拒绝" }
   const declared = normalizeImageMime(declaredType)
-  if (!declared) return { ok: false, error: "不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）" }
+  if (!declared) return { ok: false, error: IMAGE_FORMAT_REFUSED }
   if (sniffed !== declared) return { ok: false, error: "文件内容与类型不符，已拒绝" }
   return { ok: true, mime: sniffed }
 }

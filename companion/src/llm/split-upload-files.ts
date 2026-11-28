@@ -2,10 +2,13 @@ import { createHash } from "node:crypto"
 import { normalizeImageMime } from "../image-data-url"
 import { admitComposerImage } from "./image-sniff"
 
-/** Composer standalone-image caps (decoded bytes). Independent of file_upload.max_file_size. */
-export const MAX_UPLOAD_IMAGES = 4
-export const MAX_UPLOAD_IMAGE_BYTES = 4 * 1024 * 1024
-export const MAX_UPLOAD_IMAGES_TOTAL_BYTES = 6 * 1024 * 1024
+import { checkComposerImageCaps, IMAGE_FORMAT_REFUSED } from "./composer-image-policy"
+export {
+  MAX_UPLOAD_IMAGES,
+  MAX_UPLOAD_IMAGE_BYTES,
+  MAX_UPLOAD_IMAGES_TOTAL_BYTES,
+  planStandaloneImageAnalysis,
+} from "./composer-image-policy"
 
 export type PartitionedImage = { name: string; type: string; buf: Buffer }
 export type PartitionedDoc = { name: string; type: string; content: string }
@@ -13,20 +16,7 @@ export type PartitionedDoc = { name: string; type: string; content: string }
 export function validateImageCaps(
   images: Array<{ name: string; buf: Buffer }>,
 ): string | undefined {
-  if (images.length > MAX_UPLOAD_IMAGES) {
-    return `一次最多添加 ${MAX_UPLOAD_IMAGES} 张图片`
-  }
-  let total = 0
-  for (const img of images) {
-    if (img.buf.length > MAX_UPLOAD_IMAGE_BYTES) {
-      return `图片 "${img.name}" 过大，单张不超过 4MB`
-    }
-    total += img.buf.length
-  }
-  if (total > MAX_UPLOAD_IMAGES_TOTAL_BYTES) {
-    return `图片总大小超过 6MB 上限`
-  }
-  return undefined
+  return checkComposerImageCaps(images.map(({ name, buf }) => ({ name, size: buf.length })))
 }
 
 /**
@@ -58,7 +48,7 @@ export function partitionUploadFiles(
       return {
         images: [],
         docs,
-        error: "不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）",
+        error: IMAGE_FORMAT_REFUSED,
       }
     }
     const declaredImage = type.toLowerCase().startsWith("image/")
@@ -66,7 +56,7 @@ export function partitionUploadFiles(
       return {
         images: [],
         docs,
-        error: "不支持该图片格式（请使用 PNG / JPEG / GIF / WebP）",
+        error: IMAGE_FORMAT_REFUSED,
       }
     }
     if (normalizeImageMime(type)) {
@@ -118,25 +108,6 @@ export function spliceEditedCaption(diskContent: string, editedCaption: string):
   const cap = String(editedCaption || "").trim()
   if (!suffix) return cap
   return cap ? `${cap}\n\n${suffix}` : suffix
-}
-
-/**
- * Standalone (composer) images only — not document-embedded images.
- * useNative skips analyzeImage; the main model consumes sidecar bytes.
- */
-export function planStandaloneImageAnalysis(opts: {
-  imageCount: number
-  useNative: boolean
-  visionRailOn: boolean
-}): { analyze: boolean; error?: string } {
-  if (opts.imageCount <= 0) return { analyze: false }
-  if (opts.useNative) return { analyze: false }
-  if (opts.visionRailOn) return { analyze: true }
-  return {
-    analyze: false,
-    error:
-      "当前主模型不支持直接看图，且未启用视觉分析。请在设置中开启视觉分析，或改用支持图片的模型。",
-  }
 }
 
 export function sha256hex(buf: Buffer): string {
