@@ -12,6 +12,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,9 +39,28 @@ jobs:
           cd companion && node ../scripts/verify-systray2.js --strict
 
       - name: Check runtime module boundaries
+        shell: bash
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           node --test scripts/tests/architecture-dependencies.test.mjs
-          node scripts/architecture-dependencies.mjs
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            base_ref="$(git rev-parse HEAD^1)"
+          else
+            base_ref="$PUSH_BEFORE"
+          fi
+          if [[ "$base_ref" =~ ^0{40}$ ]]; then
+            node scripts/architecture-dependencies.mjs
+          else
+            if ! git cat-file -e "$base_ref^{commit}"; then
+              git fetch --no-tags --depth=1 origin "$base_ref"
+            fi
+            base="$(mktemp -d)"
+            git archive "$base_ref" companion/src companion/tsconfig.json chrome-extension/src chrome-extension/tsconfig.json | tar -xf - -C "$base"
+            ln -s "$PWD/chrome-extension/node_modules" "$base/chrome-extension/node_modules"
+            ln -s "$PWD/companion/node_modules" "$base/companion/node_modules"
+            node scripts/architecture-dependencies.mjs --base-dir "$base"
+          fi
 
       - name: Verify Node archive checksum helper (audit H8)
         # package.sh now sha256-verifies the downloaded Node binary against

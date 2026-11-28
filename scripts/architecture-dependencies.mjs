@@ -68,6 +68,20 @@ export async function inspectDependencies(root = repo) {
   }
 }
 
+// A new edge inside an existing cyclic group matters even if the group does not grow.
+export function cyclicEdges(report) {
+  const edges = new Set()
+  for (const group of report.runtimeCycles) {
+    const members = new Set(group)
+    for (const from of group) {
+      for (const edge of report.modules[from]) {
+        if (members.has(edge.path)) edges.add(`${from} --${edge.kind}--> ${edge.path}`)
+      }
+    }
+  }
+  return edges
+}
+
 if (import.meta.main) {
   const report = await inspectDependencies()
   if (process.argv.includes("--json")) {
@@ -77,5 +91,14 @@ if (import.meta.main) {
     if (report.runtimeCycles.length) console.log("Use --json for the members and import kinds of all cyclic groups.")
     for (const group of report.staticCycles) console.error("Static import cycle among:\n  " + group.join("\n  "))
   }
-  process.exitCode = report.staticCycles.length ? 1 : 0
+  const baseArg = process.argv.indexOf("--base-dir")
+  let added = []
+  if (baseArg !== -1) {
+    const baseDir = process.argv[baseArg + 1]
+    if (!baseDir || baseDir.startsWith("--")) throw new Error("--base-dir requires a checkout directory")
+    const previous = cyclicEdges(await inspectDependencies(path.resolve(baseDir)))
+    added = [...cyclicEdges(report)].filter(edge => !previous.has(edge)).sort()
+    for (const edge of added) console.error("New cyclic dependency:", edge)
+  }
+  process.exitCode = report.staticCycles.length || added.length ? 1 : 0
 }

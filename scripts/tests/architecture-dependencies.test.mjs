@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { inspectDependencies } from "../architecture-dependencies.mjs"
+import { cyclicEdges, inspectDependencies } from "../architecture-dependencies.mjs"
 
 test("emitted dependencies distinguish type, eager, deferred and self imports", async t => {
   const root = mkdtempSync(path.join(tmpdir(), "cmspark-architecture-"))
@@ -22,5 +22,12 @@ test("emitted dependencies distinguish type, eager, deferred and self imports", 
   const names = groups => groups.map(group => group.map(name => path.posix.basename(name)))
   assert.deepEqual(names(report.staticCycles), [["a.ts", "b.ts"], ["self.ts"]])
   assert.deepEqual(names(report.runtimeCycles), [["a.ts", "b.ts", "lazy.ts"], ["self.ts"]])
+  const before = cyclicEdges(report)
+  writeFileSync(path.join(root, "companion/src/lazy.ts"), 'export function get() { return require("./a") }; export function extra() { return import("./b") }')
+  const after = await inspectDependencies(root)
+  assert.deepEqual(after.runtimeCycles, report.runtimeCycles)
+  assert.deepEqual([...cyclicEdges(after)].filter(edge => !before.has(edge)), [
+    "companion/src/lazy.ts --dynamic-import--> companion/src/b.ts",
+  ])
   assert.deepEqual(report.modules["companion/src/a.ts"], [{ path: "companion/src/b.ts", kind: "import-statement" }])
 })
