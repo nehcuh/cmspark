@@ -3,6 +3,7 @@ import {createHash,randomBytes} from 'node:crypto'
 import type {WebSocket} from 'ws'
 import {ThreadManager} from '../threads/thread-manager'
 import {redactSecrets} from '../threads/distill'
+import {commitLocalWorkMessage} from "./local-handback"
 import {SecurityConfirmationManager,DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS} from '../security-confirmation'
 import {acquireL2Admission,releaseL2Admission} from '../orchestrator/l2-admission'
 import {snapshotRoot,assertRoot,type RootSnapshot} from './terminal-root'
@@ -28,18 +29,6 @@ const safe=(v:string)=>redactSecrets(v).text
 function refuse(code='LOCAL_UNAVAILABLE'):never{throw Error(code)}
 const errorCodes=new Set(['LOCAL_UNAVAILABLE','LOCAL_STALE','LOCAL_INPUT_INVALID','LOCAL_BUSY','LOCAL_ACTIVITY_UNKNOWN','LOCAL_MODULE_DISABLED','LOCAL_UNBOUND','LOCAL_CONFLICT','LOCAL_DENIED','LOCAL_CANCELLED','LOCAL_NOT_OWNED','LOCAL_NO_AGENT','LOCAL_UNCONFIRMED'])
 function code(error:unknown){return error instanceof Error&&errorCodes.has(error.message)?error.message:'LOCAL_UNAVAILABLE'}
-/** Idempotence is bounded by current canonical history, not a cross-file transaction. */
-export function commitLocalWorkMessage(threads:ThreadManager,thread:string,messageId:string,text:string,current:()=>boolean){
- if(!current())refuse('LOCAL_STALE')
- const history=threads.readDesktopDialog(thread),prior=history.messages.find(m=>m.id===messageId)
- if(prior){if(prior.role!=='assistant'||prior.content!==text)refuse('LOCAL_CONFLICT');return prior.id}
- if(!current())refuse('LOCAL_STALE')
- threads.addMessage(thread,{id:messageId,thread_id:thread,role:'assistant',content:text})
- // addMessage may have written messages then failed its separate index write. Its throw is UNKNOWN.
- const committed=threads.readDesktopDialog(thread).messages.find(m=>m.id===messageId)
- if(!committed||committed.content!==text)refuse('LOCAL_UNCONFIRMED')
- return committed.id
-}
 export function createDesktopTerminalWork(opts:{threads:ThreadManager;runtime:DesktopTerminalRuntime;manager:SecurityConfirmationManager;ws:WebSocket;current():boolean;send(frame:TerminalFrame):boolean;maxPayload:number}){
  let snapshot:Snapshot|undefined,viewThread:string|undefined
  const operations=new Map<string,Operation>()
