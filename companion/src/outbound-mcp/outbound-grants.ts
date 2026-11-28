@@ -14,24 +14,12 @@ import { atomicWriteJSON } from "../io"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { parseEnterprisePolicy, enterpriseInstance, deny, type EnterprisePolicy } from "./enterprise-policy"
 import { contextPermissionFromRecord, parseContextPermission, OUTBOUND_CONTEXT_PROFILE, type ContextPermission, type LiveContextGrant } from "./context-permission"
+import { OUTBOUND_GRANT_PROFILES, OUTBOUND_L1_DEFAULT_PROFILE, isOutboundGrantProfile } from "./profile"
+export { OUTBOUND_GRANT_PROFILES, OUTBOUND_L1_DEFAULT_PROFILE, OUTBOUND_L1_INTERACT_PROFILE, isOutboundGrantProfile } from "./profile"
 export { OUTBOUND_CONTEXT_PROFILE } from "./context-permission"
 
 export const OUTBOUND_GRANT_TOKEN_PREFIX = "cmg_"
 export const DEFAULT_GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30d wall-clock
-export const OUTBOUND_L1_DEFAULT_PROFILE = "outbound_l1_default"
-/** #410 — interact profile (superset of default, see profile.ts OUTBOUND_PROFILE_TOOLS). */
-export const OUTBOUND_L1_INTERACT_PROFILE = "outbound_l1_interact"
-
-export const OUTBOUND_GRANT_PROFILES = [
-  OUTBOUND_L1_DEFAULT_PROFILE,
-  OUTBOUND_L1_INTERACT_PROFILE,
-  OUTBOUND_CONTEXT_PROFILE,
-] as const
-
-export function isOutboundGrantProfile(p: string): boolean {
-  return (OUTBOUND_GRANT_PROFILES as readonly string[]).includes(p)
-}
-
 /** #406 — grants file was frozen at module load (GRANTS_PATH), so env-redirected
  *  callers (stdio-mcp outbound tests, runtime retarget) wrote the real home dir.
  *  Live-resolve under getConfigDir() like config.json / logs / daemon.pid. */

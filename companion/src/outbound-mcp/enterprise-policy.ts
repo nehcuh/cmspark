@@ -4,6 +4,7 @@ import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readF
 import { dirname, join } from "node:path"
 import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
+import { OUTBOUND_PROFILE_TOOLS } from "./profile"
 
 export const ENTERPRISE_VERSION = 1 as const
 export class EnterpriseError extends Error {
@@ -101,8 +102,6 @@ export function parseEnterprisePolicy(value: unknown, profile: string, checkExpi
   if (typeof authority_public_key !== "string" || authority_public_key.length > 2048) deny("AUTHORITY_INVALID")
   try { if (createPublicKey(authority_public_key).asymmetricKeyType !== "ed25519") deny("AUTHORITY_INVALID") } catch { deny("AUTHORITY_INVALID") }
   const tools = array(raw.tools, identifier)
-  // profile imports the grant store; resolve after module initialization.
-  const { OUTBOUND_PROFILE_TOOLS } = require("./profile") as typeof import("./profile")
   const profileTools = OUTBOUND_PROFILE_TOOLS[profile as keyof typeof OUTBOUND_PROFILE_TOOLS] as readonly string[] | undefined
   if (!profileTools || profile === "outbound_context_v1" || !tools.length || new Set(tools).size !== tools.length || tools.some(tool => !(ENTERPRISE_TOOLS as readonly string[]).includes(tool) || !profileTools.includes("cmspark__" + tool))) deny("ENTERPRISE_PROFILE_FORBIDDEN")
   const navigation = array(raw.navigation, scope), evidence = array(raw.evidence, scope), login = array(raw.login, scope)
